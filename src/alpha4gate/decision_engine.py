@@ -33,6 +33,11 @@ class GameSnapshot:
     enemy_army_near_base: bool = False
     enemy_army_supply_visible: int = 0
     game_time_seconds: float = 0.0
+    gateway_count: int = 0
+    robo_count: int = 0
+    forge_count: int = 0
+    upgrade_count: int = 0
+    enemy_structure_count: int = 0
 
 
 @dataclass

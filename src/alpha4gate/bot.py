@@ -110,6 +110,11 @@ class Alpha4GateBot(BotAI):
             enemy_army_near_base=enemy_near,
             enemy_army_supply_visible=enemy_supply,
             game_time_seconds=self.time,
+            gateway_count=len(self.structures(UnitTypeId.GATEWAY)),
+            robo_count=len(self.structures(UnitTypeId.ROBOTICSFACILITY)),
+            forge_count=len(self.structures(UnitTypeId.FORGE)),
+            upgrade_count=sum(1 for u in self.state.upgrades),
+            enemy_structure_count=len(self.enemy_structures),
         )
 
     async def on_step(self, iteration: int) -> None:
