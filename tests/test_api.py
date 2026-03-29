@@ -132,3 +132,62 @@ class TestGameEndpoints:
         assert resp.status_code == 200
         assert resp.json()["count"] == 5
         assert resp.json()["status"] == "running"
+
+
+class TestTrainingEndpoints:
+    def test_training_status_empty(self, client: TestClient) -> None:
+        resp = client.get("/api/training/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total_games"] == 0
+        assert data["current_checkpoint"] is None
+
+    def test_training_history_empty(self, client: TestClient) -> None:
+        resp = client.get("/api/training/history")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data.get("total_games", 0) == 0 or data.get("games") == []
+
+    def test_training_checkpoints_empty(self, client: TestClient) -> None:
+        resp = client.get("/api/training/checkpoints")
+        assert resp.status_code == 200
+        assert resp.json()["checkpoints"] == []
+
+    def test_training_start(self, client: TestClient) -> None:
+        resp = client.post("/api/training/start", json={"mode": "rl"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "accepted"
+
+    def test_training_stop(self, client: TestClient) -> None:
+        resp = client.post("/api/training/stop")
+        assert resp.status_code == 200
+
+
+class TestRewardRulesEndpoints:
+    def test_get_empty_rules(self, client: TestClient) -> None:
+        resp = client.get("/api/reward-rules")
+        assert resp.status_code == 200
+        assert resp.json()["rules"] == []
+
+    def test_put_and_get_rules(self, client: TestClient) -> None:
+        rules = {
+            "rules": [
+                {
+                    "id": "test-rule",
+                    "description": "Test",
+                    "condition": {"field": "minerals", "op": ">", "value": 500},
+                    "requires": None,
+                    "reward": 0.1,
+                    "active": True,
+                }
+            ]
+        }
+        resp = client.put("/api/reward-rules", json=rules)
+        assert resp.status_code == 200
+        assert resp.json()["updated"] is True
+        assert resp.json()["rule_count"] == 1
+
+        # Verify it persisted
+        resp2 = client.get("/api/reward-rules")
+        assert len(resp2.json()["rules"]) == 1
+        assert resp2.json()["rules"][0]["id"] == "test-rule"

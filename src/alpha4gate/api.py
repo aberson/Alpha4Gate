@@ -167,6 +167,114 @@ async def start_batch(request: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# --- Training Endpoints ---
+
+
+@app.get("/api/training/status")
+async def get_training_status() -> dict[str, Any]:
+    """Get current training status."""
+    from alpha4gate.learning.checkpoints import get_best_name, list_checkpoints
+    from alpha4gate.learning.database import TrainingDB
+
+    cp_dir = _data_dir / "checkpoints"
+    db_path = _data_dir / "training.db"
+
+    status: dict[str, Any] = {
+        "training_active": False,
+        "current_checkpoint": None,
+        "total_checkpoints": 0,
+        "total_games": 0,
+        "total_transitions": 0,
+        "db_size_bytes": 0,
+    }
+
+    if cp_dir.exists():
+        cps = list_checkpoints(cp_dir)
+        status["total_checkpoints"] = len(cps)
+        status["current_checkpoint"] = get_best_name(cp_dir)
+
+    if db_path.exists():
+        db = TrainingDB(db_path)
+        status["total_games"] = db.get_game_count()
+        status["total_transitions"] = db.get_transition_count()
+        status["db_size_bytes"] = db.get_db_size_bytes()
+        db.close()
+
+    return status
+
+
+@app.get("/api/training/history")
+async def get_training_history() -> dict[str, Any]:
+    """Get training game history with win rates."""
+    from alpha4gate.learning.database import TrainingDB
+
+    db_path = _data_dir / "training.db"
+    if not db_path.exists():
+        return {"games": [], "win_rates": {}}
+
+    db = TrainingDB(db_path)
+    game_count = db.get_game_count()
+    win_rates = {
+        "last_10": db.get_recent_win_rate(10),
+        "last_50": db.get_recent_win_rate(50),
+        "last_100": db.get_recent_win_rate(100),
+        "overall": db.get_recent_win_rate(game_count) if game_count > 0 else 0.0,
+    }
+    db.close()
+
+    return {"total_games": game_count, "win_rates": win_rates}
+
+
+@app.get("/api/training/checkpoints")
+async def get_training_checkpoints() -> dict[str, Any]:
+    """List all training checkpoints."""
+    from alpha4gate.learning.checkpoints import get_best_name, list_checkpoints
+
+    cp_dir = _data_dir / "checkpoints"
+    if not cp_dir.exists():
+        return {"checkpoints": [], "best": None}
+
+    return {
+        "checkpoints": list_checkpoints(cp_dir),
+        "best": get_best_name(cp_dir),
+    }
+
+
+@app.post("/api/training/start")
+async def start_training(request: dict[str, Any]) -> dict[str, Any]:
+    """Start training (placeholder — actual training runs via CLI)."""
+    mode = request.get("mode", "rl")
+    return {
+        "status": "accepted",
+        "mode": mode,
+        "message": f"Use CLI: uv run python -m alpha4gate.runner --train {mode}",
+    }
+
+
+@app.post("/api/training/stop")
+async def stop_training() -> dict[str, Any]:
+    """Stop training (placeholder — training runs in separate process)."""
+    return {"status": "not_running", "message": "Training is managed via CLI process"}
+
+
+@app.get("/api/reward-rules")
+async def get_reward_rules() -> dict[str, Any]:
+    """Get current reward shaping rules."""
+    path = _data_dir / "reward_rules.json"
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
+    return {"rules": []}
+
+
+@app.put("/api/reward-rules")
+async def update_reward_rules(rules: dict[str, Any]) -> dict[str, Any]:
+    """Update reward shaping rules."""
+    path = _data_dir / "reward_rules.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(rules, indent=2) + "\n", encoding="utf-8")
+    return {"updated": True, "rule_count": len(rules.get("rules", []))}
+
+
 # --- WebSocket Endpoints ---
 
 

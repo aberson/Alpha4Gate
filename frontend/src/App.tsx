@@ -4,9 +4,12 @@ import { Stats } from "./components/Stats";
 import { BuildOrderEditor } from "./components/BuildOrderEditor";
 import { ReplayBrowser } from "./components/ReplayBrowser";
 import { DecisionQueue } from "./components/DecisionQueue";
+import { TrainingDashboard } from "./components/TrainingDashboard";
+import { CheckpointList } from "./components/CheckpointList";
+import { RewardRuleEditor } from "./components/RewardRuleEditor";
 import "./App.css";
 
-type Tab = "live" | "stats" | "builds" | "replays" | "decisions";
+type Tab = "live" | "stats" | "builds" | "replays" | "decisions" | "training";
 
 function App() {
   const [tab, setTab] = useState<Tab>("live");
@@ -34,6 +37,12 @@ function App() {
           >
             Decisions
           </button>
+          <button
+            onClick={() => setTab("training")}
+            className={tab === "training" ? "active" : ""}
+          >
+            Training
+          </button>
         </nav>
       </header>
       <main>
@@ -42,6 +51,13 @@ function App() {
         {tab === "builds" && <BuildOrderEditor />}
         {tab === "replays" && <ReplayBrowser />}
         {tab === "decisions" && <DecisionQueue />}
+        {tab === "training" && (
+          <>
+            <TrainingDashboard />
+            <CheckpointList />
+            <RewardRuleEditor />
+          </>
+        )}
       </main>
     </div>
   );
