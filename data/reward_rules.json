@@ -1,0 +1,48 @@
+{
+  "rules": [
+    {
+      "id": "scout-early",
+      "description": "Reward scouting before 3:00",
+      "condition": {
+        "field": "game_time_seconds",
+        "op": "<",
+        "value": 180
+      },
+      "requires": {
+        "field": "has_scouted",
+        "op": "==",
+        "value": true
+      },
+      "reward": 0.1,
+      "active": true
+    },
+    {
+      "id": "defend-rush",
+      "description": "Reward having army near base when enemy structures detected early",
+      "condition": {
+        "field": "enemy_structure_near_base_early",
+        "op": "==",
+        "value": true
+      },
+      "requires": {
+        "field": "army_supply",
+        "op": ">=",
+        "value": 6
+      },
+      "reward": 0.3,
+      "active": true
+    },
+    {
+      "id": "no-supply-block",
+      "description": "Penalize being supply blocked",
+      "condition": {
+        "field": "supply_used",
+        "op": "==",
+        "value_field": "supply_cap"
+      },
+      "requires": null,
+      "reward": -0.05,
+      "active": true
+    }
+  ]
+}
