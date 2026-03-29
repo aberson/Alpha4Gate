@@ -1,0 +1,266 @@
+"""Async Claude API calls, prompt construction, response parsing, rate limiting."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from dataclasses import dataclass
+from typing import Any
+
+PROMPT_TEMPLATE = (
+    "You are a StarCraft II Protoss strategic advisor. "
+    "Analyze the current game state and provide one actionable suggestion.\n\n"
+    "Game time: {game_time}\n"
+    "Strategic state: {strategic_state}\n"
+    "Resources: {minerals} minerals, {vespene} gas, {supply_used}/{supply_cap} supply\n"
+    "Army: {army_composition}\n"
+    "Enemy (known): {enemy_composition}\n"
+    "Recent decisions: {recent_decisions}\n"
+    "Current build order: {build_order_name} (step {build_step}/{total_steps})\n\n"
+    "Respond with JSON only:\n"
+    '{{"suggestion": "one sentence, actionable", '
+    '"urgency": "low|medium|high", '
+    '"reasoning": "one sentence"}}'
+)
+
+
+@dataclass
+class AdvisorResponse:
+    """Parsed response from Claude advisor."""
+
+    suggestion: str
+    urgency: str  # "low", "medium", "high"
+    reasoning: str
+    raw: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dict."""
+        return {
+            "suggestion": self.suggestion,
+            "urgency": self.urgency,
+            "reasoning": self.reasoning,
+        }
+
+
+def build_prompt(
+    game_time: str,
+    strategic_state: str,
+    minerals: int,
+    vespene: int,
+    supply_used: int,
+    supply_cap: int,
+    army_composition: str,
+    enemy_composition: str,
+    recent_decisions: str,
+    build_order_name: str,
+    build_step: int,
+    total_steps: int,
+) -> str:
+    """Construct the Claude advisor prompt from game state.
+
+    Args:
+        game_time: Formatted game time string (e.g., "5:30").
+        strategic_state: Current strategic state name.
+        minerals: Current mineral count.
+        vespene: Current vespene count.
+        supply_used: Current supply used.
+        supply_cap: Current supply cap.
+        army_composition: Human-readable army composition string.
+        enemy_composition: Human-readable enemy composition string.
+        recent_decisions: Summary of recent decision engine transitions.
+        build_order_name: Name of the active build order.
+        build_step: Current step index in the build order.
+        total_steps: Total steps in the build order.
+
+    Returns:
+        Formatted prompt string.
+    """
+    return PROMPT_TEMPLATE.format(
+        game_time=game_time,
+        strategic_state=strategic_state,
+        minerals=minerals,
+        vespene=vespene,
+        supply_used=supply_used,
+        supply_cap=supply_cap,
+        army_composition=army_composition,
+        enemy_composition=enemy_composition,
+        recent_decisions=recent_decisions,
+        build_order_name=build_order_name,
+        build_step=build_step,
+        total_steps=total_steps,
+    )
+
+
+def parse_response(text: str) -> AdvisorResponse:
+    """Parse Claude's JSON response into an AdvisorResponse.
+
+    Args:
+        text: Raw text response from Claude.
+
+    Returns:
+        Parsed AdvisorResponse. Falls back to suggestion=text if JSON parsing fails.
+    """
+    cleaned = text.strip()
+
+    # Try to extract JSON from the response
+    # Claude sometimes wraps in ```json ... ```
+    if "```" in cleaned:
+        parts = cleaned.split("```")
+        for part in parts:
+            part = part.strip()
+            if part.startswith("json"):
+                part = part[4:].strip()
+            if part.startswith("{"):
+                cleaned = part
+                break
+
+    try:
+        data = json.loads(cleaned)
+        return AdvisorResponse(
+            suggestion=data.get("suggestion", ""),
+            urgency=data.get("urgency", "low"),
+            reasoning=data.get("reasoning", ""),
+            raw=text,
+        )
+    except (json.JSONDecodeError, AttributeError):
+        return AdvisorResponse(
+            suggestion=text.strip(),
+            urgency="low",
+            reasoning="(unparseable response)",
+            raw=text,
+        )
+
+
+class RateLimiter:
+    """Simple rate limiter: at most one call per interval (in game-seconds)."""
+
+    def __init__(self, interval_game_seconds: float = 30.0) -> None:
+        self._interval = interval_game_seconds
+        self._last_call_game_time: float = -interval_game_seconds
+
+    @property
+    def interval(self) -> float:
+        """The minimum interval between calls in game-seconds."""
+        return self._interval
+
+    def can_call(self, game_time_seconds: float) -> bool:
+        """Check if enough game-time has passed for a new call.
+
+        Args:
+            game_time_seconds: Current game time in seconds.
+
+        Returns:
+            True if a call is allowed.
+        """
+        return game_time_seconds - self._last_call_game_time >= self._interval
+
+    def record_call(self, game_time_seconds: float) -> None:
+        """Record that a call was made at the given game time.
+
+        Args:
+            game_time_seconds: Game time when the call was made.
+        """
+        self._last_call_game_time = game_time_seconds
+
+
+class ClaudeAdvisor:
+    """Async Claude API advisor for strategic suggestions.
+
+    Fires API calls as asyncio tasks (fire-and-forget). Results are consumed
+    on the next on_step() iteration. If Claude is unavailable, the bot
+    continues with rule-based decisions only.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "claude-sonnet-4-20250514",
+        rate_limit_seconds: float = 30.0,
+    ) -> None:
+        self._api_key = api_key
+        self._model = model
+        self._rate_limiter = RateLimiter(rate_limit_seconds)
+        self._pending_task: asyncio.Task[AdvisorResponse | None] | None = None
+        self._last_response: AdvisorResponse | None = None
+        self._enabled = bool(api_key)
+
+    @property
+    def enabled(self) -> bool:
+        """Whether the advisor is enabled (has API key)."""
+        return self._enabled
+
+    @property
+    def last_response(self) -> AdvisorResponse | None:
+        """The most recent advisor response."""
+        return self._last_response
+
+    @property
+    def has_pending(self) -> bool:
+        """Whether there's an in-flight API call."""
+        return self._pending_task is not None and not self._pending_task.done()
+
+    def request_advice(self, prompt: str, game_time_seconds: float) -> bool:
+        """Fire an async advice request if rate limit allows.
+
+        Args:
+            prompt: The constructed prompt to send to Claude.
+            game_time_seconds: Current game time for rate limiting.
+
+        Returns:
+            True if a request was fired, False if rate-limited or disabled.
+        """
+        if not self._enabled:
+            return False
+        if not self._rate_limiter.can_call(game_time_seconds):
+            return False
+        if self.has_pending:
+            return False
+
+        self._rate_limiter.record_call(game_time_seconds)
+        self._pending_task = asyncio.create_task(self._call_api(prompt))
+        return True
+
+    def collect_response(self) -> AdvisorResponse | None:
+        """Check if the pending task is done and return the response.
+
+        Returns:
+            AdvisorResponse if available, None otherwise.
+        """
+        if self._pending_task is None:
+            return None
+        if not self._pending_task.done():
+            return None
+
+        try:
+            result = self._pending_task.result()
+        except Exception:
+            result = None
+
+        self._pending_task = None
+        if result is not None:
+            self._last_response = result
+        return result
+
+    async def _call_api(self, prompt: str) -> AdvisorResponse | None:
+        """Make the actual API call to Claude.
+
+        Args:
+            prompt: The prompt to send.
+
+        Returns:
+            Parsed AdvisorResponse, or None on failure.
+        """
+        try:
+            import anthropic
+
+            client = anthropic.AsyncAnthropic(api_key=self._api_key)
+            message = await client.messages.create(
+                model=self._model,
+                max_tokens=256,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            block = message.content[0]
+            text = block.text if hasattr(block, "text") else str(block)
+            return parse_response(text)
+        except Exception:
+            return None
