@@ -12,6 +12,7 @@ from sc2.position import Point2
 from alpha4gate.build_orders import BuildOrder
 from alpha4gate.console import print_status
 from alpha4gate.decision_engine import DecisionEngine, GameSnapshot, StrategicState
+from alpha4gate.learning.neural_engine import DecisionMode, NeuralDecisionEngine
 from alpha4gate.logger import GameLogger
 from alpha4gate.macro_manager import MacroDecision, MacroManager
 from alpha4gate.micro import MicroController
@@ -69,6 +70,8 @@ class Alpha4GateBot(BotAI):
         build_order: BuildOrder | None = None,
         logger: GameLogger | None = None,
         enable_console: bool = True,
+        decision_mode: DecisionMode = DecisionMode.RULES,
+        model_path: str | None = None,
     ) -> None:
         super().__init__()
         self.decision_engine = DecisionEngine(build_order=build_order)
@@ -78,6 +81,13 @@ class Alpha4GateBot(BotAI):
         self._logger = logger
         self._enable_console = enable_console
         self._actions_this_step: list[dict[str, Any]] = []
+        self._decision_mode = decision_mode
+        self._neural_engine: NeuralDecisionEngine | None = None
+        if decision_mode != DecisionMode.RULES and model_path is not None:
+            self._neural_engine = NeuralDecisionEngine(
+                model_path=model_path,
+                mode=decision_mode,
+            )
 
     def _build_snapshot(self) -> GameSnapshot:
         """Build a GameSnapshot from current bot state."""

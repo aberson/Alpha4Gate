@@ -55,6 +55,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable Claude advisor",
     )
+    parser.add_argument(
+        "--decision-mode",
+        default="rules",
+        choices=["rules", "neural", "hybrid"],
+        help="Decision mode: rules (default), neural, or hybrid",
+    )
+    parser.add_argument(
+        "--model-path",
+        default=None,
+        help="Path to SB3 PPO model checkpoint (required for neural/hybrid mode)",
+    )
     return parser
 
 
@@ -94,6 +105,7 @@ def _run_single_game(settings: Settings, args: argparse.Namespace) -> None:
     """Run a single game vs AI."""
     from alpha4gate.bot import Alpha4GateBot
     from alpha4gate.connection import run_bot
+    from alpha4gate.learning.neural_engine import DecisionMode
     from alpha4gate.logger import GameLogger
 
     build_order = _load_build_order(settings, args.build_order)
@@ -101,7 +113,13 @@ def _run_single_game(settings: Settings, args: argparse.Namespace) -> None:
     logger = GameLogger(log_dir=settings.log_dir)
     logger.start()
 
-    bot = Alpha4GateBot(build_order=build_order, logger=logger)
+    decision_mode = DecisionMode(args.decision_mode)
+    bot = Alpha4GateBot(
+        build_order=build_order,
+        logger=logger,
+        decision_mode=decision_mode,
+        model_path=args.model_path,
+    )
     result = run_bot(
         bot,
         settings,
