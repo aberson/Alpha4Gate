@@ -139,10 +139,7 @@ class TestSnapshotToRaw:
         snap = _default_snapshot()
         # Need to bind the method — use the class method directly
         raw = SC2Env._snapshot_to_raw(env, snap)
-        assert raw.shape == (FEATURE_DIM + 1,) or raw.shape == (FEATURE_DIM,)
-        # Actually should be FEATURE_DIM since we have 14 features + enemy_structure_count
-        # The raw vector has 15 values because _snapshot_to_raw includes enemy_structure_count
-        # but the DB expects 14 state columns. Let me check...
+        assert raw.shape == (FEATURE_DIM,)
 
     def test_raw_values_match_snapshot(self) -> None:
         env = SC2Env.__new__(SC2Env)

@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS transitions (
     base_count    INTEGER NOT NULL,
     enemy_near    INTEGER NOT NULL,
     enemy_supply  INTEGER NOT NULL,
+    game_time_secs    REAL NOT NULL DEFAULT 0.0,
     gateway_count     INTEGER NOT NULL DEFAULT 0,
     robo_count        INTEGER NOT NULL DEFAULT 0,
     forge_count       INTEGER NOT NULL DEFAULT 0,
@@ -54,6 +55,7 @@ CREATE TABLE IF NOT EXISTS transitions (
     next_base_count    INTEGER,
     next_enemy_near    INTEGER,
     next_enemy_supply  INTEGER,
+    next_game_time_secs    REAL DEFAULT 0.0,
     next_gateway_count     INTEGER DEFAULT 0,
     next_robo_count        INTEGER DEFAULT 0,
     next_forge_count       INTEGER DEFAULT 0,
@@ -68,12 +70,12 @@ CREATE INDEX IF NOT EXISTS idx_games_result ON games(result);
 CREATE INDEX IF NOT EXISTS idx_games_model ON games(model_version);
 """
 
-# Column names for the 14 state features in transitions table (matches feature vector order)
+# Column names for the 15 state features in transitions table (matches feature vector order)
 _STATE_COLS = [
     "supply_used", "supply_cap", "minerals", "vespene", "army_supply",
     "worker_count", "base_count", "enemy_near", "enemy_supply",
-    "gateway_count", "robo_count", "forge_count", "upgrade_count",
-    "enemy_structure_count",
+    "game_time_secs", "gateway_count", "robo_count", "forge_count",
+    "upgrade_count", "enemy_structure_count",
 ]
 
 _NEXT_STATE_COLS = [f"next_{c}" for c in _STATE_COLS]

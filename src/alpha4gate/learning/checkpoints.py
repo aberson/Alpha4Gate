@@ -53,8 +53,8 @@ def save_checkpoint(
     cp_dir = Path(checkpoint_dir)
     cp_dir.mkdir(parents=True, exist_ok=True)
 
+    model.save(str(cp_dir / name))  # SB3 appends .zip automatically
     save_path = cp_dir / f"{name}.zip"
-    model.save(str(save_path))
 
     manifest = _load_manifest(cp_dir)
     entry: dict[str, Any] = {"name": name, "file": f"{name}.zip"}
@@ -95,7 +95,8 @@ def load_checkpoint(checkpoint_dir: str | Path, name: str | None = None) -> Any:
         msg = f"Checkpoint not found: {path}"
         raise FileNotFoundError(msg)
 
-    return PPO.load(str(path))
+    # Pass path without .zip — SB3's load() appends .zip automatically
+    return PPO.load(str(cp_dir / name))
 
 
 def get_best_name(checkpoint_dir: str | Path) -> str | None:

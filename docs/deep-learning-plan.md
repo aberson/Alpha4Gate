@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS transitions (
     base_count    INTEGER NOT NULL,
     enemy_near    INTEGER NOT NULL,    -- 0 or 1
     enemy_supply  INTEGER NOT NULL,
+    game_time_secs    REAL NOT NULL DEFAULT 0.0,
     -- Extended features (beyond current GameSnapshot)
     gateway_count     INTEGER NOT NULL DEFAULT 0,
     robo_count        INTEGER NOT NULL DEFAULT 0,
@@ -104,6 +105,7 @@ CREATE TABLE IF NOT EXISTS transitions (
     next_base_count    INTEGER,
     next_enemy_near    INTEGER,
     next_enemy_supply  INTEGER,
+    next_game_time_secs    REAL DEFAULT 0.0,
     next_gateway_count     INTEGER DEFAULT 0,
     next_robo_count        INTEGER DEFAULT 0,
     next_forge_count       INTEGER DEFAULT 0,
@@ -121,7 +123,7 @@ CREATE INDEX IF NOT EXISTS idx_games_model ON games(model_version);
 ### Feature vector
 
 The state observation is a fixed-size float vector extracted from `GameSnapshot` plus extended
-features. Total: **14 features**.
+features. Total: **15 features**.
 
 | Index | Feature                    | Normalization         | Source                        |
 | ----- | -------------------------- | --------------------- | ----------------------------- |
@@ -139,6 +141,7 @@ features. Total: **14 features**.
 | 11    | robo_count                 | / 4                   | count of own Robo Facilities  |
 | 12    | forge_count                | / 2                   | count of own Forges           |
 | 13    | upgrade_count              | / 10                  | count of completed upgrades   |
+| 14    | enemy_structure_count      | / 50                  | count of visible enemy structures |
 
 All values are clipped to [0, 1] after normalization. This keeps the network input stable
 regardless of game length or economy size.
@@ -907,9 +910,11 @@ class SC2Env(gymnasium.Env):
         # Kill SC2 client
 ```
 
-The async-to-sync bridge uses `asyncio.run()` for each `reset()` and manages the game loop
-via a custom callback that yields control back to `step()` every 22 game steps. This is the
-trickiest implementation detail — see `environment.py` for the full approach.
+The async-to-sync bridge works as follows: `reset()` launches a new SC2 game in a background
+thread running `asyncio.run()`. The bot's `on_step()` is overridden to put observations into a
+`queue.Queue` and block waiting for actions from a second queue. `step()` puts an action into
+the action queue, then blocks on the observation queue for the next state. This avoids nesting
+event loops and keeps the `gym.Env` interface synchronous. See `environment.py` for full details.
 
 ### PPO training with SB3
 
@@ -954,3 +959,52 @@ to `reward_rules.json`:
 The model will learn that having army near base when enemy structures appear early is
 heavily rewarded, and will start keeping units at home in those situations — without
 being told *how* to defend (which units, where to position).
+
+---
+
+## Post-Phase 2 — Feature/DB Column Alignment Fix
+
+**308/308 tests passing. Zero type errors. Zero lint violations.**
+
+### Root cause
+
+`_STATE_COLS` in `database.py` had 14 columns but was missing `game_time_seconds` at index 9.
+`_FEATURE_SPEC` in `features.py` had 14 entries but was missing `enemy_structure_count`.
+`_snapshot_to_raw()` in `environment.py` already produced 15 values (both fields present).
+
+When `bot.py:_record_transition()` built raw state vectors from `_FEATURE_SPEC` order (which
+includes `game_time_seconds` at index 9), the value was stored into the `gateway_count` DB
+column, shifting all subsequent features. The `game_time_seconds` value (up to ~2840s for a
+47-minute game) landing in `gateway_count` (expected 0-10) was the primary corruption signal.
+
+Imitation training then normalized the corrupted DB values using `_FEATURE_SPEC` divisors,
+producing near-identical feature vectors across all transitions. The model collapsed to the
+majority action class (ATTACK/DEFEND at 86%) because it couldn't distinguish game states.
+
+### What was fixed
+
+- `features.py` — added `("enemy_structure_count", 50.0)` to `_FEATURE_SPEC`, bumped `FEATURE_DIM` from 14 to 15
+- `database.py` — added `game_time_secs` column to DB schema (state + next_state), added to `_STATE_COLS` at index 9
+- `environment.py` — `_snapshot_to_raw()` already had 15 fields and was correct; test assertion cleaned up
+- Tests — updated hardcoded 14-element arrays to 15 in `test_database.py`, `test_e2e_pipeline.py`, `test_trainer.py`
+- `data/training.db` — deleted (1333 corrupted transitions from 3 games)
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `src/alpha4gate/learning/features.py` | Added `enemy_structure_count` feature, `FEATURE_DIM` 14 → 15 |
+| `src/alpha4gate/learning/database.py` | Added `game_time_secs` to schema + `_STATE_COLS` |
+| `tests/test_database.py` | Updated hardcoded state arrays from 14 to 15 elements |
+| `tests/test_e2e_pipeline.py` | Added `enemy_structure_count` to snapshot + raw array |
+| `tests/test_trainer.py` | Replaced `np.zeros(14, ...)` with `np.zeros(FEATURE_DIM, ...)` |
+| `tests/test_environment.py` | Fixed `_snapshot_to_raw` shape assertion |
+| `tests/test_features.py` | Added `enemy_structure_count=50` to normalization bounds test |
+| `docs/deep-learning-plan.md` | Updated schema, feature table (14 → 15), added this section |
+
+### Next steps
+
+1. Re-record training data: `uv run python -m alpha4gate.runner --batch 5`
+2. Re-run imitation training: `uv run python -m alpha4gate.main --train imitation`
+3. Test neural model in live SC2: `uv run python -m alpha4gate.main --decision-mode neural`
+4. DEFERRED: Class weighting in cross-entropy loss (86% ATTACK/DEFEND, 0.5% LATE_GAME) — revisit after re-training with aligned features shows whether the imbalance still causes collapse

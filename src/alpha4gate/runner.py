@@ -195,27 +195,41 @@ def _run_single_game(settings: Settings, args: argparse.Namespace) -> None:
 
 
 def _run_batch(settings: Settings, args: argparse.Namespace) -> None:
-    """Run N games in sequence."""
+    """Run N games in sequence, recording transitions for training."""
+    import uuid
+
     from sc2.data import Result
 
     from alpha4gate.batch_runner import load_stats, record_game, save_stats
     from alpha4gate.bot import Alpha4GateBot
     from alpha4gate.connection import run_bot
+    from alpha4gate.learning.database import TrainingDB
+    from alpha4gate.learning.rewards import RewardCalculator
     from alpha4gate.logger import GameLogger
 
     stats_path = settings.data_dir / "stats.json"
     games, _ = load_stats(stats_path)
     build_order = _load_build_order(settings, args.build_order)
 
+    # Open training DB for transition recording
+    settings.ensure_dirs()
+    db = TrainingDB(settings.data_dir / "training.db")
+    reward_rules = settings.data_dir / "reward_rules.json"
+    reward_calc = RewardCalculator(reward_rules if reward_rules.exists() else None)
+
     for i in range(args.batch):
         print(f"\n=== Game {i + 1}/{args.batch} ===")
         logger = GameLogger(log_dir=settings.log_dir)
         logger.start()
 
+        game_id = uuid.uuid4().hex[:12]
         bot = Alpha4GateBot(
             build_order=build_order,
             logger=logger,
             enable_console=True,
+            training_db=db,
+            game_id=game_id,
+            reward_calculator=reward_calc,
         )
         result = run_bot(
             bot,
@@ -226,20 +240,37 @@ def _run_batch(settings: Settings, args: argparse.Namespace) -> None:
         )
         logger.stop()
 
+        result_str = "win" if result == Result.Victory else "loss"
+
+        # Record terminal transition and game summary
+        bot.record_final_transition(result_str)
+        db.store_game(
+            game_id=game_id,
+            map_name=args.map,
+            difficulty=args.difficulty or 1,
+            result=result_str,
+            duration_secs=bot.time if hasattr(bot, "time") else 0.0,
+            total_reward=0.0,
+            model_version="rule-based",
+        )
+
         opponent = f"built-in-{args.difficulty or 'easy'}"
         record_game(
             games,
             map_name=args.map,
             opponent=opponent,
-            result="win" if result == Result.Victory else "loss",
+            result=result_str,
             duration_seconds=bot.time if hasattr(bot, "time") else 0.0,
             build_order_used=args.build_order,
             score=0,
         )
         print(f"Result: {result}")
 
+    transition_count = db.get_transition_count()
+    db.close()
     save_stats(games, stats_path)
     print(f"\nBatch complete. Stats saved to {stats_path}")
+    print(f"Transitions recorded: {transition_count} -> {settings.data_dir / 'training.db'}")
 
 
 def _run_multiplayer(settings: Settings, args: argparse.Namespace) -> None:

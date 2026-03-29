@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 
 from alpha4gate.learning.database import TrainingDB
+from alpha4gate.learning.features import FEATURE_DIM
 from alpha4gate.learning.trainer import TrainingOrchestrator
 
 
@@ -137,7 +138,7 @@ class TestCycleTracking:
         # Insert enough data to make the file non-trivial
         db.store_game("g1", "Simple64", 1, "win", 300.0, 5.0, "v0")
         for i in range(100):
-            state = np.zeros(14, dtype=np.float32)
+            state = np.zeros(FEATURE_DIM, dtype=np.float32)
             db.store_transition("g1", i, float(i), state, action=0, reward=0.1)
         db.close()
 
@@ -149,6 +150,53 @@ class TestCycleTracking:
         result = orch.run(n_cycles=5, games_per_cycle=2)
         assert result["stopped"] is True
         assert result["cycles_completed"] == 0
+
+
+class TestBestCheckpoint:
+    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._init_or_resume_model")
+    def test_only_first_cycle_is_best_when_win_rate_zero(
+        self, mock_init: MagicMock, tmp_path: Path
+    ) -> None:
+        """When win rate stays at 0, only the first cycle should be marked best."""
+        mock_init.return_value = _mock_model()
+        db = TrainingDB(tmp_path / "train.db")
+        db.close()
+
+        orch = TrainingOrchestrator(
+            checkpoint_dir=str(tmp_path / "cp"),
+            db_path=str(tmp_path / "train.db"),
+        )
+        orch.run(n_cycles=3, games_per_cycle=1)
+
+        from alpha4gate.learning.checkpoints import get_best_name
+
+        # Win rate is 0.0 for all cycles (no games in DB), so first cycle
+        # sets best (0.0 > -1.0), subsequent cycles do NOT overwrite.
+        assert get_best_name(tmp_path / "cp") == "v1"
+
+    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._init_or_resume_model")
+    def test_best_updates_when_win_rate_improves(
+        self, mock_init: MagicMock, tmp_path: Path
+    ) -> None:
+        """Best should update when a later cycle has a higher win rate."""
+        mock_init.return_value = _mock_model()
+        db_path = tmp_path / "train.db"
+        db = TrainingDB(db_path)
+        # Seed two wins so get_recent_win_rate returns > 0
+        db.store_game("g1", "Simple64", 1, "win", 60.0, 1.0, "v0")
+        db.store_game("g2", "Simple64", 1, "win", 60.0, 1.0, "v0")
+        db.close()
+
+        orch = TrainingOrchestrator(
+            checkpoint_dir=str(tmp_path / "cp"),
+            db_path=str(db_path),
+        )
+        orch.run(n_cycles=1, games_per_cycle=1)
+
+        from alpha4gate.learning.checkpoints import get_best_name
+
+        # With wins in the DB, win rate > 0 → first cycle is best
+        assert get_best_name(tmp_path / "cp") == "v1"
 
 
 class TestCrashRecovery:

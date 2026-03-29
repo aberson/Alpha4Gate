@@ -14,11 +14,12 @@ from alpha4gate.learning.checkpoints import (
 
 
 def _mock_model() -> MagicMock:
-    """Create a mock SB3 model with a save() method."""
+    """Create a mock SB3 model with a save() method (mimics SB3 .zip append)."""
     model = MagicMock()
-    # Make save() create the file
+    # SB3's save() auto-appends .zip to the given path
     def side_effect(path: str) -> None:
-        Path(path).touch()
+        p = path if path.endswith(".zip") else path + ".zip"
+        Path(p).touch()
 
     model.save.side_effect = side_effect
     return model

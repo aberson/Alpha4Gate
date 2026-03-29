@@ -49,6 +49,7 @@ class TrainingOrchestrator:
         self._total_games: int = 0
         self._stopped: bool = False
         self._stop_reason: str = ""
+        self._best_win_rate: float = -1.0
 
     @property
     def difficulty(self) -> int:
@@ -174,7 +175,11 @@ class TrainingOrchestrator:
             checkpoint_name = f"v{self._cycle}"
             _log.info("Training PPO on collected experience...")
 
-            # Save checkpoint
+            # Save checkpoint — only mark as best when win rate improves
+            is_new_best = recent_win_rate > self._best_win_rate
+            if is_new_best:
+                self._best_win_rate = recent_win_rate
+
             save_checkpoint(
                 model,
                 self._checkpoint_dir,
@@ -185,7 +190,7 @@ class TrainingOrchestrator:
                     "total_games": self._total_games,
                     "win_rate": recent_win_rate,
                 },
-                is_best=True,
+                is_best=is_new_best,
             )
 
             # Prune old checkpoints

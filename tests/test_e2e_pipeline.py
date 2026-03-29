@@ -68,6 +68,7 @@ class TestFullPipeline:
                 robo_count=rng.randint(0, 3),
                 forge_count=rng.randint(0, 2),
                 upgrade_count=rng.randint(0, 5),
+                enemy_structure_count=rng.randint(0, 20),
             )
 
             # Rule-based action: DEFEND if enemy near, ATTACK if army > 20, else EXPAND
@@ -88,7 +89,7 @@ class TestFullPipeline:
                 snap.army_supply, snap.worker_count, snap.base_count,
                 int(snap.enemy_army_near_base), snap.enemy_army_supply_visible,
                 snap.game_time_seconds, snap.gateway_count, snap.robo_count,
-                snap.forge_count, snap.upgrade_count,
+                snap.forge_count, snap.upgrade_count, snap.enemy_structure_count,
             ], dtype=np.float32)
 
             db.store_transition("g1", i, float(i * 22), raw, action=action, reward=0.1)

@@ -12,7 +12,9 @@ A StarCraft II Protoss bot with rule-based decision-making and Claude AI as stra
 | Build orders | Spawning Tool API | Community build order database |
 | Backend | FastAPI | WebSocket + REST for dashboard |
 | Frontend | React + TypeScript + Vite | Live dashboard with game state streaming |
-| Testing | pytest | 205 unit tests, SC2 integration markers |
+| Deep learning | PyTorch + SB3 | PPO policy network for strategic decisions |
+| Training data | SQLite | Structured (s,a,r,s') transition storage |
+| Testing | pytest | 308 unit tests, SC2 integration markers |
 | Linting | ruff + mypy | Strict type checking, consistent style |
 
 ## Prerequisites
@@ -86,7 +88,7 @@ The bot follows a build order during the opening, then transitions to dynamic de
 ## Testing
 
 ```bash
-uv run pytest              # 205 unit tests (no SC2 needed)
+uv run pytest              # 308 unit tests (no SC2 needed)
 uv run pytest -m sc2       # SC2 integration tests (SC2 must be running)
 uv run ruff check .        # Lint
 uv run mypy src            # Type check
@@ -98,9 +100,10 @@ cd frontend && npx tsc --noEmit  # TypeScript check
 ```
 Alpha4Gate/
 ├── src/alpha4gate/     # 18 Python source modules
-├── tests/              # 14 test files, 205 tests
+├── tests/              # 14 test files, 308 tests
 ├── frontend/           # React + TypeScript dashboard
-├── docs/plan.md        # Full project plan
+├── docs/plan.md        # Phase 1 project plan
+├── docs/deep-learning-plan.md  # Phase 2 deep learning plan
 ├── data/               # Cross-game stats (gitignored)
 ├── logs/               # JSONL game logs (gitignored)
 └── replays/            # SC2 replays (gitignored)

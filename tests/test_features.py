@@ -35,6 +35,7 @@ class TestEncode:
             robo_count=4,
             forge_count=2,
             upgrade_count=10,
+            enemy_structure_count=50,
         )
         vec = encode(snap)
         np.testing.assert_allclose(vec, np.ones(FEATURE_DIM, dtype=np.float32), atol=1e-6)

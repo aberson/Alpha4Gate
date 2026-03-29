@@ -7,7 +7,7 @@ from numpy.typing import NDArray
 
 from alpha4gate.decision_engine import GameSnapshot
 
-FEATURE_DIM: int = 14
+FEATURE_DIM: int = 15
 
 # (field_name, normalization_divisor) — order matches the plan's feature vector spec
 _FEATURE_SPEC: list[tuple[str, float]] = [
@@ -25,6 +25,7 @@ _FEATURE_SPEC: list[tuple[str, float]] = [
     ("robo_count", 4.0),
     ("forge_count", 2.0),
     ("upgrade_count", 10.0),
+    ("enemy_structure_count", 50.0),
 ]
 
 

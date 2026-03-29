@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from dataclasses import asdict
+from typing import TYPE_CHECKING, Any
 
+import numpy as np
 from sc2.bot_ai import BotAI
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
@@ -12,12 +14,17 @@ from sc2.position import Point2
 from alpha4gate.build_orders import BuildOrder
 from alpha4gate.console import print_status
 from alpha4gate.decision_engine import DecisionEngine, GameSnapshot, StrategicState
+from alpha4gate.learning.features import _FEATURE_SPEC
 from alpha4gate.learning.neural_engine import DecisionMode, NeuralDecisionEngine
+from alpha4gate.learning.rewards import RewardCalculator
 from alpha4gate.logger import GameLogger
 from alpha4gate.macro_manager import MacroDecision, MacroManager
 from alpha4gate.micro import MicroController
 from alpha4gate.observer import observe
 from alpha4gate.scouting import ScoutManager
+
+if TYPE_CHECKING:
+    from alpha4gate.learning.database import TrainingDB
 
 _log = logging.getLogger(__name__)
 
@@ -65,6 +72,15 @@ _ROBO_ARMY: list[UnitTypeId] = [UnitTypeId.IMMORTAL, UnitTypeId.OBSERVER]
 class Alpha4GateBot(BotAI):
     """Main bot class that orchestrates all decision layers."""
 
+    # Maps StrategicState → action index (inverse of _ACTION_TO_STATE in environment.py)
+    _STATE_TO_ACTION: dict[StrategicState, int] = {
+        StrategicState.OPENING: 0,
+        StrategicState.EXPAND: 1,
+        StrategicState.ATTACK: 2,
+        StrategicState.DEFEND: 3,
+        StrategicState.LATE_GAME: 4,
+    }
+
     def __init__(
         self,
         build_order: BuildOrder | None = None,
@@ -72,6 +88,9 @@ class Alpha4GateBot(BotAI):
         enable_console: bool = True,
         decision_mode: DecisionMode = DecisionMode.RULES,
         model_path: str | None = None,
+        training_db: TrainingDB | None = None,
+        game_id: str | None = None,
+        reward_calculator: RewardCalculator | None = None,
     ) -> None:
         super().__init__()
         self.decision_engine = DecisionEngine(build_order=build_order)
@@ -88,6 +107,14 @@ class Alpha4GateBot(BotAI):
                 model_path=model_path,
                 mode=decision_mode,
             )
+        # Transition recording for training
+        self._training_db = training_db
+        self._game_id = game_id
+        self._reward_calc = reward_calculator or RewardCalculator()
+        self._transition_step: int = 0
+        self._prev_snapshot: GameSnapshot | None = None
+        self._prev_obs: np.ndarray | None = None
+        self._prev_action: int | None = None
 
     def _build_snapshot(self) -> GameSnapshot:
         """Build a GameSnapshot from current bot state."""
@@ -137,6 +164,14 @@ class Alpha4GateBot(BotAI):
         self.decision_engine.evaluate(snapshot, game_step=self.state.game_loop)
         state = self.decision_engine.state
 
+        # Neural override: let the trained model choose the strategic state
+        if self._neural_engine is not None:
+            state = self._neural_engine.predict(snapshot)
+
+        # --- Record transition for training DB (every 22 steps) ---
+        if self._training_db is not None and iteration % 22 == 0:
+            self._record_transition(snapshot, state)
+
         # --- Opening: follow build order + keep training probes ---
         if state == StrategicState.OPENING:
             await self._execute_build_order(snapshot)
@@ -171,6 +206,56 @@ class Alpha4GateBot(BotAI):
                 self._logger.put(entry)
             if self._enable_console:
                 print_status(entry)
+
+    # ------------------------------------------------------------------ #
+    #  Transition recording for training
+    # ------------------------------------------------------------------ #
+
+    def _record_transition(self, snapshot: GameSnapshot, state: StrategicState) -> None:
+        """Record a (s, a, r, s') transition into the training DB."""
+        assert self._training_db is not None
+        # Raw (un-normalized) feature vector for DB storage
+        raw = np.array(
+            [getattr(snapshot, field) for field, _ in _FEATURE_SPEC],
+            dtype=np.float32,
+        )
+        action = self._STATE_TO_ACTION[state]
+        state_dict = asdict(snapshot)
+        reward = self._reward_calc.compute_step_reward(state_dict)
+
+        if self._prev_obs is not None and self._prev_action is not None:
+            self._training_db.store_transition(
+                game_id=self._game_id or "unknown",
+                step_index=self._transition_step,
+                game_time=snapshot.game_time_seconds,
+                state=self._prev_obs,
+                action=self._prev_action,
+                reward=reward,
+                next_state=raw,
+                done=False,
+            )
+            self._transition_step += 1
+
+        self._prev_obs = raw
+        self._prev_action = action
+        self._prev_snapshot = snapshot
+
+    def record_final_transition(self, result: str) -> None:
+        """Record the terminal transition at game end. Call from runner."""
+        if self._training_db is None or self._prev_obs is None:
+            return
+        state_dict = asdict(self._prev_snapshot) if self._prev_snapshot else {}
+        reward = self._reward_calc.compute_step_reward(state_dict, is_terminal=True, result=result)
+        self._training_db.store_transition(
+            game_id=self._game_id or "unknown",
+            step_index=self._transition_step,
+            game_time=self._prev_snapshot.game_time_seconds if self._prev_snapshot else 0.0,
+            state=self._prev_obs,
+            action=self._prev_action or 0,
+            reward=reward,
+            next_state=None,
+            done=True,
+        )
 
     # ------------------------------------------------------------------ #
     #  Build order execution (OPENING phase)

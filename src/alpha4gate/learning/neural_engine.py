@@ -47,7 +47,11 @@ class NeuralDecisionEngine:
     ) -> None:
         from stable_baselines3 import PPO
 
-        self._model = PPO.load(str(model_path))
+        # Strip .zip suffix — SB3's load() appends it automatically
+        p = str(model_path)
+        if p.endswith(".zip"):
+            p = p[:-4]
+        self._model = PPO.load(p)
         self._mode = mode
         self._deterministic = deterministic
         self._last_probabilities: list[float] = []
