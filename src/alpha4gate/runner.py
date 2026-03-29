@@ -56,6 +56,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable Claude advisor",
     )
     parser.add_argument(
+        "--train",
+        default=None,
+        choices=["imitation", "rl"],
+        help="Training mode: imitation (behavior cloning) or rl (PPO)",
+    )
+    parser.add_argument(
+        "--cycles",
+        type=int,
+        default=10,
+        help="Number of RL training cycles (default: 10)",
+    )
+    parser.add_argument(
+        "--games-per-cycle",
+        type=int,
+        default=10,
+        help="Games per RL cycle (default: 10)",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume RL training from last checkpoint",
+    )
+    parser.add_argument(
         "--decision-mode",
         default="rules",
         choices=["rules", "neural", "hybrid"],
@@ -76,7 +99,9 @@ def main(argv: list[str] | None = None) -> None:
 
     settings = load_settings()
 
-    if args.serve:
+    if args.train is not None:
+        _run_training(settings, args)
+    elif args.serve:
         _start_server(settings)
     elif args.batch > 0:
         _run_batch(settings, args)
@@ -84,6 +109,43 @@ def main(argv: list[str] | None = None) -> None:
         _run_multiplayer(settings, args)
     else:
         _run_single_game(settings, args)
+
+
+def _run_training(settings: Settings, args: argparse.Namespace) -> None:
+    """Run training (imitation or RL)."""
+    if args.train == "imitation":
+        from alpha4gate.learning.database import TrainingDB
+        from alpha4gate.learning.imitation import run_imitation_training
+
+        db = TrainingDB(settings.data_dir / "training.db")
+        result = run_imitation_training(
+            db=db,
+            checkpoint_dir=settings.data_dir / "checkpoints",
+            hyperparams_path=settings.data_dir / "hyperparams.json",
+        )
+        db.close()
+        print(f"Imitation training complete: {result}")
+
+    elif args.train == "rl":
+        from alpha4gate.learning.trainer import TrainingOrchestrator
+
+        reward_rules = settings.data_dir / "reward_rules.json"
+        hyperparams = settings.data_dir / "hyperparams.json"
+
+        orchestrator = TrainingOrchestrator(
+            checkpoint_dir=settings.data_dir / "checkpoints",
+            db_path=settings.data_dir / "training.db",
+            reward_rules_path=reward_rules if reward_rules.exists() else None,
+            hyperparams_path=hyperparams if hyperparams.exists() else None,
+            map_name=args.map,
+            initial_difficulty=args.difficulty or 1,
+        )
+        result = orchestrator.run(
+            n_cycles=args.cycles,
+            games_per_cycle=args.games_per_cycle,
+            resume=args.resume,
+        )
+        print(f"RL training complete: {result}")
 
 
 def _start_server(settings: Settings) -> None:
