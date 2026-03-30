@@ -11,6 +11,7 @@ from sc2.bot_ai import BotAI
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
+from alpha4gate.army_coherence import ArmyCoherenceManager
 from alpha4gate.build_orders import BuildOrder
 from alpha4gate.console import print_status
 from alpha4gate.decision_engine import DecisionEngine, GameSnapshot, StrategicState
@@ -72,6 +73,9 @@ _ROBO_ARMY: list[UnitTypeId] = [UnitTypeId.IMMORTAL, UnitTypeId.OBSERVER]
 class Alpha4GateBot(BotAI):
     """Main bot class that orchestrates all decision layers."""
 
+    # Staging point recalculation interval in game seconds
+    _STAGING_RECALC_SECONDS: float = 30.0
+
     # Maps StrategicState → action index (inverse of _ACTION_TO_STATE in environment.py)
     _STATE_TO_ACTION: dict[StrategicState, int] = {
         StrategicState.OPENING: 0,
@@ -107,6 +111,12 @@ class Alpha4GateBot(BotAI):
                 model_path=model_path,
                 mode=decision_mode,
             )
+        # Army coherence manager (randomized params per game)
+        self.coherence_manager = ArmyCoherenceManager()
+        self._coherence_params_logged: bool = False
+        self._cached_staging_point: tuple[float, float] | None = None
+        self._staging_point_time: float = -999.0  # last recalc time
+
         # Transition recording for training
         self._training_db = training_db
         self._game_id = game_id
@@ -201,6 +211,11 @@ class Alpha4GateBot(BotAI):
         if iteration % 22 == 0:
             entry = observe(self, actions_taken=self._actions_this_step)
             entry["strategic_state"] = state.value
+
+            # Log coherence params on the first entry each game
+            if not self._coherence_params_logged:
+                entry["coherence_params"] = self.coherence_manager.get_params_dict()
+                self._coherence_params_logged = True
 
             if self._logger is not None:
                 self._logger.put(entry)
@@ -446,10 +461,11 @@ class Alpha4GateBot(BotAI):
         """Issue combat micro commands to army units."""
         army = [u for u in self.units if not u.is_structure and u.type_id != UnitTypeId.PROBE]
         enemies = list(self.enemy_units)
+        snapshot = self._build_snapshot()
+        cm = self.coherence_manager
 
-        # Determine rally / attack target
         if state == StrategicState.ATTACK:
-            rally = self._attack_target()
+            rally = self._resolve_attack_rally(army, snapshot, cm)
         else:
             rally = self._defense_rally()
 
@@ -474,8 +490,9 @@ class Alpha4GateBot(BotAI):
                 unit.move(Point2(cmd.target_position))
 
     async def _rally_idle_army(self) -> None:
-        """Move idle army units to a rally point near the natural."""
-        rally = self._defense_rally()
+        """Move idle army units to staging point (pre-stage) or defense rally."""
+        staging = self._get_staging_point()
+        rally = staging if staging else self._defense_rally()
         if rally is None:
             return
         rally_pt = Point2(rally)
@@ -503,3 +520,77 @@ class Alpha4GateBot(BotAI):
         natural = self.main_base_ramp.bottom_center
         mid = main.towards(natural, main.distance_to(natural) * 0.6)
         return (float(mid.x), float(mid.y))
+
+    # ------------------------------------------------------------------ #
+    #  Army coherence helpers
+    # ------------------------------------------------------------------ #
+
+    def _get_staging_point(self) -> tuple[float, float] | None:
+        """Return cached staging point, recalculating every ~30s."""
+        if self.time - self._staging_point_time >= self._STAGING_RECALC_SECONDS:
+            own_base = (float(self.start_location.x), float(self.start_location.y))
+            enemy_structs = [
+                (float(s.position.x), float(s.position.y))
+                for s in self.enemy_structures
+            ]
+            if self.enemy_start_locations:
+                enemy_start = (
+                    float(self.enemy_start_locations[0].x),
+                    float(self.enemy_start_locations[0].y),
+                )
+            else:
+                enemy_start = own_base  # fallback — shouldn't happen
+            self._cached_staging_point = ArmyCoherenceManager.compute_staging_point(
+                own_base=own_base,
+                enemy_structures=enemy_structs,
+                enemy_start=enemy_start,
+                staging_distance=self.coherence_manager.staging_distance,
+            )
+            self._staging_point_time = self.time
+        return self._cached_staging_point
+
+    def _resolve_attack_rally(
+        self,
+        army: list[Any],
+        snapshot: GameSnapshot,
+        cm: ArmyCoherenceManager,
+    ) -> tuple[float, float] | None:
+        """Decide rally point during ATTACK state using coherence logic.
+
+        Priority:
+        1. Retreat if outnumbered → staging or defense rally (per rolled param)
+        2. Not coherent → staging point (gathering)
+        3. Coherent + strong enough → attack target (push)
+        4. Coherent but not strong enough → hold at staging
+        5. Staging timeout → push anyway
+        """
+        own_supply = float(snapshot.army_supply)
+        enemy_supply = float(snapshot.enemy_army_supply_visible)
+
+        # 1. Retreat check
+        if cm.should_retreat(own_supply, enemy_supply):
+            cm.update_staging_timer(self.time, is_staging=False)
+            if cm.retreat_to_staging:
+                return self._get_staging_point()
+            return self._defense_rally()
+
+        staging = self._get_staging_point()
+        coherent = cm.is_coherent(army)
+        timed_out = cm.update_staging_timer(self.time, is_staging=not coherent)
+
+        # 2. Not coherent (and not timed out) → gather at staging
+        if not coherent and not timed_out:
+            return staging
+
+        # 3. Coherent (or timed out) + strong enough → push
+        if cm.should_attack(own_supply, enemy_supply):
+            cm.update_staging_timer(self.time, is_staging=False)
+            return self._attack_target()
+
+        # 4. Timed out but not strong enough → push anyway (safety valve)
+        if timed_out:
+            cm.update_staging_timer(self.time, is_staging=False)
+            return self._attack_target()
+
+        # 5. Coherent but not strong enough → hold at staging
+        return staging
