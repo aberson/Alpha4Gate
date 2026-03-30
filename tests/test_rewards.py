@@ -10,6 +10,7 @@ import pytest
 from alpha4gate.learning.rewards import (
     BASE_LOSS_REWARD,
     BASE_STEP_REWARD,
+    BASE_TIMEOUT_REWARD,
     BASE_WIN_REWARD,
     RewardCalculator,
 )
@@ -23,22 +24,22 @@ def calc() -> RewardCalculator:
 
 
 def _state(**overrides: Any) -> dict[str, Any]:
-    """Build a default game state dict with optional overrides."""
+    """Build a minimal game state dict that triggers no shaped rules by default."""
     base: dict[str, Any] = {
-        "supply_used": 50,
-        "supply_cap": 100,
-        "minerals": 800,
-        "vespene": 400,
-        "army_supply": 30,
-        "worker_count": 22,
-        "base_count": 2,
+        "supply_used": 20,
+        "supply_cap": 30,
+        "minerals": 200,
+        "vespene": 50,
+        "army_supply": 5,
+        "worker_count": 12,
+        "base_count": 1,
         "enemy_army_near_base": False,
-        "enemy_army_supply_visible": 0,
-        "game_time_seconds": 200.0,
-        "gateway_count": 3,
-        "robo_count": 1,
-        "forge_count": 1,
-        "upgrade_count": 2,
+        "enemy_army_supply_visible": 10,
+        "game_time_seconds": 400.0,
+        "gateway_count": 1,
+        "robo_count": 0,
+        "forge_count": 0,
+        "upgrade_count": 0,
         "enemy_structure_count": 0,
     }
     base.update(overrides)
@@ -58,6 +59,14 @@ class TestBaseReward:
         reward = calc.compute_step_reward(_state(), is_terminal=True, result="loss")
         assert reward <= BASE_LOSS_REWARD + BASE_STEP_REWARD + 1.0  # allow some rule bonuses
 
+    def test_timeout_reward(self, calc: RewardCalculator) -> None:
+        """Timeout is milder than loss but still negative."""
+        reward = calc.compute_step_reward(_state(), is_terminal=True, result="timeout")
+        loss_reward = calc.compute_step_reward(_state(), is_terminal=True, result="loss")
+        assert reward < 0  # still negative
+        assert reward > loss_reward  # but milder than loss
+        assert abs(reward - (BASE_STEP_REWARD + BASE_TIMEOUT_REWARD)) < 0.001
+
 
 class TestRuleEvaluation:
     def test_scout_early_active(self, calc: RewardCalculator) -> None:
@@ -68,26 +77,28 @@ class TestRuleEvaluation:
 
     def test_scout_early_not_scouted(self, calc: RewardCalculator) -> None:
         """Scout rule does NOT fire when has_scouted=False."""
+        base = calc.compute_step_reward(_state(game_time_seconds=120.0))
         s = _state(game_time_seconds=120.0, has_scouted=False)
         reward = calc.compute_step_reward(s)
-        assert abs(reward - BASE_STEP_REWARD) < 0.001
+        assert abs(reward - base) < 0.001
 
     def test_scout_early_too_late(self, calc: RewardCalculator) -> None:
         """Scout rule does NOT fire when game_time >= 180."""
+        base = calc.compute_step_reward(_state(game_time_seconds=200.0))
         s = _state(game_time_seconds=200.0, has_scouted=True)
         reward = calc.compute_step_reward(s)
-        assert abs(reward - BASE_STEP_REWARD) < 0.001
+        assert abs(reward - base) < 0.001
 
     def test_supply_block_penalty(self, calc: RewardCalculator) -> None:
         """Supply block rule fires when supply_used == supply_cap."""
-        s = _state(supply_used=100, supply_cap=100)
+        base = calc.compute_step_reward(_state())
+        s = _state(supply_used=30, supply_cap=30)
         reward = calc.compute_step_reward(s)
-        expected = BASE_STEP_REWARD - 0.05
-        assert abs(reward - expected) < 0.001
+        assert reward < base  # supply block penalty
 
     def test_no_supply_block_no_penalty(self, calc: RewardCalculator) -> None:
         """Supply block rule does NOT fire when supply_used < supply_cap."""
-        s = _state(supply_used=50, supply_cap=100)
+        s = _state()
         reward = calc.compute_step_reward(s)
         assert abs(reward - BASE_STEP_REWARD) < 0.001
 
@@ -103,7 +114,128 @@ class TestRuleEvaluation:
         assert reward > BASE_STEP_REWARD + 0.2  # includes +0.3 from defend-rush
 
 
-class TestOperators:
+class TestEconomyRewards:
+    """Tests for economy reward rules (Step 9)."""
+
+    def test_worker_saturation_fires(self, calc: RewardCalculator) -> None:
+        base = calc.compute_step_reward(_state())
+        s = _state(worker_count=22)
+        reward = calc.compute_step_reward(s)
+        assert reward > base  # +0.05 from worker-saturation
+
+    def test_worker_saturation_below_threshold(self, calc: RewardCalculator) -> None:
+        s = _state(worker_count=20)
+        reward = calc.compute_step_reward(s)
+        assert abs(reward - BASE_STEP_REWARD) < 0.001
+
+    def test_expand_on_time_fires(self, calc: RewardCalculator) -> None:
+        base = calc.compute_step_reward(_state())
+        s = _state(base_count=2, game_time_seconds=250.0)
+        reward = calc.compute_step_reward(s)
+        assert reward > base  # +0.2 from expand-on-time
+
+    def test_expand_on_time_too_late(self, calc: RewardCalculator) -> None:
+        s = _state(base_count=2, game_time_seconds=350.0)
+        reward = calc.compute_step_reward(s)
+        assert abs(reward - BASE_STEP_REWARD) < 0.001
+
+    def test_mineral_floating_penalty(self, calc: RewardCalculator) -> None:
+        base = calc.compute_step_reward(_state())
+        s = _state(minerals=1500)
+        reward = calc.compute_step_reward(s)
+        assert reward < base  # -0.02 from mineral-floating
+
+    def test_mineral_floating_not_triggered(self, calc: RewardCalculator) -> None:
+        s = _state(minerals=800)
+        reward = calc.compute_step_reward(s)
+        assert abs(reward - BASE_STEP_REWARD) < 0.001
+
+    def test_worker_production_early(self, calc: RewardCalculator) -> None:
+        base = calc.compute_step_reward(_state())
+        s = _state(worker_count=16, game_time_seconds=100.0)
+        reward = calc.compute_step_reward(s)
+        assert reward > base  # +0.03 from worker-production
+
+
+class TestMilitaryRewards:
+    """Tests for military reward rules (Step 10)."""
+
+    def test_army_buildup_fires(self, calc: RewardCalculator) -> None:
+        base = calc.compute_step_reward(_state())
+        s = _state(army_supply=15)
+        reward = calc.compute_step_reward(s)
+        assert reward > base  # +0.05 from army-buildup
+
+    def test_army_buildup_below_threshold(self, calc: RewardCalculator) -> None:
+        s = _state(army_supply=10)
+        reward = calc.compute_step_reward(s)
+        assert abs(reward - BASE_STEP_REWARD) < 0.001
+
+    def test_army_ratio_fires(self, calc: RewardCalculator) -> None:
+        base = calc.compute_step_reward(_state())
+        s = _state(army_supply=20, enemy_army_supply_visible=10)
+        reward = calc.compute_step_reward(s)
+        assert reward > base  # +0.1 from army-ratio
+
+    def test_army_ratio_weaker(self, calc: RewardCalculator) -> None:
+        s = _state(army_supply=5, enemy_army_supply_visible=20)
+        reward = calc.compute_step_reward(s)
+        assert abs(reward - BASE_STEP_REWARD) < 0.001
+
+    def test_tech_progress_fires(self, calc: RewardCalculator) -> None:
+        base = calc.compute_step_reward(_state())
+        s = _state(robo_count=1, game_time_seconds=300.0)
+        reward = calc.compute_step_reward(s)
+        assert reward > base  # +0.05 from tech-progress
+
+    def test_gateway_efficiency_fires(self, calc: RewardCalculator) -> None:
+        base = calc.compute_step_reward(_state())
+        s = _state(gateway_count=3)
+        reward = calc.compute_step_reward(s)
+        assert reward > base  # +0.03 from gateway-efficiency
+
+
+class TestScoutingRewards:
+    """Tests for scouting and information reward rules (Step 11)."""
+
+    def test_early_scout_tight_fires(self, calc: RewardCalculator) -> None:
+        base = calc.compute_step_reward(_state())
+        s = _state(game_time_seconds=90.0, has_scouted=True)
+        reward = calc.compute_step_reward(s)
+        assert reward > base  # +0.15 from early-scout-tight + 0.1 from scout-early
+
+    def test_react_to_rush_fires(self, calc: RewardCalculator) -> None:
+        base = calc.compute_step_reward(_state())
+        s = _state(
+            enemy_army_near_base=True,
+            current_state="defend",
+            army_supply=20,
+            enemy_army_supply_visible=5,
+        )
+        reward = calc.compute_step_reward(s)
+        assert reward > base  # +0.3 from react-to-rush
+
+    def test_react_to_rush_not_defending(self, calc: RewardCalculator) -> None:
+        """Does NOT fire when not in DEFEND state."""
+        s = _state(
+            enemy_army_near_base=True,
+            current_state="attack",
+        )
+        # react-to-rush should not fire (is_defending_rush = False)
+        reward = calc.compute_step_reward(s)
+        # Should not include react-to-rush bonus
+        s2 = _state(enemy_army_near_base=True, current_state="defend")
+        reward2 = calc.compute_step_reward(s2)
+        assert reward < reward2
+
+    def test_map_awareness_fires(self, calc: RewardCalculator) -> None:
+        base = calc.compute_step_reward(_state())
+        s = _state(enemy_structure_count=3)
+        reward = calc.compute_step_reward(s)
+        assert reward > base  # +0.05 from map-awareness
+
+
+
     def test_all_operators(self) -> None:
         calc = RewardCalculator()
         calc._rules = []

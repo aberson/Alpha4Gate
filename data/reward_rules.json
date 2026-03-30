@@ -43,6 +43,154 @@
       "requires": null,
       "reward": -0.05,
       "active": true
+    },
+    {
+      "id": "worker-saturation",
+      "description": "Reward reaching 22+ workers per base (44 at 2 bases)",
+      "condition": {
+        "field": "worker_count",
+        "op": ">=",
+        "value": 22
+      },
+      "requires": null,
+      "reward": 0.05,
+      "active": true
+    },
+    {
+      "id": "expand-on-time",
+      "description": "Reward expanding before 5:00",
+      "condition": {
+        "field": "base_count",
+        "op": ">=",
+        "value": 2
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": "<",
+        "value": 300
+      },
+      "reward": 0.2,
+      "active": true
+    },
+    {
+      "id": "mineral-floating",
+      "description": "Penalize banking over 1000 minerals",
+      "condition": {
+        "field": "is_mineral_floating",
+        "op": "==",
+        "value": true
+      },
+      "requires": null,
+      "reward": -0.02,
+      "active": true
+    },
+    {
+      "id": "worker-production",
+      "description": "Reward having 16+ workers before 2:00",
+      "condition": {
+        "field": "worker_count",
+        "op": ">=",
+        "value": 16
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": "<",
+        "value": 120
+      },
+      "reward": 0.03,
+      "active": true
+    },
+    {
+      "id": "army-buildup",
+      "description": "Reward maintaining minimum fighting force",
+      "condition": {
+        "field": "army_supply",
+        "op": ">=",
+        "value": 15
+      },
+      "requires": null,
+      "reward": 0.05,
+      "active": true
+    },
+    {
+      "id": "army-ratio",
+      "description": "Reward having stronger army than visible enemy",
+      "condition": {
+        "field": "army_stronger_than_enemy",
+        "op": "==",
+        "value": true
+      },
+      "requires": null,
+      "reward": 0.1,
+      "active": true
+    },
+    {
+      "id": "tech-progress",
+      "description": "Reward building robo facility before 6:00",
+      "condition": {
+        "field": "robo_count",
+        "op": ">=",
+        "value": 1
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": "<",
+        "value": 360
+      },
+      "reward": 0.05,
+      "active": true
+    },
+    {
+      "id": "gateway-efficiency",
+      "description": "Reward having enough production gateways",
+      "condition": {
+        "field": "gateway_count",
+        "op": ">=",
+        "value": 3
+      },
+      "requires": null,
+      "reward": 0.03,
+      "active": true
+    },
+    {
+      "id": "early-scout-tight",
+      "description": "Reward scouting before 2:00 (tighter window)",
+      "condition": {
+        "field": "game_time_seconds",
+        "op": "<",
+        "value": 120
+      },
+      "requires": {
+        "field": "has_scouted",
+        "op": "==",
+        "value": true
+      },
+      "reward": 0.15,
+      "active": true
+    },
+    {
+      "id": "react-to-rush",
+      "description": "Reward defending when enemy is near base",
+      "condition": {
+        "field": "is_defending_rush",
+        "op": "==",
+        "value": true
+      },
+      "requires": null,
+      "reward": 0.3,
+      "active": true
+    },
+    {
+      "id": "map-awareness",
+      "description": "Reward finding enemy structures",
+      "condition": {
+        "field": "enemy_structure_count",
+        "op": ">",
+        "value": 0
+      },
+      "requires": null,
+      "reward": 0.05,
+      "active": true
     }
   ]
 }

@@ -33,6 +33,9 @@ _ACTION_TO_STATE: list[StrategicState] = [
 # How many game steps per env step (match bot.py observation frequency)
 STEPS_PER_ACTION: int = 22
 
+# Max game time in seconds before forcing a timeout (prevents 20+ min passive games)
+MAX_GAME_TIME_SECONDS: float = 900.0  # 15 minutes
+
 
 class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
     """Gymnasium environment wrapping a burnysc2 SC2 game.
@@ -123,8 +126,9 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
             obs = np.zeros(FEATURE_DIM, dtype=np.float32)
             return obs, -10.0, True, False, {"error": "timeout"}
 
-        # Compute reward
+        # Compute reward (include current_state for scouting reward rules)
         state_dict = info.get("snapshot_dict", {})
+        state_dict["current_state"] = info.get("strategic_state", "")
         reward = self._reward_calc.compute_step_reward(
             state_dict, is_terminal=done, result=result
         )
@@ -245,117 +249,91 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         return np.array(values, dtype=np.float32)
 
 
+class _GymStateProxy:
+    """Proxy that mimics NeuralDecisionEngine.predict() for gym state injection.
+
+    Alpha4GateBot.on_step() checks if self._neural_engine is not None, then
+    calls predict(snapshot). This proxy always returns the gym-chosen state.
+    """
+
+    def __init__(self, state: StrategicState) -> None:
+        self._state = state
+
+    def predict(self, snapshot: GameSnapshot) -> StrategicState:
+        return self._state
+
+
 def _make_training_bot(
     obs_queue: queue.Queue[tuple[NDArray[np.float32], dict[str, Any], bool, str | None]],
     action_queue: queue.Queue[int | None],
     reward_calc: RewardCalculator,
 ) -> Any:
-    """Create a _TrainingBot that also inherits from BotAI at runtime."""
-    from sc2.bot_ai import BotAI
+    """Create a full training bot that inherits Alpha4GateBot.
 
-    class _LiveTrainingBot(BotAI, _TrainingBot):
-        def __init__(self) -> None:
-            BotAI.__init__(self)
-            _TrainingBot.__init__(self, obs_queue, action_queue, reward_calc)
-
-    return _LiveTrainingBot()
-
-
-class _TrainingBot:
-    """Minimal bot that bridges between burnysc2 on_step and gym queues.
-
-    Not a full Alpha4GateBot — it only observes and applies strategic state
-    without the full macro/micro pipeline. The point is to collect transitions
-    for training, not to play optimally.
-
-    Inherits from BotAI at runtime (set up via _make_training_bot factory)
-    so it has access to self.units, self.minerals, etc.
+    The bot runs full macro/micro/scouting from Alpha4GateBot but lets the
+    gym action queue override the strategic state each decision step.
     """
+    from alpha4gate.bot import Alpha4GateBot
+    from alpha4gate.build_orders import default_4gate
 
-    def __init__(
-        self,
-        obs_queue: queue.Queue[tuple[NDArray[np.float32], dict[str, Any], bool, str | None]],
-        action_queue: queue.Queue[int | None],
-        reward_calc: RewardCalculator,
-    ) -> None:
-        self._obs_queue = obs_queue
-        self._action_queue = action_queue
-        self._reward_calc = reward_calc
-        self._iteration = 0
-        self._current_state = StrategicState.OPENING
+    class _FullTrainingBot(Alpha4GateBot):
+        """Alpha4GateBot subclass that bridges with gym queues for RL training."""
 
-    async def on_step(self, iteration: int) -> None:
-        """Called each game step by burnysc2."""
-        self._iteration = iteration
+        def __init__(self) -> None:
+            super().__init__(
+                build_order=default_4gate(),
+                logger=None,
+                enable_console=False,
+            )
+            self._obs_queue_train = obs_queue
+            self._action_queue_train = action_queue
+            self._reward_calc_train = reward_calc
+            self._gym_state: StrategicState | None = None
 
-        # Only act every STEPS_PER_ACTION steps
-        if iteration % STEPS_PER_ACTION != 0:
-            return
+        async def on_step(self, iteration: int) -> None:
+            """Run full Alpha4GateBot logic, but override strategic state from gym.
 
-        # Build snapshot (we inherit from BotAI so self has game state)
-        snapshot = self._build_snapshot()
-        obs = encode(snapshot)
-        state_dict = asdict(snapshot)
-        info: dict[str, Any] = {
-            "snapshot": snapshot,
-            "snapshot_dict": state_dict,
-            "game_time": snapshot.game_time_seconds,
-            "strategic_state": self._current_state.value,
-        }
+            On decision steps (every STEPS_PER_ACTION), sends an observation to
+            the gym and receives a PPO action. The action is injected via a proxy
+            neural engine so Alpha4GateBot.on_step() uses the gym-chosen state
+            for all macro/micro decisions.
+            """
+            if iteration % STEPS_PER_ACTION == 0:
+                snapshot = self._build_snapshot()
+                obs = encode(snapshot)
+                state_dict = asdict(snapshot)
 
-        # Put observation for gym.step() to receive
-        self._obs_queue.put((obs, info, False, None))
+                # Check for game time limit — send terminal timeout if exceeded
+                timed_out = snapshot.game_time_seconds >= MAX_GAME_TIME_SECONDS
+                info: dict[str, Any] = {
+                    "snapshot": snapshot,
+                    "snapshot_dict": state_dict,
+                    "game_time": snapshot.game_time_seconds,
+                    "strategic_state": (
+                        self._gym_state.value
+                        if self._gym_state
+                        else self.decision_engine.state.value
+                    ),
+                }
+                if timed_out:
+                    _log.info(
+                        "Game timeout at %.0fs — sending terminal observation",
+                        snapshot.game_time_seconds,
+                    )
+                    self._obs_queue_train.put((obs, info, True, "timeout"))
+                    return  # Stop playing — SC2Env will close the game
 
-        # Wait for action from gym.step()
-        action = self._action_queue.get(timeout=120)
-        if action is None:
-            return  # Shutdown signal
+                self._obs_queue_train.put((obs, info, False, None))
 
-        # Apply strategic state
-        if 0 <= action < len(_ACTION_TO_STATE):
-            self._current_state = _ACTION_TO_STATE[action]
+                action = self._action_queue_train.get(timeout=120)
+                if action is None:
+                    return  # Shutdown signal
+                if 0 <= action < len(_ACTION_TO_STATE):
+                    self._gym_state = _ACTION_TO_STATE[action]
+                    # Inject gym state via the neural engine proxy so
+                    # Alpha4GateBot.on_step() uses it for macro/micro
+                    self._neural_engine = _GymStateProxy(self._gym_state)  # type: ignore[assignment]
 
-    def _build_snapshot(self) -> GameSnapshot:
-        """Build GameSnapshot from current bot state (BotAI attributes)."""
-        from sc2.ids.unit_typeid import UnitTypeId
+            await super().on_step(iteration)
 
-        supply_cost: dict[Any, int] = {
-            UnitTypeId.ZEALOT: 2, UnitTypeId.STALKER: 2,
-            UnitTypeId.IMMORTAL: 4, UnitTypeId.OBSERVER: 1,
-            UnitTypeId.PROBE: 1,
-        }
-
-        army_supply = 0
-        worker_count = 0
-        for unit in self.units:  # type: ignore[attr-defined]
-            if unit.type_id == UnitTypeId.PROBE:
-                worker_count += 1
-            elif not unit.is_structure:
-                army_supply += supply_cost.get(unit.type_id, 2)
-
-        enemy_near = False
-        for e in self.enemy_units:  # type: ignore[attr-defined]
-            if e.distance_to(self.start_location) < 40:  # type: ignore[attr-defined]
-                enemy_near = True
-                break
-        enemy_supply = 0
-        for u in self.enemy_units:  # type: ignore[attr-defined]
-            enemy_supply += supply_cost.get(u.type_id, 2)
-
-        return GameSnapshot(
-            supply_used=int(self.supply_used),  # type: ignore[attr-defined]
-            supply_cap=int(self.supply_cap),  # type: ignore[attr-defined]
-            minerals=self.minerals,  # type: ignore[attr-defined]
-            vespene=self.vespene,  # type: ignore[attr-defined]
-            army_supply=army_supply,
-            worker_count=worker_count,
-            base_count=len(self.townhalls),  # type: ignore[attr-defined]
-            enemy_army_near_base=enemy_near,
-            enemy_army_supply_visible=enemy_supply,
-            game_time_seconds=self.time,  # type: ignore[attr-defined]
-            gateway_count=len(self.structures(UnitTypeId.GATEWAY)),  # type: ignore[attr-defined]
-            robo_count=len(self.structures(UnitTypeId.ROBOTICSFACILITY)),  # type: ignore[attr-defined]
-            forge_count=len(self.structures(UnitTypeId.FORGE)),  # type: ignore[attr-defined]
-            upgrade_count=len(self.state.upgrades),  # type: ignore[attr-defined]
-            enemy_structure_count=len(self.enemy_structures),  # type: ignore[attr-defined]
-        )
+    return _FullTrainingBot()

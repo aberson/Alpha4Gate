@@ -6,7 +6,6 @@ needing a running SC2 instance.
 
 from __future__ import annotations
 
-import queue
 from dataclasses import asdict
 from typing import Any
 
@@ -17,7 +16,7 @@ from alpha4gate.learning.environment import (
     _ACTION_TO_STATE,
     FEATURE_DIM,
     SC2Env,
-    _TrainingBot,
+    _GymStateProxy,
 )
 from alpha4gate.learning.features import encode
 from alpha4gate.learning.rewards import RewardCalculator
@@ -66,30 +65,18 @@ class TestObservationSpace:
         assert np.all(obs <= 1.0)
 
 
-class TestTrainingBot:
-    """Test the _TrainingBot queue-based communication without SC2."""
+class TestGymStateProxy:
+    """Test the _GymStateProxy used to inject gym actions into Alpha4GateBot."""
 
-    def _make_bot(
-        self,
-    ) -> tuple[
-        _TrainingBot,
-        queue.Queue[tuple[Any, ...]],
-        queue.Queue[int | None],
-    ]:
-        obs_q: queue.Queue[tuple[Any, ...]] = queue.Queue()
-        action_q: queue.Queue[int | None] = queue.Queue()
-        bot = _TrainingBot(obs_q, action_q, RewardCalculator())
-        return bot, obs_q, action_q
+    def test_proxy_returns_correct_state(self) -> None:
+        proxy = _GymStateProxy(StrategicState.ATTACK)
+        snap = _default_snapshot()
+        assert proxy.predict(snap) == StrategicState.ATTACK
 
-    def test_initial_state(self) -> None:
-        bot, _, _ = self._make_bot()
-        assert bot._current_state == StrategicState.OPENING
-
-    def test_action_changes_state(self) -> None:
-        bot, _, _ = self._make_bot()
-        # Simulate receiving action 2 (ATTACK)
-        bot._current_state = _ACTION_TO_STATE[2]
-        assert bot._current_state == StrategicState.ATTACK
+    def test_proxy_all_states(self) -> None:
+        for _action_idx, expected_state in enumerate(_ACTION_TO_STATE):
+            proxy = _GymStateProxy(expected_state)
+            assert proxy.predict(_default_snapshot()) == expected_state
 
 
 class TestRewardComputation:

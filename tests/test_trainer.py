@@ -16,10 +16,11 @@ def _mock_model() -> MagicMock:
     model = MagicMock()
     model.device = "cpu"
 
-    def side_effect(path: str) -> None:
+    def save_side_effect(path: str) -> None:
         Path(path).touch()
 
-    model.save.side_effect = side_effect
+    model.save.side_effect = save_side_effect
+    # model.learn() and model.set_env() are auto-mocked as MagicMock
     return model
 
 
@@ -115,9 +116,13 @@ class TestCycleTracking:
         assert orch.total_games == 0
         assert not orch.stopped
 
+    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._make_env")
     @patch("alpha4gate.learning.trainer.TrainingOrchestrator._init_or_resume_model")
-    def test_run_cycles(self, mock_init: MagicMock, tmp_path: Path) -> None:
+    def test_run_cycles(
+        self, mock_init: MagicMock, mock_env: MagicMock, tmp_path: Path
+    ) -> None:
         mock_init.return_value = _mock_model()
+        mock_env.return_value = MagicMock()
         db = TrainingDB(tmp_path / "train.db")
         db.close()
 
@@ -129,10 +134,17 @@ class TestCycleTracking:
         assert result["cycles_completed"] == 3
         assert orch.cycle == 3
         assert orch.total_games == 6
+        # Verify model.learn() was called each cycle
+        model = mock_init.return_value
+        assert model.learn.call_count == 3
 
+    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._make_env")
     @patch("alpha4gate.learning.trainer.TrainingOrchestrator._init_or_resume_model")
-    def test_disk_guard_stops_run(self, mock_init: MagicMock, tmp_path: Path) -> None:
+    def test_disk_guard_stops_run(
+        self, mock_init: MagicMock, mock_env: MagicMock, tmp_path: Path
+    ) -> None:
         mock_init.return_value = _mock_model()
+        mock_env.return_value = MagicMock()
         db_path = tmp_path / "train.db"
         db = TrainingDB(db_path)
         # Insert enough data to make the file non-trivial
@@ -153,12 +165,14 @@ class TestCycleTracking:
 
 
 class TestBestCheckpoint:
+    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._make_env")
     @patch("alpha4gate.learning.trainer.TrainingOrchestrator._init_or_resume_model")
     def test_only_first_cycle_is_best_when_win_rate_zero(
-        self, mock_init: MagicMock, tmp_path: Path
+        self, mock_init: MagicMock, mock_env: MagicMock, tmp_path: Path
     ) -> None:
         """When win rate stays at 0, only the first cycle should be marked best."""
         mock_init.return_value = _mock_model()
+        mock_env.return_value = MagicMock()
         db = TrainingDB(tmp_path / "train.db")
         db.close()
 
@@ -174,12 +188,14 @@ class TestBestCheckpoint:
         # sets best (0.0 > -1.0), subsequent cycles do NOT overwrite.
         assert get_best_name(tmp_path / "cp") == "v1"
 
+    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._make_env")
     @patch("alpha4gate.learning.trainer.TrainingOrchestrator._init_or_resume_model")
     def test_best_updates_when_win_rate_improves(
-        self, mock_init: MagicMock, tmp_path: Path
+        self, mock_init: MagicMock, mock_env: MagicMock, tmp_path: Path
     ) -> None:
         """Best should update when a later cycle has a higher win rate."""
         mock_init.return_value = _mock_model()
+        mock_env.return_value = MagicMock()
         db_path = tmp_path / "train.db"
         db = TrainingDB(db_path)
         # Seed two wins so get_recent_win_rate returns > 0
@@ -200,9 +216,13 @@ class TestBestCheckpoint:
 
 
 class TestCrashRecovery:
+    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._make_env")
     @patch("alpha4gate.learning.trainer.TrainingOrchestrator._init_or_resume_model")
-    def test_resume_flag(self, mock_init: MagicMock, tmp_path: Path) -> None:
+    def test_resume_flag(
+        self, mock_init: MagicMock, mock_env: MagicMock, tmp_path: Path
+    ) -> None:
         mock_init.return_value = _mock_model()
+        mock_env.return_value = MagicMock()
         db = TrainingDB(tmp_path / "train.db")
         db.close()
 

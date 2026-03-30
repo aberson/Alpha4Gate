@@ -89,6 +89,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Path to SB3 PPO model checkpoint (required for neural/hybrid mode)",
     )
+    parser.add_argument(
+        "--reward-log",
+        action="store_true",
+        help="Enable per-step reward logging to data/reward_log.jsonl",
+    )
     return parser
 
 
@@ -215,7 +220,11 @@ def _run_batch(settings: Settings, args: argparse.Namespace) -> None:
     settings.ensure_dirs()
     db = TrainingDB(settings.data_dir / "training.db")
     reward_rules = settings.data_dir / "reward_rules.json"
-    reward_calc = RewardCalculator(reward_rules if reward_rules.exists() else None)
+    reward_log = settings.data_dir / "reward_log.jsonl" if args.reward_log else None
+    reward_calc = RewardCalculator(
+        reward_rules if reward_rules.exists() else None,
+        log_path=reward_log,
+    )
 
     for i in range(args.batch):
         print(f"\n=== Game {i + 1}/{args.batch} ===")

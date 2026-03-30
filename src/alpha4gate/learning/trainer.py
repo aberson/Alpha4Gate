@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -149,31 +150,37 @@ class TrainingOrchestrator:
             if not self.check_disk_guard():
                 break
 
-            # Collect games
-            for game_num in range(games_per_cycle):
-                self._total_games += 1
-                game_id = f"cycle{self._cycle}_game{game_num}"
-                _log.info("Game %d/%d (id=%s)", game_num + 1, games_per_cycle, game_id)
-
-                # In a real implementation, this would launch SC2 via SC2Env
-                # For now, we record the training intent and let the caller
-                # run actual games separately. The test suite tests the
-                # orchestration logic (curriculum, disk guard, checkpointing).
+            # Play games and train via model.learn() + SC2Env.
+            # SB3 PPO is on-policy: model.learn() internally calls env.reset()
+            # and env.step() to collect rollouts, then runs PPO updates.
+            env = self._make_env(db)
+            try:
+                model.set_env(env)
+                # Estimate total timesteps: games_per_cycle games, each ~15
+                # decisions (300 game-seconds / 22 steps-per-action ≈ 15).
+                est_steps = games_per_cycle * 15
                 _log.info(
-                    "Would play game: map=%s, difficulty=%d, game_id=%s",
-                    self._map_name,
-                    self._difficulty,
-                    game_id,
+                    "Training: %d games, ~%d timesteps",
+                    games_per_cycle, est_steps,
                 )
+                model.learn(total_timesteps=est_steps, reset_num_timesteps=False)
+                self._total_games += games_per_cycle
+            except Exception:
+                _log.exception("Training cycle %d crashed", self._cycle)
+                self._total_games += 1  # at least one game attempted
+            finally:
+                env.close()
 
             # Check win rate for curriculum
             recent_win_rate = db.get_recent_win_rate(games_per_cycle * 2)
             if self.should_increase_difficulty(recent_win_rate):
                 self.increase_difficulty()
 
-            # Train PPO on collected experience (would call model.learn())
             checkpoint_name = f"v{self._cycle}"
-            _log.info("Training PPO on collected experience...")
+            _log.info("Cycle %d: win_rate=%.2f", self._cycle, recent_win_rate)
+
+            # Run diagnostics on representative states
+            self._log_diagnostics(model, self._cycle, recent_win_rate)
 
             # Save checkpoint — only mark as best when win rate improves
             is_new_best = recent_win_rate > self._best_win_rate
@@ -215,6 +222,70 @@ class TrainingOrchestrator:
             "stop_reason": self._stop_reason,
             "cycle_results": results,
         }
+
+    def _log_diagnostics(self, model: Any, cycle: int, win_rate: float) -> None:
+        """Log action probabilities on diagnostic states after each cycle."""
+        import json
+
+        import numpy as np
+        import torch
+
+        diag_path = self._checkpoint_dir.parent / "diagnostic_states.json"
+        if not diag_path.exists():
+            return
+
+        with open(diag_path) as f:
+            diag_states = json.load(f)
+
+        output_path = self._checkpoint_dir.parent / "training_diagnostics.json"
+        existing: list[Any] = []
+        if output_path.exists():
+            with open(output_path) as f:
+                existing = json.load(f)
+
+        cycle_diag: dict[str, Any] = {
+            "cycle": cycle,
+            "win_rate": win_rate,
+            "states": [],
+        }
+        for ds in diag_states:
+            obs = np.array(ds["features"], dtype=np.float32)
+            try:
+                with torch.no_grad():
+                    obs_t = torch.as_tensor(obs).unsqueeze(0).to(model.device)
+                    dist = model.policy.get_distribution(obs_t)
+                    probs = dist.distribution.probs[0].cpu().numpy()
+                    action = int(probs.argmax())
+                    cycle_diag["states"].append({
+                        "name": ds["name"],
+                        "action": action,
+                        "probs": [round(float(p), 4) for p in probs],
+                    })
+            except Exception:
+                _log.warning("Could not get diagnostics for %s", ds["name"])
+
+        existing.append(cycle_diag)
+        with open(output_path, "w") as f:
+            json.dump(existing, f, indent=2)
+        _log.info("Diagnostics: %s", cycle_diag)
+
+    def _make_env(self, db: Any) -> Any:
+        """Create an SC2Env for training with the current difficulty."""
+        from alpha4gate.learning.environment import SC2Env
+        from alpha4gate.learning.rewards import RewardCalculator
+
+        reward_calc = RewardCalculator(
+            self._reward_rules_path if self._reward_rules_path else None
+        )
+        game_id = f"rl_{uuid.uuid4().hex[:8]}"
+        return SC2Env(
+            map_name=self._map_name,
+            difficulty=self._difficulty,
+            reward_calculator=reward_calc,
+            db=db,
+            game_id=game_id,
+            model_version=f"v{self._cycle}",
+        )
 
     def _init_or_resume_model(self, resume: bool) -> Any:
         """Initialize a new PPO model or load from latest checkpoint."""

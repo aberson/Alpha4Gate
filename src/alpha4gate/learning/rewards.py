@@ -14,6 +14,7 @@ _log = logging.getLogger(__name__)
 BASE_WIN_REWARD: float = 10.0
 BASE_LOSS_REWARD: float = -10.0
 BASE_STEP_REWARD: float = 0.001  # survival bonus per step
+BASE_TIMEOUT_REWARD: float = -3.0  # milder than loss: bot survived but didn't close
 
 # Supported comparison operators
 _OPS: dict[str, Any] = {
@@ -49,10 +50,17 @@ class RewardRule:
 class RewardCalculator:
     """Computes shaped rewards by evaluating rules against game state."""
 
-    def __init__(self, rules_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        rules_path: str | Path | None = None,
+        log_path: str | Path | None = None,
+    ) -> None:
         self._rules: list[RewardRule] = []
+        self._log_file: Any | None = None
         if rules_path is not None:
             self.load_rules(rules_path)
+        if log_path is not None:
+            self._log_file = open(log_path, "a")  # noqa: SIM115
 
     @property
     def rules(self) -> list[RewardRule]:
@@ -101,10 +109,13 @@ class RewardCalculator:
         if is_terminal and result is not None:
             if result == "win":
                 total += BASE_WIN_REWARD
+            elif result == "timeout":
+                total += BASE_TIMEOUT_REWARD
             elif result == "loss":
                 total += BASE_LOSS_REWARD
 
         # Evaluate each active rule
+        fired_rules: list[dict[str, Any]] = []
         for rule in self._rules:
             if not rule.active:
                 continue
@@ -112,6 +123,18 @@ class RewardCalculator:
                 rule.requires, state
             ):
                 total += rule.reward
+                fired_rules.append({"id": rule.rule_id, "reward": rule.reward})
+
+        # Log per-step reward breakdown if logging is enabled
+        if self._log_file is not None:
+            entry = {
+                "game_time": state.get("game_time_seconds", 0.0),
+                "total_reward": total,
+                "fired_rules": fired_rules,
+                "is_terminal": is_terminal,
+                "result": result,
+            }
+            self._log_file.write(json.dumps(entry) + "\n")
 
         return total
 
@@ -161,6 +184,22 @@ class RewardCalculator:
         state.setdefault(
             "enemy_structure_near_base_early",
             enemy_structs > 0 and game_time < 300.0 and enemy_near,
+        )
+
+        # Economy derived fields
+        minerals = state.get("minerals", 0)
+        state.setdefault("is_mineral_floating", minerals > 1000)
+
+        # Military derived fields
+        army_supply = state.get("army_supply", 0)
+        enemy_supply = state.get("enemy_army_supply_visible", 0)
+        state.setdefault("army_stronger_than_enemy", army_supply > enemy_supply)
+
+        # Scouting derived fields
+        current_state = state.get("current_state", "")
+        state.setdefault(
+            "is_defending_rush",
+            bool(enemy_near) and current_state == "defend",
         )
 
         return state
