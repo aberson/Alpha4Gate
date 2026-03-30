@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import queue
 import threading
@@ -41,7 +40,7 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
     """Gymnasium environment wrapping a burnysc2 SC2 game.
 
     The async-to-sync bridge works as follows:
-    - reset() launches a new SC2 game in a background thread running asyncio
+    - reset() launches a new SC2 game in a background thread
     - The bot's on_step() is overridden to put observations into a queue and
       wait for actions from another queue
     - step() puts an action, waits for the next observation
@@ -173,16 +172,29 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
                     break
 
     def _run_game_thread(self) -> None:
-        """Run the SC2 game in a new asyncio event loop (background thread)."""
+        """Run the SC2 game in a background thread.
+
+        sc2.main.run_game() is synchronous and calls asyncio.run() internally,
+        so we must NOT wrap it in another asyncio.run().
+
+        burnysc2's SC2Process sets signal handlers which only work in the main
+        thread, so we monkey-patch signal.signal to a no-op here.
+        """
+        import signal
+
+        _orig_signal = signal.signal
+        signal.signal = lambda *_args, **_kw: signal.SIG_DFL  # noqa: E731
         try:
-            asyncio.run(self._async_game())
+            self._sync_game()
         except Exception:
             _log.exception("Game thread crashed")
             # Send terminal observation so step() doesn't hang
             obs = np.zeros(FEATURE_DIM, dtype=np.float32)
             self._obs_queue.put((obs, {}, True, "loss"))
+        finally:
+            signal.signal = _orig_signal
 
-    async def _async_game(self) -> None:
+    def _sync_game(self) -> None:
         """Run the actual SC2 game with a custom bot that bridges to the queues."""
         import sc2.maps
         from sc2.data import Difficulty, Race
@@ -209,7 +221,7 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         }
         diff = difficulty_map.get(self._difficulty, Difficulty.Easy)
 
-        result = await run_game(  # type: ignore[misc]
+        result = run_game(
             sc2.maps.get(self._map_name),
             [Bot(Race.Protoss, bot), Computer(Race.Random, diff)],
             realtime=self._realtime,

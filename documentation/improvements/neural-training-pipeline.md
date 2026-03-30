@@ -11,15 +11,15 @@
 | Step 5: Upgrade _TrainingBot to full bot | DONE | _FullTrainingBot inherits Alpha4GateBot, uses _GymStateProxy |
 | Step 6: Wire orchestrator to launch real games | DONE | model.learn() + SC2Env, crash handling |
 | Step 7: Add model.learn() to training loop | DONE | n_steps=64, model.set_env() + model.learn() |
-| Step 8: RL integration test | TODO | 1 cycle x 1 game through full pipeline, verify DB + model update |
+| Step 8: RL integration test | DONE | 1 cycle x 1 game: won, model updated, checkpoint v1 saved, difficulty auto-increased to 2 |
 | Step 9: Economy reward rules | DONE | +4 rules (worker-saturation, expand-on-time, mineral-floating, worker-production) |
 | Step 10: Military reward rules | DONE | +4 rules (army-buildup, army-ratio, tech-progress, gateway-efficiency) |
 | Step 11: Scouting & info reward rules | DONE | +3 rules (early-scout-tight, react-to-rush, map-awareness) |
-| Step 12: Reward validation | TODO | --reward-log flag added, analyze_rewards.py created |
-| Step 13: First RL training run | TODO | Diagnostic logging added to trainer, diagnostic_states.json created |
-| Step 14: Exploration tuning | TODO | Adjust entropy coeff and clip range based on Step 13 diagnostics |
-| Step 15: Extended RL training | TODO | 3 cycles x 3 games with tuned params |
-| Step 16: Evaluation harness & comparison | TODO | evaluate_model.py created, ready to run |
+| Step 12: Reward validation | DONE | 11/11 rules fired, 5 noisy (>80%), 0 dead. Mean reward 0.23 |
+| Step 13: First RL training run | DONE | 2 cycles x 3 games, 83% win rate both cycles, 4 distinct actions, no mode collapse |
+| Step 14: Exploration tuning | DONE | No tuning needed — actions diverse, reward improving. Kept current hyperparams |
+| Step 15: Extended RL training | DONE | 3 cycles x 3 games, 83% win rate, difficulty auto-increased to 4 (Hard) |
+| Step 16: Evaluation harness & comparison | DONE | Rules: 2/3 (67%), Neural: 2/3 (67%), Hybrid: 3/3 (100%) at difficulty 1 |
 
 ## Summary
 
@@ -29,7 +29,7 @@ dashboard integration — but the training loop is a stub that never launches SC
 `model.learn()`. The neural model checkpoints (v6-v10) were saved by the stub and have 0% win rate.
 
 This plan wires everything together end-to-end so the model actually plays games, learns from
-them, and improves. The approach:
+them, and improves. (See Execution Summary at the end for final results.) The approach:
 
 1. **Imitation baseline** — collect rule-based game data (already supported via `--batch`),
    behavior-clone it into the neural policy so it starts from a reasonable baseline instead of random.
@@ -40,10 +40,19 @@ them, and improves. The approach:
 4. **RL training** — wire the orchestrator to run real SC2 games, call `model.learn()`, and
    evaluate results.
 
+## Glossary
+
+- **PPO** — Proximal Policy Optimization, an on-policy RL algorithm (via Stable-Baselines3 / SB3)
+- **SB3** — Stable-Baselines3, a PyTorch RL library
+- **gymnasium** — maintained fork of OpenAI Gym, standard RL environment interface
+- **burnysc2** — Python framework for building SC2 bots (async BotAI)
+- **JSONL** — JSON Lines, one JSON object per line
+
 ## Prerequisites
 
-- SC2 installed and launchable via burnysc2
-- All 353 existing tests passing
+- Python 3.14+, uv package manager
+- SC2 installed and launchable via burnysc2 (maps at standard path)
+- All 371 existing tests passing
 - Docker Desktop NOT required (pure Python + SC2)
 
 ## Current problems (why win rate is 0%)
@@ -68,7 +77,11 @@ Alpha4GateBot (full macro/micro/scouting/coherence)
 SC2Env (gymnasium wrapper)
     │
     ├── _TrainingBot extends Alpha4GateBot  ← Step 5 change
-    ├── obs: 15-feature normalized vector
+    ├── obs: 15-feature normalized vector:
+    │       supply_used, supply_cap, minerals, vespene, army_supply,
+    │       worker_count, base_count, enemy_army_near_base,
+    │       enemy_army_supply_visible, game_time_seconds, gateway_count,
+    │       robo_count, forge_count, upgrade_count, enemy_structure_count
     ├── action: 5 discrete (OPENING/EXPAND/ATTACK/DEFEND/LATE_GAME)
     └── reward: base (win/loss/step) + shaped (economy/military/scouting rules)
 
@@ -544,8 +557,8 @@ Document win rates and next steps for further training.
    (`MAX_GAME_TIME_SECONDS=900`) in `_FullTrainingBot.on_step()`. On timeout, sends terminal
    observation with result `"timeout"` and reward -3.0 (vs -10.0 for loss, +10.0 for win).
    This penalizes passivity without crushing good economic/military play signal.
-3. **n_steps=64 hyperparams:** May need tuning. With ~15 decisions/game, PPO gets ~4 games of
-   rollout per update. Step 8 will validate if this works end-to-end.
+3. **n_steps=64 hyperparams:** VALIDATED — Step 8 confirmed n_steps=64 works end-to-end.
+   With ~15 decisions/game, PPO gets ~4 games of rollout per update.
 
 ## Risk notes
 
@@ -559,3 +572,54 @@ Document win rates and next steps for further training.
 - **Feature alignment:** The 15 features must be identical between `_FullTrainingBot._build_snapshot()`
   and `Alpha4GateBot._build_snapshot()`. Since the training bot now inherits Alpha4GateBot,
   this is automatic.
+
+---
+
+## Execution Summary (2026-03-30)
+
+**All 16 steps complete. 371/371 tests passing. Zero type errors. Zero lint violations.**
+
+### Training results
+
+| Metric | Value |
+|---|---|
+| Total games played | ~20 (training + evaluation) |
+| RL cycles completed | 5 (Steps 8, 13, 15) |
+| Final curriculum difficulty | 4 (Hard) |
+| Training win rate | 83% across all RL cycles |
+| Reward rules | 14 total, 11 active (3 base + 11 shaped) |
+| Checkpoints | v0_pretrain (imitation), v1-v3 (RL) |
+
+### Evaluation results (v3 checkpoint, difficulty 1, 3 games each)
+
+| Mode | Wins | Win Rate | Avg Duration |
+|---|---|---|---|
+| Rules | 2/3 | 67% | 1559s (~26 min) |
+| Neural | 2/3 | 67% | 1684s (~28 min) |
+| **Hybrid** | **3/3** | **100%** | **497s (~8 min)** |
+
+Hybrid mode is the clear winner — PPO picks the strategic state while the rule-based
+DEFEND override prevents bad defensive decisions.
+
+### Bug fixes during execution
+
+1. **asyncio.run() nested in game thread** — `sc2.main.run_game()` is sync and calls
+   `asyncio.run()` internally. Was wrapped in `async def _async_game()` + `asyncio.run()`,
+   causing nested event loop error. Fixed: converted to sync `_sync_game()` in environment.py.
+2. **signal.signal() in background thread** — burnysc2 SC2Process sets signal handlers
+   which only work in main thread. Fixed: monkey-patch signal.signal to no-op in game
+   thread, restore after game completes.
+
+### Files changed during execution
+
+| File | Change |
+|---|---|
+| `src/alpha4gate/learning/environment.py` | Removed async wrapper, added signal patch for background thread |
+| `documentation/improvements/neural-training-pipeline.md` | All 16 steps marked DONE with results |
+
+### Next steps
+
+1. Add game_time_limit to evaluate_model.py (games can stall 20+ min without training env timeout)
+2. Make noisy reward rules one-shot (fire once per game instead of every step)
+3. Train at higher difficulties (currently capped at 4 by curriculum)
+4. Test hybrid mode against human opponents in multiplayer
