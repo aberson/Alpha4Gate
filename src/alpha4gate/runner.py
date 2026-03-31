@@ -159,7 +159,10 @@ def _start_server(settings: Settings) -> None:
 
     from alpha4gate.api import configure
 
-    configure(settings.data_dir, settings.log_dir, settings.replay_dir)
+    configure(
+        settings.data_dir, settings.log_dir, settings.replay_dir,
+        api_key=settings.anthropic_api_key,
+    )
     uvicorn.run(
         "alpha4gate.api:app",
         host="0.0.0.0",
@@ -176,7 +179,10 @@ def _start_server_background(settings: Settings) -> None:
 
     from alpha4gate.api import configure
 
-    configure(settings.data_dir, settings.log_dir, settings.replay_dir)
+    configure(
+        settings.data_dir, settings.log_dir, settings.replay_dir,
+        api_key=settings.anthropic_api_key,
+    )
     config = uvicorn.Config(
         "alpha4gate.api:app",
         host="0.0.0.0",

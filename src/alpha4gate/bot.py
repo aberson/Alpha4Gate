@@ -201,7 +201,7 @@ class Alpha4GateBot(BotAI):
 
         # --- Command system: drain queue and execute ---
         settings = get_command_settings()
-        if settings.mode != CommandMode.HUMAN_ONLY or not settings.muted:
+        if settings.mode != CommandMode.HUMAN_ONLY and not settings.muted:
             queue = get_command_queue()
             commands = queue.drain(snapshot.game_time_seconds)
             for cmd in commands:
@@ -211,7 +211,13 @@ class Alpha4GateBot(BotAI):
                     and settings.mode == CommandMode.HYBRID_CMD
                 ):
                     self.set_ai_lockout(snapshot.game_time_seconds)
-                await self._command_executor.execute(cmd)
+                result = await self._command_executor.execute(cmd)
+                if result.success:
+                    _log.info("Cmd OK: %s %s → %s", cmd.action.value, cmd.target, result.message)
+                else:
+                    _log.warning(
+                        "Cmd FAIL: %s %s → %s", cmd.action.value, cmd.target, result.message
+                    )
 
         # --- Claude advisor → command queue ---
         if (

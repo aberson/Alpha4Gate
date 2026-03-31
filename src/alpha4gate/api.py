@@ -36,6 +36,7 @@ _replay_dir: Path = Path("replays")
 # Command system state
 _command_history: list[dict[str, Any]] = []
 _interpreter: CommandInterpreter | None = None
+_parser = StructuredParser()
 
 
 def configure(
@@ -127,16 +128,13 @@ def _add_to_history(
 
 
 async def _interpret_and_queue(cmd_id: str, text: str) -> None:
-    """Background task: parse free text via Claude Haiku and queue results."""
-    if _interpreter is None:
-        await _broadcast_command_event({
-            "type": "rejected",
-            "id": cmd_id,
-            "reason": "no interpreter configured",
-        })
-        _add_to_history(cmd_id, text, None, status="rejected")
-        return
-    result = await _interpreter.interpret(text, CommandSource.HUMAN)
+    """Background task: parse free text via structured parser, then Claude Haiku fallback."""
+    # Fast path: try the regex-based structured parser first
+    result = _parser.parse(text, CommandSource.HUMAN)
+
+    # Slow path: fall back to Claude Haiku interpreter for complex natural language
+    if result is None and _interpreter is not None:
+        result = await _interpreter.interpret(text, CommandSource.HUMAN)
     if result:
         queue = get_command_queue()
         for p in result:
