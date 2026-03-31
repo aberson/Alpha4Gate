@@ -409,8 +409,7 @@ async def update_reward_rules(rules: dict[str, Any]) -> dict[str, Any]:
 async def submit_command(request: dict[str, Any]) -> dict[str, Any]:
     """Submit a text command. Structured parse first, then background interpreter."""
     text = request.get("text", "")
-    parser = StructuredParser()
-    primitives = parser.parse(text, CommandSource.HUMAN)
+    primitives = _parser.parse(text, CommandSource.HUMAN)
 
     if primitives:
         queue = get_command_queue()
@@ -419,6 +418,12 @@ async def submit_command(request: dict[str, Any]) -> dict[str, Any]:
             p.ttl = float("inf")
             queue.push(p)
         _add_to_history(primitives[0].id, text, primitives, status="queued")
+        await _broadcast_command_event({
+            "type": "queued",
+            "id": primitives[0].id,
+            "parsed": [_primitive_to_dict(p) for p in primitives],
+            "source": "human",
+        })
         return {
             "id": primitives[0].id,
             "status": "queued",
