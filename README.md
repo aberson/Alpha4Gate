@@ -2,7 +2,7 @@
 
 A StarCraft II Protoss bot with rule-based decision-making and Claude AI as strategic advisor. Uses a three-layer architecture (strategy, tactics, micro) to play against the built-in AI and human opponents. Includes a React dashboard for live game visualization, build order editing, replay browsing, and strategic reasoning display.
 
-**Natural denial + critical mass improvement complete** — army targets enemy natural instead of main ramp, hard coherence gate prevents piecemeal attacks, late-game main push at 160 supply. 378 tests passing, 0 type errors, 0 lint violations.
+**Strategic Command System planned** — three-mode command system (AI-Assisted, Human-only, Hybrid) designed and reviewed. Plan doc ready at `documentation/improvements/strategic-command-system.md`. 378 tests passing, 0 type errors, 0 lint violations.
 
 ## Stack
 
@@ -108,6 +108,7 @@ Alpha4Gate/
 ├── frontend/           # React + TypeScript dashboard
 ├── docs/plan.md        # Phase 1 project plan
 ├── docs/deep-learning-plan.md  # Phase 2 deep learning plan
+├── documentation/improvements/  # Improvement plan docs (command system, army coherence, etc.)
 ├── data/               # Cross-game stats (gitignored)
 ├── logs/               # JSONL game logs (gitignored)
 └── replays/            # SC2 replays (gitignored)
