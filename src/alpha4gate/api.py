@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -22,9 +24,8 @@ from alpha4gate.commands import (
     get_command_queue,
     get_command_settings,
 )
-from alpha4gate.web_socket import ConnectionManager
+from alpha4gate.web_socket import ConnectionManager, drain_broadcast_queue
 
-app = FastAPI(title="Alpha4Gate", version="0.1.0")
 ws_manager = ConnectionManager()
 
 # These are set at startup by the runner
@@ -53,6 +54,30 @@ def configure(
     _replay_dir = replay_dir
     if api_key:
         _interpreter = CommandInterpreter(api_key)
+
+
+async def _game_state_broadcast_loop() -> None:
+    """Drain the thread-safe broadcast queue and push to WebSocket clients."""
+    while True:
+        entries = drain_broadcast_queue()
+        for entry in entries:
+            await ws_manager.broadcast_game_state(entry)
+        await asyncio.sleep(0.5)
+
+
+@asynccontextmanager
+async def _lifespan(application: FastAPI) -> AsyncIterator[None]:
+    """Start the game-state broadcast loop on startup."""
+    task = asyncio.create_task(_game_state_broadcast_loop())
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+app = FastAPI(title="Alpha4Gate", version="0.1.0", lifespan=_lifespan)
 
 
 # --- Command Helpers ---
@@ -107,6 +132,7 @@ async def _interpret_and_queue(cmd_id: str, text: str) -> None:
         queue = get_command_queue()
         for p in result:
             p.id = cmd_id  # correlate with original request
+            p.ttl = float("inf")  # no game clock in API context
             queue.push(p)
         await _broadcast_command_event({
             "type": "queued",
@@ -382,6 +408,8 @@ async def submit_command(request: dict[str, Any]) -> dict[str, Any]:
     if primitives:
         queue = get_command_queue()
         for p in primitives:
+            # API has no game clock — use infinite TTL so the bot always picks it up.
+            p.ttl = float("inf")
             queue.push(p)
         _add_to_history(primitives[0].id, text, primitives, status="queued")
         return {

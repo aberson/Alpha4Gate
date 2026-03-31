@@ -31,6 +31,7 @@ from alpha4gate.macro_manager import MacroDecision, MacroManager
 from alpha4gate.micro import MicroController
 from alpha4gate.observer import observe
 from alpha4gate.scouting import ScoutManager
+from alpha4gate.web_socket import queue_broadcast
 
 if TYPE_CHECKING:
     from alpha4gate.learning.database import TrainingDB
@@ -293,6 +294,7 @@ class Alpha4GateBot(BotAI):
                 self._logger.put(entry)
             if self._enable_console:
                 print_status(entry)
+            queue_broadcast(entry)
 
     # ------------------------------------------------------------------ #
     #  Transition recording for training

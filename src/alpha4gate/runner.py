@@ -154,7 +154,7 @@ def _run_training(settings: Settings, args: argparse.Namespace) -> None:
 
 
 def _start_server(settings: Settings) -> None:
-    """Start the FastAPI server."""
+    """Start the FastAPI server (blocking)."""
     import uvicorn
 
     from alpha4gate.api import configure
@@ -168,12 +168,36 @@ def _start_server(settings: Settings) -> None:
     )
 
 
+def _start_server_background(settings: Settings) -> None:
+    """Start the FastAPI server in a background daemon thread."""
+    import threading
+
+    import uvicorn
+
+    from alpha4gate.api import configure
+
+    configure(settings.data_dir, settings.log_dir, settings.replay_dir)
+    config = uvicorn.Config(
+        "alpha4gate.api:app",
+        host="0.0.0.0",
+        port=settings.web_ui_port,
+        reload=False,
+        log_level="warning",
+    )
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    print(f"API server started on http://localhost:{settings.web_ui_port}")
+
+
 def _run_single_game(settings: Settings, args: argparse.Namespace) -> None:
     """Run a single game vs AI."""
     from alpha4gate.bot import Alpha4GateBot
     from alpha4gate.connection import run_bot
     from alpha4gate.learning.neural_engine import DecisionMode
     from alpha4gate.logger import GameLogger
+
+    _start_server_background(settings)
 
     build_order = _load_build_order(settings, args.build_order)
 
