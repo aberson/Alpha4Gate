@@ -268,8 +268,8 @@ class TestStagingTimeout:
     def test_timeout_after_duration(self) -> None:
         mgr = ArmyCoherenceManager(seed=0)
         mgr.update_staging_timer(0.0, is_staging=True)
-        assert mgr.update_staging_timer(29.0, is_staging=True) is False
-        assert mgr.update_staging_timer(30.0, is_staging=True) is True
+        assert mgr.update_staging_timer(59.0, is_staging=True) is False
+        assert mgr.update_staging_timer(60.0, is_staging=True) is True
 
     def test_reset_when_not_staging(self) -> None:
         mgr = ArmyCoherenceManager(seed=0)
@@ -279,8 +279,8 @@ class TestStagingTimeout:
         mgr.update_staging_timer(25.0, is_staging=False)
         # Restart staging — should not immediately timeout
         assert mgr.update_staging_timer(26.0, is_staging=True) is False
-        assert mgr.update_staging_timer(55.0, is_staging=True) is False
-        assert mgr.update_staging_timer(56.0, is_staging=True) is True
+        assert mgr.update_staging_timer(85.0, is_staging=True) is False
+        assert mgr.update_staging_timer(86.0, is_staging=True) is True
 
 
 class TestRetreatDestination:

@@ -2,7 +2,7 @@
 
 A StarCraft II Protoss bot with rule-based decision-making and Claude AI as strategic advisor. Uses a three-layer architecture (strategy, tactics, micro) to play against the built-in AI and human opponents. Includes a React dashboard for live game visualization, build order editing, replay browsing, and strategic reasoning display.
 
-**Neural training pipeline complete** — all 16 steps done. Hybrid mode (PPO + rule-based DEFEND override) achieves 100% win rate at difficulty 1. 371 tests passing, 0 type errors, 0 lint violations.
+**Natural denial + critical mass improvement complete** — army targets enemy natural instead of main ramp, hard coherence gate prevents piecemeal attacks, late-game main push at 160 supply. 378 tests passing, 0 type errors, 0 lint violations.
 
 ## Stack
 
@@ -16,7 +16,7 @@ A StarCraft II Protoss bot with rule-based decision-making and Claude AI as stra
 | Frontend | React + TypeScript + Vite | Live dashboard with game state streaming |
 | Deep learning | PyTorch + SB3 | PPO policy network for strategic decisions |
 | Training data | SQLite | Structured (s,a,r,s') transition storage |
-| Testing | pytest | 371 unit tests, SC2 integration markers |
+| Testing | pytest | 378 unit tests, SC2 integration markers |
 | Linting | ruff + mypy | Strict type checking, consistent style |
 
 ## Prerequisites
@@ -92,7 +92,7 @@ The bot follows a build order during the opening, then transitions to dynamic de
 ## Testing
 
 ```bash
-uv run pytest              # 371 unit tests (no SC2 needed)
+uv run pytest              # 378 unit tests (no SC2 needed)
 uv run pytest -m sc2       # SC2 integration tests (SC2 must be running)
 uv run ruff check .        # Lint
 uv run mypy src            # Type check
@@ -104,7 +104,7 @@ cd frontend && npx tsc --noEmit  # TypeScript check
 ```
 Alpha4Gate/
 ├── src/alpha4gate/     # 19 Python source modules
-├── tests/              # 16 test files, 371 tests
+├── tests/              # 16 test files, 378 tests
 ├── frontend/           # React + TypeScript dashboard
 ├── docs/plan.md        # Phase 1 project plan
 ├── docs/deep-learning-plan.md  # Phase 2 deep learning plan

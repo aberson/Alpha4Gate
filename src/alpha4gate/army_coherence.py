@@ -31,7 +31,7 @@ class ArmyCoherenceManager:
     }
 
     # Staging timeout: push even if not coherent after this many seconds
-    STAGING_TIMEOUT_SECONDS: float = 30.0
+    STAGING_TIMEOUT_SECONDS: float = 60.0
 
     # Hysteresis multiplier: after retreat, require attack_ratio * this to re-engage
     HYSTERESIS_MULTIPLIER: float = 1.2

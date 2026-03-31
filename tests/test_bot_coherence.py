@@ -38,14 +38,18 @@ def _make_bot(seed: int = 42) -> Alpha4GateBot:
     bot._resolve_attack_rally = Alpha4GateBot._resolve_attack_rally.__get__(bot)
     bot._get_staging_point = Alpha4GateBot._get_staging_point.__get__(bot)
     bot._attack_target = Alpha4GateBot._attack_target.__get__(bot)
+    bot._enemy_main = Alpha4GateBot._enemy_main.__get__(bot)
+    bot._enemy_natural = Alpha4GateBot._enemy_natural.__get__(bot)
     bot._defense_rally = Alpha4GateBot._defense_rally.__get__(bot)
     bot._STAGING_RECALC_SECONDS = Alpha4GateBot._STAGING_RECALC_SECONDS
+    bot.PUSH_MAIN_SUPPLY = Alpha4GateBot.PUSH_MAIN_SUPPLY
 
     # Coherence manager
     bot.coherence_manager = ArmyCoherenceManager(seed=seed)
     bot._coherence_params_logged = False
     bot._cached_staging_point = None
     bot._staging_point_time = -999.0
+    bot._cached_enemy_natural = None
 
     # Mock BotAI attributes
     start = MagicMock()
@@ -56,6 +60,7 @@ def _make_bot(seed: int = 42) -> Alpha4GateBot:
     enemy_start = MagicMock()
     enemy_start.x = 90.0
     enemy_start.y = 90.0
+    enemy_start.distance_to = MagicMock(return_value=0.0)  # distance to itself
     bot.enemy_start_locations = [enemy_start]
     bot.enemy_structures = []
 
@@ -75,6 +80,24 @@ def _make_bot(seed: int = 42) -> Alpha4GateBot:
     start.distance_to = MagicMock(return_value=5.0)
     bot.main_base_ramp = ramp
     bot.townhalls = [MagicMock()]
+
+    # Expansion locations for _enemy_natural()
+    nat_loc = MagicMock()
+    nat_loc.x = 80.0
+    nat_loc.y = 80.0
+    nat_loc.distance_to = MagicMock(side_effect=lambda p: (
+        ((80.0 - p.x) ** 2 + (80.0 - p.y) ** 2) ** 0.5
+    ))
+    far_loc = MagicMock()
+    far_loc.x = 50.0
+    far_loc.y = 50.0
+    far_loc.distance_to = MagicMock(side_effect=lambda p: (
+        ((50.0 - p.x) ** 2 + (50.0 - p.y) ** 2) ** 0.5
+    ))
+    bot.expansion_locations_list = [enemy_start, nat_loc, far_loc]
+
+    # Supply for _attack_target high-supply check
+    bot.supply_used = 50
 
     return bot
 
@@ -142,7 +165,7 @@ class TestResolveAttackRally:
         assert result == staging
 
     def test_push_on_staging_timeout(self) -> None:
-        """After 30s at staging without coherence, push anyway."""
+        """After 60s at staging without coherence, push anyway."""
         bot = _make_bot()
         bot.coherence_manager.coherence_distance = 1.0  # very strict
         bot.coherence_manager.coherence_pct = 1.0
@@ -156,8 +179,8 @@ class TestResolveAttackRally:
         bot.time = 0.0
         bot._resolve_attack_rally(army, snap, bot.coherence_manager)
 
-        # After 30s, should push
-        bot.time = 31.0
+        # After 60s, should push
+        bot.time = 61.0
         bot._staging_point_time = -999.0
         result = bot._resolve_attack_rally(army, snap, bot.coherence_manager)
         attack = bot._attack_target()
@@ -257,3 +280,59 @@ class TestHysteresisIntegration:
         result = bot._resolve_attack_rally(army, snap3, cm)
         attack = bot._attack_target()
         assert result == attack
+
+
+class TestEnemyNatural:
+    """Test _enemy_natural() expansion detection."""
+
+    def test_returns_closest_expansion_to_enemy_start(self) -> None:
+        bot = _make_bot()
+        result = bot._enemy_natural()
+        # nat_loc at (80,80) is closer to enemy_start (90,90) than far_loc (50,50)
+        assert result == (80.0, 80.0)
+
+    def test_caches_result(self) -> None:
+        bot = _make_bot()
+        result1 = bot._enemy_natural()
+        result2 = bot._enemy_natural()
+        assert result1 == result2
+        assert result1 is result2  # same cached tuple
+
+    def test_returns_none_without_enemy_start(self) -> None:
+        bot = _make_bot()
+        bot.enemy_start_locations = []
+        result = bot._enemy_natural()
+        assert result is None
+
+    def test_returns_none_without_expansions(self) -> None:
+        bot = _make_bot()
+        bot.expansion_locations_list = [bot.enemy_start_locations[0]]  # only start loc
+        result = bot._enemy_natural()
+        assert result is None
+
+
+class TestAttackTargetNatural:
+    """Test that _attack_target() returns enemy natural by default."""
+
+    def test_targets_enemy_natural_by_default(self) -> None:
+        bot = _make_bot()
+        bot.supply_used = 50
+        result = bot._attack_target()
+        assert result == (80.0, 80.0)  # enemy natural
+
+    def test_targets_enemy_main_at_high_supply(self) -> None:
+        bot = _make_bot()
+        bot.supply_used = 160
+        result = bot._attack_target()
+        # Should return enemy main (scouted base or start location)
+        main = bot._enemy_main()
+        assert result == main
+
+    def test_falls_back_to_main_without_natural(self) -> None:
+        bot = _make_bot()
+        bot.supply_used = 50
+        bot.expansion_locations_list = [bot.enemy_start_locations[0]]  # no natural
+        bot._cached_enemy_natural = None
+        result = bot._attack_target()
+        main = bot._enemy_main()
+        assert result == main

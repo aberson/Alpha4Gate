@@ -76,6 +76,9 @@ class Alpha4GateBot(BotAI):
     # Staging point recalculation interval in game seconds
     _STAGING_RECALC_SECONDS: float = 30.0
 
+    # At this supply or above, attack the enemy main instead of the natural
+    PUSH_MAIN_SUPPLY: int = 160
+
     # Maps StrategicState → action index (inverse of _ACTION_TO_STATE in environment.py)
     _STATE_TO_ACTION: dict[StrategicState, int] = {
         StrategicState.OPENING: 0,
@@ -116,6 +119,7 @@ class Alpha4GateBot(BotAI):
         self._coherence_params_logged: bool = False
         self._cached_staging_point: tuple[float, float] | None = None
         self._staging_point_time: float = -999.0  # last recalc time
+        self._cached_enemy_natural: tuple[float, float] | None = None
 
         # Transition recording for training
         self._training_db = training_db
@@ -466,6 +470,18 @@ class Alpha4GateBot(BotAI):
 
         if state == StrategicState.ATTACK:
             rally = self._resolve_attack_rally(army, snapshot, cm)
+
+            # Hard coherence gate: in ATTACK state, if army is not grouped,
+            # skip micro entirely and gather all units to staging point.
+            # Does NOT apply in DEFEND — must fight immediately even if ungrouped.
+            if not cm.is_coherent(army):
+                staging = self._get_staging_point()
+                if staging is not None:
+                    staging_pt = Point2(staging)
+                    for u in army:
+                        if u.distance_to(staging_pt) > 5:
+                            u.move(staging_pt)
+                return
         else:
             rally = self._defense_rally()
 
@@ -499,11 +515,23 @@ class Alpha4GateBot(BotAI):
         for unit in self.units:
             if unit.is_structure or unit.type_id == UnitTypeId.PROBE:
                 continue
-            if unit.is_idle and unit.distance_to(rally_pt) > 10:
+            if unit.distance_to(rally_pt) > 10:
                 unit.attack(rally_pt)
 
     def _attack_target(self) -> tuple[float, float] | None:
-        """Pick an attack target: known enemy base or enemy start location."""
+        """Pick an attack target: enemy natural (early) or enemy main (high supply)."""
+        # Late game: push enemy main when at high supply
+        if self.supply_used >= self.PUSH_MAIN_SUPPLY:
+            return self._enemy_main()
+        # Default: deny the enemy natural expansion
+        natural = self._enemy_natural()
+        if natural is not None:
+            return natural
+        # Fallback to enemy main
+        return self._enemy_main()
+
+    def _enemy_main(self) -> tuple[float, float] | None:
+        """Return enemy main base position (scouted or start location)."""
         if self.scout_manager.enemy_base_locations:
             pos = self.scout_manager.enemy_base_locations[0]
             return (float(pos.x), float(pos.y))
@@ -511,6 +539,28 @@ class Alpha4GateBot(BotAI):
             pos = self.enemy_start_locations[0]
             return (float(pos.x), float(pos.y))
         return None
+
+    def _enemy_natural(self) -> tuple[float, float] | None:
+        """Find the enemy's natural expansion (closest expansion to enemy start).
+
+        Caches the result since expansion locations don't change during a game.
+        """
+        if self._cached_enemy_natural is not None:
+            return self._cached_enemy_natural
+        if not self.enemy_start_locations:
+            return None
+        enemy_start = self.enemy_start_locations[0]
+        all_expansions: list[Point2] = self.expansion_locations_list
+        candidates = [
+            exp
+            for exp in all_expansions
+            if exp.distance_to(enemy_start) > 1  # exclude start location itself
+        ]
+        if not candidates:
+            return None
+        natural = min(candidates, key=lambda loc: loc.distance_to(enemy_start))
+        self._cached_enemy_natural = (float(natural.x), float(natural.y))
+        return self._cached_enemy_natural
 
     def _defense_rally(self) -> tuple[float, float] | None:
         """Rally point for defending: between main and natural."""
