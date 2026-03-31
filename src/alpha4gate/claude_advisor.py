@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, field
 from typing import Any
+
+from alpha4gate.commands.primitives import (
+    CommandAction,
+    CommandPrimitive,
+    CommandSource,
+)
 
 PROMPT_TEMPLATE = (
     "You are a StarCraft II Protoss strategic advisor. "
-    "Analyze the current game state and provide one actionable suggestion.\n\n"
+    "Analyze the current game state and issue commands.\n\n"
     "Game time: {game_time}\n"
     "Strategic state: {strategic_state}\n"
     "Resources: {minerals} minerals, {vespene} gas, {supply_used}/{supply_cap} supply\n"
@@ -17,11 +24,17 @@ PROMPT_TEMPLATE = (
     "Enemy (known): {enemy_composition}\n"
     "Recent decisions: {recent_decisions}\n"
     "Current build order: {build_order_name} (step {build_step}/{total_steps})\n\n"
+    "Valid actions: build, expand, defend, attack, scout, tech, upgrade, rally\n"
+    "Valid locations: main, natural, third, fourth, enemy_main, enemy_natural, enemy_third\n\n"
     "Respond with JSON only:\n"
-    '{{"suggestion": "one sentence, actionable", '
+    '{{"commands": [{{"action": "...", "target": "...", "location": "..." or null, '
+    '"priority": 1-10}}], '
+    '"suggestion": "one sentence, actionable", '
     '"urgency": "low|medium|high", '
     '"reasoning": "one sentence"}}'
 )
+
+_VALID_ACTIONS = {a.value for a in CommandAction}
 
 
 @dataclass
@@ -32,6 +45,7 @@ class AdvisorResponse:
     urgency: str  # "low", "medium", "high"
     reasoning: str
     raw: str = ""
+    commands: list[CommandPrimitive] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict."""
@@ -116,11 +130,13 @@ def parse_response(text: str) -> AdvisorResponse:
 
     try:
         data = json.loads(cleaned)
+        commands = _extract_commands(data.get("commands", []))
         return AdvisorResponse(
             suggestion=data.get("suggestion", ""),
             urgency=data.get("urgency", "low"),
             reasoning=data.get("reasoning", ""),
             raw=text,
+            commands=commands,
         )
     except (json.JSONDecodeError, AttributeError):
         return AdvisorResponse(
@@ -129,6 +145,42 @@ def parse_response(text: str) -> AdvisorResponse:
             reasoning="(unparseable response)",
             raw=text,
         )
+
+
+def _extract_commands(raw_commands: Any) -> list[CommandPrimitive]:
+    """Extract CommandPrimitive list from parsed JSON commands array.
+
+    Invalid entries are silently skipped.
+    """
+    if not isinstance(raw_commands, list):
+        return []
+
+    primitives: list[CommandPrimitive] = []
+    for item in raw_commands:
+        if not isinstance(item, dict):
+            continue
+        action_str = str(item.get("action", "")).lower()
+        if action_str not in _VALID_ACTIONS:
+            continue
+        target = str(item.get("target", ""))
+        location = item.get("location")
+        if location is not None:
+            location = str(location)
+        priority = item.get("priority", 5)
+        if not isinstance(priority, int) or not (1 <= priority <= 10):
+            priority = 5
+
+        primitives.append(
+            CommandPrimitive(
+                action=CommandAction(action_str),
+                target=target,
+                location=location,
+                priority=priority,
+                source=CommandSource.AI,
+                id=str(uuid.uuid4()),
+            )
+        )
+    return primitives
 
 
 class RateLimiter:
@@ -153,6 +205,14 @@ class RateLimiter:
             True if a call is allowed.
         """
         return game_time_seconds - self._last_call_game_time >= self._interval
+
+    def set_interval(self, interval: float) -> None:
+        """Update the minimum interval between calls.
+
+        Args:
+            interval: New interval in game-seconds.
+        """
+        self._interval = interval
 
     def record_call(self, game_time_seconds: float) -> None:
         """Record that a call was made at the given game time.

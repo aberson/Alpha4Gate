@@ -2,12 +2,26 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 
+from alpha4gate.commands import (
+    CommandAction,
+    CommandInterpreter,
+    CommandMode,
+    CommandPrimitive,
+    CommandSource,
+    StructuredParser,
+    get_command_queue,
+    get_command_settings,
+)
 from alpha4gate.web_socket import ConnectionManager
 
 app = FastAPI(title="Alpha4Gate", version="0.1.0")
@@ -18,16 +32,96 @@ _data_dir: Path = Path("data")
 _log_dir: Path = Path("logs")
 _replay_dir: Path = Path("replays")
 
+# Command system state
+_command_history: list[dict[str, Any]] = []
+_interpreter: CommandInterpreter | None = None
 
-def configure(data_dir: Path, log_dir: Path, replay_dir: Path) -> None:
+
+def configure(
+    data_dir: Path,
+    log_dir: Path,
+    replay_dir: Path,
+    api_key: str = "",
+) -> None:
     """Configure directory paths for the API.
 
     Called by the runner at startup.
     """
-    global _data_dir, _log_dir, _replay_dir
+    global _data_dir, _log_dir, _replay_dir, _interpreter
     _data_dir = data_dir
     _log_dir = log_dir
     _replay_dir = replay_dir
+    if api_key:
+        _interpreter = CommandInterpreter(api_key)
+
+
+# --- Command Helpers ---
+
+
+def _primitive_to_dict(p: CommandPrimitive) -> dict[str, Any]:
+    """Convert a CommandPrimitive to a JSON-serialisable dict."""
+    return {
+        "action": p.action.value,
+        "target": p.target,
+        "location": p.location,
+        "priority": p.priority,
+        "source": p.source.value,
+    }
+
+
+async def _broadcast_command_event(event: dict[str, Any]) -> None:
+    """Broadcast an event to all command WebSocket clients."""
+    await ws_manager.broadcast_command_event(event)
+
+
+def _add_to_history(
+    cmd_id: str,
+    text: str,
+    primitives: list[CommandPrimitive] | None,
+    status: str = "queued",
+) -> None:
+    """Append an entry to the in-memory command history."""
+    _command_history.append({
+        "id": cmd_id,
+        "text": text,
+        "parsed": [_primitive_to_dict(p) for p in primitives] if primitives else None,
+        "source": "human",
+        "status": status,
+        "game_time": None,
+        "timestamp_utc": datetime.now(UTC).isoformat(),
+    })
+
+
+async def _interpret_and_queue(cmd_id: str, text: str) -> None:
+    """Background task: parse free text via Claude Haiku and queue results."""
+    if _interpreter is None:
+        await _broadcast_command_event({
+            "type": "rejected",
+            "id": cmd_id,
+            "reason": "no interpreter configured",
+        })
+        _add_to_history(cmd_id, text, None, status="rejected")
+        return
+    result = await _interpreter.interpret(text, CommandSource.HUMAN)
+    if result:
+        queue = get_command_queue()
+        for p in result:
+            p.id = cmd_id  # correlate with original request
+            queue.push(p)
+        await _broadcast_command_event({
+            "type": "queued",
+            "id": cmd_id,
+            "parsed": [_primitive_to_dict(p) for p in result],
+            "source": "human",
+        })
+        _add_to_history(cmd_id, text, result, status="queued")
+    else:
+        await _broadcast_command_event({
+            "type": "rejected",
+            "id": cmd_id,
+            "reason": "could not parse input",
+        })
+        _add_to_history(cmd_id, text, None, status="rejected")
 
 
 # --- REST Endpoints ---
@@ -275,6 +369,115 @@ async def update_reward_rules(rules: dict[str, Any]) -> dict[str, Any]:
     return {"updated": True, "rule_count": len(rules.get("rules", []))}
 
 
+# --- Command Endpoints ---
+
+
+@app.post("/api/commands")
+async def submit_command(request: dict[str, Any]) -> dict[str, Any]:
+    """Submit a text command. Structured parse first, then background interpreter."""
+    text = request.get("text", "")
+    parser = StructuredParser()
+    primitives = parser.parse(text, CommandSource.HUMAN)
+
+    if primitives:
+        queue = get_command_queue()
+        for p in primitives:
+            queue.push(p)
+        _add_to_history(primitives[0].id, text, primitives, status="queued")
+        return {
+            "id": primitives[0].id,
+            "status": "queued",
+            "text": text,
+            "parsed": [_primitive_to_dict(p) for p in primitives],
+        }
+    else:
+        cmd_id = str(uuid.uuid4())
+        asyncio.create_task(_interpret_and_queue(cmd_id, text))
+        return {
+            "id": cmd_id,
+            "status": "parsing",
+            "text": text,
+        }
+
+
+@app.get("/api/commands/history")
+async def get_command_history() -> dict[str, Any]:
+    """Get the in-memory command history."""
+    return {"commands": _command_history}
+
+
+@app.get("/api/commands/mode")
+async def get_command_mode() -> dict[str, Any]:
+    """Get the current command mode."""
+    settings = get_command_settings()
+    return {"mode": settings.mode.value, "muted": settings.muted}
+
+
+@app.put("/api/commands/mode", response_model=None)
+async def set_command_mode(
+    request: dict[str, Any],
+) -> JSONResponse | dict[str, Any]:
+    """Set the command mode. Clears the queue on mode switch."""
+    mode_str = request.get("mode", "")
+    try:
+        new_mode = CommandMode(mode_str)
+    except ValueError:
+        valid = [m.value for m in CommandMode]
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Invalid mode: {mode_str!r}", "valid_modes": valid},
+        )
+    settings = get_command_settings()
+    settings.mode = new_mode
+    queue = get_command_queue()
+    cleared = queue.clear()
+    for cmd in cleared:
+        await _broadcast_command_event({
+            "type": "cleared",
+            "id": cmd.id,
+            "reason": "mode switch",
+        })
+    return {"mode": settings.mode.value, "queue_cleared": bool(cleared)}
+
+
+@app.put("/api/commands/settings")
+async def update_command_settings(request: dict[str, Any]) -> dict[str, Any]:
+    """Update command settings (claude_interval, lockout_duration, muted)."""
+    settings = get_command_settings()
+    if "claude_interval" in request:
+        settings.claude_interval = float(request["claude_interval"])
+    if "lockout_duration" in request:
+        settings.lockout_duration = float(request["lockout_duration"])
+    if "muted" in request:
+        settings.muted = bool(request["muted"])
+    return {
+        "claude_interval": settings.claude_interval,
+        "lockout_duration": settings.lockout_duration,
+        "muted": settings.muted,
+    }
+
+
+@app.get("/api/commands/primitives")
+async def get_primitives() -> dict[str, Any]:
+    """Get the action/target/location vocabulary for the command system."""
+    return {
+        "actions": [a.value for a in CommandAction],
+        "targets": {
+            "build": [
+                "stalkers", "zealots", "immortals", "sentries", "pylon", "gateway", "forge",
+            ],
+            "tech": [
+                "voidrays", "colossi", "high_templar", "dark_templar", "blink", "charge",
+            ],
+            "upgrade": ["weapons", "armor", "shields", "blink", "charge"],
+        },
+        "locations": [
+            "main", "natural", "third", "fourth",
+            "enemy_main", "enemy_natural", "enemy_third",
+        ],
+    }
+
+
 # --- WebSocket Endpoints ---
 
 
@@ -288,6 +491,17 @@ async def ws_game(websocket: WebSocket) -> None:
             await websocket.receive_text()
     except WebSocketDisconnect:
         ws_manager.disconnect_game(websocket)
+
+
+@app.websocket("/ws/commands")
+async def ws_commands(websocket: WebSocket) -> None:
+    """WebSocket endpoint for live command events."""
+    await ws_manager.connect_commands(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        ws_manager.disconnect_commands(websocket)
 
 
 @app.websocket("/ws/decisions")

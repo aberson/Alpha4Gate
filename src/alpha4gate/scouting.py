@@ -148,6 +148,7 @@ class ScoutManager:
         self._scout_tag: int | None = None
         self._last_scout_time: float = -self.RESCOUT_INTERVAL
         self._enemy_base_locations: list[Any] = []
+        self._forced_target: tuple[float, float] | None = None
 
     @property
     def scout_tag(self) -> int | None:
@@ -189,6 +190,21 @@ class ScoutManager:
     def clear_scout(self) -> None:
         """Clear the scout assignment (probe died or returned)."""
         self._scout_tag = None
+
+    def force_scout(self, target: tuple[float, float]) -> None:
+        """Set a forced scout target to be picked up by the next scout cycle."""
+        self._forced_target = target
+
+    @property
+    def forced_target(self) -> tuple[float, float] | None:
+        """Return the forced scout target, if set."""
+        return self._forced_target
+
+    def consume_forced_target(self) -> tuple[float, float] | None:
+        """Return and clear the forced scout target."""
+        target = self._forced_target
+        self._forced_target = None
+        return target
 
     def update_enemy_bases(self, locations: list[Any]) -> None:
         """Update known enemy base locations.

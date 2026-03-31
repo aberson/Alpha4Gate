@@ -13,6 +13,14 @@ from sc2.position import Point2
 
 from alpha4gate.army_coherence import ArmyCoherenceManager
 from alpha4gate.build_orders import BuildOrder
+from alpha4gate.claude_advisor import ClaudeAdvisor, build_prompt
+from alpha4gate.commands import (
+    CommandExecutor,
+    CommandMode,
+    CommandSource,
+    get_command_queue,
+    get_command_settings,
+)
 from alpha4gate.console import print_status
 from alpha4gate.decision_engine import DecisionEngine, GameSnapshot, StrategicState
 from alpha4gate.learning.features import _FEATURE_SPEC
@@ -98,6 +106,7 @@ class Alpha4GateBot(BotAI):
         training_db: TrainingDB | None = None,
         game_id: str | None = None,
         reward_calculator: RewardCalculator | None = None,
+        claude_advisor: ClaudeAdvisor | None = None,
     ) -> None:
         super().__init__()
         self.decision_engine = DecisionEngine(build_order=build_order)
@@ -120,6 +129,13 @@ class Alpha4GateBot(BotAI):
         self._cached_staging_point: tuple[float, float] | None = None
         self._staging_point_time: float = -999.0  # last recalc time
         self._cached_enemy_natural: tuple[float, float] | None = None
+
+        # Command system executor
+        self._command_executor = CommandExecutor(self)
+
+        # Claude advisor integration
+        self._claude_advisor = claude_advisor
+        self._ai_lockout_until: float = 0.0
 
         # Transition recording for training
         self._training_db = training_db
@@ -181,6 +197,58 @@ class Alpha4GateBot(BotAI):
         # Neural override: let the trained model choose the strategic state
         if self._neural_engine is not None:
             state = self._neural_engine.predict(snapshot)
+
+        # --- Command system: drain queue and execute ---
+        settings = get_command_settings()
+        if settings.mode != CommandMode.HUMAN_ONLY or not settings.muted:
+            queue = get_command_queue()
+            commands = queue.drain(snapshot.game_time_seconds)
+            for cmd in commands:
+                # Trigger lockout when human command arrives in hybrid mode
+                if (
+                    cmd.source == CommandSource.HUMAN
+                    and settings.mode == CommandMode.HYBRID_CMD
+                ):
+                    self.set_ai_lockout(snapshot.game_time_seconds)
+                await self._command_executor.execute(cmd)
+
+        # --- Claude advisor → command queue ---
+        if (
+            self._claude_advisor is not None
+            and self._claude_advisor.enabled
+            and not settings.muted
+            and settings.mode != CommandMode.HUMAN_ONLY
+        ):
+            if not self._is_ai_locked_out(snapshot.game_time_seconds):
+                # Check for completed advice
+                response = self._claude_advisor.collect_response()
+                if response and response.commands:
+                    queue = get_command_queue()
+                    for cmd in response.commands:
+                        queue.push(cmd)
+
+                # Fire new advice request if rate limit allows
+                sequencer = self.decision_engine.sequencer
+                prompt = build_prompt(
+                    game_time=f"{int(snapshot.game_time_seconds // 60)}:"
+                    f"{int(snapshot.game_time_seconds % 60):02d}",
+                    strategic_state=state.value,
+                    minerals=snapshot.minerals,
+                    vespene=snapshot.vespene,
+                    supply_used=snapshot.supply_used,
+                    supply_cap=snapshot.supply_cap,
+                    army_composition=f"{snapshot.army_supply} supply",
+                    enemy_composition=(
+                        f"{snapshot.enemy_army_supply_visible} supply visible"
+                    ),
+                    recent_decisions=str(state.value),
+                    build_order_name=sequencer.order.id,
+                    build_step=sequencer.current_index,
+                    total_steps=len(sequencer.order.steps),
+                )
+                self._claude_advisor.request_advice(
+                    prompt, snapshot.game_time_seconds
+                )
 
         # --- Record transition for training DB (every 22 steps) ---
         if self._training_db is not None and iteration % 22 == 0:
@@ -275,6 +343,30 @@ class Alpha4GateBot(BotAI):
             next_state=None,
             done=True,
         )
+
+    # ------------------------------------------------------------------ #
+    #  AI lockout (hybrid mode)
+    # ------------------------------------------------------------------ #
+
+    def set_ai_lockout(self, game_time: float) -> None:
+        """Set AI lockout after a human command in hybrid mode.
+
+        Args:
+            game_time: Current game time in seconds.
+        """
+        settings = get_command_settings()
+        self._ai_lockout_until = game_time + settings.lockout_duration
+
+    def _is_ai_locked_out(self, game_time: float) -> bool:
+        """Check if AI commands are currently locked out.
+
+        Args:
+            game_time: Current game time in seconds.
+
+        Returns:
+            True if AI commands should be suppressed.
+        """
+        return game_time < self._ai_lockout_until
 
     # ------------------------------------------------------------------ #
     #  Build order execution (OPENING phase)
@@ -437,6 +529,19 @@ class Alpha4GateBot(BotAI):
         enemy_bases = [s.position for s in self.enemy_structures if s.is_structure]
         if enemy_bases:
             self.scout_manager.update_enemy_bases(enemy_bases)
+
+        # Check for forced scout target (from command system)
+        forced = self.scout_manager.consume_forced_target()
+        if forced is not None:
+            probes = self.units(UnitTypeId.PROBE)
+            if len(probes) >= 2:
+                scout = probes.furthest_to(self.start_location)
+                scout.move(Point2(forced))
+                self.scout_manager.assign_scout(scout.tag, self.time)
+                self._actions_this_step.append(
+                    {"action": "Scout", "target": f"probe→{forced} (forced)"}
+                )
+                return
 
         if not self.scout_manager.should_scout(self.time):
             return

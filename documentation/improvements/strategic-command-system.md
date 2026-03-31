@@ -15,12 +15,12 @@ Key modules a builder needs to understand:
 | Module | Path | What it does |
 |--------|------|-------------|
 | `Alpha4GateBot` | `src/alpha4gate/bot.py` | Main bot class, subclasses burnysc2's `BotAI`. The `async on_step(iteration)` method runs every game frame and orchestrates all decision layers. |
-| `DecisionEngine` | `src/alpha4gate/decision_engine.py` | Rule-based state machine with 5 states: `StrategicState(StrEnum)` = OPENING, EXPAND, ATTACK, DEFEND, LATE_GAME. `evaluate(snapshot, game_step)` returns the current state. Has `set_claude_advice(advice)` (exists but never called). `DecisionEntry` dataclass logs transitions with a `claude_advice` field. |
+| `DecisionEngine` | `src/alpha4gate/decision_engine.py` | Rule-based state machine with 5 states: `StrategicState(StrEnum)` = OPENING, EXPAND, ATTACK, DEFEND, LATE_GAME. `evaluate(snapshot, game_step)` returns the current state. Has `set_command_override(override)` for the command system to influence decisions. `DecisionEntry` dataclass logs transitions with a `claude_advice` field. |
 | `GameSnapshot` | `src/alpha4gate/decision_engine.py` | Dataclass holding minimal game state for decisions: supply, minerals, vespene, army_supply, worker_count, base_count, enemy_army_near_base, game_time_seconds, structure counts. |
 | `MacroManager` | `src/alpha4gate/macro_manager.py` | Economy and production decisions (worker saturation, supply, expansions, production building scaling). Called from `on_step()` for non-OPENING states. |
 | `MicroController` | `src/alpha4gate/micro.py` | Army combat logic (target priority, kiting, focus fire). Called from `on_step()` during ATTACK/DEFEND states. |
 | `NeuralDecisionEngine` | `src/alpha4gate/learning/neural_engine.py` | Optional PPO model that can replace rule-based decisions. `DecisionMode(StrEnum)` = RULES, NEURAL, HYBRID. In HYBRID mode, neural picks action but DEFEND is forced if enemy near base. |
-| `ClaudeAdvisor` | `src/alpha4gate/claude_advisor.py` | Async Claude API advisor. Fire-and-forget `asyncio.Task`. `RateLimiter` gates calls (default 30 game-seconds). Returns `AdvisorResponse(suggestion, urgency, reasoning)`. **Built but NOT wired into game loop.** |
+| `ClaudeAdvisor` | `src/alpha4gate/claude_advisor.py` | Async Claude API advisor. Fire-and-forget `asyncio.Task`. `RateLimiter` gates calls (default 30 game-seconds). Returns structured command output. Wired into game loop via `CommandInterpreter` — Claude advice is parsed into command primitives and queued for execution. |
 | `ScoutManager` | `src/alpha4gate/scouting.py` | Sends probe/observer to scout enemy base. |
 | `ArmyCoherenceManager` | `src/alpha4gate/army_coherence.py` | Army grouping params: staging timeout, gather radius. |
 | `ConnectionManager` | `src/alpha4gate/web_socket.py` | WebSocket broadcast manager. `_broadcast_queue` (thread-safe `queue.Queue`) bridges game thread → FastAPI async. |
@@ -49,7 +49,7 @@ RewardRuleEditor.
 cd .
 uv sync
 
-# Run tests (378 unit tests, no SC2 needed)
+# Run tests (505 unit tests, no SC2 needed)
 uv run pytest
 
 # Lint and typecheck
@@ -181,7 +181,7 @@ then train voidrays). Two execution strategies:
 2. **Claude-decomposed**: Claude breaks free text into multiple sequential primitives
    and sends them as an ordered list.
 
-Both paths exist. Testing will determine which works better for each scenario.
+Both paths are built and working. Bot-level chains handle common prerequisite sequences automatically; Claude-decomposed is better for complex multi-step strategies where the AI has full situational awareness.
 
 ### Location resolution
 
@@ -652,9 +652,7 @@ New component: `CommandPanel.tsx`
 ## Configuration
 
 ### CLI flags (runner.py)
-- `--command-mode [ai_assisted|human_only|hybrid_cmd]` (default: ai_assisted)
-- `--claude-interval SECONDS` (default: 30)
-- `--lockout-duration SECONDS` (default: 5)
+- `--command-mode`, `--claude-interval`, `--lockout-duration` are **not** in runner.py CLI flags. These are runtime-only settings adjustable via the REST API (`POST /commands/mode`, `POST /commands/settings`) and the CommandPanel UI.
 
 ### Runtime settings (adjustable via UI)
 - Command mode
@@ -674,3 +672,50 @@ New component: `CommandPanel.tsx`
 | Mode switch mid-game loses queued commands | Queue is cleared on mode switch; broadcast "cleared" events; fresh start in new mode |
 | Command override conflicts with neural engine | Defined precedence: command > neural > rules. Override has expiry (120s default). Neural resumes after |
 | Executor bypasses macro manager | Direct BotAI calls for v1. If conflicts arise in testing, add commanded-production queue that macro checks first |
+
+---
+
+## Build Complete — 2026-03-30
+
+**All 6 steps built. Issues #24–#29 closed. 505/505 tests passing. Zero type errors. Zero lint violations.**
+
+### What was built
+
+- **Step 1** — Command primitives, structured parser, thread-safe priority queue, TECH recipe chains (+32 tests)
+- **Step 2** — CommandExecutor with location resolution, DecisionEngine command override with expiry, bot.py on_step() integration, ScoutManager.force_scout() (+38 tests)
+- **Step 3** — Claude Haiku NLP interpreter (5s timeout, 128 max_tokens), advisor structured output, lockout logic, RateLimiter runtime interval changes (+23 tests)
+- **Step 4** — 6 REST endpoints (POST/GET commands, GET/PUT mode, PUT settings, GET primitives), /ws/commands WebSocket, command history (+13 tests)
+- **Step 5** — CommandPanel.tsx React component: text input with autocomplete, mode selector, settings sliders, mute toggle, command history feed with source badges and status tracking, /ws/commands real-time updates
+- **Step 6** — 21 end-to-end integration tests covering full pipeline, mode switching, mute, lockout, TTL expiry, overflow eviction, conflict clearing, command override, TECH recipes, settings persistence, command history
+
+### Files created
+
+| File | What it does |
+|---|---|
+| `src/alpha4gate/commands/__init__.py` | Public exports for commands package |
+| `src/alpha4gate/commands/primitives.py` | CommandAction, CommandSource, CommandMode enums; CommandPrimitive, CommandSettings dataclasses; get_command_settings() singleton |
+| `src/alpha4gate/commands/parser.py` | StructuredParser — regex-based text → CommandPrimitive matching |
+| `src/alpha4gate/commands/queue.py` | Thread-safe CommandQueue with priority ordering, max depth 10, TTL expiry, conflict clearing; get_command_queue() singleton |
+| `src/alpha4gate/commands/recipes.py` | TECH_RECIPES dict and expand_tech() for prerequisite chains |
+| `src/alpha4gate/commands/executor.py` | CommandExecutor translates primitives to BotAI calls; resolve_location() for location strings → Point2 |
+| `src/alpha4gate/commands/interpreter.py` | Claude Haiku NLP free-text parser with 5s timeout |
+| `frontend/src/components/CommandPanel.tsx` | React command panel with input, autocomplete, mode selector, settings, history feed |
+| `tests/test_commands.py` | 32 tests for primitives, parser, queue, recipes |
+| `tests/test_executor.py` | 38 tests for executor, location resolution, override |
+| `tests/test_interpreter.py` | 23 tests for interpreter, advisor, lockout |
+| `tests/test_api_commands.py` | 13 tests for API endpoints |
+| `tests/test_command_integration.py` | 21 tests for end-to-end integration |
+
+### Files modified
+
+| File | Change |
+|---|---|
+| `src/alpha4gate/bot.py` | Added command queue drain/execute in on_step(), advisor wiring, lockout logic, _command_executor init |
+| `src/alpha4gate/decision_engine.py` | Added set_command_override() with override state, expiry, and audit logging |
+| `src/alpha4gate/claude_advisor.py` | Updated prompt for structured primitive JSON, added commands to AdvisorResponse, RateLimiter.set_interval() |
+| `src/alpha4gate/scouting.py` | Added force_scout(), forced_target property, consume_forced_target() |
+| `src/alpha4gate/api.py` | Added 6 command REST endpoints, /ws/commands WebSocket, configure() api_key param, command history |
+| `src/alpha4gate/web_socket.py` | Added command connections channel to ConnectionManager |
+| `frontend/src/components/LiveView.tsx` | Integrated CommandPanel into layout |
+| `frontend/src/types/game.ts` | Added command system TypeScript types |
+| `frontend/src/App.css` | Added command panel styles |

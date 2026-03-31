@@ -182,3 +182,272 @@
     border-right-color: var(--border);
   }
 }
+
+/* --- Live View Layout --- */
+
+.live-view-layout {
+  display: flex;
+  gap: 24px;
+  text-align: left;
+
+  @media (max-width: 1024px) {
+    flex-direction: column;
+  }
+}
+
+.live-view-layout > .live-view {
+  flex: 1 1 55%;
+  min-width: 0;
+}
+
+.live-view-layout > .command-panel {
+  flex: 1 1 45%;
+  min-width: 0;
+}
+
+/* --- Command Panel --- */
+
+.command-panel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+
+  h3 {
+    margin: 0 0 12px;
+    font-size: 18px;
+    color: var(--text-h);
+  }
+
+  h4 {
+    margin: 12px 0 8px;
+    font-size: 15px;
+    color: var(--text-h);
+  }
+}
+
+.command-error {
+  background: rgba(220, 38, 38, 0.12);
+  color: #dc2626;
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.command-input-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+
+  button {
+    padding: 6px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--accent-bg);
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 14px;
+    white-space: nowrap;
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  }
+}
+
+.command-input-wrapper {
+  position: relative;
+  flex: 1;
+}
+
+.command-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  font-family: var(--mono);
+  font-size: 14px;
+  box-sizing: border-box;
+
+  &:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+  }
+}
+
+.command-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 0 0 6px 6px;
+  z-index: 10;
+  max-height: 160px;
+  overflow-y: auto;
+
+  li {
+    padding: 6px 12px;
+    font-family: var(--mono);
+    font-size: 14px;
+    cursor: pointer;
+    color: var(--text);
+
+    &:hover,
+    &.selected {
+      background: var(--accent-bg);
+      color: var(--accent);
+    }
+  }
+}
+
+.command-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+
+  label {
+    font-size: 14px;
+    color: var(--text);
+  }
+
+  select {
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--text-h);
+    font-size: 14px;
+  }
+
+  button {
+    padding: 4px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13px;
+  }
+}
+
+.mute-btn.muted {
+  background: rgba(220, 38, 38, 0.15);
+  color: #dc2626;
+  border-color: rgba(220, 38, 38, 0.4);
+}
+
+.command-settings {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+
+  label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text);
+  }
+
+  input[type="range"] {
+    flex: 1;
+  }
+}
+
+.command-history-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.command-entry {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.command-entry-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.source-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.source-ai {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.source-human {
+  background: rgba(34, 197, 94, 0.12);
+  color: #16a34a;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.status-badge.status-queued { color: #ca8a04; }
+.status-badge.status-executed { color: #16a34a; }
+.status-badge.status-expired { color: #9ca3af; }
+.status-badge.status-rejected { color: #dc2626; }
+.status-badge.status-parsing { color: #2563eb; }
+
+.command-time {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.command-text {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text-h);
+}
+
+.command-parsed {
+  margin-top: 2px;
+}
+
+.parsed-primitive {
+  display: inline-block;
+  padding: 1px 6px;
+  margin-right: 4px;
+  background: var(--code-bg);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+}

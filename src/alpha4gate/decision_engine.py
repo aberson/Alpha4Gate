@@ -82,6 +82,11 @@ class DecisionEngine:
         self._sequencer = BuildSequencer(order)
         self._decision_log: list[DecisionEntry] = []
         self._pending_advice: str | None = None
+        self._override_state: StrategicState | None = None
+        self._override_expires: float = 0.0
+        self._override_source: str | None = None
+        self._override_duration: float = 0.0
+        self._override_active: bool = False
 
     @property
     def state(self) -> StrategicState:
@@ -102,6 +107,19 @@ class DecisionEngine:
         """Store pending Claude advice for the next decision."""
         self._pending_advice = advice
 
+    def set_command_override(
+        self, state: StrategicState, source: str, duration: float = 120.0
+    ) -> None:
+        """Force strategic state for duration game-seconds.
+
+        Command override has highest priority and will be checked before
+        normal state evaluation.
+        """
+        self._override_state = state
+        self._override_duration = duration
+        self._override_source = source
+        self._override_active = False  # becomes True on first evaluate
+
     def evaluate(self, snapshot: GameSnapshot, game_step: int = 0) -> StrategicState:
         """Evaluate the game state and potentially transition to a new strategic state.
 
@@ -112,6 +130,59 @@ class DecisionEngine:
         Returns:
             The (possibly new) strategic state.
         """
+        # --- Command override: highest priority ---
+        if self._override_state is not None:
+            # Activate override on first evaluate after set_command_override()
+            if not self._override_active:
+                self._override_expires = (
+                    snapshot.game_time_seconds + self._override_duration
+                )
+                self._override_active = True
+
+            if snapshot.game_time_seconds < self._override_expires:
+                override = self._override_state
+                if override != self._state:
+                    entry = DecisionEntry(
+                        game_step=game_step,
+                        game_time_seconds=snapshot.game_time_seconds,
+                        from_state=self._state.value,
+                        to_state=override.value,
+                        reason="command_override",
+                        claude_advice=self._pending_advice,
+                    )
+                    self._decision_log.append(entry)
+                    self._pending_advice = None
+                    self._state = override
+                return self._state
+
+            # Override expired — clear it and log transition back
+            self._override_state = None
+            self._override_active = False
+            self._override_source = None
+
+            # Fall through to normal evaluation below, which will
+            # compute the correct next state and log the transition
+            # if the state changes from the override state.
+            old_state = self._state
+            new_state = self._compute_next_state(snapshot)
+            if new_state != old_state:
+                reason = (
+                    f"command_override_expired, "
+                    f"{self._transition_reason(old_state, new_state, snapshot)}"
+                )
+                entry = DecisionEntry(
+                    game_step=game_step,
+                    game_time_seconds=snapshot.game_time_seconds,
+                    from_state=old_state.value,
+                    to_state=new_state.value,
+                    reason=reason,
+                    claude_advice=self._pending_advice,
+                )
+                self._decision_log.append(entry)
+                self._pending_advice = None
+                self._state = new_state
+            return self._state
+
         old_state = self._state
         new_state = self._compute_next_state(snapshot)
 

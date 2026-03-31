@@ -98,6 +98,41 @@ export interface ReplayDetail {
   };
 }
 
+/** Command system types. */
+export type CommandModeValue = "ai_assisted" | "human_only" | "hybrid_cmd";
+
+export interface CommandParsed {
+  action: string;
+  target: string;
+  location: string | null;
+  priority: number;
+  source: string;
+}
+
+export interface CommandHistoryEntry {
+  id: string;
+  text: string;
+  parsed: CommandParsed[] | null;
+  source: string;
+  status: string;
+  game_time: number | null;
+  timestamp_utc: string;
+}
+
+export interface CommandPrimitives {
+  actions: string[];
+  targets: Record<string, string[]>;
+  locations: string[];
+}
+
+export interface CommandEvent {
+  type: "queued" | "executed" | "expired" | "rejected" | "evicted" | "cleared";
+  id: string;
+  parsed?: CommandParsed[];
+  reason?: string;
+  source?: string;
+}
+
 /** Status response. */
 export interface StatusResponse {
   state: "playing" | "idle";

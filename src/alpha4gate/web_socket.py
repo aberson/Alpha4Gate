@@ -15,6 +15,7 @@ class ConnectionManager:
     def __init__(self) -> None:
         self._game_connections: list[WebSocket] = []
         self._decision_connections: list[WebSocket] = []
+        self._command_connections: list[WebSocket] = []
 
     async def connect_game(self, websocket: WebSocket) -> None:
         """Accept a game state WebSocket connection."""
@@ -59,6 +60,33 @@ class ConnectionManager:
                 disconnected.append(ws)
         for ws in disconnected:
             self.disconnect_decisions(ws)
+
+    async def connect_commands(self, websocket: WebSocket) -> None:
+        """Accept a command stream WebSocket connection."""
+        await websocket.accept()
+        self._command_connections.append(websocket)
+
+    def disconnect_commands(self, websocket: WebSocket) -> None:
+        """Remove a command stream WebSocket connection."""
+        if websocket in self._command_connections:
+            self._command_connections.remove(websocket)
+
+    async def broadcast_command_event(self, data: dict[str, Any]) -> None:
+        """Broadcast a command event to all connected command clients."""
+        message = json.dumps(data)
+        disconnected: list[WebSocket] = []
+        for ws in self._command_connections:
+            try:
+                await ws.send_text(message)
+            except Exception:
+                disconnected.append(ws)
+        for ws in disconnected:
+            self.disconnect_commands(ws)
+
+    @property
+    def command_connection_count(self) -> int:
+        """Number of active command stream connections."""
+        return len(self._command_connections)
 
     @property
     def game_connection_count(self) -> int:
