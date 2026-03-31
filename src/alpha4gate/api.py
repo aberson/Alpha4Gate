@@ -56,12 +56,21 @@ def configure(
         _interpreter = CommandInterpreter(api_key)
 
 
+async def _drain_and_broadcast_once() -> int:
+    """Drain the broadcast queue and push entries to WebSocket clients.
+
+    Returns the number of entries broadcast.
+    """
+    entries = drain_broadcast_queue()
+    for entry in entries:
+        await ws_manager.broadcast_game_state(entry)
+    return len(entries)
+
+
 async def _game_state_broadcast_loop() -> None:
     """Drain the thread-safe broadcast queue and push to WebSocket clients."""
     while True:
-        entries = drain_broadcast_queue()
-        for entry in entries:
-            await ws_manager.broadcast_game_state(entry)
+        await _drain_and_broadcast_once()
         await asyncio.sleep(0.5)
 
 

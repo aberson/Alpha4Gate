@@ -581,3 +581,105 @@ class TestCommandHistoryTracking:
         history = resp.json()["commands"]
         ids = [e["id"] for e in history]
         assert len(ids) == len(set(ids))
+
+
+# ---------------------------------------------------------------------------
+# 13. API commands use infinite TTL — never expired by drain
+# ---------------------------------------------------------------------------
+
+
+class TestAPICommandTTL:
+    def test_api_command_survives_high_game_time(self, client: TestClient) -> None:
+        """Commands submitted via the API have ttl=inf and are never expired."""
+        resp = client.post("/api/commands", json={"text": "build stalkers"})
+        assert resp.status_code == 200
+
+        queue = get_command_queue()
+        assert queue.size == 1
+
+        # Drain at an absurdly high game time — command should still be returned
+        commands = queue.drain(game_time=999_999.0)
+        assert len(commands) == 1
+        assert commands[0].target == "stalkers"
+
+    def test_game_time_stamped_command_does_expire(self) -> None:
+        """A command with a finite TTL and timestamp DOES expire when drained late."""
+        queue = get_command_queue()
+        cmd = CommandPrimitive(
+            action=CommandAction.BUILD,
+            target="zealot",
+            timestamp=10.0,
+            ttl=5.0,
+            source=CommandSource.HUMAN,
+        )
+        queue.push(cmd)
+        assert queue.size == 1
+
+        # Drain well past expiry (10 + 5 = 15)
+        result = queue.drain(game_time=100.0)
+        assert len(result) == 0
+
+    def test_inf_ttl_command_not_expired_alongside_finite(
+        self, client: TestClient
+    ) -> None:
+        """Mix inf-TTL (API) and finite-TTL commands; only the finite one expires."""
+        # API command — gets inf TTL
+        client.post("/api/commands", json={"text": "build stalkers"})
+
+        # Manually pushed command with short TTL
+        queue = get_command_queue()
+        finite_cmd = CommandPrimitive(
+            action=CommandAction.BUILD,
+            target="zealot",
+            timestamp=0.0,
+            ttl=10.0,
+            source=CommandSource.HUMAN,
+        )
+        queue.push(finite_cmd)
+        assert queue.size == 2
+
+        # Drain past the finite TTL but the inf one survives
+        commands = queue.drain(game_time=50.0)
+        assert len(commands) == 1
+        assert commands[0].target == "stalkers"
+
+
+# ---------------------------------------------------------------------------
+# 14. Drain → CommandExecutor integration
+# ---------------------------------------------------------------------------
+
+
+class TestDrainToExecute:
+    def test_drain_feeds_executor(self) -> None:
+        """Push a command, drain it, pass to CommandExecutor, verify execution."""
+        import asyncio
+
+        queue = get_command_queue()
+        cmd = CommandPrimitive(
+            action=CommandAction.BUILD,
+            target="stalkers",
+            timestamp=0.0,
+            ttl=60.0,
+            source=CommandSource.HUMAN,
+        )
+        queue.push(cmd)
+
+        commands = queue.drain(game_time=1.0)
+        assert len(commands) == 1
+
+        bot = _mock_bot()
+        executor = CommandExecutor(bot)
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(executor.execute(commands[0]))
+        finally:
+            loop.close()
+
+        assert result.success is True
+        assert result.primitives_executed == 1
+
+    def test_drain_empty_queue_gives_nothing_to_execute(self) -> None:
+        """Draining an empty queue yields no commands for the executor."""
+        queue = get_command_queue()
+        commands = queue.drain(game_time=0.0)
+        assert len(commands) == 0
