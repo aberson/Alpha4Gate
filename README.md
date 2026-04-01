@@ -2,7 +2,7 @@
 
 A StarCraft II Protoss bot with rule-based decision-making and Claude AI as strategic advisor. Uses a three-layer architecture (strategy, tactics, micro) to play against the built-in AI and human opponents. Includes a React dashboard for live game visualization, build order editing, replay browsing, and strategic reasoning display.
 
-**ClaudeAdvisor CLI verified at runtime** — rwl-full Run 2 confirmed all advisor logging works with CLI backend. Fixed subprocess leak on cancellation, added GET /api/commands/settings endpoint, added missing exception-path test. 527 tests passing, 0 type errors, 0 lint violations.
+**Defensive Fortification complete** — new FORTIFY strategic state with BuildBacklog, FortificationManager (cannons + batteries), and full bot integration. 578 tests passing, 0 type errors, 0 lint violations.
 
 ## Stack
 
@@ -16,7 +16,7 @@ A StarCraft II Protoss bot with rule-based decision-making and Claude AI as stra
 | Frontend | React + TypeScript + Vite | Live dashboard with game state streaming |
 | Deep learning | PyTorch + SB3 | PPO policy network for strategic decisions |
 | Training data | SQLite | Structured (s,a,r,s') transition storage |
-| Testing | pytest | 527 unit tests, SC2 integration markers |
+| Testing | pytest | 578 unit tests, SC2 integration markers |
 | Linting | ruff + mypy | Strict type checking, consistent style |
 
 ## Prerequisites
@@ -79,7 +79,7 @@ cd frontend && npm start
 ```
 Claude Advisor (async, non-blocking)
         |
-Strategy Layer — state machine: opening → expand → attack → defend → late_game
+Strategy Layer — state machine: opening → expand → attack → defend → fortify → late_game
         |
 Tactics Layer — macro manager, scouting, production balance
         |
@@ -93,7 +93,7 @@ The bot follows a build order during the opening, then transitions to dynamic de
 ## Testing
 
 ```bash
-uv run pytest              # 527 unit tests (no SC2 needed)
+uv run pytest              # 578 unit tests (no SC2 needed)
 uv run pytest -m sc2       # SC2 integration tests (SC2 must be running)
 uv run ruff check .        # Lint
 uv run mypy src            # Type check
@@ -104,8 +104,8 @@ cd frontend && npx tsc --noEmit  # TypeScript check
 
 ```
 Alpha4Gate/
-├── src/alpha4gate/     # 26 Python source modules (incl. commands/ package)
-├── tests/              # 21 test files, 527 tests
+├── src/alpha4gate/     # 28 Python source modules (incl. commands/ package)
+├── tests/              # 24 test files, 578 tests
 ├── frontend/           # React + TypeScript dashboard
 ├── docs/plan.md        # Phase 1 project plan
 ├── docs/deep-learning-plan.md  # Phase 2 deep learning plan

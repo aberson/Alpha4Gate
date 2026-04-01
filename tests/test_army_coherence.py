@@ -51,6 +51,9 @@ class TestParameterRandomization:
             "coherence_pct",
             "coherence_distance",
             "staging_distance",
+            "fortify_trigger_ratio",
+            "defense_scaling_divisor",
+            "max_defenses",
             "retreat_to_staging",
         }
         assert set(params.keys()) == expected_keys

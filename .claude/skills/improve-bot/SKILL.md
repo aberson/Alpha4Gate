@@ -1,14 +1,14 @@
 ---
 name: improve-bot
-description: Take an improvement suggestion for the Alpha4Gate SC2 bot, plan the changes through a structured conversation, then run /con_prep to hand off to the next session.
+description: Take an improvement suggestion for the Alpha4Gate SC2 bot, research and plan the changes, then execute them using /rwl-full for code review and verification.
 user-invocable: true
 argument: The improvement suggestion (e.g., "better worker defense against early rushes")
 ---
 
 # Improve Bot
 
-This skill takes an improvement suggestion for the Alpha4Gate bot and turns it into an
-actionable plan through conversation, then prepares the context handoff.
+This skill takes an improvement suggestion for the Alpha4Gate bot, turns it into an
+actionable plan, then executes it using the rwl-full developer-reviewer loop.
 
 **Input:** The user provides a suggestion as the skill argument
 (e.g., `/improve-bot better army composition against Zerg`).
@@ -34,7 +34,7 @@ actionable plan through conversation, then prepares the context handoff.
 
 ---
 
-## Phase 2: Plan the improvement (conversation)
+## Phase 2: Plan the improvement
 
 Ask the user targeted questions to nail down the plan. Adapt questions to the suggestion,
 but always cover:
@@ -53,7 +53,7 @@ follow-up questions if answers are ambiguous.
 
 ---
 
-## Phase 3: Write the improvement plan
+## Phase 3: Write the improvement plan and execute with rwl-full
 
 Once alignment is reached, write a concrete improvement plan document:
 
@@ -91,13 +91,52 @@ Show the plan to the user and confirm they approve it.
 
 ---
 
-## Phase 4: Hand off
+## Phase 4: Hand off for execution
 
 Once the user approves the plan, run `/con_prep` to prepare the context transition.
 
-The con_prep session should capture:
+The con_prep session must capture:
 - The improvement plan location and contents
-- The exact next action (which step to start with)
-- The testing commands to verify the improvement
+- The exact `/rwl-full` invocation(s) to run in the next session (see below)
+- The verification steps to run after rwl-full passes
 
-This ensures the next context window can pick up the improvement work cold.
+### Constructing the rwl-full invocation
+
+The transition prompt must include a ready-to-paste `/rwl-full` command. Construct the
+`--problem` argument from the improvement plan. It must include:
+- The summary of the improvement
+- The ordered list of proposed changes (copy from plan)
+- The files to modify and what changes in each
+- The testing plan (unit tests + regression)
+
+Example invocation (code-only, no app startup):
+
+```
+/rwl-full --problem "Implement improvement: <title>.
+
+Summary: <from plan>
+
+Changes:
+1. <step 1 from plan>
+2. <step 2 from plan>
+
+Files to modify:
+- <file>: <what to change>
+
+Testing:
+- Add/modify tests: <details>
+- Regression: all existing tests must pass
+- Run: uv run pytest
+"
+```
+
+**Notes for the transition prompt:**
+- Use code-only mode (omit `--start-cmd`) — the bot has no web UI to screenshot.
+- If the improvement is large (4+ steps), include multiple sequential rwl-full commands,
+  one per logical step. Instruct the next session to run them in order.
+- After rwl-full passes, the next session should:
+  1. Run the full test suite: `uv run pytest`
+  2. Run lint: `uv run ruff check .`
+  3. Run typecheck: `uv run mypy src`
+  4. Update the improvement plan doc — check off completed steps
+  5. Summarize what changed and suggest a game test command

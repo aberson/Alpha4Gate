@@ -62,6 +62,8 @@ _STRUCTURE_MAP: dict[str, UnitTypeId] = {
     "nexus": UnitTypeId.NEXUS,
     "assimilator": UnitTypeId.ASSIMILATOR,
     "cybernetics_core": UnitTypeId.CYBERNETICSCORE,
+    "photon_cannon": UnitTypeId.PHOTONCANNON,
+    "shield_battery": UnitTypeId.SHIELDBATTERY,
 }
 
 # Production structures for unit types

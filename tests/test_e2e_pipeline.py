@@ -90,6 +90,7 @@ class TestFullPipeline:
                 int(snap.enemy_army_near_base), snap.enemy_army_supply_visible,
                 snap.game_time_seconds, snap.gateway_count, snap.robo_count,
                 snap.forge_count, snap.upgrade_count, snap.enemy_structure_count,
+                snap.cannon_count, snap.battery_count,
             ], dtype=np.float32)
 
             db.store_transition("g1", i, float(i * 22), raw, action=action, reward=0.1)

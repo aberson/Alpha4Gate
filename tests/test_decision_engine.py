@@ -146,3 +146,130 @@ class TestDecisionLog:
         assert d["from_state"] == "opening"
         assert d["to_state"] == "expand"
         assert "reason" in d
+
+
+class TestFortifyState:
+    """Tests for FORTIFY strategic state transitions."""
+
+    def _make_engine(
+        self,
+        fortify_trigger_ratio: float = 1.5,
+        attack_supply_ratio: float = 1.2,
+    ) -> DecisionEngine:
+        """Create a DecisionEngine past the OPENING phase."""
+        order = _simple_build_order(1)
+        engine = DecisionEngine(
+            build_order=order,
+            fortify_trigger_ratio=fortify_trigger_ratio,
+            attack_supply_ratio=attack_supply_ratio,
+        )
+        engine.sequencer.advance()
+        engine.evaluate(GameSnapshot(supply_used=20))  # → EXPAND
+        assert engine.state == StrategicState.EXPAND
+        return engine
+
+    def test_enters_fortify_when_outgunned_and_retreated(self) -> None:
+        engine = self._make_engine(fortify_trigger_ratio=1.5)
+        engine._recently_retreated = True
+        # enemy 30 > own 10 * 1.5 = 15
+        snap = GameSnapshot(army_supply=10, enemy_army_supply_visible=30)
+        assert engine.evaluate(snap) == StrategicState.FORTIFY
+
+    def test_does_not_enter_fortify_without_retreat(self) -> None:
+        engine = self._make_engine(fortify_trigger_ratio=1.5)
+        # Not retreated — should not fortify
+        snap = GameSnapshot(army_supply=10, enemy_army_supply_visible=30)
+        result = engine.evaluate(snap)
+        assert result != StrategicState.FORTIFY
+
+    def test_does_not_enter_fortify_when_supply_not_exceeded(self) -> None:
+        engine = self._make_engine(fortify_trigger_ratio=1.5)
+        engine._recently_retreated = True
+        # enemy 14 is NOT > own 10 * 1.5 = 15
+        snap = GameSnapshot(army_supply=10, enemy_army_supply_visible=14)
+        result = engine.evaluate(snap)
+        assert result != StrategicState.FORTIFY
+
+    def test_exits_fortify_when_supply_recovers(self) -> None:
+        engine = self._make_engine(fortify_trigger_ratio=1.5, attack_supply_ratio=1.2)
+        engine._recently_retreated = True
+        # Enter fortify
+        engine.evaluate(
+            GameSnapshot(army_supply=10, enemy_army_supply_visible=30)
+        )
+        assert engine.state == StrategicState.FORTIFY
+
+        # Supply recovers: own 36 >= enemy 30 * 1.2 = 36
+        snap = GameSnapshot(army_supply=36, enemy_army_supply_visible=30)
+        result = engine.evaluate(snap)
+        assert result != StrategicState.FORTIFY
+
+    def test_exits_fortify_when_no_enemy_visible(self) -> None:
+        engine = self._make_engine(fortify_trigger_ratio=1.5)
+        engine._recently_retreated = True
+        engine.evaluate(
+            GameSnapshot(army_supply=10, enemy_army_supply_visible=30)
+        )
+        assert engine.state == StrategicState.FORTIFY
+
+        # Enemy disappears
+        snap = GameSnapshot(army_supply=10, enemy_army_supply_visible=0)
+        result = engine.evaluate(snap)
+        assert result == StrategicState.EXPAND
+
+    def test_defend_overrides_fortify(self) -> None:
+        engine = self._make_engine(fortify_trigger_ratio=1.5)
+        engine._recently_retreated = True
+        engine.evaluate(
+            GameSnapshot(army_supply=10, enemy_army_supply_visible=30)
+        )
+        assert engine.state == StrategicState.FORTIFY
+
+        # Enemy near base → DEFEND takes priority
+        snap = GameSnapshot(
+            army_supply=10,
+            enemy_army_supply_visible=30,
+            enemy_army_near_base=True,
+        )
+        assert engine.evaluate(snap) == StrategicState.DEFEND
+
+    def test_stays_in_fortify_while_outgunned(self) -> None:
+        engine = self._make_engine(fortify_trigger_ratio=1.5, attack_supply_ratio=1.2)
+        engine._recently_retreated = True
+        engine.evaluate(
+            GameSnapshot(army_supply=10, enemy_army_supply_visible=30)
+        )
+        assert engine.state == StrategicState.FORTIFY
+
+        # Still outgunned: own 20 < enemy 30 * 1.2 = 36
+        snap = GameSnapshot(army_supply=20, enemy_army_supply_visible=30)
+        assert engine.evaluate(snap) == StrategicState.FORTIFY
+
+    def test_fortify_transition_reason(self) -> None:
+        engine = self._make_engine(fortify_trigger_ratio=1.5)
+        engine._recently_retreated = True
+        engine.evaluate(
+            GameSnapshot(army_supply=10, enemy_army_supply_visible=30)
+        )
+        assert len(engine.decision_log) >= 2  # opening→expand, expand→fortify
+        fortify_entry = engine.decision_log[-1]
+        assert fortify_entry.to_state == "fortify"
+        assert "Fortifying" in fortify_entry.reason
+
+
+class TestGameSnapshotNewFields:
+    def test_cannon_count_default(self) -> None:
+        snap = GameSnapshot()
+        assert snap.cannon_count == 0
+
+    def test_battery_count_default(self) -> None:
+        snap = GameSnapshot()
+        assert snap.battery_count == 0
+
+    def test_cannon_count_set(self) -> None:
+        snap = GameSnapshot(cannon_count=3)
+        assert snap.cannon_count == 3
+
+    def test_battery_count_set(self) -> None:
+        snap = GameSnapshot(battery_count=2)
+        assert snap.battery_count == 2

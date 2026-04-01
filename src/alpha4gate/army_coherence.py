@@ -28,6 +28,13 @@ class ArmyCoherenceManager:
         "coherence_pct": (0.60, 0.80),
         "coherence_distance": (6.0, 10.0),
         "staging_distance": (12.0, 20.0),
+        "fortify_trigger_ratio": (1.3, 2.0),
+        "defense_scaling_divisor": (8.0, 15.0),
+    }
+
+    # Integer parameter ranges: (min, max) — inclusive
+    _INT_RANGES: dict[str, tuple[int, int]] = {
+        "max_defenses": (3, 5),
     }
 
     # Staging timeout: push even if not coherent after this many seconds
@@ -46,6 +53,13 @@ class ArmyCoherenceManager:
         self.coherence_pct: float = rng.uniform(*self._RANGES["coherence_pct"])
         self.coherence_distance: float = rng.uniform(*self._RANGES["coherence_distance"])
         self.staging_distance: float = rng.uniform(*self._RANGES["staging_distance"])
+        self.fortify_trigger_ratio: float = rng.uniform(
+            *self._RANGES["fortify_trigger_ratio"]
+        )
+        self.defense_scaling_divisor: float = rng.uniform(
+            *self._RANGES["defense_scaling_divisor"]
+        )
+        self.max_defenses: int = rng.randint(*self._INT_RANGES["max_defenses"])
 
         # Roll boolean parameter
         self.retreat_to_staging: bool = rng.random() < 0.5
@@ -67,6 +81,9 @@ class ArmyCoherenceManager:
             "coherence_pct": round(self.coherence_pct, 3),
             "coherence_distance": round(self.coherence_distance, 1),
             "staging_distance": round(self.staging_distance, 1),
+            "fortify_trigger_ratio": round(self.fortify_trigger_ratio, 3),
+            "defense_scaling_divisor": round(self.defense_scaling_divisor, 3),
+            "max_defenses": self.max_defenses,
             "retreat_to_staging": self.retreat_to_staging,
         }
 

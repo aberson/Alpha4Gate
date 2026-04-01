@@ -27,6 +27,7 @@ _ACTION_TO_STATE: list[StrategicState] = [
     StrategicState.ATTACK,
     StrategicState.DEFEND,
     StrategicState.LATE_GAME,
+    StrategicState.FORTIFY,
 ]
 
 # How many game steps per env step (match bot.py observation frequency)
@@ -53,7 +54,7 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
     observation_space: spaces.Box = spaces.Box(
         low=0.0, high=1.0, shape=(FEATURE_DIM,), dtype=np.float32
     )
-    action_space: spaces.Discrete = spaces.Discrete(5)  # type: ignore[type-arg]
+    action_space: spaces.Discrete = spaces.Discrete(6)  # type: ignore[type-arg]
 
     def __init__(
         self,
@@ -250,7 +251,7 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
             "worker_count", "base_count", "enemy_army_near_base",
             "enemy_army_supply_visible", "game_time_seconds",
             "gateway_count", "robo_count", "forge_count", "upgrade_count",
-            "enemy_structure_count",
+            "enemy_structure_count", "cannon_count", "battery_count",
         ]
         values = []
         for f in fields:

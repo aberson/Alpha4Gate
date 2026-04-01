@@ -44,6 +44,8 @@ CREATE TABLE IF NOT EXISTS transitions (
     forge_count       INTEGER NOT NULL DEFAULT 0,
     upgrade_count     INTEGER NOT NULL DEFAULT 0,
     enemy_structure_count INTEGER NOT NULL DEFAULT 0,
+    cannon_count      INTEGER NOT NULL DEFAULT 0,
+    battery_count     INTEGER NOT NULL DEFAULT 0,
     action        INTEGER NOT NULL,
     reward        REAL NOT NULL,
     next_supply_used   INTEGER,
@@ -61,6 +63,8 @@ CREATE TABLE IF NOT EXISTS transitions (
     next_forge_count       INTEGER DEFAULT 0,
     next_upgrade_count     INTEGER DEFAULT 0,
     next_enemy_structure_count INTEGER DEFAULT 0,
+    next_cannon_count     INTEGER DEFAULT 0,
+    next_battery_count    INTEGER DEFAULT 0,
     done          INTEGER NOT NULL DEFAULT 0
 );
 
@@ -70,12 +74,12 @@ CREATE INDEX IF NOT EXISTS idx_games_result ON games(result);
 CREATE INDEX IF NOT EXISTS idx_games_model ON games(model_version);
 """
 
-# Column names for the 15 state features in transitions table (matches feature vector order)
+# Column names for the 17 state features in transitions table (matches feature vector order)
 _STATE_COLS = [
     "supply_used", "supply_cap", "minerals", "vespene", "army_supply",
     "worker_count", "base_count", "enemy_near", "enemy_supply",
     "game_time_secs", "gateway_count", "robo_count", "forge_count",
-    "upgrade_count", "enemy_structure_count",
+    "upgrade_count", "enemy_structure_count", "cannon_count", "battery_count",
 ]
 
 _NEXT_STATE_COLS = [f"next_{c}" for c in _STATE_COLS]
@@ -126,7 +130,7 @@ class TrainingDB:
         """Insert a single (s, a, r, s') transition.
 
         state and next_state are raw (un-normalized) integer feature vectors
-        matching the 14-column order in _STATE_COLS.
+        matching the 17-column order in _STATE_COLS.
         """
         values: list[Any] = [game_id, step_index, game_time]
         values.extend(int(v) for v in state)

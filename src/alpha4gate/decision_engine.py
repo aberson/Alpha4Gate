@@ -17,6 +17,7 @@ class StrategicState(StrEnum):
     ATTACK = "attack"
     DEFEND = "defend"
     LATE_GAME = "late_game"
+    FORTIFY = "fortify"
 
 
 @dataclass
@@ -38,6 +39,8 @@ class GameSnapshot:
     forge_count: int = 0
     upgrade_count: int = 0
     enemy_structure_count: int = 0
+    cannon_count: int = 0
+    battery_count: int = 0
 
 
 @dataclass
@@ -76,7 +79,12 @@ class DecisionEngine:
     LATE_GAME_BASE_COUNT: int = 3
     LATE_GAME_TIME_SECONDS: float = 480.0  # 8 minutes
 
-    def __init__(self, build_order: BuildOrder | None = None) -> None:
+    def __init__(
+        self,
+        build_order: BuildOrder | None = None,
+        fortify_trigger_ratio: float = 1.5,
+        attack_supply_ratio: float = 1.2,
+    ) -> None:
         self._state = StrategicState.OPENING
         order = build_order if build_order is not None else default_4gate()
         self._sequencer = BuildSequencer(order)
@@ -87,6 +95,9 @@ class DecisionEngine:
         self._override_source: str | None = None
         self._override_duration: float = 0.0
         self._override_active: bool = False
+        self._fortify_trigger_ratio = fortify_trigger_ratio
+        self._attack_supply_ratio = attack_supply_ratio
+        self._recently_retreated: bool = False
 
     @property
     def state(self) -> StrategicState:
@@ -106,6 +117,10 @@ class DecisionEngine:
     def set_claude_advice(self, advice: str) -> None:
         """Store pending Claude advice for the next decision."""
         self._pending_advice = advice
+
+    def notify_retreat(self) -> None:
+        """Signal that the army has recently retreated."""
+        self._recently_retreated = True
 
     def set_command_override(
         self, state: StrategicState, source: str, duration: float = 120.0
@@ -204,9 +219,25 @@ class DecisionEngine:
 
     def _compute_next_state(self, snapshot: GameSnapshot) -> StrategicState:
         """Determine the next state based on current game conditions."""
-        # Defend takes priority in any state if enemy is near base
+        # Defend takes highest priority if enemy is near base
         if snapshot.enemy_army_near_base:
             return StrategicState.DEFEND
+
+        # FORTIFY: enter when outgunned and recently retreated (lower priority than DEFEND)
+        own_supply = snapshot.army_supply
+        enemy_vis = snapshot.enemy_army_supply_visible
+        if (
+            self._recently_retreated
+            and enemy_vis > own_supply * self._fortify_trigger_ratio
+        ):
+            return StrategicState.FORTIFY
+
+        # FORTIFY exit: leave when own supply recovers
+        if self._state == StrategicState.FORTIFY:
+            if enemy_vis == 0 or own_supply >= enemy_vis * self._attack_supply_ratio:
+                self._recently_retreated = False
+                return StrategicState.EXPAND
+            return StrategicState.FORTIFY
 
         # Opening: follow build order until complete
         if self._state == StrategicState.OPENING:
@@ -229,7 +260,11 @@ class DecisionEngine:
         if self._state == StrategicState.DEFEND and not snapshot.enemy_army_near_base:
             return StrategicState.EXPAND
 
-        if self._state in (StrategicState.EXPAND, StrategicState.ATTACK, StrategicState.LATE_GAME):
+        if self._state in (
+            StrategicState.EXPAND,
+            StrategicState.ATTACK,
+            StrategicState.LATE_GAME,
+        ):
             # Stay in current state unless conditions change
             is_attack = self._state == StrategicState.ATTACK
             if is_attack and snapshot.army_supply < self.ATTACK_ARMY_SUPPLY:
@@ -264,4 +299,9 @@ class DecisionEngine:
             bases = snapshot.base_count
             secs = snapshot.game_time_seconds
             return f"Late game conditions met ({bases} bases, {secs:.0f}s)"
+        if to_state == StrategicState.FORTIFY:
+            return (
+                f"Fortifying: enemy visible supply {snapshot.enemy_army_supply_visible}"
+                f" > own {snapshot.army_supply} * {self._fortify_trigger_ratio:.2f}"
+            )
         return f"Transition from {from_state.value} to {to_state.value}"

@@ -46,6 +46,7 @@ def _make_bot(seed: int = 42) -> Alpha4GateBot:
 
     # Coherence manager
     bot.coherence_manager = ArmyCoherenceManager(seed=seed)
+    bot.decision_engine = MagicMock()
     bot._coherence_params_logged = False
     bot._cached_staging_point = None
     bot._staging_point_time = -999.0
@@ -241,7 +242,8 @@ class TestCoherenceParamsLogging:
         params = bot.coherence_manager.get_params_dict()
         assert "attack_supply_ratio" in params
         assert "retreat_to_staging" in params
-        assert len(params) == 7
+        assert "fortify_trigger_ratio" in params
+        assert len(params) == 10
 
     def test_coherence_params_logged_flag(self) -> None:
         bot = _make_bot()

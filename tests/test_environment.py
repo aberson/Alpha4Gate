@@ -40,7 +40,7 @@ def _default_snapshot(**overrides: Any) -> GameSnapshot:
 
 class TestActionMapping:
     def test_action_space_size(self) -> None:
-        assert len(_ACTION_TO_STATE) == 5
+        assert len(_ACTION_TO_STATE) == 6
 
     def test_action_indices(self) -> None:
         assert _ACTION_TO_STATE[0] == StrategicState.OPENING
@@ -110,7 +110,7 @@ class TestSC2EnvSpaces:
 
     def test_action_space_n(self) -> None:
         env = SC2Env.__new__(SC2Env)
-        assert env.action_space.n == 5
+        assert env.action_space.n == 6
 
     def test_observation_space_bounds(self) -> None:
         env = SC2Env.__new__(SC2Env)

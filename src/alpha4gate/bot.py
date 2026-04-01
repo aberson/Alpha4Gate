@@ -12,6 +12,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from alpha4gate.army_coherence import ArmyCoherenceManager
+from alpha4gate.build_backlog import BuildBacklog
 from alpha4gate.build_orders import BuildOrder
 from alpha4gate.claude_advisor import ClaudeAdvisor, build_prompt
 from alpha4gate.commands import (
@@ -24,6 +25,7 @@ from alpha4gate.commands import (
 )
 from alpha4gate.console import print_status
 from alpha4gate.decision_engine import DecisionEngine, GameSnapshot, StrategicState
+from alpha4gate.fortification import FortificationManager
 from alpha4gate.learning.features import _FEATURE_SPEC
 from alpha4gate.learning.neural_engine import DecisionMode, NeuralDecisionEngine
 from alpha4gate.learning.rewards import RewardCalculator
@@ -72,6 +74,8 @@ _TARGET_MAP: dict[str, UnitTypeId] = {
     "Immortal": UnitTypeId.IMMORTAL,
     "Observer": UnitTypeId.OBSERVER,
     "Colossus": UnitTypeId.COLOSSUS,
+    "PhotonCannon": UnitTypeId.PHOTONCANNON,
+    "ShieldBattery": UnitTypeId.SHIELDBATTERY,
 }
 
 # Army units to train from gateways (priority order)
@@ -96,6 +100,7 @@ class Alpha4GateBot(BotAI):
         StrategicState.ATTACK: 2,
         StrategicState.DEFEND: 3,
         StrategicState.LATE_GAME: 4,
+        StrategicState.FORTIFY: 5,
     }
 
     def __init__(
@@ -111,7 +116,14 @@ class Alpha4GateBot(BotAI):
         claude_advisor: ClaudeAdvisor | None = None,
     ) -> None:
         super().__init__()
-        self.decision_engine = DecisionEngine(build_order=build_order)
+        # Army coherence manager (randomized params per game) — created first
+        # so its rolled params can be passed to the decision engine.
+        self.coherence_manager = ArmyCoherenceManager()
+        self.decision_engine = DecisionEngine(
+            build_order=build_order,
+            fortify_trigger_ratio=self.coherence_manager.fortify_trigger_ratio,
+            attack_supply_ratio=self.coherence_manager.attack_supply_ratio,
+        )
         self.macro_manager = MacroManager()
         self.scout_manager = ScoutManager()
         self.micro_controller = MicroController()
@@ -125,12 +137,17 @@ class Alpha4GateBot(BotAI):
                 model_path=model_path,
                 mode=decision_mode,
             )
-        # Army coherence manager (randomized params per game)
-        self.coherence_manager = ArmyCoherenceManager()
         self._coherence_params_logged: bool = False
         self._cached_staging_point: tuple[float, float] | None = None
         self._staging_point_time: float = -999.0  # last recalc time
         self._cached_enemy_natural: tuple[float, float] | None = None
+
+        # Fortification manager (randomized params from coherence manager)
+        self._fortification_manager = FortificationManager(
+            defense_scaling_divisor=self.coherence_manager.defense_scaling_divisor,
+            max_defenses=self.coherence_manager.max_defenses,
+        )
+        self._build_backlog = BuildBacklog()
 
         # Command system executor
         self._command_executor = CommandExecutor(self)
@@ -184,6 +201,8 @@ class Alpha4GateBot(BotAI):
             forge_count=len(self.structures(UnitTypeId.FORGE)),
             upgrade_count=sum(1 for u in self.state.upgrades),
             enemy_structure_count=len(self.enemy_structures),
+            cannon_count=len(self.structures(UnitTypeId.PHOTONCANNON)),
+            battery_count=len(self.structures(UnitTypeId.SHIELDBATTERY)),
         )
 
     async def on_step(self, iteration: int) -> None:
@@ -285,6 +304,23 @@ class Alpha4GateBot(BotAI):
             for decision in decisions:
                 await self._execute_macro(decision)
 
+        # --- FORTIFY: defensive structure production ---
+        if state == StrategicState.FORTIFY:
+            fort_decisions = self._evaluate_fortification(snapshot)
+            for fd in fort_decisions:
+                success = await self._execute_macro(fd)
+                if not success:
+                    self._build_backlog.add(
+                        fd.target,
+                        (float(self.start_location.x), float(self.start_location.y)),
+                        fd.reason,
+                        snapshot.game_time_seconds,
+                    )
+
+        # --- Drain build backlog (all non-OPENING states) ---
+        if state != StrategicState.OPENING:
+            await self._drain_backlog(snapshot)
+
         # --- Army production from idle gateways / robos ---
         if state != StrategicState.OPENING:
             await self._produce_army()
@@ -293,9 +329,9 @@ class Alpha4GateBot(BotAI):
         await self._run_scouting()
 
         # --- Micro: combat commands for army units ---
-        if state in (StrategicState.ATTACK, StrategicState.DEFEND):
+        if state in (StrategicState.ATTACK, StrategicState.DEFEND, StrategicState.FORTIFY):
             await self._run_micro(state)
-        elif state == StrategicState.EXPAND or state == StrategicState.LATE_GAME:
+        elif state in (StrategicState.EXPAND, StrategicState.LATE_GAME):
             # Rally idle army to a defensive position near natural
             await self._rally_idle_army()
 
@@ -491,20 +527,79 @@ class Alpha4GateBot(BotAI):
     #  Macro execution (post-opening)
     # ------------------------------------------------------------------ #
 
-    async def _execute_macro(self, decision: MacroDecision) -> None:
-        """Execute a single MacroManager decision."""
+    async def _execute_macro(self, decision: MacroDecision) -> bool:
+        """Execute a single MacroManager decision. Returns True if issued."""
         if decision.action == "expand":
             if self.can_afford(UnitTypeId.NEXUS):
                 await self.expand_now()
                 self._actions_this_step.append(decision.to_dict())
+                return True
         elif decision.action == "build":
             unit_id = _TARGET_MAP.get(decision.target)
             if unit_id and await self._build_structure(unit_id):
                 self._actions_this_step.append(decision.to_dict())
+                return True
         elif decision.action == "train":
             unit_id = _TARGET_MAP.get(decision.target)
             if unit_id and self._train_unit(unit_id):
                 self._actions_this_step.append(decision.to_dict())
+                return True
+        return False
+
+    # ------------------------------------------------------------------ #
+    #  Fortification helpers
+    # ------------------------------------------------------------------ #
+
+    def _evaluate_fortification(self, snapshot: GameSnapshot) -> list[MacroDecision]:
+        """Run the fortification manager and return defensive build decisions."""
+        has_forge = len(self.structures(UnitTypeId.FORGE).ready) > 0
+        forge_building = len(self.structures(UnitTypeId.FORGE).not_ready) > 0
+        has_cyber = len(self.structures(UnitTypeId.CYBERNETICSCORE).ready) > 0
+
+        # Check for pylon near natural
+        natural_pos = self.main_base_ramp.bottom_center
+        has_pylon_near_natural = any(
+            p.distance_to(natural_pos) < 12
+            for p in self.structures(UnitTypeId.PYLON).ready
+        )
+
+        existing_cannons = len(self.structures(UnitTypeId.PHOTONCANNON))
+        existing_batteries = len(self.structures(UnitTypeId.SHIELDBATTERY))
+
+        return self._fortification_manager.evaluate(
+            enemy_supply=float(snapshot.enemy_army_supply_visible),
+            own_supply=float(snapshot.army_supply),
+            existing_cannons=existing_cannons,
+            existing_batteries=existing_batteries,
+            has_forge=has_forge,
+            forge_building=forge_building,
+            has_cybernetics_core=has_cyber,
+            has_pylon_near_natural=has_pylon_near_natural,
+        )
+
+    async def _drain_backlog(self, snapshot: GameSnapshot) -> None:
+        """Try to retry one failed build from the backlog."""
+
+        def _can_afford(structure_type: str, location: tuple[float, float]) -> bool:
+            unit_id = _TARGET_MAP.get(structure_type)
+            if unit_id is None:
+                return False
+            return bool(self.can_afford(unit_id))
+
+        entry = self._build_backlog.tick(
+            game_time=snapshot.game_time_seconds,
+            can_afford=_can_afford,
+        )
+        if entry is not None:
+            unit_id = _TARGET_MAP.get(entry.structure_type)
+            if unit_id is not None:
+                built = await self._build_structure(unit_id)
+                if built:
+                    self._actions_this_step.append({
+                        "action": "build",
+                        "target": entry.structure_type,
+                        "reason": "backlog_retry",
+                    })
 
     # ------------------------------------------------------------------ #
     #  Army production
@@ -745,6 +840,7 @@ class Alpha4GateBot(BotAI):
 
         # 1. Retreat check
         if cm.should_retreat(own_supply, enemy_supply):
+            self.decision_engine.notify_retreat()
             cm.update_staging_timer(self.time, is_staging=False)
             if cm.retreat_to_staging:
                 return self._get_staging_point()
