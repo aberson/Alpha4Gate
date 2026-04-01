@@ -5,8 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sys
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from alpha4gate.claude_advisor import (
     AdvisorResponse,
@@ -137,39 +136,30 @@ class TestRateLimiter:
 
 
 class TestClaudeAdvisor:
-    def test_disabled_without_api_key(self) -> None:
-        advisor = ClaudeAdvisor(api_key="")
-        assert not advisor.enabled
-
-    def test_enabled_with_api_key(self) -> None:
-        advisor = ClaudeAdvisor(api_key="sk-test-key")
+    def test_enabled_by_default(self) -> None:
+        advisor = ClaudeAdvisor()
         assert advisor.enabled
 
-    def test_request_rejected_when_disabled(self) -> None:
-        advisor = ClaudeAdvisor(api_key="")
-        assert not advisor.request_advice("test", 0.0)
-
     def test_no_pending_initially(self) -> None:
-        advisor = ClaudeAdvisor(api_key="sk-test")
+        advisor = ClaudeAdvisor()
         assert not advisor.has_pending
 
     def test_last_response_initially_none(self) -> None:
-        advisor = ClaudeAdvisor(api_key="sk-test")
+        advisor = ClaudeAdvisor()
         assert advisor.last_response is None
 
     def test_collect_response_none_without_pending(self) -> None:
-        advisor = ClaudeAdvisor(api_key="sk-test")
+        advisor = ClaudeAdvisor()
         assert advisor.collect_response() is None
 
     def test_rate_limited_request(self) -> None:
-        advisor = ClaudeAdvisor(api_key="sk-test", rate_limit_seconds=30.0)
-        # Manually record a call
+        advisor = ClaudeAdvisor(rate_limit_seconds=30.0)
         advisor._rate_limiter.record_call(0.0)
         assert not advisor.request_advice("test", 15.0)  # Too soon
 
 
 class TestClaudeAdvisorAsync:
-    """Async integration tests for ClaudeAdvisor using event loops."""
+    """Async tests for ClaudeAdvisor using mocked subprocess."""
 
     def _make_canned_response(self) -> str:
         return json.dumps({
@@ -181,50 +171,35 @@ class TestClaudeAdvisorAsync:
             "reasoning": "Need production",
         })
 
-    def _make_mock_anthropic(
-        self, *, side_effect: Exception | None = None
-    ) -> tuple[MagicMock, MagicMock]:
-        """Return (mock_module, mock_client) with anthropic mocked."""
-        mock_module = MagicMock()
-        mock_client = MagicMock()
-        mock_module.AsyncAnthropic.return_value = mock_client
-        if side_effect is not None:
-            mock_client.messages.create = AsyncMock(side_effect=side_effect)
-        return mock_module, mock_client
+    def _make_mock_process(
+        self, *, stdout: bytes = b"", stderr: bytes = b"", returncode: int = 0
+    ) -> MagicMock:
+        """Return a mock process with canned communicate() result."""
+        proc = MagicMock()
+        proc.communicate = AsyncMock(return_value=(stdout, stderr))
+        proc.returncode = returncode
+        return proc
 
     def test_request_fires_and_collects(self) -> None:
         loop = asyncio.new_event_loop()
         try:
             canned = self._make_canned_response()
+            mock_proc = self._make_mock_process(stdout=canned.encode())
 
-            mock_block = MagicMock()
-            mock_block.text = canned
-            mock_message = MagicMock()
-            mock_message.content = [mock_block]
+            advisor = ClaudeAdvisor()
 
-            mock_module, mock_client = self._make_mock_anthropic()
-            mock_client.messages.create = AsyncMock(return_value=mock_message)
-
-            saved = sys.modules.get("anthropic")
-            sys.modules["anthropic"] = mock_module
-            try:
-                advisor = ClaudeAdvisor(api_key="sk-test")
-
-                async def run() -> AdvisorResponse | None:
+            async def run() -> AdvisorResponse | None:
+                with patch(
+                    "asyncio.create_subprocess_exec",
+                    AsyncMock(return_value=mock_proc),
+                ):
                     fired = advisor.request_advice("test prompt", 0.0)
                     assert fired
                     assert advisor.has_pending
-                    assert advisor._pending_task is not None
                     await advisor._pending_task
-                    return advisor.collect_response()
+                return advisor.collect_response()
 
-                result = loop.run_until_complete(run())
-            finally:
-                if saved is None:
-                    sys.modules.pop("anthropic", None)
-                else:
-                    sys.modules["anthropic"] = saved
-
+            result = loop.run_until_complete(run())
             assert result is not None
             assert len(result.commands) == 1
             assert result.commands[0].action.value == "build"
@@ -232,50 +207,45 @@ class TestClaudeAdvisorAsync:
         finally:
             loop.close()
 
-    def test_api_failure_logs_exception(self, caplog: object) -> None:
+    def test_cli_failure_logs_error(self, caplog: object) -> None:
         import _pytest.logging
 
         assert isinstance(caplog, _pytest.logging.LogCaptureFixture)
 
         loop = asyncio.new_event_loop()
         try:
-            mock_module, _mock_client = self._make_mock_anthropic(
-                side_effect=Exception("API down"),
+            mock_proc = self._make_mock_process(
+                stdout=b"", stderr=b"auth failed", returncode=1
             )
 
-            saved = sys.modules.get("anthropic")
-            sys.modules["anthropic"] = mock_module
-            try:
-                advisor = ClaudeAdvisor(api_key="sk-test")
+            advisor = ClaudeAdvisor()
 
-                async def run() -> AdvisorResponse | None:
+            async def run() -> AdvisorResponse | None:
+                with patch(
+                    "asyncio.create_subprocess_exec",
+                    AsyncMock(return_value=mock_proc),
+                ):
                     advisor.request_advice("test prompt", 0.0)
-                    assert advisor._pending_task is not None
                     await advisor._pending_task
-                    return advisor.collect_response()
+                return advisor.collect_response()
 
-                with caplog.at_level(logging.DEBUG, logger="alpha4gate.claude_advisor"):
-                    result = loop.run_until_complete(run())
-            finally:
-                if saved is None:
-                    sys.modules.pop("anthropic", None)
-                else:
-                    sys.modules["anthropic"] = saved
+            with caplog.at_level(logging.DEBUG, logger="alpha4gate.claude_advisor"):
+                result = loop.run_until_complete(run())
 
             assert result is None
-            assert "Advisor API call failed" in caplog.text
+            assert "Advisor CLI failed" in caplog.text
         finally:
             loop.close()
 
-    def test_disabled_advisor_logs(self, caplog: object) -> None:
+    def test_init_logs_enabled(self, caplog: object) -> None:
         import _pytest.logging
 
         assert isinstance(caplog, _pytest.logging.LogCaptureFixture)
 
         with caplog.at_level(logging.DEBUG, logger="alpha4gate.claude_advisor"):
-            advisor = ClaudeAdvisor(api_key="")
-        assert not advisor.enabled
-        assert "enabled=False" in caplog.text
+            advisor = ClaudeAdvisor()
+        assert advisor.enabled
+        assert "enabled=True" in caplog.text
 
     def test_collect_response_exception_logs(self, caplog: object) -> None:
         import _pytest.logging
@@ -284,7 +254,7 @@ class TestClaudeAdvisorAsync:
 
         loop = asyncio.new_event_loop()
         try:
-            advisor = ClaudeAdvisor(api_key="sk-test")
+            advisor = ClaudeAdvisor()
 
             async def failing_task() -> AdvisorResponse | None:
                 raise RuntimeError("task exploded")
@@ -294,7 +264,6 @@ class TestClaudeAdvisorAsync:
                 await advisor._pending_task
                 return None
 
-            # Run the task so it completes with exception
             try:
                 loop.run_until_complete(run())
             except RuntimeError:
@@ -305,5 +274,33 @@ class TestClaudeAdvisorAsync:
 
             assert result is None
             assert "Advisor: task raised" in caplog.text
+        finally:
+            loop.close()
+
+    def test_empty_response_logs_warning(self, caplog: object) -> None:
+        import _pytest.logging
+
+        assert isinstance(caplog, _pytest.logging.LogCaptureFixture)
+
+        loop = asyncio.new_event_loop()
+        try:
+            mock_proc = self._make_mock_process(stdout=b"", returncode=0)
+
+            advisor = ClaudeAdvisor()
+
+            async def run() -> AdvisorResponse | None:
+                with patch(
+                    "asyncio.create_subprocess_exec",
+                    AsyncMock(return_value=mock_proc),
+                ):
+                    advisor.request_advice("test prompt", 0.0)
+                    await advisor._pending_task
+                return advisor.collect_response()
+
+            with caplog.at_level(logging.DEBUG, logger="alpha4gate.claude_advisor"):
+                result = loop.run_until_complete(run())
+
+            assert result is None
+            assert "empty response" in caplog.text
         finally:
             loop.close()

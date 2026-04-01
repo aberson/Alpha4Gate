@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import argparse
 import logging
+import shutil
 import sys
 
 from alpha4gate.build_orders import BuildOrder
 from alpha4gate.config import Settings, load_settings
+
+_log = logging.getLogger(__name__)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -216,10 +219,14 @@ def _run_single_game(settings: Settings, args: argparse.Namespace) -> None:
     logger.start()
 
     claude_advisor = None
-    if settings.anthropic_api_key and not args.no_claude:
+    if args.no_claude:
+        _log.info("ClaudeAdvisor: disabled (--no-claude flag)")
+    elif shutil.which("claude") is None:
+        _log.info("ClaudeAdvisor: disabled (claude CLI not found on PATH)")
+    else:
         from alpha4gate.claude_advisor import ClaudeAdvisor
 
-        claude_advisor = ClaudeAdvisor(api_key=settings.anthropic_api_key)
+        claude_advisor = ClaudeAdvisor()
 
     decision_mode = DecisionMode(args.decision_mode)
     bot = Alpha4GateBot(
@@ -269,10 +276,14 @@ def _run_batch(settings: Settings, args: argparse.Namespace) -> None:
     )
 
     claude_advisor = None
-    if settings.anthropic_api_key and not args.no_claude:
+    if args.no_claude:
+        _log.info("ClaudeAdvisor: disabled (--no-claude flag)")
+    elif shutil.which("claude") is None:
+        _log.info("ClaudeAdvisor: disabled (claude CLI not found on PATH)")
+    else:
         from alpha4gate.claude_advisor import ClaudeAdvisor
 
-        claude_advisor = ClaudeAdvisor(api_key=settings.anthropic_api_key)
+        claude_advisor = ClaudeAdvisor()
 
     for i in range(args.batch):
         print(f"\n=== Game {i + 1}/{args.batch} ===")

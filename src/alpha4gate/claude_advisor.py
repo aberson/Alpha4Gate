@@ -1,4 +1,4 @@
-"""Async Claude API calls, prompt construction, response parsing, rate limiting."""
+"""Claude CLI advisor: prompt construction, response parsing, rate limiting."""
 
 from __future__ import annotations
 
@@ -228,30 +228,30 @@ class RateLimiter:
 
 
 class ClaudeAdvisor:
-    """Async Claude API advisor for strategic suggestions.
+    """Async Claude CLI advisor for strategic suggestions.
 
-    Fires API calls as asyncio tasks (fire-and-forget). Results are consumed
+    Fires CLI calls as asyncio tasks (fire-and-forget). Results are consumed
     on the next on_step() iteration. If Claude is unavailable, the bot
     continues with rule-based decisions only.
+
+    Auth is handled by the ``claude`` CLI itself (OAuth token or API key).
     """
 
     def __init__(
         self,
-        api_key: str,
-        model: str = "claude-sonnet-4-20250514",
+        model: str = "sonnet",
         rate_limit_seconds: float = 30.0,
     ) -> None:
-        self._api_key = api_key
         self._model = model
         self._rate_limiter = RateLimiter(rate_limit_seconds)
         self._pending_task: asyncio.Task[AdvisorResponse | None] | None = None
         self._last_response: AdvisorResponse | None = None
-        self._enabled = bool(api_key)
+        self._enabled = True
         _log.info("ClaudeAdvisor: enabled=%s model=%s", self._enabled, self._model)
 
     @property
     def enabled(self) -> bool:
-        """Whether the advisor is enabled (has API key)."""
+        """Whether the advisor is enabled."""
         return self._enabled
 
     @property
@@ -313,7 +313,7 @@ class ClaudeAdvisor:
         return result
 
     async def _call_api(self, prompt: str) -> AdvisorResponse | None:
-        """Make the actual API call to Claude.
+        """Call the Claude CLI in print mode.
 
         Args:
             prompt: The prompt to send.
@@ -322,19 +322,33 @@ class ClaudeAdvisor:
             Parsed AdvisorResponse, or None on failure.
         """
         try:
-            import anthropic
-
-            client = anthropic.AsyncAnthropic(api_key=self._api_key)
-            message = await client.messages.create(
-                model=self._model,
-                max_tokens=256,
-                messages=[{"role": "user", "content": prompt}],
+            proc = await asyncio.create_subprocess_exec(
+                "claude",
+                "-p",
+                prompt,
+                "--model",
+                self._model,
+                "--output-format",
+                "text",
+                "--no-session-persistence",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            block = message.content[0]
-            text = block.text if hasattr(block, "text") else str(block)
+            stdout, stderr = await proc.communicate()
+            if proc.returncode != 0:
+                _log.error(
+                    "Advisor CLI failed (rc=%d): %s",
+                    proc.returncode,
+                    stderr.decode(errors="replace").strip(),
+                )
+                return None
+            text = stdout.decode(errors="replace").strip()
+            if not text:
+                _log.warning("Advisor CLI returned empty response")
+                return None
             response = parse_response(text)
             _log.info("Advisor: response received, %d commands", len(response.commands))
             return response
         except Exception:
-            _log.exception("Advisor API call failed")
+            _log.exception("Advisor CLI call failed")
             return None

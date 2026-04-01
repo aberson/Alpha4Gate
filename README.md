@@ -2,7 +2,7 @@
 
 A StarCraft II Protoss bot with rule-based decision-making and Claude AI as strategic advisor. Uses a three-layer architecture (strategy, tactics, micro) to play against the built-in AI and human opponents. Includes a React dashboard for live game visualization, build order editing, replay browsing, and strategic reasoning display.
 
-**Strategic Command System complete** — three-mode command system (AI-Assisted, Human-only, Hybrid) with unified command primitives, structured parser + Claude Haiku NLP fallback, real-time WebSocket events, and React CommandPanel UI. Issues #24–#29 closed. **HUMAN_ONLY mode fix** — `filter_executable()` correctly passes human commands while dropping AI commands. **Command history fix** — deduplicated POST/WebSocket race entries, fixed WebSocket reconnect leak under React StrictMode, sorted history by timestamp (most recent first). 521 tests passing, 0 type errors, 0 lint violations.
+**ClaudeAdvisor CLI migration complete** — replaced Anthropic Python SDK with Claude CLI subprocess (`claude -p`), enabling OAuth authentication via subscription. Added logging at every advisor decision point and disabled-advisor diagnostics. 524 tests passing, 0 type errors, 0 lint violations.
 
 ## Stack
 
@@ -10,13 +10,13 @@ A StarCraft II Protoss bot with rule-based decision-making and Claude AI as stra
 |---|---|---|
 | Language | Python 3.12 | SC2 libraries are Python-native |
 | SC2 interface | burnysc2 v7.1.3 | Async BotAI, actively maintained |
-| AI advisor | Claude API (Anthropic SDK) | Strategic advice mid-game, async and non-blocking |
+| AI advisor | Claude CLI (OAuth or API key) | Strategic advice mid-game, async subprocess |
 | Build orders | Spawning Tool API | Community build order database |
 | Backend | FastAPI | WebSocket + REST for dashboard |
 | Frontend | React + TypeScript + Vite | Live dashboard with game state streaming |
 | Deep learning | PyTorch + SB3 | PPO policy network for strategic decisions |
 | Training data | SQLite | Structured (s,a,r,s') transition storage |
-| Testing | pytest | 521 unit tests, SC2 integration markers |
+| Testing | pytest | 524 unit tests, SC2 integration markers |
 | Linting | ruff + mypy | Strict type checking, consistent style |
 
 ## Prerequisites
@@ -39,7 +39,8 @@ A StarCraft II Protoss bot with rule-based decision-making and Claude AI as stra
 2. Create `.env` from template and fill in your keys:
    ```bash
    cp .env.example .env
-   # Edit .env: set SC2PATH, ANTHROPIC_API_KEY, SPAWNING_TOOL_API_KEY
+   # Edit .env: set SC2PATH, SPAWNING_TOOL_API_KEY
+   # Claude advisor auth: claude CLI must be on PATH with OAuth token or API key
    ```
 
 3. Install frontend dependencies:
