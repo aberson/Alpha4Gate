@@ -321,6 +321,7 @@ class ClaudeAdvisor:
         Returns:
             Parsed AdvisorResponse, or None on failure.
         """
+        proc: asyncio.subprocess.Process | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 "claude",
@@ -352,3 +353,7 @@ class ClaudeAdvisor:
         except Exception:
             _log.exception("Advisor CLI call failed")
             return None
+        finally:
+            if proc is not None and proc.returncode is None:
+                proc.kill()
+                await proc.wait()

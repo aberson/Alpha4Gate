@@ -497,6 +497,17 @@ async def set_command_mode(
     return {"mode": settings.mode.value, "queue_cleared": bool(cleared)}
 
 
+@app.get("/api/commands/settings")
+async def get_current_command_settings() -> dict[str, Any]:
+    """Return the current command settings."""
+    settings = get_command_settings()
+    return {
+        "claude_interval": settings.claude_interval,
+        "lockout_duration": settings.lockout_duration,
+        "muted": settings.muted,
+    }
+
+
 @app.put("/api/commands/settings")
 async def update_command_settings(request: dict[str, Any]) -> dict[str, Any]:
     """Update command settings (claude_interval, lockout_duration, muted)."""

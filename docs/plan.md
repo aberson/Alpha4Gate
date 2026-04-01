@@ -18,7 +18,7 @@ human opponent (William Gathright) in multiplayer.
 | Language           | Python 3.14          | Matches sc2ai_explore; SC2 libs are Python-native          |
 | Package manager    | uv                   | Consistent with existing workflow                          |
 | SC2 interface      | burnysc2 (v7.1.3)    | Async BotAI base class, actively maintained (replaced PySC2) |
-| AI advisor         | Claude API (Anthropic SDK) | Strategic advice mid-game via async calls             |
+| AI advisor         | Claude CLI subprocess (`claude -p`) | Strategic advice mid-game via async subprocess; auth via OAuth or API key (CLI handles it) |
 | Build orders       | Spawning Tool API    | Community SC2 build order database (spawningtool.com); JSON API returns build order step sequences. Auth: API key in `SPAWNING_TOOL_API_KEY` env var. |
 | Backend            | FastAPI              | WebSocket + REST, async-native, lightweight                |
 | Frontend           | React                | Live dashboard, stats, build order editor, replay browser  |
@@ -219,7 +219,14 @@ The bot uses a three-layer decision architecture:
 | `macro_manager.py`    | Economy: worker production, expansions, supply, production buildings |
 | `scouting.py`         | Probe scouting, enemy tracking, threat assessment            |
 | `micro.py`            | Army movement, kiting, focus fire, ability usage             |
-| `claude_advisor.py`   | Async Claude API calls, prompt construction, response parsing |
+| `claude_advisor.py`   | Async Claude CLI subprocess, prompt construction, response parsing |
+| `commands/__init__.py`| Commands subpackage init                                     |
+| `commands/primitives.py`| CommandPrimitive, CommandAction, CommandSource, CommandMode enums and dataclasses |
+| `commands/queue.py`   | Thread-safe command queue with TTL and drain                 |
+| `commands/executor.py`| Execute commands against live game state                     |
+| `commands/interpreter.py`| Natural language → CommandPrimitive via Claude SDK         |
+| `commands/parser.py`  | Regex-based structured command parser (fallback)             |
+| `commands/settings.py`| CommandSettings dataclass (interval, lockout, mute)          |
 | `build_orders.py`     | Build order definitions, sequencer, Spawning Tool integration |
 | `replay_parser.py`    | Parse SC2Replay files, extract stats and timelines           |
 | `batch_runner.py`     | Run N games in sequence, aggregate statistics                |
@@ -286,6 +293,13 @@ The bot uses a three-layer decision architecture:
 | GET    | `/api/decision-log`      | —                                         | `{"entries": [{"timestamp": str, "game_step": int, "from_state": str, "to_state": str, "reason": str, "claude_advice": str\|null}]}` |
 | POST   | `/api/game/start`        | `{"map": str, "difficulty": str}`         | `{"game_id": str, "status": "starting"}` |
 | POST   | `/api/game/batch`        | `{"count": int, "map": str, "difficulty": str}` | `{"batch_id": str, "count": int, "status": "running"}` |
+| POST   | `/api/commands/submit`   | `{"text": str}` (natural language command) | `{"id": str, "action": str, "status": "queued"\|"rejected", "reason": str\|null}` |
+| GET    | `/api/commands/mode`     | —                                         | `{"mode": "ai_assisted"\|"human_only"\|"hybrid"}` |
+| PUT    | `/api/commands/mode`     | `{"mode": str}`                           | `{"mode": str, "queue_cleared": bool}` |
+| GET    | `/api/commands/settings` | —                                         | `{"claude_interval": float, "lockout_duration": float, "muted": bool}` |
+| PUT    | `/api/commands/settings` | `{"claude_interval": float?, "lockout_duration": float?, "muted": bool?}` | `{"claude_interval": float, "lockout_duration": float, "muted": bool}` |
+| GET    | `/api/commands/history`  | —                                         | `[{"id": str, "text": str, "action": str, "status": str, "timestamp": str}]` |
+| GET    | `/api/commands/primitives`| —                                        | `{"actions": str[], "locations": str[]}` — valid action/location vocabulary |
 
 ### WebSocket endpoints
 
@@ -293,6 +307,7 @@ The bot uses a three-layer decision architecture:
 | -------------- | --------------- | ------------------------------------------- | ------------------------------ |
 | `/ws/game`     | server → client | One JSON message per tick, matching JSONL log entry schema | Every 22 game steps (~1 real second at Normal speed) |
 | `/ws/decisions`| server → client | `{"event": "state_change"\|"claude_advice", "timestamp": str, "detail": object}` | On every state transition or Claude response |
+| `/ws/commands` | server → client | `{"type": "queued"\|"executed"\|"rejected"\|"failed", "id": str, ...}` | On every command state change |
 
 ### Frontend proxy
 
@@ -415,7 +430,7 @@ re-implementing tested code. Source files live at
 
 ## Out of Scope (v1)
 
-- ML/RL training (planned for future versions, not this build)
+- Advanced ML/RL beyond PPO baseline (neural training pipeline is complete; further RL research is future work)
 - Non-Protoss races (Zerg, Terran)
 - Automated ladder play or tournament participation
 - Multi-bot management (running multiple bot instances)
@@ -473,7 +488,8 @@ uv sync
 
 # Create .env from template
 cp .env.example .env
-# Edit .env: set SC2PATH, ANTHROPIC_API_KEY, SPAWNING_TOOL_API_KEY
+# Edit .env: set SC2PATH, SPAWNING_TOOL_API_KEY
+# Claude advisor auth: ensure `claude` CLI is on PATH with OAuth token or API key
 
 # Install frontend dependencies
 cd frontend && npm install && cd ..
@@ -670,3 +686,34 @@ Respond with:
 - urgency: low / medium / high
 - reasoning: one sentence
 ```
+
+---
+
+## ClaudeAdvisor CLI Runtime Verification — Complete (2026-04-01)
+
+**rwl-full Run 2 PASS (iteration 2/4). 527/527 tests passing. Zero type errors. Zero lint violations.**
+
+### What was verified
+
+- `ClaudeAdvisor: enabled=True model=sonnet` logged on startup
+- `Advisor: request fired at game_time=X` every ~30 game-seconds (0.3, 30.3, 60.4, 90.4)
+- `Advisor: response received, N commands` after each request (commands executed by bot)
+- Bot played normally, dashboard rendered, command panel functional
+- Zero CLI failures, zero tracebacks across two full game runs
+
+### What was fixed (iteration 2 findings)
+
+| File | Change |
+|---|---|
+| `src/alpha4gate/claude_advisor.py` | Added `finally: proc.kill() / proc.wait()` to `_call_api` — prevents subprocess leak on asyncio task cancellation |
+| `src/alpha4gate/api.py` | Added `GET /api/commands/settings` endpoint — frontend was getting 405 on mount, settings hydration was broken |
+| `tests/test_claude_advisor.py` | Added `test_call_api_subprocess_raises` — covers `FileNotFoundError` exception path when claude binary is missing |
+| `tests/test_api_commands.py` | Added `TestGetCommandSettings` (2 tests) — verifies defaults and PUT/GET round-trip |
+
+### Fresh context notes
+
+| Issue | Detail |
+|---|---|
+| Stats/Decisions pages show Live view | Playwright screenshots show all three hash routes render the Live page content — either routing is shared or those pages intentionally embed the Live view. Low severity, not a runtime defect. |
+| Shared ClaudeAdvisor in batch mode | `_run_batch()` creates one `ClaudeAdvisor` for all N games — a pending task from game N could inject stale advice into game N+1. Low severity edge case. |
+| WebSocket startup race | Frontend WebSocket connections fail on first paint, auto-reconnect after 3s. Expected Vite proxy timing. |

@@ -169,6 +169,30 @@ class TestCommandSettings:
         assert data["lockout_duration"] == 5.0
 
 
+class TestGetCommandSettings:
+    def test_get_settings_defaults(self, client: TestClient) -> None:
+        """GET /api/commands/settings returns current defaults."""
+        resp = client.get("/api/commands/settings")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["claude_interval"] == 30.0
+        assert data["lockout_duration"] == 5.0
+        assert data["muted"] is False
+
+    def test_get_settings_reflects_put(self, client: TestClient) -> None:
+        """GET /api/commands/settings returns values after PUT."""
+        client.put(
+            "/api/commands/settings",
+            json={"claude_interval": 10.0, "muted": True},
+        )
+        resp = client.get("/api/commands/settings")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["claude_interval"] == 10.0
+        assert data["muted"] is True
+        assert data["lockout_duration"] == 5.0  # unchanged
+
+
 class TestCommandPrimitives:
     def test_get_primitives(self, client: TestClient) -> None:
         """GET /api/commands/primitives returns vocabulary."""

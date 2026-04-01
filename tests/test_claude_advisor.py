@@ -277,6 +277,31 @@ class TestClaudeAdvisorAsync:
         finally:
             loop.close()
 
+    def test_call_api_subprocess_raises(self, caplog: object) -> None:
+        """create_subprocess_exec raising logs 'Advisor CLI call failed'."""
+        import _pytest.logging
+
+        assert isinstance(caplog, _pytest.logging.LogCaptureFixture)
+
+        loop = asyncio.new_event_loop()
+        try:
+            advisor = ClaudeAdvisor()
+
+            async def run() -> AdvisorResponse | None:
+                with patch(
+                    "asyncio.create_subprocess_exec",
+                    AsyncMock(side_effect=FileNotFoundError("claude not found")),
+                ):
+                    return await advisor._call_api("test prompt")
+
+            with caplog.at_level(logging.ERROR, logger="alpha4gate.claude_advisor"):
+                result = loop.run_until_complete(run())
+
+            assert result is None
+            assert "Advisor CLI call failed" in caplog.text
+        finally:
+            loop.close()
+
     def test_empty_response_logs_warning(self, caplog: object) -> None:
         import _pytest.logging
 
