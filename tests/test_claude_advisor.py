@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
+import sys
+from unittest.mock import AsyncMock, MagicMock
 
 from alpha4gate.claude_advisor import (
     AdvisorResponse,
@@ -162,3 +166,144 @@ class TestClaudeAdvisor:
         # Manually record a call
         advisor._rate_limiter.record_call(0.0)
         assert not advisor.request_advice("test", 15.0)  # Too soon
+
+
+class TestClaudeAdvisorAsync:
+    """Async integration tests for ClaudeAdvisor using event loops."""
+
+    def _make_canned_response(self) -> str:
+        return json.dumps({
+            "commands": [
+                {"action": "build", "target": "gateway", "location": "main", "priority": 7}
+            ],
+            "suggestion": "Build a gateway",
+            "urgency": "medium",
+            "reasoning": "Need production",
+        })
+
+    def _make_mock_anthropic(
+        self, *, side_effect: Exception | None = None
+    ) -> tuple[MagicMock, MagicMock]:
+        """Return (mock_module, mock_client) with anthropic mocked."""
+        mock_module = MagicMock()
+        mock_client = MagicMock()
+        mock_module.AsyncAnthropic.return_value = mock_client
+        if side_effect is not None:
+            mock_client.messages.create = AsyncMock(side_effect=side_effect)
+        return mock_module, mock_client
+
+    def test_request_fires_and_collects(self) -> None:
+        loop = asyncio.new_event_loop()
+        try:
+            canned = self._make_canned_response()
+
+            mock_block = MagicMock()
+            mock_block.text = canned
+            mock_message = MagicMock()
+            mock_message.content = [mock_block]
+
+            mock_module, mock_client = self._make_mock_anthropic()
+            mock_client.messages.create = AsyncMock(return_value=mock_message)
+
+            saved = sys.modules.get("anthropic")
+            sys.modules["anthropic"] = mock_module
+            try:
+                advisor = ClaudeAdvisor(api_key="sk-test")
+
+                async def run() -> AdvisorResponse | None:
+                    fired = advisor.request_advice("test prompt", 0.0)
+                    assert fired
+                    assert advisor.has_pending
+                    assert advisor._pending_task is not None
+                    await advisor._pending_task
+                    return advisor.collect_response()
+
+                result = loop.run_until_complete(run())
+            finally:
+                if saved is None:
+                    sys.modules.pop("anthropic", None)
+                else:
+                    sys.modules["anthropic"] = saved
+
+            assert result is not None
+            assert len(result.commands) == 1
+            assert result.commands[0].action.value == "build"
+            assert result.suggestion == "Build a gateway"
+        finally:
+            loop.close()
+
+    def test_api_failure_logs_exception(self, caplog: object) -> None:
+        import _pytest.logging
+
+        assert isinstance(caplog, _pytest.logging.LogCaptureFixture)
+
+        loop = asyncio.new_event_loop()
+        try:
+            mock_module, _mock_client = self._make_mock_anthropic(
+                side_effect=Exception("API down"),
+            )
+
+            saved = sys.modules.get("anthropic")
+            sys.modules["anthropic"] = mock_module
+            try:
+                advisor = ClaudeAdvisor(api_key="sk-test")
+
+                async def run() -> AdvisorResponse | None:
+                    advisor.request_advice("test prompt", 0.0)
+                    assert advisor._pending_task is not None
+                    await advisor._pending_task
+                    return advisor.collect_response()
+
+                with caplog.at_level(logging.DEBUG, logger="alpha4gate.claude_advisor"):
+                    result = loop.run_until_complete(run())
+            finally:
+                if saved is None:
+                    sys.modules.pop("anthropic", None)
+                else:
+                    sys.modules["anthropic"] = saved
+
+            assert result is None
+            assert "Advisor API call failed" in caplog.text
+        finally:
+            loop.close()
+
+    def test_disabled_advisor_logs(self, caplog: object) -> None:
+        import _pytest.logging
+
+        assert isinstance(caplog, _pytest.logging.LogCaptureFixture)
+
+        with caplog.at_level(logging.DEBUG, logger="alpha4gate.claude_advisor"):
+            advisor = ClaudeAdvisor(api_key="")
+        assert not advisor.enabled
+        assert "enabled=False" in caplog.text
+
+    def test_collect_response_exception_logs(self, caplog: object) -> None:
+        import _pytest.logging
+
+        assert isinstance(caplog, _pytest.logging.LogCaptureFixture)
+
+        loop = asyncio.new_event_loop()
+        try:
+            advisor = ClaudeAdvisor(api_key="sk-test")
+
+            async def failing_task() -> AdvisorResponse | None:
+                raise RuntimeError("task exploded")
+
+            async def run() -> AdvisorResponse | None:
+                advisor._pending_task = asyncio.create_task(failing_task())
+                await advisor._pending_task
+                return None
+
+            # Run the task so it completes with exception
+            try:
+                loop.run_until_complete(run())
+            except RuntimeError:
+                pass
+
+            with caplog.at_level(logging.DEBUG, logger="alpha4gate.claude_advisor"):
+                result = advisor.collect_response()
+
+            assert result is None
+            assert "Advisor: task raised" in caplog.text
+        finally:
+            loop.close()

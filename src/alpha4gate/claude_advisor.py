@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -13,6 +14,8 @@ from alpha4gate.commands.primitives import (
     CommandPrimitive,
     CommandSource,
 )
+
+_log = logging.getLogger(__name__)
 
 PROMPT_TEMPLATE = (
     "You are a StarCraft II Protoss strategic advisor. "
@@ -139,6 +142,7 @@ def parse_response(text: str) -> AdvisorResponse:
             commands=commands,
         )
     except (json.JSONDecodeError, AttributeError):
+        _log.warning("Advisor: unparseable response: %.100s", text)
         return AdvisorResponse(
             suggestion=text.strip(),
             urgency="low",
@@ -243,6 +247,7 @@ class ClaudeAdvisor:
         self._pending_task: asyncio.Task[AdvisorResponse | None] | None = None
         self._last_response: AdvisorResponse | None = None
         self._enabled = bool(api_key)
+        _log.info("ClaudeAdvisor: enabled=%s model=%s", self._enabled, self._model)
 
     @property
     def enabled(self) -> bool:
@@ -270,14 +275,18 @@ class ClaudeAdvisor:
             True if a request was fired, False if rate-limited or disabled.
         """
         if not self._enabled:
+            _log.debug("Advisor: disabled")
             return False
         if not self._rate_limiter.can_call(game_time_seconds):
+            _log.debug("Advisor: rate-limited at game_time=%.1f", game_time_seconds)
             return False
         if self.has_pending:
+            _log.debug("Advisor: pending task in-flight")
             return False
 
         self._rate_limiter.record_call(game_time_seconds)
         self._pending_task = asyncio.create_task(self._call_api(prompt))
+        _log.info("Advisor: request fired at game_time=%.1f", game_time_seconds)
         return True
 
     def collect_response(self) -> AdvisorResponse | None:
@@ -294,10 +303,12 @@ class ClaudeAdvisor:
         try:
             result = self._pending_task.result()
         except Exception:
+            _log.exception("Advisor: task raised")
             result = None
 
         self._pending_task = None
         if result is not None:
+            _log.debug("Advisor: collected %d commands", len(result.commands))
             self._last_response = result
         return result
 
@@ -321,6 +332,9 @@ class ClaudeAdvisor:
             )
             block = message.content[0]
             text = block.text if hasattr(block, "text") else str(block)
-            return parse_response(text)
+            response = parse_response(text)
+            _log.info("Advisor: response received, %d commands", len(response.commands))
+            return response
         except Exception:
+            _log.exception("Advisor API call failed")
             return None
