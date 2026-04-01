@@ -18,6 +18,7 @@ from alpha4gate.commands import (
     CommandExecutor,
     CommandMode,
     CommandSource,
+    filter_executable,
     get_command_queue,
     get_command_settings,
 )
@@ -31,7 +32,7 @@ from alpha4gate.macro_manager import MacroDecision, MacroManager
 from alpha4gate.micro import MicroController
 from alpha4gate.observer import observe
 from alpha4gate.scouting import ScoutManager
-from alpha4gate.web_socket import queue_broadcast
+from alpha4gate.web_socket import queue_broadcast, queue_command_event
 
 if TYPE_CHECKING:
     from alpha4gate.learning.database import TrainingDB
@@ -201,9 +202,11 @@ class Alpha4GateBot(BotAI):
 
         # --- Command system: drain queue and execute ---
         settings = get_command_settings()
-        if settings.mode != CommandMode.HUMAN_ONLY and not settings.muted:
+        if not settings.muted:
             queue = get_command_queue()
-            commands = queue.drain(snapshot.game_time_seconds)
+            commands = filter_executable(
+                queue.drain(snapshot.game_time_seconds), settings.mode
+            )
             for cmd in commands:
                 # Trigger lockout when human command arrives in hybrid mode
                 if (
@@ -214,10 +217,20 @@ class Alpha4GateBot(BotAI):
                 result = await self._command_executor.execute(cmd)
                 if result.success:
                     _log.info("Cmd OK: %s %s → %s", cmd.action.value, cmd.target, result.message)
+                    queue_command_event({
+                        "type": "executed",
+                        "id": cmd.id,
+                        "reason": result.message,
+                    })
                 else:
                     _log.warning(
                         "Cmd FAIL: %s %s → %s", cmd.action.value, cmd.target, result.message
                     )
+                    queue_command_event({
+                        "type": "failed",
+                        "id": cmd.id,
+                        "reason": result.message,
+                    })
 
         # --- Claude advisor → command queue ---
         if (
@@ -286,8 +299,8 @@ class Alpha4GateBot(BotAI):
             # Rally idle army to a defensive position near natural
             await self._rally_idle_army()
 
-        # Observe and log every 22 steps (~1 real second at normal speed)
-        if iteration % 22 == 0:
+        # Observe and log every 11 steps (~0.5 real seconds at normal speed)
+        if iteration % 11 == 0:
             entry = observe(self, actions_taken=self._actions_this_step)
             entry["strategic_state"] = state.value
 

@@ -55,3 +55,16 @@ def get_command_settings() -> CommandSettings:
     if _settings is None:
         _settings = CommandSettings()
     return _settings
+
+
+def filter_executable(
+    commands: list[CommandPrimitive], mode: CommandMode
+) -> list[CommandPrimitive]:
+    """Return commands that should execute under the given mode.
+
+    In HUMAN_ONLY mode, AI-sourced commands are dropped.
+    All other modes pass every command through.
+    """
+    if mode != CommandMode.HUMAN_ONLY:
+        return commands
+    return [c for c in commands if c.source != CommandSource.AI]

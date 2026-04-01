@@ -64,7 +64,9 @@ export function CommandPanel() {
     const event = data as CommandEvent;
     setHistory((prev) => {
       const updated = prev.map((entry) =>
-        entry.id === event.id ? { ...entry, status: event.type } : entry,
+        entry.id === event.id
+          ? { ...entry, status: event.type, message: event.reason }
+          : entry,
       );
       // If the event is "queued" and we don't have this entry, add it
       if (event.type === "queued" && !prev.some((e) => e.id === event.id)) {
@@ -82,6 +84,10 @@ export function CommandPanel() {
     });
     if (event.type === "rejected" && event.reason) {
       setError(`Rejected: ${event.reason}`);
+      setTimeout(() => setError(null), 5000);
+    }
+    if (event.type === "failed" && event.reason) {
+      setError(`Failed: ${event.reason}`);
       setTimeout(() => setError(null), 5000);
     }
   }, []);
@@ -379,6 +385,11 @@ export function CommandPanel() {
                   </span>
                 </div>
                 {entry.text && <div className="command-text">{entry.text}</div>}
+                {entry.message && (
+                  <div className={`command-message ${entry.status === "failed" ? "command-message-error" : ""}`}>
+                    {entry.message}
+                  </div>
+                )}
                 {entry.parsed && (
                   <div className="command-parsed">
                     {entry.parsed.map((p, i) => (

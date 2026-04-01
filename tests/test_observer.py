@@ -16,6 +16,7 @@ def _make_mock_bot(
     time: float = 64.0,
     score: float = 1250.0,
     units: list[tuple[str, int]] | None = None,
+    structures: list[tuple[str, int]] | None = None,
 ) -> MagicMock:
     """Create a mock BotAI with standard game state."""
     bot = MagicMock()
@@ -29,7 +30,7 @@ def _make_mock_bot(
 
     # Build mock units
     if units is None:
-        units = [("Probe", 12), ("Nexus", 1), ("Pylon", 2)]
+        units = [("Probe", 12)]
 
     mock_units = []
     for name, count in units:
@@ -38,6 +39,18 @@ def _make_mock_bot(
             u.name = name
             mock_units.append(u)
     bot.all_own_units = mock_units
+
+    # Build mock structures
+    if structures is None:
+        structures = [("Nexus", 1), ("Pylon", 2)]
+
+    mock_structures = []
+    for name, count in structures:
+        for _ in range(count):
+            s = MagicMock()
+            s.name = name
+            mock_structures.append(s)
+    bot.structures = mock_structures
     return bot
 
 
@@ -54,6 +67,7 @@ class TestObserve:
             "supply_used",
             "supply_cap",
             "units",
+            "structures",
             "actions_taken",
             "score",
         }
@@ -83,12 +97,38 @@ class TestObserve:
         unit_map = {u["type"]: u["count"] for u in entry["units"]}
         assert unit_map["Probe"] == 12
         assert unit_map["Zealot"] == 3
-        assert unit_map["Pylon"] == 2
+        # Pylon is a structure, so it should NOT appear in units
+        assert "Pylon" not in unit_map
+
+    def test_structures_excluded_from_units(self) -> None:
+        """Units that share a name with structures should only appear in structures."""
+        bot = _make_mock_bot(
+            units=[("Probe", 5), ("Nexus", 1), ("Gateway", 2)],
+            structures=[("Nexus", 1), ("Gateway", 2)],
+        )
+        entry = observe(bot)
+        unit_map = {u["type"]: u["count"] for u in entry["units"]}
+        struct_map = {s["type"]: s["count"] for s in entry["structures"]}
+        assert unit_map == {"Probe": 5}
+        assert struct_map == {"Nexus": 1, "Gateway": 2}
 
     def test_empty_units(self) -> None:
         bot = _make_mock_bot(units=[])
         entry = observe(bot)
         assert entry["units"] == []
+
+    def test_structure_counts(self) -> None:
+        bot = _make_mock_bot(structures=[("Nexus", 2), ("Gateway", 3), ("Pylon", 4)])
+        entry = observe(bot)
+        struct_map = {s["type"]: s["count"] for s in entry["structures"]}
+        assert struct_map["Nexus"] == 2
+        assert struct_map["Gateway"] == 3
+        assert struct_map["Pylon"] == 4
+
+    def test_empty_structures(self) -> None:
+        bot = _make_mock_bot(structures=[])
+        entry = observe(bot)
+        assert entry["structures"] == []
 
     def test_actions_taken_default_empty(self) -> None:
         bot = _make_mock_bot()

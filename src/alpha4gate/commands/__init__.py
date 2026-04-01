@@ -9,6 +9,7 @@ from alpha4gate.commands.primitives import (
     CommandPrimitive,
     CommandSettings,
     CommandSource,
+    filter_executable,
     get_command_settings,
 )
 from alpha4gate.commands.queue import CommandQueue, get_command_queue
@@ -24,6 +25,7 @@ __all__ = [
     "CommandSettings",
     "CommandSource",
     "ExecutionResult",
+    "filter_executable",
     "StructuredParser",
     "TECH_RECIPES",
     "expand_tech",

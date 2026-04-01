@@ -115,6 +115,7 @@ export interface CommandHistoryEntry {
   parsed: CommandParsed[] | null;
   source: string;
   status: string;
+  message?: string;
   game_time: number | null;
   timestamp_utc: string;
 }
@@ -126,7 +127,7 @@ export interface CommandPrimitives {
 }
 
 export interface CommandEvent {
-  type: "queued" | "executed" | "expired" | "rejected" | "evicted" | "cleared";
+  type: "queued" | "executed" | "expired" | "rejected" | "evicted" | "cleared" | "failed";
   id: string;
   parsed?: CommandParsed[];
   reason?: string;

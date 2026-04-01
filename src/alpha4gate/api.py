@@ -24,7 +24,11 @@ from alpha4gate.commands import (
     get_command_queue,
     get_command_settings,
 )
-from alpha4gate.web_socket import ConnectionManager, drain_broadcast_queue
+from alpha4gate.web_socket import (
+    ConnectionManager,
+    drain_broadcast_queue,
+    drain_command_event_queue,
+)
 
 ws_manager = ConnectionManager()
 
@@ -65,7 +69,20 @@ async def _drain_and_broadcast_once() -> int:
     entries = drain_broadcast_queue()
     for entry in entries:
         await ws_manager.broadcast_game_state(entry)
-    return len(entries)
+
+    # Drain command execution results from the bot thread
+    cmd_events = drain_command_event_queue()
+    for event in cmd_events:
+        await _broadcast_command_event(event)
+        # Update in-memory history with execution result
+        cmd_id = event.get("id")
+        if cmd_id:
+            for hist in _command_history:
+                if hist["id"] == cmd_id:
+                    hist["status"] = event["type"]
+                    break
+
+    return len(entries) + len(cmd_events)
 
 
 async def _game_state_broadcast_loop() -> None:

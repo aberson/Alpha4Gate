@@ -46,6 +46,16 @@ export function LiveView() {
             ))}
           </ul>
         </div>
+        {gameState.structures && gameState.structures.length > 0 && (
+          <div className="structures">
+            <h3>Structures</h3>
+            <ul>
+              {gameState.structures.map((s) => (
+                <li key={s.type}>{s.type}: {s.count}</li>
+              ))}
+            </ul>
+          </div>
+        )}
         {gameState.claude_advice && (
           <div className="advice">
             <h3>Claude Advice</h3>

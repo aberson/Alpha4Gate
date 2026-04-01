@@ -218,7 +218,9 @@ class CommandExecutor:
         bot = self._bot
         if not bot.can_afford(structure_id):
             return ExecutionResult(
-                success=False, message="Cannot afford structure", primitives_executed=0
+                success=False,
+                message=f"Cannot afford {structure_id.name} — not enough resources",
+                primitives_executed=0,
             )
 
         if structure_id == UnitTypeId.NEXUS:
@@ -252,7 +254,9 @@ class CommandExecutor:
         bot = self._bot
         if not bot.can_afford(unit_id):
             return ExecutionResult(
-                success=False, message="Cannot afford unit", primitives_executed=0
+                success=False,
+                message=f"Cannot afford {unit_id.name} — not enough resources",
+                primitives_executed=0,
             )
 
         production_type = _PRODUCTION_MAP.get(unit_id)
@@ -271,9 +275,20 @@ class CommandExecutor:
                 primitives_executed=1,
             )
 
+        all_structures = bot.structures(production_type)
+        total = len(all_structures)
+        idle_count = len(all_structures.idle)
+        if total == 0:
+            reason = f"No {production_type.name} built — build one first"
+        else:
+            busy = total - idle_count
+            reason = (
+                f"No idle {production_type.name} — all {total} busy"
+                f" ({busy} training)"
+            )
         return ExecutionResult(
             success=False,
-            message=f"No idle {production_type.name} available",
+            message=reason,
             primitives_executed=0,
         )
 
@@ -282,7 +297,9 @@ class CommandExecutor:
         bot = self._bot
         if not bot.can_afford(UnitTypeId.NEXUS):
             return ExecutionResult(
-                success=False, message="Cannot afford Nexus", primitives_executed=0
+                success=False,
+                message="Cannot afford Nexus — not enough resources",
+                primitives_executed=0,
             )
 
         location = self.resolve_location(cmd.location, cmd.action)

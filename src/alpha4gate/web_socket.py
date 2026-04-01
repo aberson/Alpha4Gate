@@ -102,6 +102,9 @@ class ConnectionManager:
 # Thread-safe queue for broadcasting from the game loop thread to the async web server
 _broadcast_queue: Queue[dict[str, Any]] = Queue()
 
+# Thread-safe queue for command execution results (bot thread → async web server)
+_command_event_queue: Queue[dict[str, Any]] = Queue()
+
 
 def queue_broadcast(entry: dict[str, Any]) -> None:
     """Enqueue a game state entry for WebSocket broadcast.
@@ -109,6 +112,14 @@ def queue_broadcast(entry: dict[str, Any]) -> None:
     Thread-safe: called from the game logger's background thread.
     """
     _broadcast_queue.put(entry)
+
+
+def queue_command_event(event: dict[str, Any]) -> None:
+    """Enqueue a command execution event for WebSocket broadcast.
+
+    Thread-safe: called from the bot's game loop thread after command execution.
+    """
+    _command_event_queue.put(event)
 
 
 def drain_broadcast_queue() -> list[dict[str, Any]]:
@@ -121,6 +132,21 @@ def drain_broadcast_queue() -> list[dict[str, Any]]:
     while True:
         try:
             entries.append(_broadcast_queue.get_nowait())
+        except Empty:
+            break
+    return entries
+
+
+def drain_command_event_queue() -> list[dict[str, Any]]:
+    """Drain all pending command execution events from the queue.
+
+    Returns:
+        List of command events to broadcast.
+    """
+    entries: list[dict[str, Any]] = []
+    while True:
+        try:
+            entries.append(_command_event_queue.get_nowait())
         except Empty:
             break
     return entries

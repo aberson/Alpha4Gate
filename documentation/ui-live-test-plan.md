@@ -173,6 +173,84 @@ Phase-runner does NOT run this phase.
 | 3     | 7    | Live game + smoke script          | MANUAL | —     |
 | 3     | 8    | Browser visual verification       | MANUAL | —     |
 
+## Bug fix: HUMAN_ONLY mode blocks all commands (found during Phase 3)
+
+**Root cause:** Commit 500d168 fixed `or` → `and` in the drain gate (`bot.py:204`),
+which correctly stopped the previous bug (wrong operator) but went too far — it
+blocked ALL commands in HUMAN_ONLY mode, including human-sourced ones.
+
+**Fix:** Extracted `filter_executable()` into `commands/primitives.py`. The drain gate
+now only checks `muted`; mode-based filtering happens per-command via `filter_executable()`.
+In HUMAN_ONLY mode, AI commands are dropped while human commands pass through.
+
+**Files changed:**
+
+| File | Change |
+|---|---|
+| `src/alpha4gate/commands/primitives.py` | Added `filter_executable()` function |
+| `src/alpha4gate/commands/__init__.py` | Export `filter_executable` |
+| `src/alpha4gate/bot.py` | Simplified drain gate, calls `filter_executable()` |
+| `tests/test_command_integration.py` | 3 new tests for `filter_executable()` |
+
+**Also:** Observation interval changed from 22 to 11 steps (~0.5s instead of ~1s).
+
+**Validation:** rwl-full 7-reviewer gauntlet PASS (4 code + 3 runtime reviewers).
+
+---
+
+## Bug fixes found during Phase 3 manual testing
+
+### Fix 1: Command execution feedback not visible
+
+Commands appeared in history as "queued" but never showed execution results.
+
+**Root cause:** `bot.on_step()` executed commands but never broadcast results back to
+the frontend. The executor returned `success=False` with generic messages.
+
+**Fix:**
+- Added `queue_command_event()` in `web_socket.py` — thread-safe queue for bot→API
+- `bot.py` now broadcasts `executed`/`failed` events after each command
+- `api.py` drains command events in the broadcast loop, updates history status
+- `executor.py` failure messages now include specific details (e.g., "No Gateway built"
+  vs "No idle GATEWAY available")
+- `CommandPanel.tsx` displays execution status and failure reasons
+- `game.ts` added `"failed"` event type and `message` field
+
+### Fix 2: Claude advisor never instantiated
+
+AI-Assisted mode never issued commands because `ClaudeAdvisor` was never created.
+
+**Root cause:** `runner.py` defined `--no-claude` flag but never used it. Bot was
+created without passing a `claude_advisor` argument.
+
+**Fix:** `runner.py` now creates `ClaudeAdvisor(api_key=settings.anthropic_api_key)`
+in `_run_single_game()` and `_run_batch()` when API key is available and `--no-claude`
+is not set.
+
+### Fix 3: Dashboard missing structure/building counts
+
+The dashboard showed unit counts but not buildings.
+
+**Root cause:** `observer.py` extracted unit counts but never structures. The frontend
+`GameState.structures` field existed but was never populated.
+
+**Fix:**
+- `observer.py` now counts structures using the same `Counter` pattern as units
+- `LiveView.tsx` renders a "Structures" section when data is present
+- `test_observer.py` has 2 new tests for structure counting
+
+### Fix 4: Vite WebSocket proxy target protocol
+
+**Root cause:** `vite.config.ts` used `ws://` as the proxy target for `/ws`. Vite's
+`http-proxy` handles WS upgrade internally and expects `http://`.
+
+**Fix:** Changed proxy target from `ws://localhost:8765` to `http://localhost:8765`.
+
+**All fixes validated:** 521/521 tests passing. Zero lint violations. Manual test with
+SC2 confirmed commands execute in-game and dashboard shows live data.
+
+---
+
 ## Quality gates
 - `uv run pytest --tb=no -q` — all tests pass (run after Phase 1 Step 5 and Phase 2 Step 6)
 - `uv run ruff check .` — clean

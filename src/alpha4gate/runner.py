@@ -210,12 +210,19 @@ def _run_single_game(settings: Settings, args: argparse.Namespace) -> None:
     logger = GameLogger(log_dir=settings.log_dir)
     logger.start()
 
+    claude_advisor = None
+    if settings.anthropic_api_key and not args.no_claude:
+        from alpha4gate.claude_advisor import ClaudeAdvisor
+
+        claude_advisor = ClaudeAdvisor(api_key=settings.anthropic_api_key)
+
     decision_mode = DecisionMode(args.decision_mode)
     bot = Alpha4GateBot(
         build_order=build_order,
         logger=logger,
         decision_mode=decision_mode,
         model_path=args.model_path,
+        claude_advisor=claude_advisor,
     )
     result = run_bot(
         bot,
@@ -256,6 +263,12 @@ def _run_batch(settings: Settings, args: argparse.Namespace) -> None:
         log_path=reward_log,
     )
 
+    claude_advisor = None
+    if settings.anthropic_api_key and not args.no_claude:
+        from alpha4gate.claude_advisor import ClaudeAdvisor
+
+        claude_advisor = ClaudeAdvisor(api_key=settings.anthropic_api_key)
+
     for i in range(args.batch):
         print(f"\n=== Game {i + 1}/{args.batch} ===")
         logger = GameLogger(log_dir=settings.log_dir)
@@ -269,6 +282,7 @@ def _run_batch(settings: Settings, args: argparse.Namespace) -> None:
             training_db=db,
             game_id=game_id,
             reward_calculator=reward_calc,
+            claude_advisor=claude_advisor,
         )
         result = run_bot(
             bot,

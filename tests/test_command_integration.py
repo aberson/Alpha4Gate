@@ -22,6 +22,7 @@ from alpha4gate.commands import (
     CommandMode,
     CommandPrimitive,
     CommandSource,
+    filter_executable,
     get_command_queue,
     get_command_settings,
 )
@@ -516,6 +517,45 @@ class TestHumanOnlyMode:
         assert resp.status_code == 200
         assert resp.json()["status"] == "queued"
         assert get_command_queue().size == 1
+
+    def test_human_command_executes_in_human_only(self) -> None:
+        """Human commands pass through filter_executable in HUMAN_ONLY."""
+        human_cmd = CommandPrimitive(
+            action=CommandAction.BUILD,
+            target="stalkers",
+            source=CommandSource.HUMAN,
+        )
+        result = filter_executable([human_cmd], CommandMode.HUMAN_ONLY)
+        assert len(result) == 1
+        assert result[0].source == CommandSource.HUMAN
+
+    def test_ai_command_skipped_in_human_only(self) -> None:
+        """AI commands are dropped by filter_executable in HUMAN_ONLY."""
+        ai_cmd = CommandPrimitive(
+            action=CommandAction.BUILD,
+            target="stalkers",
+            source=CommandSource.AI,
+        )
+        human_cmd = CommandPrimitive(
+            action=CommandAction.BUILD,
+            target="zealots",
+            source=CommandSource.HUMAN,
+        )
+        result = filter_executable([ai_cmd, human_cmd], CommandMode.HUMAN_ONLY)
+        assert len(result) == 1
+        assert result[0].source == CommandSource.HUMAN
+        assert result[0].target == "zealots"
+
+    def test_filter_passes_all_in_ai_assisted(self) -> None:
+        """In AI_ASSISTED mode, all commands pass through regardless of source."""
+        ai_cmd = CommandPrimitive(
+            action=CommandAction.BUILD, target="stalkers", source=CommandSource.AI
+        )
+        human_cmd = CommandPrimitive(
+            action=CommandAction.BUILD, target="zealots", source=CommandSource.HUMAN
+        )
+        result = filter_executable([ai_cmd, human_cmd], CommandMode.AI_ASSISTED)
+        assert len(result) == 2
 
 
 # ---------------------------------------------------------------------------

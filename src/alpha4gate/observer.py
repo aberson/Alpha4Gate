@@ -20,10 +20,21 @@ def observe(bot: BotAI, actions_taken: list[dict[str, Any]] | None = None) -> di
     Returns:
         Dict matching the JSONL log entry schema.
     """
-    # Count units by type name
+    # Count structures by type name
+    structure_counts: Counter[str] = Counter()
+    for structure in bot.structures:
+        structure_counts[structure.name] += 1
+
+    structures = [
+        {"type": name, "count": count} for name, count in structure_counts.most_common()
+    ]
+
+    # Count non-structure units (all_own_units includes structures, so exclude them)
+    structure_names = set(structure_counts)
     unit_counts: Counter[str] = Counter()
     for unit in bot.all_own_units:
-        unit_counts[unit.name] += 1
+        if unit.name not in structure_names:
+            unit_counts[unit.name] += 1
 
     units = [{"type": name, "count": count} for name, count in unit_counts.most_common()]
 
@@ -36,6 +47,7 @@ def observe(bot: BotAI, actions_taken: list[dict[str, Any]] | None = None) -> di
         "supply_used": int(bot.supply_used),
         "supply_cap": int(bot.supply_cap),
         "units": units,
+        "structures": structures,
         "actions_taken": actions_taken or [],
         "score": bot.state.score.score,
     }
