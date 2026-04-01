@@ -535,6 +535,7 @@ New component: `CommandPanel.tsx`
   - How it was parsed (which primitives)
   - Execution status (queued → executed/expired/rejected)
   - Source badge (AI / Human)
+  - Sorted by timestamp descending (most recent first)
 - Autocomplete dropdown powered by `GET /api/commands/primitives`
 - Error display: "I don't understand that command" for rejected free text
 - Integrate into existing `LiveView.tsx` layout

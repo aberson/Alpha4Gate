@@ -2,7 +2,7 @@
 
 A StarCraft II Protoss bot with rule-based decision-making and Claude AI as strategic advisor. Uses a three-layer architecture (strategy, tactics, micro) to play against the built-in AI and human opponents. Includes a React dashboard for live game visualization, build order editing, replay browsing, and strategic reasoning display.
 
-**Strategic Command System complete** — three-mode command system (AI-Assisted, Human-only, Hybrid) with unified command primitives, structured parser + Claude Haiku NLP fallback, real-time WebSocket events, and React CommandPanel UI. Issues #24–#29 closed. **HUMAN_ONLY mode fix** — `filter_executable()` correctly passes human commands while dropping AI commands. 521 tests passing, 0 type errors, 0 lint violations.
+**Strategic Command System complete** — three-mode command system (AI-Assisted, Human-only, Hybrid) with unified command primitives, structured parser + Claude Haiku NLP fallback, real-time WebSocket events, and React CommandPanel UI. Issues #24–#29 closed. **HUMAN_ONLY mode fix** — `filter_executable()` correctly passes human commands while dropping AI commands. **Command history fix** — deduplicated POST/WebSocket race entries, fixed WebSocket reconnect leak under React StrictMode, sorted history by timestamp (most recent first). 521 tests passing, 0 type errors, 0 lint violations.
 
 ## Stack
 

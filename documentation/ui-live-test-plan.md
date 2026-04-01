@@ -194,7 +194,8 @@ In HUMAN_ONLY mode, AI commands are dropped while human commands pass through.
 
 **Also:** Observation interval changed from 22 to 11 steps (~0.5s instead of ~1s).
 
-**Validation:** rwl-full 7-reviewer gauntlet PASS (4 code + 3 runtime reviewers).
+**Validation:** rwl-full (Reviewer-Writer Loop with 7 parallel review agents) PASS
+(4 code reviewers + 3 runtime reviewers).
 
 ---
 
@@ -248,6 +249,29 @@ The dashboard showed unit counts but not buildings.
 
 **All fixes validated:** 521/521 tests passing. Zero lint violations. Manual test with
 SC2 confirmed commands execute in-game and dashboard shows live data.
+
+### Fix 5: Duplicate command history entries and wrong sort order
+
+Command history showed each command multiple times and did not display most recent
+commands first.
+
+**Root causes (3):**
+1. **POST + WebSocket race:** `submit_command` in `api.py` awaits the WS broadcast
+   *before* returning the HTTP response, so the frontend WebSocket handler adds the
+   entry first, then `submitCommand` adds a duplicate (no dedup check).
+2. **WebSocket reconnect leak:** `useWebSocket.ts` effect cleanup calls `ws.close()`,
+   triggering `onclose`, which schedules a reconnect timer. React StrictMode's
+   double mount/cleanup cycle spawns extra WS connections, multiplying every event.
+3. **Sort order:** `history.slice(-20).reverse()` relied on insertion order, which is
+   non-deterministic when WS and POST responses race.
+
+**Fix:**
+- `CommandPanel.tsx` `submitCommand`: added `prev.some(e => e.id === data.id)` dedup
+  check before adding entries from POST responses
+- `useWebSocket.ts`: added `closingRef` flag to suppress reconnect during intentional
+  cleanup close
+- `CommandPanel.tsx` render: replaced `slice(-20).reverse()` with explicit sort by
+  `timestamp_utc` descending, then `slice(0, 20)`
 
 ---
 

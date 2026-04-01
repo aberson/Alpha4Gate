@@ -159,19 +159,22 @@ export function CommandPanel() {
       if (!res.ok) {
         setError(data.error || `Error ${res.status}`);
       } else {
-        // Add to local history immediately
-        setHistory((prev) => [
-          ...prev,
-          {
-            id: data.id,
-            text,
-            parsed: data.parsed ?? null,
-            source: "human",
-            status: data.status,
-            game_time: null,
-            timestamp_utc: new Date().toISOString(),
-          },
-        ]);
+        // Add to local history if not already added by WebSocket
+        setHistory((prev) => {
+          if (prev.some((e) => e.id === data.id)) return prev;
+          return [
+            ...prev,
+            {
+              id: data.id,
+              text,
+              parsed: data.parsed ?? null,
+              source: "human",
+              status: data.status,
+              game_time: null,
+              timestamp_utc: new Date().toISOString(),
+            },
+          ];
+        });
         setInput("");
       }
     } catch {
@@ -258,7 +261,9 @@ export function CommandPanel() {
   };
 
   // --- Render ---
-  const recentHistory = history.slice(-20).reverse();
+  const recentHistory = [...history]
+    .sort((a, b) => b.timestamp_utc.localeCompare(a.timestamp_utc))
+    .slice(0, 20);
 
   return (
     <div className="command-panel">

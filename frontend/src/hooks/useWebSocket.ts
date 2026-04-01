@@ -10,15 +10,19 @@ export function useWebSocket({ url, onMessage, reconnectInterval = 3000 }: UseWe
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<number | null>(null);
+  const closingRef = useRef(false);
 
   const connect = useCallback(() => {
+    closingRef.current = false;
     const ws = new WebSocket(url);
     wsRef.current = ws;
 
     ws.onopen = () => setConnected(true);
     ws.onclose = () => {
       setConnected(false);
-      reconnectTimer.current = window.setTimeout(connect, reconnectInterval);
+      if (!closingRef.current) {
+        reconnectTimer.current = window.setTimeout(connect, reconnectInterval);
+      }
     };
     ws.onmessage = (event) => {
       try {
@@ -33,6 +37,7 @@ export function useWebSocket({ url, onMessage, reconnectInterval = 3000 }: UseWe
   useEffect(() => {
     connect();
     return () => {
+      closingRef.current = true;
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
       wsRef.current?.close();
     };
