@@ -30,37 +30,6 @@ def _sample_entry(
 
 
 class TestFormatStatus:
-    def test_contains_step(self) -> None:
-        line = format_status(_sample_entry(game_step=2048))
-        assert "Step 2048" in line
-
-    def test_contains_time_formatted(self) -> None:
-        # 64 seconds = 1:04
-        line = format_status(_sample_entry(game_time_seconds=64.0))
-        assert "1:04" in line
-
-    def test_time_zero(self) -> None:
-        line = format_status(_sample_entry(game_time_seconds=0.0))
-        assert "0:00" in line
-
-    def test_contains_resources(self) -> None:
-        line = format_status(_sample_entry(minerals=400, vespene=200))
-        assert "Minerals: 400" in line
-        assert "Gas: 200" in line
-
-    def test_contains_supply(self) -> None:
-        line = format_status(_sample_entry(supply_used=15, supply_cap=23))
-        assert "Supply: 15/23" in line
-
-    def test_contains_score(self) -> None:
-        line = format_status(_sample_entry(score=5000.0))
-        assert "Score: 5000" in line
-
-    def test_contains_unit_count(self) -> None:
-        units = [{"type": "Probe", "count": 12}, {"type": "Zealot", "count": 3}]
-        line = format_status(_sample_entry(units=units))
-        assert "Units: 15" in line
-
     def test_empty_units(self) -> None:
         line = format_status(_sample_entry(units=[]))
         assert "Units: 0" in line

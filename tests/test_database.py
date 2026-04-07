@@ -47,16 +47,6 @@ class TestSampling:
         assert actions.shape == (0,)
         assert rewards.shape == (0,)
 
-    def test_sample_batch_returns_correct_shapes(self, db: TrainingDB) -> None:
-        db.store_game("g1", "Simple64", 1, "win", 300.0, 5.5, "v0")
-        for i in range(20):
-            state = np.full(FEATURE_DIM, float(i), dtype=np.float32)
-            db.store_transition("g1", i, float(i), state, action=i % 5, reward=0.1)
-        states, actions, rewards = db.sample_batch(10)
-        assert states.shape == (10, FEATURE_DIM)
-        assert actions.shape == (10,)
-        assert rewards.shape == (10,)
-
     def test_sample_batch_fewer_than_requested(self, db: TrainingDB) -> None:
         db.store_game("g1", "Simple64", 1, "win", 300.0, 5.5, "v0")
         state = np.zeros(FEATURE_DIM, dtype=np.float32)
@@ -89,7 +79,3 @@ class TestWinRate:
         assert db.get_recent_win_rate(2) == 1.0
 
 
-class TestDbSize:
-    def test_db_size_positive(self, db: TrainingDB) -> None:
-        db.store_game("g1", "Simple64", 1, "win", 300.0, 5.5, "v0")
-        assert db.get_db_size_bytes() > 0

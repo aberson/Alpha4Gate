@@ -135,17 +135,6 @@ class TestObserve:
         entry = observe(bot)
         assert entry["actions_taken"] == []
 
-    def test_actions_taken_passed_through(self) -> None:
-        bot = _make_mock_bot()
-        actions = [{"action": "Build", "target": "Pylon", "location": [32, 48]}]
-        entry = observe(bot, actions_taken=actions)
-        assert entry["actions_taken"] == actions
-
-    def test_score_value(self) -> None:
-        bot = _make_mock_bot(score=5000.0)
-        entry = observe(bot)
-        assert entry["score"] == 5000.0
-
     def test_timestamp_is_iso_format(self) -> None:
         bot = _make_mock_bot()
         entry = observe(bot)

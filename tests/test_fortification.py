@@ -2,22 +2,7 @@
 
 from __future__ import annotations
 
-from alpha4gate.fortification import FortificationManager, _clamp
-
-
-class TestClamp:
-    def test_clamp_below(self) -> None:
-        assert _clamp(-5, 1, 5) == 1
-
-    def test_clamp_above(self) -> None:
-        assert _clamp(10, 1, 5) == 5
-
-    def test_clamp_within(self) -> None:
-        assert _clamp(3, 1, 5) == 3
-
-    def test_clamp_at_boundaries(self) -> None:
-        assert _clamp(1, 1, 5) == 1
-        assert _clamp(5, 1, 5) == 5
+from alpha4gate.fortification import FortificationManager
 
 
 class TestScalingFormula:

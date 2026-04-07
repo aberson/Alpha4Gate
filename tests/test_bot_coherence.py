@@ -104,16 +104,20 @@ def _make_bot(seed: int = 42) -> Alpha4GateBot:
 
 
 class TestResolveAttackRally:
-    """Test the _resolve_attack_rally decision tree."""
+    """Test bot-level wiring of _resolve_attack_rally.
 
-    def test_retreat_when_outnumbered(self) -> None:
+    Core decision logic (retreat/attack/hold thresholds) is tested in
+    test_army_coherence.py. These tests verify bot-specific behavior:
+    retreat destination, staging flag, and staging timeout.
+    """
+
+    def test_retreat_to_defense_rally(self) -> None:
         bot = _make_bot()
         bot.coherence_manager.retreat_supply_ratio = 0.5
         bot.coherence_manager.retreat_to_staging = False
         army = [_mock_unit(50, 50)]
         snap = GameSnapshot(army_supply=5, enemy_army_supply_visible=30)
         result = bot._resolve_attack_rally(army, snap, bot.coherence_manager)
-        # Should retreat to defense rally (retreat_to_staging=False)
         defense = bot._defense_rally()
         assert result == defense
 
@@ -123,44 +127,6 @@ class TestResolveAttackRally:
         bot.coherence_manager.retreat_to_staging = True
         army = [_mock_unit(50, 50)]
         snap = GameSnapshot(army_supply=5, enemy_army_supply_visible=30)
-        result = bot._resolve_attack_rally(army, snap, bot.coherence_manager)
-        staging = bot._get_staging_point()
-        assert result == staging
-
-    def test_gather_when_not_coherent(self) -> None:
-        bot = _make_bot()
-        bot.coherence_manager.coherence_distance = 2.0
-        bot.coherence_manager.coherence_pct = 0.8
-        bot.coherence_manager.retreat_supply_ratio = 0.1  # won't retreat
-        # Scattered army
-        army = [_mock_unit(0, 0), _mock_unit(50, 50), _mock_unit(100, 100)]
-        snap = GameSnapshot(army_supply=30, enemy_army_supply_visible=10)
-        result = bot._resolve_attack_rally(army, snap, bot.coherence_manager)
-        staging = bot._get_staging_point()
-        assert result == staging
-
-    def test_push_when_coherent_and_strong(self) -> None:
-        bot = _make_bot()
-        bot.coherence_manager.coherence_distance = 100.0  # easy coherence
-        bot.coherence_manager.coherence_pct = 0.5
-        bot.coherence_manager.attack_supply_ratio = 1.0
-        bot.coherence_manager.attack_supply_floor = 15
-        bot.coherence_manager.retreat_supply_ratio = 0.1
-        army = [_mock_unit(50, 50), _mock_unit(51, 50)]
-        snap = GameSnapshot(army_supply=30, enemy_army_supply_visible=20)
-        result = bot._resolve_attack_rally(army, snap, bot.coherence_manager)
-        attack = bot._attack_target()
-        assert result == attack
-
-    def test_hold_when_coherent_but_weak(self) -> None:
-        bot = _make_bot()
-        bot.coherence_manager.coherence_distance = 100.0
-        bot.coherence_manager.coherence_pct = 0.5
-        bot.coherence_manager.attack_supply_ratio = 2.0  # need 2x enemy
-        bot.coherence_manager.attack_supply_floor = 100  # high floor
-        bot.coherence_manager.retreat_supply_ratio = 0.1  # won't retreat
-        army = [_mock_unit(50, 50), _mock_unit(51, 50)]
-        snap = GameSnapshot(army_supply=20, enemy_army_supply_visible=20)
         result = bot._resolve_attack_rally(army, snap, bot.coherence_manager)
         staging = bot._get_staging_point()
         assert result == staging
@@ -230,58 +196,6 @@ class TestGetStagingPoint:
         assert pt is not None
         assert abs(pt[0] - 66.0) < 1.0
         assert abs(pt[1] - 66.0) < 1.0
-
-
-class TestCoherenceParamsLogging:
-    def test_bot_has_coherence_manager(self) -> None:
-        bot = _make_bot()
-        assert isinstance(bot.coherence_manager, ArmyCoherenceManager)
-
-    def test_params_dict_has_all_keys(self) -> None:
-        bot = _make_bot()
-        params = bot.coherence_manager.get_params_dict()
-        assert "attack_supply_ratio" in params
-        assert "retreat_to_staging" in params
-        assert "fortify_trigger_ratio" in params
-        assert len(params) == 10
-
-    def test_coherence_params_logged_flag(self) -> None:
-        bot = _make_bot()
-        assert bot._coherence_params_logged is False
-
-
-class TestHysteresisIntegration:
-    """Test the full retreat → re-engage hysteresis cycle through bot helpers."""
-
-    def test_retreat_then_requires_higher_ratio(self) -> None:
-        bot = _make_bot()
-        cm = bot.coherence_manager
-        cm.attack_supply_ratio = 1.0
-        cm.retreat_supply_ratio = 0.5
-        cm.attack_supply_floor = 100  # high so floor doesn't interfere
-        cm.coherence_distance = 100.0  # easy coherence
-        cm.coherence_pct = 0.5
-
-        army = [_mock_unit(50, 50)]
-
-        # Step 1: retreat (5 < 20 * 0.5 = 10)
-        snap1 = GameSnapshot(army_supply=5, enemy_army_supply_visible=20)
-        bot._resolve_attack_rally(army, snap1, cm)
-        assert cm._recently_retreated is True
-
-        # Step 2: rebuild to 20 supply, enemy still 20
-        # Without hysteresis 20 >= 20*1.0 would attack. With hysteresis need 20*1.2=24.
-        snap2 = GameSnapshot(army_supply=20, enemy_army_supply_visible=20)
-        result = bot._resolve_attack_rally(army, snap2, cm)
-        # Should NOT be attacking — held at staging
-        staging = bot._get_staging_point()
-        assert result == staging
-
-        # Step 3: at 24 supply, should now attack
-        snap3 = GameSnapshot(army_supply=24, enemy_army_supply_visible=20)
-        result = bot._resolve_attack_rally(army, snap3, cm)
-        attack = bot._attack_target()
-        assert result == attack
 
 
 class TestEnemyNatural:

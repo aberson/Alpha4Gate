@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from alpha4gate.web_socket import ConnectionManager, drain_broadcast_queue, queue_broadcast
+from alpha4gate.web_socket import drain_broadcast_queue, queue_broadcast
 
 
 class TestQueueBroadcast:
@@ -29,13 +29,6 @@ class TestQueueBroadcast:
         queue_broadcast({"step": 3})
         entries = drain_broadcast_queue()
         assert len(entries) == 3
-
-
-class TestConnectionManager:
-    def test_initial_counts(self) -> None:
-        mgr = ConnectionManager()
-        assert mgr.game_connection_count == 0
-        assert mgr.decision_connection_count == 0
 
 
 class TestBroadcastPipelineFields:

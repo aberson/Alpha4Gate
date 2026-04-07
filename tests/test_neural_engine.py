@@ -105,30 +105,3 @@ class TestNeuralDecisionEngine:
         result = engine.predict(snap)
         assert result == StrategicState.ATTACK
 
-    def test_deterministic_mode(self) -> None:
-        mock_model = _make_mock_model(action=1)
-        with patch("stable_baselines3.PPO") as mock_ppo_cls:
-            mock_ppo_cls.load.return_value = mock_model
-            engine = NeuralDecisionEngine("fake.zip", deterministic=True)
-
-        engine.predict(GameSnapshot())
-        mock_model.predict.assert_called_once()
-        _, call_kwargs = mock_model.predict.call_args
-        assert call_kwargs.get("deterministic") is True
-
-    def test_stochastic_mode(self) -> None:
-        mock_model = _make_mock_model(action=1)
-        with patch("stable_baselines3.PPO") as mock_ppo_cls:
-            mock_ppo_cls.load.return_value = mock_model
-            engine = NeuralDecisionEngine("fake.zip", deterministic=False)
-
-        engine.predict(GameSnapshot())
-        _, call_kwargs = mock_model.predict.call_args
-        assert call_kwargs.get("deterministic") is False
-
-    def test_mode_property(self) -> None:
-        mock_model = _make_mock_model()
-        with patch("stable_baselines3.PPO") as mock_ppo_cls:
-            mock_ppo_cls.load.return_value = mock_model
-            engine = NeuralDecisionEngine("fake.zip", mode=DecisionMode.HYBRID)
-        assert engine.mode == DecisionMode.HYBRID

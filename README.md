@@ -9,7 +9,7 @@ A StarCraft II Protoss bot combining rule-based decision-making, a PPO neural po
 - **Evaluation metrics** — structured reward shaping, win-rate tracking, training diagnostics, and cross-game statistics
 - **Autonomous self-improvement** — train-play-evaluate loop that runs 24/7, getting stronger with each cycle
 
-**Current capability:** Wins reliably at difficulty 1-3 (Easy through Medium AI). Struggles at 4-5 (Hard). 578 tests passing, 0 type errors, 0 lint violations.
+**Current capability:** Wins reliably at difficulty 1-3 (Easy through Medium AI). Struggles at 4-5 (Hard). 500 tests passing, 0 type errors, 0 lint violations.
 
 ## Stack
 
@@ -131,7 +131,7 @@ Alpha4Gate/
 │   ├── imitation.py         # Imitation pre-training from replays
 │   ├── api.py               # FastAPI server (REST + WebSocket)
 │   └── ...                  # scouting, config, logger, runner, etc.
-├── tests/                   # 34 test files, 578 tests
+├── tests/                   # 34 test files, 500 tests
 ├── frontend/                # React + TypeScript dashboard (Vite)
 ├── scripts/                 # Live test, training analysis, model evaluation
 ├── docs/archived/           # Historical plan documents (Phase 1 + Phase 2)

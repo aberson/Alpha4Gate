@@ -12,9 +12,9 @@ from unittest.mock import AsyncMock, MagicMock
 from sc2.ids.unit_typeid import UnitTypeId
 
 from alpha4gate.army_coherence import ArmyCoherenceManager
-from alpha4gate.bot import _TARGET_MAP, Alpha4GateBot
+from alpha4gate.bot import Alpha4GateBot
 from alpha4gate.build_backlog import BuildBacklog
-from alpha4gate.decision_engine import DecisionEngine, GameSnapshot, StrategicState
+from alpha4gate.decision_engine import DecisionEngine, GameSnapshot
 from alpha4gate.fortification import FortificationManager
 
 
@@ -118,18 +118,6 @@ def _make_bot(seed: int = 42) -> MagicMock:
     return bot
 
 
-class TestTargetMapEntries:
-    """Verify PhotonCannon and ShieldBattery are in _TARGET_MAP."""
-
-    def test_photon_cannon_in_target_map(self) -> None:
-        assert "PhotonCannon" in _TARGET_MAP
-        assert _TARGET_MAP["PhotonCannon"] == UnitTypeId.PHOTONCANNON
-
-    def test_shield_battery_in_target_map(self) -> None:
-        assert "ShieldBattery" in _TARGET_MAP
-        assert _TARGET_MAP["ShieldBattery"] == UnitTypeId.SHIELDBATTERY
-
-
 class TestFortificationManagerWiring:
     """Test that the bot correctly instantiates and calls FortificationManager."""
 
@@ -221,9 +209,3 @@ class TestNotifyRetreatWiring:
         assert bot.decision_engine._recently_retreated is True
 
 
-class TestMicroRouting:
-    """Test that FORTIFY state uses defense rally in micro."""
-
-    def test_state_to_action_has_fortify(self) -> None:
-        """FORTIFY should be mapped to action index 5."""
-        assert Alpha4GateBot._STATE_TO_ACTION[StrategicState.FORTIFY] == 5

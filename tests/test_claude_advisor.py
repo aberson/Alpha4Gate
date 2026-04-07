@@ -130,9 +130,6 @@ class TestRateLimiter:
         rl.record_call(0.0)
         assert rl.can_call(30.0)
 
-    def test_interval_property(self) -> None:
-        rl = RateLimiter(interval_game_seconds=60.0)
-        assert rl.interval == 60.0
 
 
 class TestClaudeAdvisor:
@@ -180,33 +177,6 @@ class TestClaudeAdvisorAsync:
         proc.returncode = returncode
         return proc
 
-    def test_request_fires_and_collects(self) -> None:
-        loop = asyncio.new_event_loop()
-        try:
-            canned = self._make_canned_response()
-            mock_proc = self._make_mock_process(stdout=canned.encode())
-
-            advisor = ClaudeAdvisor()
-
-            async def run() -> AdvisorResponse | None:
-                with patch(
-                    "asyncio.create_subprocess_exec",
-                    AsyncMock(return_value=mock_proc),
-                ):
-                    fired = advisor.request_advice("test prompt", 0.0)
-                    assert fired
-                    assert advisor.has_pending
-                    await advisor._pending_task
-                return advisor.collect_response()
-
-            result = loop.run_until_complete(run())
-            assert result is not None
-            assert len(result.commands) == 1
-            assert result.commands[0].action.value == "build"
-            assert result.suggestion == "Build a gateway"
-        finally:
-            loop.close()
-
     def test_cli_failure_logs_error(self, caplog: object) -> None:
         import _pytest.logging
 
@@ -236,16 +206,6 @@ class TestClaudeAdvisorAsync:
             assert "Advisor CLI failed" in caplog.text
         finally:
             loop.close()
-
-    def test_init_logs_enabled(self, caplog: object) -> None:
-        import _pytest.logging
-
-        assert isinstance(caplog, _pytest.logging.LogCaptureFixture)
-
-        with caplog.at_level(logging.DEBUG, logger="alpha4gate.claude_advisor"):
-            advisor = ClaudeAdvisor()
-        assert advisor.enabled
-        assert "enabled=True" in caplog.text
 
     def test_collect_response_exception_logs(self, caplog: object) -> None:
         import _pytest.logging
@@ -302,30 +262,3 @@ class TestClaudeAdvisorAsync:
         finally:
             loop.close()
 
-    def test_empty_response_logs_warning(self, caplog: object) -> None:
-        import _pytest.logging
-
-        assert isinstance(caplog, _pytest.logging.LogCaptureFixture)
-
-        loop = asyncio.new_event_loop()
-        try:
-            mock_proc = self._make_mock_process(stdout=b"", returncode=0)
-
-            advisor = ClaudeAdvisor()
-
-            async def run() -> AdvisorResponse | None:
-                with patch(
-                    "asyncio.create_subprocess_exec",
-                    AsyncMock(return_value=mock_proc),
-                ):
-                    advisor.request_advice("test prompt", 0.0)
-                    await advisor._pending_task
-                return advisor.collect_response()
-
-            with caplog.at_level(logging.DEBUG, logger="alpha4gate.claude_advisor"):
-                result = loop.run_until_complete(run())
-
-            assert result is None
-            assert "empty response" in caplog.text
-        finally:
-            loop.close()

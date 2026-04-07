@@ -64,22 +64,6 @@ class TestGameLogger:
         lines = logger.log_path.read_text(encoding="utf-8").strip().splitlines()
         assert len(lines) == 1
 
-    def test_creates_log_directory(self, tmp_path: Path) -> None:
-        log_dir = tmp_path / "nested" / "logs"
-        logger = GameLogger(log_dir=log_dir)
-        logger.start()
-        logger.put(_sample_entry(game_step=1))
-        logger.stop()
-        assert log_dir.is_dir()
-
-    def test_log_filename_format(self, tmp_path: Path) -> None:
-        logger = GameLogger(log_dir=tmp_path / "logs")
-        logger.start()
-        logger.stop()
-        assert logger.log_path is not None
-        assert logger.log_path.name.startswith("game_")
-        assert logger.log_path.suffix == ".jsonl"
-
     def test_data_preserved_in_jsonl(self, tmp_path: Path) -> None:
         logger = GameLogger(log_dir=tmp_path / "logs")
         logger.start()

@@ -6,6 +6,7 @@ from alpha4gate.commands.primitives import (
     CommandMode,
     CommandPrimitive,
     CommandSource,
+    filter_executable,
     get_command_settings,
 )
 from alpha4gate.commands.queue import CommandQueue
@@ -310,3 +311,38 @@ class TestTechRecipes:
     def test_expand_tech_prereq_higher_priority(self) -> None:
         cmds = expand_tech("voidrays", CommandSource.HUMAN, game_time=0.0)
         assert cmds[0].priority > cmds[1].priority
+
+
+# --- filter_executable ---
+
+
+class TestFilterExecutable:
+    def test_human_command_passes_in_human_only(self) -> None:
+        human_cmd = CommandPrimitive(
+            action=CommandAction.BUILD, target="stalkers", source=CommandSource.HUMAN
+        )
+        result = filter_executable([human_cmd], CommandMode.HUMAN_ONLY)
+        assert len(result) == 1
+        assert result[0].source == CommandSource.HUMAN
+
+    def test_ai_command_dropped_in_human_only(self) -> None:
+        ai_cmd = CommandPrimitive(
+            action=CommandAction.BUILD, target="stalkers", source=CommandSource.AI
+        )
+        human_cmd = CommandPrimitive(
+            action=CommandAction.BUILD, target="zealots", source=CommandSource.HUMAN
+        )
+        result = filter_executable([ai_cmd, human_cmd], CommandMode.HUMAN_ONLY)
+        assert len(result) == 1
+        assert result[0].source == CommandSource.HUMAN
+        assert result[0].target == "zealots"
+
+    def test_all_pass_in_ai_assisted(self) -> None:
+        ai_cmd = CommandPrimitive(
+            action=CommandAction.BUILD, target="stalkers", source=CommandSource.AI
+        )
+        human_cmd = CommandPrimitive(
+            action=CommandAction.BUILD, target="zealots", source=CommandSource.HUMAN
+        )
+        result = filter_executable([ai_cmd, human_cmd], CommandMode.AI_ASSISTED)
+        assert len(result) == 2

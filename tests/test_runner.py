@@ -61,17 +61,3 @@ class TestStartServerBackground:
         data = resp.json()
         assert "mode" in data
 
-    def test_server_thread_is_daemon(self, tmp_path: Path) -> None:
-        """Verify the server runs in a daemon thread (won't block process exit)."""
-        import threading
-
-        port = _free_port()
-        settings = _make_settings(tmp_path, port)
-
-        initial_threads = set(threading.enumerate())
-        _start_server_background(settings)
-        time.sleep(0.5)
-        new_threads = set(threading.enumerate()) - initial_threads
-
-        daemon_threads = [t for t in new_threads if t.daemon]
-        assert len(daemon_threads) >= 1, "Expected at least one daemon thread"

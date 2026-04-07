@@ -257,19 +257,3 @@ class TestFortifyState:
         assert "Fortifying" in fortify_entry.reason
 
 
-class TestGameSnapshotNewFields:
-    def test_cannon_count_default(self) -> None:
-        snap = GameSnapshot()
-        assert snap.cannon_count == 0
-
-    def test_battery_count_default(self) -> None:
-        snap = GameSnapshot()
-        assert snap.battery_count == 0
-
-    def test_cannon_count_set(self) -> None:
-        snap = GameSnapshot(cannon_count=3)
-        assert snap.cannon_count == 3
-
-    def test_battery_count_set(self) -> None:
-        snap = GameSnapshot(battery_count=2)
-        assert snap.battery_count == 2

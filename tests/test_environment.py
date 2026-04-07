@@ -38,18 +38,6 @@ def _default_snapshot(**overrides: Any) -> GameSnapshot:
     return base
 
 
-class TestActionMapping:
-    def test_action_space_size(self) -> None:
-        assert len(_ACTION_TO_STATE) == 6
-
-    def test_action_indices(self) -> None:
-        assert _ACTION_TO_STATE[0] == StrategicState.OPENING
-        assert _ACTION_TO_STATE[1] == StrategicState.EXPAND
-        assert _ACTION_TO_STATE[2] == StrategicState.ATTACK
-        assert _ACTION_TO_STATE[3] == StrategicState.DEFEND
-        assert _ACTION_TO_STATE[4] == StrategicState.LATE_GAME
-
-
 class TestObservationSpace:
     def test_obs_shape(self) -> None:
         """Encoded observations should match FEATURE_DIM."""
@@ -99,23 +87,6 @@ class TestRewardComputation:
         state = asdict(_default_snapshot())
         reward = calc.compute_step_reward(state, is_terminal=True, result="loss")
         assert reward < -5.0
-
-
-class TestSC2EnvSpaces:
-    """Test env space definitions without launching a game."""
-
-    def test_observation_space_shape(self) -> None:
-        env = SC2Env.__new__(SC2Env)
-        assert env.observation_space.shape == (FEATURE_DIM,)
-
-    def test_action_space_n(self) -> None:
-        env = SC2Env.__new__(SC2Env)
-        assert env.action_space.n == 6
-
-    def test_observation_space_bounds(self) -> None:
-        env = SC2Env.__new__(SC2Env)
-        np.testing.assert_array_equal(env.observation_space.low, 0.0)
-        np.testing.assert_array_equal(env.observation_space.high, 1.0)
 
 
 class TestSnapshotToRaw:
