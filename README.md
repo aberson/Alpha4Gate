@@ -1,8 +1,15 @@
 # Alpha4Gate
 
-A StarCraft II Protoss bot with rule-based decision-making and Claude AI as strategic advisor. Uses a three-layer architecture (strategy, tactics, micro) to play against the built-in AI and human opponents. Includes a React dashboard for live game visualization, build order editing, replay browsing, and strategic reasoning display.
+A StarCraft II Protoss bot combining rule-based decision-making, a PPO neural policy network, and Claude AI as strategic advisor. Uses a layered architecture (strategy, tactics, coherence, micro) with three command execution modes (AI-Assisted, Human Only, Hybrid). Includes a React dashboard for live game visualization, training metrics, build order editing, and strategic command input.
 
-**Defensive Fortification complete** — new FORTIFY strategic state with BuildBacklog, FortificationManager (cannons + batteries), and full bot integration. 578 tests passing, 0 type errors, 0 lint violations.
+## Vision
+
+- **AI-vs-AI competition** — build a bot that wins consistently at increasing difficulty levels and eventually competes against other SC2 bots
+- **Transparent model introspection** — live dashboard showing strategic state, decision reasoning, neural policy outputs, and Claude advisor suggestions
+- **Evaluation metrics** — structured reward shaping, win-rate tracking, training diagnostics, and cross-game statistics
+- **Autonomous self-improvement** — train-play-evaluate loop that runs 24/7, getting stronger with each cycle
+
+**Current capability:** Wins reliably at difficulty 1-3 (Easy through Medium AI). Struggles at 4-5 (Hard). 578 tests passing, 0 type errors, 0 lint violations.
 
 ## Stack
 
@@ -14,7 +21,7 @@ A StarCraft II Protoss bot with rule-based decision-making and Claude AI as stra
 | Build orders | Spawning Tool API | Community build order database |
 | Backend | FastAPI | WebSocket + REST for dashboard |
 | Frontend | React + TypeScript + Vite | Live dashboard with game state streaming |
-| Deep learning | PyTorch + SB3 | PPO policy network for strategic decisions |
+| Deep learning | PyTorch + Stable Baselines 3 | PPO policy network for strategic decisions |
 | Training data | SQLite | Structured (s,a,r,s') transition storage |
 | Testing | pytest | 578 unit tests, SC2 integration markers |
 | Linting | ruff + mypy | Strict type checking, consistent style |
@@ -23,7 +30,7 @@ A StarCraft II Protoss bot with rule-based decision-making and Claude AI as stra
 
 - Windows 11
 - StarCraft II installed at `C:\Program Files (x86)\StarCraft II\`
-- Python 3.14+
+- Python 3.12+
 - [uv](https://docs.astral.sh/uv/) package manager
 - Node.js 18+ (for React frontend)
 - SC2 maps from [Blizzard CDN](https://blzdistsc2-a.akamaihd.net/MapPacks/Melee.zip) (password: `iagreetotheeula`) — do NOT use GitHub map files (Git LFS pointers)
@@ -77,9 +84,13 @@ cd frontend && npm start
 ## Architecture
 
 ```
-Claude Advisor (async, non-blocking)
+Claude Advisor (async, non-blocking subprocess)
         |
-Strategy Layer — state machine: opening → expand → attack → defend → fortify → late_game
+Neural Engine — PPO policy network (optional, hybrid or pure RL mode)
+        |
+Strategy Layer — state machine: opening -> expand -> attack -> defend -> fortify -> late_game
+        |
+Command System — parser -> interpreter -> executor (AI-Assisted / Human Only / Hybrid)
         |
 Tactics Layer — macro manager, scouting, production balance
         |
@@ -88,7 +99,7 @@ Coherence — army staging, grouping, engagement/retreat decisions
 Micro Layer — army movement, kiting, focus fire, ability usage
 ```
 
-The bot follows a build order during the opening, then transitions to dynamic decision-making. Claude provides optional strategic advice via async API calls (rate-limited to 1 per 30 game-seconds).
+The bot follows a build order during the opening, then transitions to dynamic decision-making. Claude provides optional strategic advice via async subprocess calls (rate-limited to 1 per 30 game-seconds). The neural engine can override or supplement rule-based strategy decisions using a PPO-trained policy.
 
 ## Testing
 
@@ -104,21 +115,40 @@ cd frontend && npx tsc --noEmit  # TypeScript check
 
 ```
 Alpha4Gate/
-├── src/alpha4gate/     # 28 Python source modules (incl. commands/ package)
-├── tests/              # 24 test files, 578 tests
-├── frontend/           # React + TypeScript dashboard
-├── docs/plan.md        # Phase 1 project plan
-├── docs/deep-learning-plan.md  # Phase 2 deep learning plan
-├── documentation/improvements/  # Improvement plan docs (command system, army coherence, etc.)
-├── data/               # Cross-game stats (gitignored)
-├── logs/               # JSONL game logs (gitignored)
-└── replays/            # SC2 replays (gitignored)
+├── src/alpha4gate/          # 38 Python modules
+│   ├── commands/            # Strategic command system (parser, interpreter, executor, queue)
+│   ├── bot.py               # Main BotAI subclass, game loop orchestration
+│   ├── decision_engine.py   # Strategic state machine (6 states)
+│   ├── neural_engine.py     # PPO policy integration with SB3
+│   ├── army_coherence.py    # Staging, grouping, engagement/retreat
+│   ├── fortification.py     # Cannons + batteries + FORTIFY state
+│   ├── macro_manager.py     # Economy, production, expansion
+│   ├── micro.py             # Kiting, focus fire, abilities
+│   ├── claude_advisor.py    # Async Claude CLI subprocess
+│   ├── trainer.py           # PPO training orchestrator
+│   ├── features.py          # Game state -> tensor encoding
+│   ├── rewards.py           # Configurable reward shaping
+│   ├── imitation.py         # Imitation pre-training from replays
+│   ├── api.py               # FastAPI server (REST + WebSocket)
+│   └── ...                  # scouting, config, logger, runner, etc.
+├── tests/                   # 34 test files, 578 tests
+├── frontend/                # React + TypeScript dashboard (Vite)
+├── scripts/                 # Live test, training analysis, model evaluation
+├── docs/archived/           # Historical plan documents (Phase 1 + Phase 2)
+├── documentation/archived/  # Completed improvement plans
+├── data/                    # Cross-game stats, training DB, checkpoints (gitignored)
+├── logs/                    # JSONL game logs (gitignored)
+└── replays/                 # SC2 replays (gitignored)
 ```
 
 ## Key Design Decisions
 
-- **Three-layer separation**: Strategy, tactics, and micro are independent modules with clear interfaces, testable in isolation
-- **Async Claude advisor**: Fire-and-forget `asyncio.create_task()`, bot never blocks waiting for AI advice
+- **Layered separation**: Strategy, tactics, coherence, and micro are independent modules with clear interfaces, testable in isolation
+- **Async Claude advisor**: Fire-and-forget subprocess call, bot never blocks waiting for AI advice
+- **Deep learning pipeline**: PPO policy via Stable Baselines 3, SQLite transition storage, imitation learning bootstrap, gymnasium environment wrapping SC2 state. Hybrid mode combines neural + rule-based decisions
+- **Strategic command system**: Three execution modes (AI-Assisted, Human Only, Hybrid), natural language parser with recipe library, command queue with priority and TTL
+- **Defensive fortification**: FORTIFY strategic state triggered by threat assessment, BuildBacklog for deferred production retry, FortificationManager places cannons and shield batteries at expansion choke points
+- **Army coherence**: Staging areas outside enemy range, group-based engagement with critical mass gate, retreat decisions based on relative army strength
 - **JSONL logging**: Extended schema with `strategic_state`, `decision_queue`, and `claude_advice` for decision debugging
-- **Cross-game persistence**: Simple JSON files in `data/` — no database needed for single-user local app
+- **Cross-game persistence**: JSON files in `data/` and SQLite for training transitions
 - **Build order system**: Named build orders importable from Spawning Tool API, sequenced by supply thresholds

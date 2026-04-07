@@ -6,8 +6,8 @@ A StarCraft II Protoss bot that plays against the built-in AI and human opponent
 rule-based decision-making with a layered architecture (strategy → tactics → micro). A Claude
 API integration provides asynchronous strategic advice mid-game without blocking the game loop.
 A React dashboard provides live game visualization, stats, build order editing, replay
-browsing, and display of the bot's strategic reasoning. The ultimate goal is to beat a specific
-human opponent (William Gathright) in multiplayer.
+browsing, and display of the bot's strategic reasoning. The goal is competitive AI-vs-AI play with transparent model introspection,
+evaluation metrics, and autonomous self-improvement.
 
 ---
 
