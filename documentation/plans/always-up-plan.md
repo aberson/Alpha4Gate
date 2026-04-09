@@ -135,6 +135,7 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 ### Step 6: Dashboard — improvement timeline
 
+- **Status:** DONE (2026-04-09)
 - **Issue:** #41
 - **Problem:** Add a minimal improvement timeline to the Training tab showing how win
   rates have changed across model versions. This is a minimal version — charts deferred
