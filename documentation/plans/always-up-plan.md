@@ -161,7 +161,7 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 **Goal:** System plays, trains, and evaluates without human intervention.
 
-- **Status:** IN PROGRESS
+- **Status:** DONE (2026-04-10) — 7/7 steps, issues #43–#49. 661 tests passing.
 
 ### Step 1: Training loop daemon
 
@@ -344,6 +344,7 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 ### Step 7: Curriculum auto-advancement
 
+- **Status:** DONE (2026-04-10)
 - **Issue:** #49
 - **Problem:** Wire the existing curriculum logic (`should_increase_difficulty()` /
   `increase_difficulty()` in `trainer.py`) into the autonomous daemon loop so difficulty
