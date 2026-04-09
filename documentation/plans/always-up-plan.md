@@ -195,6 +195,7 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 ### Step 2: Training trigger logic
 
+- **Status:** DONE (2026-04-10)
 - **Issue:** #44
 - **Problem:** Implement the `_should_train()` method in `TrainingDaemon` that decides
   whether to start a training run. Two trigger conditions (OR logic — either triggers
