@@ -263,6 +263,56 @@ class TrainingDB:
             return None
         return [s / count for s in sums]
 
+    def get_win_rate_by_model(self, model_version: str) -> dict[str, object]:
+        """Win rate and game counts for a specific model version.
+
+        Returns:
+            Dict with keys: wins, losses, total, win_rate.
+        """
+        rows = self._conn.execute(
+            "SELECT result FROM games WHERE model_version = ?",
+            (model_version,),
+        ).fetchall()
+        total = len(rows)
+        wins = sum(1 for r in rows if r[0] == "win")
+        losses = total - wins
+        return {
+            "wins": wins,
+            "losses": losses,
+            "total": total,
+            "win_rate": wins / total if total > 0 else 0.0,
+        }
+
+    def get_all_model_stats(self) -> list[dict[str, object]]:
+        """Per-model stats ordered by first game timestamp (chronological).
+
+        Returns:
+            List of dicts with keys: model_version, wins, losses, total,
+            win_rate, first_game, last_game.
+        """
+        rows = self._conn.execute(
+            "SELECT model_version, "
+            "  SUM(CASE WHEN result = 'win' THEN 1 ELSE 0 END) AS wins, "
+            "  SUM(CASE WHEN result != 'win' THEN 1 ELSE 0 END) AS losses, "
+            "  COUNT(*) AS total, "
+            "  MIN(created_at) AS first_game, "
+            "  MAX(created_at) AS last_game "
+            "FROM games GROUP BY model_version ORDER BY MIN(created_at)",
+        ).fetchall()
+        result: list[dict[str, object]] = []
+        for row in rows:
+            mv, wins, losses, total, first_game, last_game = row
+            result.append({
+                "model_version": mv,
+                "wins": wins,
+                "losses": losses,
+                "total": total,
+                "win_rate": wins / total if total > 0 else 0.0,
+                "first_game": first_game,
+                "last_game": last_game,
+            })
+        return result
+
     def get_db_size_bytes(self) -> int:
         """Size of the database file on disk."""
         if self._path.exists():

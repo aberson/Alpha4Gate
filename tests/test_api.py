@@ -162,6 +162,35 @@ class TestTrainingEndpoints:
         resp = client.post("/api/training/stop")
         assert resp.status_code == 200
 
+    def test_training_models_empty(self, client: TestClient) -> None:
+        resp = client.get("/api/training/models")
+        assert resp.status_code == 200
+        assert resp.json()["models"] == []
+
+    def test_training_models_with_data(self, client: TestClient, tmp_path: Path) -> None:
+        from alpha4gate.learning.database import TrainingDB
+
+        db = TrainingDB(tmp_path / "data" / "training.db")
+        db.store_game("g0", "Simple64", 1, "win", 300.0, 5.0, "v1")
+        db.store_game("g1", "Simple64", 1, "loss", 300.0, -5.0, "v1")
+        db.store_game("g2", "Simple64", 2, "win", 300.0, 5.0, "v2")
+        db.close()
+
+        resp = client.get("/api/training/models")
+        assert resp.status_code == 200
+        models = resp.json()["models"]
+        assert len(models) == 2
+        assert models[0]["model_version"] == "v1"
+        assert models[0]["wins"] == 1
+        assert models[0]["losses"] == 1
+        assert models[0]["total"] == 2
+        assert models[0]["win_rate"] == 0.5
+        assert models[0]["first_game"] is not None
+        assert models[0]["last_game"] is not None
+        assert models[1]["model_version"] == "v2"
+        assert models[1]["wins"] == 1
+        assert models[1]["total"] == 1
+
 
 class TestRewardRulesEndpoints:
     def test_get_empty_rules(self, client: TestClient) -> None:

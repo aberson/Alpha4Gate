@@ -369,6 +369,22 @@ async def get_training_history() -> dict[str, Any]:
     return {"total_games": game_count, "win_rates": win_rates}
 
 
+@app.get("/api/training/models")
+async def get_training_models() -> dict[str, Any]:
+    """Get per-model version win rate stats, ordered chronologically."""
+    from alpha4gate.learning.database import TrainingDB
+
+    db_path = _data_dir / "training.db"
+    if not db_path.exists():
+        return {"models": []}
+
+    db = TrainingDB(db_path)
+    models = db.get_all_model_stats()
+    db.close()
+
+    return {"models": models}
+
+
 @app.get("/api/training/checkpoints")
 async def get_training_checkpoints() -> dict[str, Any]:
     """List all training checkpoints."""

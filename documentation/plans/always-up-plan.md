@@ -99,6 +99,7 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 ### Step 4: Per-checkpoint win rate tracking
 
+- **Status:** DONE (2026-04-09)
 - **Issue:** #39
 - **Problem:** Win rates are currently queried as a sliding window over recent games
   regardless of which model played them. Add per-checkpoint tracking so we can compare

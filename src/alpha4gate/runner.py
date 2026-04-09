@@ -6,6 +6,7 @@ import argparse
 import logging
 import shutil
 import sys
+from pathlib import Path
 
 from alpha4gate.build_orders import BuildOrder
 from alpha4gate.config import Settings, load_settings
@@ -301,6 +302,14 @@ def _run_batch(settings: Settings, args: argparse.Namespace) -> None:
 
         claude_advisor = ClaudeAdvisor()
 
+    # Determine model_version label for this batch
+    decision_mode = getattr(args, "decision_mode", "rules")
+    model_path = getattr(args, "model_path", None)
+    if model_path:
+        model_version = Path(model_path).stem
+    else:
+        model_version = decision_mode
+
     for i in range(args.batch):
         print(f"\n=== Game {i + 1}/{args.batch} ===")
         logger = GameLogger(log_dir=settings.log_dir)
@@ -338,7 +347,7 @@ def _run_batch(settings: Settings, args: argparse.Namespace) -> None:
             result=result_str,
             duration_secs=bot.time if hasattr(bot, "time") else 0.0,
             total_reward=0.0,
-            model_version="rule-based",
+            model_version=model_version,
         )
 
         opponent = f"built-in-{args.difficulty or 'easy'}"

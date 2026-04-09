@@ -201,3 +201,76 @@ class TestGetActionDistribution:
         result = db.get_action_distribution("v1", 10)
         assert result is not None
         assert abs(result[2] - 1.0) < 1e-6  # Only v1 data
+
+
+class TestWinRateByModel:
+    def test_empty_db(self, db: TrainingDB) -> None:
+        result = db.get_win_rate_by_model("v0")
+        assert result == {"wins": 0, "losses": 0, "total": 0, "win_rate": 0.0}
+
+    def test_single_model_all_wins(self, db: TrainingDB) -> None:
+        for i in range(3):
+            db.store_game(f"g{i}", "Simple64", 1, "win", 300.0, 5.0, "v1")
+        result = db.get_win_rate_by_model("v1")
+        assert result["wins"] == 3
+        assert result["losses"] == 0
+        assert result["total"] == 3
+        assert result["win_rate"] == 1.0
+
+    def test_single_model_mixed(self, db: TrainingDB) -> None:
+        db.store_game("g0", "Simple64", 1, "win", 300.0, 5.0, "v1")
+        db.store_game("g1", "Simple64", 1, "loss", 300.0, -5.0, "v1")
+        result = db.get_win_rate_by_model("v1")
+        assert result["wins"] == 1
+        assert result["losses"] == 1
+        assert result["total"] == 2
+        assert result["win_rate"] == 0.5
+
+    def test_filters_by_model(self, db: TrainingDB) -> None:
+        db.store_game("g0", "Simple64", 1, "win", 300.0, 5.0, "v1")
+        db.store_game("g1", "Simple64", 1, "loss", 300.0, -5.0, "v2")
+        result_v1 = db.get_win_rate_by_model("v1")
+        result_v2 = db.get_win_rate_by_model("v2")
+        assert result_v1["total"] == 1
+        assert result_v1["win_rate"] == 1.0
+        assert result_v2["total"] == 1
+        assert result_v2["win_rate"] == 0.0
+
+    def test_nonexistent_model(self, db: TrainingDB) -> None:
+        db.store_game("g0", "Simple64", 1, "win", 300.0, 5.0, "v1")
+        result = db.get_win_rate_by_model("v99")
+        assert result["total"] == 0
+        assert result["win_rate"] == 0.0
+
+
+class TestAllModelStats:
+    def test_empty_db(self, db: TrainingDB) -> None:
+        assert db.get_all_model_stats() == []
+
+    def test_single_model(self, db: TrainingDB) -> None:
+        db.store_game("g0", "Simple64", 1, "win", 300.0, 5.0, "v1")
+        db.store_game("g1", "Simple64", 1, "loss", 300.0, -5.0, "v1")
+        stats = db.get_all_model_stats()
+        assert len(stats) == 1
+        assert stats[0]["model_version"] == "v1"
+        assert stats[0]["wins"] == 1
+        assert stats[0]["losses"] == 1
+        assert stats[0]["total"] == 2
+        assert stats[0]["win_rate"] == 0.5
+        assert stats[0]["first_game"] is not None
+        assert stats[0]["last_game"] is not None
+
+    def test_multiple_models_chronological_order(self, db: TrainingDB) -> None:
+        db.store_game("g0", "Simple64", 1, "win", 300.0, 5.0, "v1")
+        db.store_game("g1", "Simple64", 1, "loss", 300.0, -5.0, "v1")
+        db.store_game("g2", "Simple64", 2, "win", 300.0, 5.0, "v2")
+        db.store_game("g3", "Simple64", 2, "win", 300.0, 5.0, "v2")
+        db.store_game("g4", "Simple64", 2, "loss", 300.0, -5.0, "v2")
+        stats = db.get_all_model_stats()
+        assert len(stats) == 2
+        assert stats[0]["model_version"] == "v1"
+        assert stats[0]["win_rate"] == 0.5
+        assert stats[1]["model_version"] == "v2"
+        assert stats[1]["wins"] == 2
+        assert stats[1]["losses"] == 1
+        assert abs(stats[1]["win_rate"] - 2 / 3) < 1e-9
