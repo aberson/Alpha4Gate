@@ -417,6 +417,97 @@ async def stop_training() -> dict[str, Any]:
     return {"status": "not_running", "message": "Training is managed via CLI process"}
 
 
+# --- Evaluation Endpoints ---
+
+# In-memory evaluator instance (created lazily)
+_evaluator: Any = None
+
+
+def _get_evaluator() -> Any:
+    """Get or create the ModelEvaluator instance."""
+    global _evaluator
+    if _evaluator is None:
+        from alpha4gate.config import Settings
+        from alpha4gate.learning.database import TrainingDB
+        from alpha4gate.learning.evaluator import ModelEvaluator
+
+        settings = Settings(
+            sc2_path=Path("."),
+            log_dir=_log_dir,
+            replay_dir=_replay_dir,
+            data_dir=_data_dir,
+            web_ui_port=0,
+            anthropic_api_key="",
+            spawning_tool_api_key="",
+        )
+        db_path = _data_dir / "training.db"
+        db = TrainingDB(db_path)
+        _evaluator = ModelEvaluator(settings, db)
+    return _evaluator
+
+
+@app.post("/api/training/evaluate")
+async def start_evaluation(request: dict[str, Any]) -> JSONResponse:
+    """Start a model evaluation. Returns 202 with job ID for polling.
+
+    Query params in body: checkpoint, games, difficulty.
+    """
+    import threading
+
+    checkpoint = request.get("checkpoint", "")
+    n_games = int(request.get("games", 10))
+    difficulty = int(request.get("difficulty", 1))
+
+    if not checkpoint:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "checkpoint is required"},
+        )
+
+    evaluator = _get_evaluator()
+    job_id = evaluator.submit_job(checkpoint, n_games, difficulty)
+
+    # Run evaluation in background thread
+    thread = threading.Thread(target=evaluator.run_job, args=(job_id,), daemon=True)
+    thread.start()
+
+    return JSONResponse(
+        status_code=202,
+        content={
+            "job_id": job_id,
+            "status": "pending",
+            "checkpoint": checkpoint,
+            "games": n_games,
+            "difficulty": difficulty,
+        },
+    )
+
+
+@app.get("/api/training/evaluate/{job_id}", response_model=None)
+async def get_evaluation_status(job_id: str) -> JSONResponse | dict[str, Any]:
+    """Poll evaluation job status."""
+    from dataclasses import asdict
+
+    evaluator = _get_evaluator()
+    job = evaluator.get_job(job_id)
+    if job is None:
+        return JSONResponse(status_code=404, content={"error": "Job not found"})
+
+    response: dict[str, Any] = {
+        "job_id": job.job_id,
+        "status": job.status,
+        "checkpoint": job.checkpoint,
+        "games_requested": job.n_games,
+        "games_completed": job.games_completed,
+        "difficulty": job.difficulty,
+    }
+    if job.result is not None:
+        response["result"] = asdict(job.result)
+    if job.error is not None:
+        response["error"] = job.error
+    return response
+
+
 @app.get("/api/reward-rules")
 async def get_reward_rules() -> dict[str, Any]:
     """Get current reward shaping rules."""
