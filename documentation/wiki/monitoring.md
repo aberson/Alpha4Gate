@@ -43,13 +43,13 @@ Game Loop (bot.py on_step)
 |------|---------|----------|-----|
 | Game state snapshots | `logs/game_*.jsonl` | Permanent (one file per game) | No reward data, no action probabilities |
 | Game results | `data/training.db` games table | Permanent | No per-step detail |
-| Transitions (s,a,r,s') | `data/training.db` transitions table | Permanent | Only during training, not regular play |
+| Transitions (s,a,r,s') | `data/training.db` transitions table | Permanent | Only during training, not regular play. No action probabilities or reward breakdown columns — stores scalar `action` (int) and `reward` (float) only. |
 | Batch stats | `data/stats.json` | Permanent | Separate from training DB (not synced) |
 | Decision log | In-memory + `data/decision_audit.json` | Session / file | Only state transitions, not every step |
 | Live game state | WebSocket `/ws/game` | Ephemeral (lost on disconnect) | Not archived |
 | Command events | WebSocket `/ws/commands` | Ephemeral | In-memory history only |
 | Action probabilities | `NeuralDecisionEngine._last_probabilities` | Ephemeral (memory) | Never persisted anywhere |
-| Reward breakdown | `data/reward_log.jsonl` | Permanent **if** `--reward-log` flag used | Off by default |
+| Reward breakdown | `data/reward_log.jsonl` | Permanent **if** `--reward-log` flag used | Off by default; only works in `--batch` mode (ignored in `--train rl`) |
 | Training diagnostics | `data/training_diagnostics.json` | Permanent | Not surfaced in dashboard |
 
 ### Gaps
@@ -59,8 +59,11 @@ Game Loop (bot.py on_step)
 - **Decision data is ephemeral.** Action probabilities from the neural engine exist only
   in memory (`_last_probabilities`). WebSocket consumers see them briefly; nothing
   persists them. A future session can't analyze how the model's decisions evolved.
-- **Reward logging is opt-in.** Must pass `--reward-log` flag. Without it,
-  `analyze_rewards.py` has nothing to read. Should be default.
+- **Reward logging is opt-in and batch-only.** Must pass `--reward-log` flag, and it
+  only takes effect in `--batch` mode. The `--train rl` path (`TrainingOrchestrator`)
+  creates its own `RewardCalculator` without a `log_path`, so the flag is silently
+  ignored during RL training. Without logging, `analyze_rewards.py` has nothing to read.
+  Should be default and work in all modes.
 - **Training diagnostics aren't in the dashboard.** `training_diagnostics.json` has
   per-cycle action distributions on test states — valuable for tracking improvement —
   but no frontend component renders it.

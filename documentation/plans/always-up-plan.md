@@ -45,6 +45,7 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 ### Step 1: Audit current logging
 
+- **Status:** DONE (2026-04-09)
 - **Issue:** #36
 - **Problem:** Verify what data is persisted vs ephemeral across the system. Confirm the
   gaps documented in `documentation/wiki/monitoring.md` are accurate against current code.
