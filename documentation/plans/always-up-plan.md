@@ -165,6 +165,7 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 ### Step 1: Training loop daemon
 
+- **Status:** DONE (2026-04-10)
 - **Issue:** #43
 - **Problem:** Add a `TrainingDaemon` class in `src/alpha4gate/learning/daemon.py` that
   runs as a background thread inside the API server process. No new dependencies — use
