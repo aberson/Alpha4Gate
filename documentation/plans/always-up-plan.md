@@ -117,6 +117,7 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 ### Step 5: Dashboard — model comparison view
 
+- **Status:** DONE (2026-04-09)
 - **Issue:** #40
 - **Problem:** Add a minimal model comparison table to the Training tab so users can see
   per-checkpoint performance at a glance. This is a minimal version — enhanced charts

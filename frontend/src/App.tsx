@@ -6,6 +6,7 @@ import { ReplayBrowser } from "./components/ReplayBrowser";
 import { DecisionQueue } from "./components/DecisionQueue";
 import { TrainingDashboard } from "./components/TrainingDashboard";
 import { CheckpointList } from "./components/CheckpointList";
+import { ModelComparison } from "./components/ModelComparison";
 import { RewardRuleEditor } from "./components/RewardRuleEditor";
 import "./App.css";
 
@@ -54,6 +55,7 @@ function App() {
         {tab === "training" && (
           <>
             <TrainingDashboard />
+            <ModelComparison />
             <CheckpointList />
             <RewardRuleEditor />
           </>
