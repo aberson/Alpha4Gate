@@ -256,6 +256,7 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 ### Step 4: Model promotion gate
 
+- **Status:** DONE (2026-04-10)
 - **Issue:** #46
 - **Problem:** After each training run, automatically evaluate the new checkpoint against
   the current best. Promote if the new model is better. This replaces the current implicit
