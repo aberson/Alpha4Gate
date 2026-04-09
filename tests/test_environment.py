@@ -66,6 +66,15 @@ class TestGymStateProxy:
             proxy = _GymStateProxy(expected_state)
             assert proxy.predict(_default_snapshot()) == expected_state
 
+    def test_proxy_last_probabilities_default_empty(self) -> None:
+        proxy = _GymStateProxy(StrategicState.ATTACK)
+        assert proxy.last_probabilities == []
+
+    def test_proxy_last_probabilities_settable(self) -> None:
+        proxy = _GymStateProxy(StrategicState.ATTACK)
+        proxy._probabilities = [0.1, 0.2, 0.3, 0.25, 0.15]
+        assert proxy.last_probabilities == [0.1, 0.2, 0.3, 0.25, 0.15]
+
 
 class TestRewardComputation:
     """Test that reward calculator integrates correctly with env logic."""

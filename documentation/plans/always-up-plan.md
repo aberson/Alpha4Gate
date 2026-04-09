@@ -57,6 +57,7 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 ### Step 2: Persist decision logs with action probabilities
 
+- **Status:** DONE (2026-04-09)
 - **Issue:** #37
 - **Problem:** Add action probability persistence so we can track how the model's decision
   distribution changes over time. Changes needed:

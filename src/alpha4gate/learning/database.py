@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from pathlib import Path
@@ -93,6 +94,17 @@ class TrainingDB:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self._path))
         self._conn.executescript(_SCHEMA)
+        self._migrate_action_probs()
+
+    def _migrate_action_probs(self) -> None:
+        """Add action_probs column to transitions table if it doesn't exist (idempotent)."""
+        cursor = self._conn.execute("PRAGMA table_info(transitions)")
+        columns = {row[1] for row in cursor.fetchall()}
+        if "action_probs" not in columns:
+            self._conn.execute(
+                "ALTER TABLE transitions ADD COLUMN action_probs TEXT DEFAULT NULL"
+            )
+            self._conn.commit()
 
     def close(self) -> None:
         """Close the database connection."""
@@ -126,11 +138,15 @@ class TrainingDB:
         reward: float,
         next_state: NDArray[np.float32] | None = None,
         done: bool = False,
+        action_probs: list[float] | None = None,
     ) -> None:
         """Insert a single (s, a, r, s') transition.
 
         state and next_state are raw (un-normalized) integer feature vectors
         matching the 17-column order in _STATE_COLS.
+
+        action_probs: optional list of action probabilities from the neural
+        engine, stored as JSON text.
         """
         values: list[Any] = [game_id, step_index, game_time]
         values.extend(int(v) for v in state)
@@ -141,15 +157,16 @@ class TrainingDB:
         else:
             values.extend([None] * FEATURE_DIM)
         values.append(1 if done else 0)
+        values.append(json.dumps(action_probs) if action_probs is not None else None)
 
-        placeholders = ", ".join("?" * len(values))
         cols = (
             ["game_id", "step_index", "game_time"]
             + _STATE_COLS
             + ["action", "reward"]
             + _NEXT_STATE_COLS
-            + ["done"]
+            + ["done", "action_probs"]
         )
+        placeholders = ", ".join("?" * len(values))
         col_str = ", ".join(cols)
         self._conn.execute(
             f"INSERT INTO transitions ({col_str}) VALUES ({placeholders})",
@@ -203,6 +220,48 @@ class TrainingDB:
         """Total number of transitions recorded."""
         row = self._conn.execute("SELECT COUNT(*) FROM transitions").fetchone()
         return int(row[0]) if row else 0
+
+    def get_action_distribution(
+        self, model_version: str, n_games: int
+    ) -> list[float] | None:
+        """Return average action probabilities for a given model version.
+
+        Averages the stored action_probs across the most recent ``n_games``
+        games for the specified ``model_version``. Returns None if no
+        transitions with action_probs data are found.
+        """
+        # Get game_ids for the most recent n_games of this model version
+        game_rows = self._conn.execute(
+            "SELECT game_id FROM games WHERE model_version = ? "
+            "ORDER BY rowid DESC LIMIT ?",
+            (model_version, n_games),
+        ).fetchall()
+        if not game_rows:
+            return None
+        game_ids = [r[0] for r in game_rows]
+        placeholders = ", ".join("?" * len(game_ids))
+        rows = self._conn.execute(
+            f"SELECT action_probs FROM transitions "
+            f"WHERE game_id IN ({placeholders}) AND action_probs IS NOT NULL",
+            game_ids,
+        ).fetchall()
+
+        if not rows:
+            return None
+
+        sums: list[float] | None = None
+        count = 0
+        for (raw,) in rows:
+            probs = json.loads(raw)
+            if sums is None:
+                sums = [0.0] * len(probs)
+            for i, p in enumerate(probs):
+                sums[i] += p
+            count += 1
+
+        if sums is None or count == 0:
+            return None
+        return [s / count for s in sums]
 
     def get_db_size_bytes(self) -> int:
         """Size of the database file on disk."""

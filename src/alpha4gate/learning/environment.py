@@ -149,6 +149,7 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
                 reward=reward,
                 next_state=curr_raw if not done else None,
                 done=done,
+                action_probs=info.get("action_probs"),
             )
 
         self._last_snapshot = info.get("snapshot")
@@ -271,6 +272,12 @@ class _GymStateProxy:
 
     def __init__(self, state: StrategicState) -> None:
         self._state = state
+        self._probabilities: list[float] = []
+
+    @property
+    def last_probabilities(self) -> list[float]:
+        """Action probabilities carried over from the gym caller."""
+        return self._probabilities
 
     def predict(self, snapshot: GameSnapshot) -> StrategicState:
         return self._state
@@ -318,6 +325,15 @@ def _make_training_bot(
 
                 # Check for game time limit — send terminal timeout if exceeded
                 timed_out = snapshot.game_time_seconds >= MAX_GAME_TIME_SECONDS
+                # Capture action_probs from neural engine proxy if available
+                _action_probs: list[float] | None = None
+                if (
+                    self._neural_engine is not None
+                    and hasattr(self._neural_engine, "last_probabilities")
+                    and self._neural_engine.last_probabilities
+                ):
+                    _action_probs = self._neural_engine.last_probabilities
+
                 info: dict[str, Any] = {
                     "snapshot": snapshot,
                     "snapshot_dict": state_dict,
@@ -327,6 +343,7 @@ def _make_training_bot(
                         if self._gym_state
                         else self.decision_engine.state.value
                     ),
+                    "action_probs": _action_probs,
                 }
                 if timed_out:
                     _log.info(
@@ -345,7 +362,14 @@ def _make_training_bot(
                     self._gym_state = _ACTION_TO_STATE[action]
                     # Inject gym state via the neural engine proxy so
                     # Alpha4GateBot.on_step() uses it for macro/micro
-                    self._neural_engine = _GymStateProxy(self._gym_state)  # type: ignore[assignment]
+                    proxy = _GymStateProxy(self._gym_state)
+                    # Carry over last_probabilities from previous neural engine
+                    if (
+                        self._neural_engine is not None
+                        and hasattr(self._neural_engine, "last_probabilities")
+                    ):
+                        proxy._probabilities = self._neural_engine.last_probabilities
+                    self._neural_engine = proxy  # type: ignore[assignment]
 
             await super().on_step(iteration)
 

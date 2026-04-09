@@ -367,6 +367,13 @@ class Alpha4GateBot(BotAI):
         state_dict = asdict(snapshot)
         reward = self._reward_calc.compute_step_reward(state_dict)
 
+        # Capture action probabilities from neural engine when available
+        action_probs: list[float] | None = None
+        if self._neural_engine is not None and hasattr(self._neural_engine, "last_probabilities"):
+            probs = self._neural_engine.last_probabilities
+            if probs:
+                action_probs = probs
+
         if self._prev_obs is not None and self._prev_action is not None:
             self._training_db.store_transition(
                 game_id=self._game_id or "unknown",
@@ -377,6 +384,7 @@ class Alpha4GateBot(BotAI):
                 reward=reward,
                 next_state=raw,
                 done=False,
+                action_probs=action_probs,
             )
             self._transition_step += 1
 
