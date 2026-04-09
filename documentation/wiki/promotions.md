@@ -46,9 +46,9 @@ performs worse than the previous one. There's no comparison, no rollback, no rec
 > This table will be populated as promotions happen. Each entry records what changed,
 > the evidence, and the outcome.
 
-| Date | From | To | Win Rate Change | Difficulty | Reason | Outcome |
-|------|------|----|----------------|------------|--------|---------|
-| *2026-04-xx* | *v0_pretrain* | *v1* | *— → 65%* | *1* | *First RL cycle, baseline* | *promoted* |
+| Date | From | To | Win Rate (Old→New) | Games | Difficulty | Reason | Outcome |
+|------|------|----|-------------------|-------|------------|--------|---------|
+| *2026-04-xx* | *v0_pretrain* | *v1* | *---→65%* | *20* | *1* | *First RL cycle, baseline* | *promoted* |
 
 *(Entries will be added as the autonomous loop runs promotions.)*
 

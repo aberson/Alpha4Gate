@@ -568,6 +568,8 @@ async def get_evaluation_status(job_id: str) -> JSONResponse | dict[str, Any]:
 
 # In-memory promotion manager (created lazily)
 _promotion_manager: Any = None
+# Promotion logger (created lazily)
+_promotion_logger: Any = None
 
 
 def _get_promotion_manager() -> Any:
@@ -581,11 +583,40 @@ def _get_promotion_manager() -> Any:
     return _promotion_manager
 
 
+def _get_promotion_logger() -> Any:
+    """Get or create the PromotionLogger instance."""
+    global _promotion_logger
+    if _promotion_logger is None:
+        from alpha4gate.learning.promotion import PromotionLogger
+
+        _promotion_logger = PromotionLogger(
+            history_path=_data_dir / "promotion_history.json",
+        )
+    return _promotion_logger
+
+
 @app.get("/api/training/promotions")
 async def get_promotions() -> dict[str, Any]:
     """Get promotion decision history."""
     pm = _get_promotion_manager()
     return {"promotions": pm.get_history_dicts()}
+
+
+@app.get("/api/training/promotions/history")
+async def get_promotion_history() -> dict[str, Any]:
+    """Get the full promotion history from the persistent JSON log."""
+    logger = _get_promotion_logger()
+    return {"history": logger.get_history()}
+
+
+@app.get("/api/training/promotions/latest")
+async def get_promotion_latest() -> dict[str, Any]:
+    """Get the most recent promotion decision from the persistent log."""
+    logger = _get_promotion_logger()
+    latest = logger.get_latest()
+    if latest is None:
+        return {"latest": None}
+    return {"latest": latest}
 
 
 @app.post("/api/training/promote", response_model=None)

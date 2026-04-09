@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from alpha4gate.learning.checkpoints import (
@@ -14,7 +16,9 @@ from alpha4gate.learning.evaluator import EvalResult
 from alpha4gate.learning.promotion import (
     PromotionConfig,
     PromotionDecision,
+    PromotionLogger,
     PromotionManager,
+    compute_action_distribution_shift,
 )
 
 
@@ -367,3 +371,305 @@ class TestPromotionApiEndpoints:
         # Verify it shows in promotions history
         resp2 = client.get("/api/training/promotions")
         assert len(resp2.json()["promotions"]) == 1
+
+
+class TestActionDistributionShift:
+    def test_l1_distance_identical(self) -> None:
+        dist = [0.2, 0.3, 0.5]
+        assert compute_action_distribution_shift(dist, dist) == 0.0
+
+    def test_l1_distance_different(self) -> None:
+        old = [0.2, 0.3, 0.5]
+        new = [0.4, 0.1, 0.5]
+        # |0.2-0.4| + |0.3-0.1| + |0.5-0.5| = 0.2 + 0.2 + 0.0 = 0.4
+        result = compute_action_distribution_shift(old, new)
+        assert result is not None
+        assert abs(result - 0.4) < 1e-9
+
+    def test_returns_none_when_missing(self) -> None:
+        assert compute_action_distribution_shift(None, [0.5, 0.5]) is None
+        assert compute_action_distribution_shift([0.5, 0.5], None) is None
+        assert compute_action_distribution_shift(None, None) is None
+
+    def test_returns_none_for_length_mismatch(self) -> None:
+        assert compute_action_distribution_shift([0.5, 0.5], [0.3, 0.3, 0.4]) is None
+
+    def test_set_on_decision_by_manager(self, tmp_path: Path) -> None:
+        """PromotionManager populates action_distribution_shift when distributions exist."""
+        model = _mock_model()
+        save_checkpoint(model, tmp_path, "v1", is_best=True)
+        save_checkpoint(model, tmp_path, "v2")
+
+        evaluator = MagicMock()
+        evaluator._checkpoint_dir = tmp_path
+
+        def eval_side_effect(
+            checkpoint: str, n_games: int, difficulty: int
+        ) -> EvalResult:
+            dist = [0.6, 0.4] if checkpoint == "v2" else [0.3, 0.7]
+            return EvalResult(
+                checkpoint=checkpoint,
+                games_played=n_games,
+                wins=(
+                    int(n_games * 0.7) if checkpoint == "v2" else int(n_games * 0.5)
+                ),
+                losses=(
+                    n_games - int(n_games * 0.7)
+                    if checkpoint == "v2"
+                    else n_games - int(n_games * 0.5)
+                ),
+                win_rate=0.7 if checkpoint == "v2" else 0.5,
+                avg_reward=1.0,
+                avg_duration=300.0,
+                difficulty=1,
+                action_distribution=dist,
+            )
+
+        evaluator.evaluate.side_effect = eval_side_effect
+
+        pm = PromotionManager(evaluator, PromotionConfig())
+        decision = pm.evaluate_and_promote("v2", difficulty=1)
+
+        assert decision.action_distribution_shift is not None
+        # |0.3-0.6| + |0.7-0.4| = 0.3 + 0.3 = 0.6
+        assert abs(decision.action_distribution_shift - 0.6) < 1e-9
+        assert decision.difficulty == 1
+
+
+class TestPromotionLogger:
+    def test_log_decision_creates_json(self, tmp_path: Path) -> None:
+        logger = PromotionLogger(
+            history_path=tmp_path / "history.json",
+            wiki_path=tmp_path / "promotions.md",
+        )
+        # Create a minimal wiki file so append works
+        wiki = tmp_path / "promotions.md"
+        wiki.write_text(
+            "| Date | From | To | Win Rate (Old\u2192New) |"
+            " Games | Difficulty | Reason | Outcome |\n"
+            "|------|------|----|-------------------|"
+            "-------|------------|--------|--------|\n",
+            encoding="utf-8",
+        )
+
+        decision = PromotionDecision(
+            new_checkpoint="v2",
+            old_best="v1",
+            new_eval=_make_eval_result("v2", 0.7),
+            old_eval=_make_eval_result("v1", 0.5),
+            promoted=True,
+            reason="new checkpoint wins",
+            difficulty=1,
+            action_distribution_shift=0.4,
+        )
+
+        entry = logger.log_decision(decision)
+
+        # Verify JSON file
+        history_path = tmp_path / "history.json"
+        assert history_path.exists()
+        data = json.loads(history_path.read_text(encoding="utf-8"))
+        assert len(data) == 1
+        assert data[0]["new_checkpoint"] == "v2"
+        assert data[0]["promoted"] is True
+        assert data[0]["difficulty"] == 1
+        assert data[0]["action_distribution_shift"] == 0.4
+
+        # Verify the returned entry
+        assert entry["new_win_rate"] == 0.7
+        assert entry["old_win_rate"] == 0.5
+
+    def test_log_decision_appends(self, tmp_path: Path) -> None:
+        logger = PromotionLogger(
+            history_path=tmp_path / "history.json",
+            wiki_path=tmp_path / "promotions.md",
+        )
+        wiki = tmp_path / "promotions.md"
+        wiki.write_text("| Date |\n|------|\n", encoding="utf-8")
+
+        d1 = PromotionDecision(
+            new_checkpoint="v1", old_best="none",
+            new_eval=_make_eval_result("v1", 0.6),
+            old_eval=None, promoted=True, reason="first",
+        )
+        d2 = PromotionDecision(
+            new_checkpoint="v2", old_best="v1",
+            new_eval=_make_eval_result("v2", 0.8),
+            old_eval=_make_eval_result("v1", 0.6),
+            promoted=True, reason="better",
+        )
+
+        logger.log_decision(d1)
+        logger.log_decision(d2)
+
+        data = json.loads((tmp_path / "history.json").read_text(encoding="utf-8"))
+        assert len(data) == 2
+        assert data[0]["new_checkpoint"] == "v1"
+        assert data[1]["new_checkpoint"] == "v2"
+
+    def test_wiki_row_appended(self, tmp_path: Path) -> None:
+        wiki = tmp_path / "promotions.md"
+        wiki.write_text(
+            "| Date | From | To | Win Rate (Old\u2192New) |"
+            " Games | Difficulty | Reason | Outcome |\n"
+            "|------|------|----|-------------------|"
+            "-------|------------|--------|--------|\n",
+            encoding="utf-8",
+        )
+
+        logger = PromotionLogger(
+            history_path=tmp_path / "history.json",
+            wiki_path=wiki,
+        )
+
+        decision = PromotionDecision(
+            new_checkpoint="v3", old_best="v2",
+            new_eval=_make_eval_result("v3", 0.8),
+            old_eval=_make_eval_result("v2", 0.6),
+            promoted=True, reason="improved", difficulty=2,
+        )
+        logger.log_decision(decision)
+
+        content = wiki.read_text(encoding="utf-8")
+        lines = content.strip().split("\n")
+        last_line = lines[-1]
+        assert "| v2 |" in last_line
+        assert "| v3 |" in last_line
+        assert "promoted" in last_line
+
+    def test_get_history_empty(self, tmp_path: Path) -> None:
+        logger = PromotionLogger(history_path=tmp_path / "history.json")
+        assert logger.get_history() == []
+
+    def test_get_latest_none(self, tmp_path: Path) -> None:
+        logger = PromotionLogger(history_path=tmp_path / "history.json")
+        assert logger.get_latest() is None
+
+    def test_get_latest_returns_last(self, tmp_path: Path) -> None:
+        logger = PromotionLogger(
+            history_path=tmp_path / "history.json",
+            wiki_path=tmp_path / "promotions.md",
+        )
+        wiki = tmp_path / "promotions.md"
+        wiki.write_text("| Date |\n|------|\n", encoding="utf-8")
+
+        for name in ["v1", "v2", "v3"]:
+            d = PromotionDecision(
+                new_checkpoint=name, old_best="prev",
+                new_eval=_make_eval_result(name, 0.7),
+                old_eval=None, promoted=True, reason="test",
+            )
+            logger.log_decision(d)
+
+        latest = logger.get_latest()
+        assert latest is not None
+        assert latest["new_checkpoint"] == "v3"
+
+    def test_json_serialization_round_trip(self, tmp_path: Path) -> None:
+        """Verify the JSON file is valid and can be deserialized."""
+        logger = PromotionLogger(
+            history_path=tmp_path / "history.json",
+            wiki_path=tmp_path / "promotions.md",
+        )
+        wiki = tmp_path / "promotions.md"
+        wiki.write_text("# Promotions\n", encoding="utf-8")
+
+        decision = PromotionDecision(
+            new_checkpoint="v5", old_best="v4",
+            new_eval=_make_eval_result("v5", 0.75),
+            old_eval=_make_eval_result("v4", 0.65),
+            promoted=True, reason="delta sufficient",
+            difficulty=3, action_distribution_shift=0.15,
+        )
+        logger.log_decision(decision)
+
+        raw = (tmp_path / "history.json").read_text(encoding="utf-8")
+        entries = json.loads(raw)
+        assert len(entries) == 1
+        e = entries[0]
+        assert e["timestamp"] == decision.timestamp
+        assert e["new_checkpoint"] == "v5"
+        assert e["old_best"] == "v4"
+        assert abs(e["new_win_rate"] - 0.75) < 1e-9
+        assert abs(e["old_win_rate"] - 0.65) < 1e-9
+        assert abs(e["delta"] - 0.10) < 1e-9
+        assert e["eval_games_played"] == 40  # 20 + 20
+        assert e["promoted"] is True
+        assert e["difficulty"] == 3
+        assert abs(e["action_distribution_shift"] - 0.15) < 1e-9
+
+
+class TestPromotionHistoryApiEndpoints:
+    def _setup_api(self, tmp_path: Path) -> Any:  # noqa: ANN401
+        from fastapi.testclient import TestClient
+
+        from alpha4gate.api import app, configure
+
+        data_dir = tmp_path / "data"
+        log_dir = tmp_path / "logs"
+        replay_dir = tmp_path / "replays"
+        data_dir.mkdir()
+        log_dir.mkdir()
+        replay_dir.mkdir()
+        configure(data_dir, log_dir, replay_dir)
+
+        import alpha4gate.api as api_mod
+
+        api_mod._promotion_manager = None
+        api_mod._promotion_logger = None
+
+        return TestClient(app)
+
+    def test_history_empty(self, tmp_path: Path) -> None:
+        client = self._setup_api(tmp_path)
+        resp = client.get("/api/training/promotions/history")
+        assert resp.status_code == 200
+        assert resp.json()["history"] == []
+
+    def test_latest_empty(self, tmp_path: Path) -> None:
+        client = self._setup_api(tmp_path)
+        resp = client.get("/api/training/promotions/latest")
+        assert resp.status_code == 200
+        assert resp.json()["latest"] is None
+
+    def test_history_with_data(self, tmp_path: Path) -> None:
+        client = self._setup_api(tmp_path)
+
+        # Write a history file directly
+        history_path = tmp_path / "data" / "promotion_history.json"
+        entries = [
+            {
+                "timestamp": "2026-04-09T12:00:00+00:00",
+                "new_checkpoint": "v2",
+                "old_best": "v1",
+                "new_win_rate": 0.7,
+                "old_win_rate": 0.5,
+                "delta": 0.2,
+                "eval_games_played": 40,
+                "promoted": True,
+                "reason": "test",
+                "difficulty": 1,
+                "action_distribution_shift": None,
+            }
+        ]
+        history_path.write_text(json.dumps(entries), encoding="utf-8")
+
+        resp = client.get("/api/training/promotions/history")
+        assert resp.status_code == 200
+        data = resp.json()["history"]
+        assert len(data) == 1
+        assert data[0]["new_checkpoint"] == "v2"
+
+    def test_latest_with_data(self, tmp_path: Path) -> None:
+        client = self._setup_api(tmp_path)
+
+        history_path = tmp_path / "data" / "promotion_history.json"
+        entries = [
+            {"new_checkpoint": "v1", "promoted": True},
+            {"new_checkpoint": "v2", "promoted": False},
+        ]
+        history_path.write_text(json.dumps(entries), encoding="utf-8")
+
+        resp = client.get("/api/training/promotions/latest")
+        assert resp.status_code == 200
+        assert resp.json()["latest"]["new_checkpoint"] == "v2"

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from alpha4gate.learning.evaluator import EvalResult, ModelEvaluator
@@ -31,6 +33,8 @@ class PromotionDecision:
     old_eval: EvalResult | None
     promoted: bool
     reason: str
+    difficulty: int = 0
+    action_distribution_shift: float | None = None
     timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
@@ -85,6 +89,7 @@ class PromotionManager:
                 old_eval=None,
                 promoted=True,
                 reason="no previous best checkpoint",
+                difficulty=difficulty,
             )
             self._history.append(decision)
             return decision
@@ -131,6 +136,12 @@ class PromotionManager:
             )
             _log.info("Not promoted: %s", reason)
 
+        # Compute action distribution shift if both evals have distributions
+        shift = compute_action_distribution_shift(
+            old_eval.action_distribution,
+            new_eval.action_distribution,
+        )
+
         decision = PromotionDecision(
             new_checkpoint=new_checkpoint,
             old_best=old_best,
@@ -138,6 +149,8 @@ class PromotionManager:
             old_eval=old_eval,
             promoted=promoted,
             reason=reason,
+            difficulty=difficulty,
+            action_distribution_shift=shift,
         )
         self._history.append(decision)
         return decision
@@ -187,3 +200,139 @@ class PromotionManager:
             entry = asdict(d)
             result.append(entry)
         return result
+
+
+def compute_action_distribution_shift(
+    old_dist: list[float] | None,
+    new_dist: list[float] | None,
+) -> float | None:
+    """Compute L1 distance between two action distributions.
+
+    Returns None if either distribution is unavailable.
+    """
+    if old_dist is None or new_dist is None:
+        return None
+    if len(old_dist) != len(new_dist):
+        return None
+    return sum(abs(a - b) for a, b in zip(old_dist, new_dist, strict=True))
+
+
+# Default paths (relative to project root; overridable in constructor)
+_DEFAULT_HISTORY_PATH = Path("data/promotion_history.json")
+_DEFAULT_WIKI_PATH = Path("documentation/wiki/promotions.md")
+
+
+class PromotionLogger:
+    """Logs promotion decisions to a JSON file and appends to the wiki page."""
+
+    def __init__(
+        self,
+        history_path: Path | None = None,
+        wiki_path: Path | None = None,
+    ) -> None:
+        self._history_path = history_path or _DEFAULT_HISTORY_PATH
+        self._wiki_path = wiki_path or _DEFAULT_WIKI_PATH
+
+    def _read_history(self) -> list[dict[str, Any]]:
+        """Read existing history from JSON file, or return empty list."""
+        if self._history_path.exists():
+            raw = self._history_path.read_text(encoding="utf-8")
+            data: list[dict[str, Any]] = json.loads(raw)
+            return data
+        return []
+
+    def _write_history(self, entries: list[dict[str, Any]]) -> None:
+        """Write history list to JSON file (pretty-printed)."""
+        self._history_path.parent.mkdir(parents=True, exist_ok=True)
+        self._history_path.write_text(
+            json.dumps(entries, indent=2) + "\n", encoding="utf-8"
+        )
+
+    def log_decision(self, decision: PromotionDecision) -> dict[str, Any]:
+        """Append a decision to the JSON log and update the wiki page.
+
+        Returns the serialised decision dict that was logged.
+        """
+        entry = self._decision_to_dict(decision)
+
+        # Append to JSON file
+        entries = self._read_history()
+        entries.append(entry)
+        self._write_history(entries)
+
+        # Append row to wiki page
+        self._append_wiki_row(decision)
+
+        _log.info("Logged promotion decision: %s -> %s (%s)",
+                  decision.old_best, decision.new_checkpoint,
+                  "promoted" if decision.promoted else "rejected")
+        return entry
+
+    def get_history(self) -> list[dict[str, Any]]:
+        """Return the full promotion history from the JSON file."""
+        return self._read_history()
+
+    def get_latest(self) -> dict[str, Any] | None:
+        """Return the most recent promotion decision, or None if empty."""
+        entries = self._read_history()
+        return entries[-1] if entries else None
+
+    @staticmethod
+    def _decision_to_dict(decision: PromotionDecision) -> dict[str, Any]:
+        """Convert a PromotionDecision to a flat, JSON-serialisable dict."""
+        new_wr = decision.new_eval.win_rate
+        old_wr = decision.old_eval.win_rate if decision.old_eval else None
+        delta = (new_wr - old_wr) if old_wr is not None else None
+        eval_games = decision.new_eval.games_played
+        if decision.old_eval:
+            eval_games += decision.old_eval.games_played
+
+        return {
+            "timestamp": decision.timestamp,
+            "new_checkpoint": decision.new_checkpoint,
+            "old_best": decision.old_best,
+            "new_win_rate": new_wr,
+            "old_win_rate": old_wr,
+            "delta": delta,
+            "eval_games_played": eval_games,
+            "promoted": decision.promoted,
+            "reason": decision.reason,
+            "difficulty": decision.difficulty,
+            "action_distribution_shift": decision.action_distribution_shift,
+        }
+
+    def _append_wiki_row(self, decision: PromotionDecision) -> None:
+        """Append a new row to the promotions wiki table."""
+        if not self._wiki_path.exists():
+            return
+
+        # Parse timestamp to a readable date
+        try:
+            dt = datetime.fromisoformat(decision.timestamp)
+            date_str = dt.strftime("%Y-%m-%d %H:%M")
+        except (ValueError, TypeError):
+            date_str = decision.timestamp[:16]
+
+        old_wr = (
+            f"{decision.old_eval.win_rate:.0%}"
+            if decision.old_eval
+            else "\u2014"
+        )
+        new_wr = f"{decision.new_eval.win_rate:.0%}"
+        win_rate_str = f"{old_wr}\u2192{new_wr}"
+
+        eval_games = decision.new_eval.games_played
+        if decision.old_eval:
+            eval_games += decision.old_eval.games_played
+
+        outcome = "promoted" if decision.promoted else "rejected"
+
+        row = (
+            f"| {date_str} | {decision.old_best} | {decision.new_checkpoint} "
+            f"| {win_rate_str} | {eval_games} "
+            f"| {decision.difficulty} | {decision.reason} | {outcome} |"
+        )
+
+        content = self._wiki_path.read_text(encoding="utf-8")
+        content = content.rstrip("\n") + "\n" + row + "\n"
+        self._wiki_path.write_text(content, encoding="utf-8")
