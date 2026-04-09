@@ -288,6 +288,7 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 ### Step 5: Promotion logging
 
+- **Status:** DONE (2026-04-10)
 - **Issue:** #47
 - **Problem:** Record every promotion/rejection decision with full evidence so the history
   is auditable. Two outputs: a structured JSON log and the wiki page.
