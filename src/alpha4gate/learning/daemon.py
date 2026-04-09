@@ -75,6 +75,10 @@ class TrainingDaemon:
         # Promotion manager (created lazily in _run_training)
         self._promotion_manager: Any = None
 
+        # Rollback monitor (created lazily)
+        self._rollback_monitor: Any = None
+        self._last_rollback: dict[str, Any] | None = None
+
     def start(self) -> None:
         """Start the daemon loop in a background thread.
 
@@ -119,6 +123,7 @@ class TrainingDaemon:
                 "runs_completed": self._runs_completed,
                 "last_result": self._last_result,
                 "last_error": self._last_error,
+                "last_rollback": self._last_rollback,
                 "config": asdict(self._config),
             }
 
@@ -261,6 +266,24 @@ class TrainingDaemon:
                 setattr(self._config, key, value)
         return self._config
 
+    def _get_rollback_monitor(self) -> Any:
+        """Get or create the RollbackMonitor instance."""
+        if self._rollback_monitor is None:
+            from alpha4gate.learning.database import TrainingDB
+            from alpha4gate.learning.rollback import RollbackConfig, RollbackMonitor
+
+            db_path = self._settings.data_dir / "training.db"
+            db = TrainingDB(db_path)
+            checkpoint_dir = self._settings.data_dir / "checkpoints"
+            history_path = self._settings.data_dir / "promotion_history.json"
+            self._rollback_monitor = RollbackMonitor(
+                db=db,
+                config=RollbackConfig(),
+                checkpoint_dir=checkpoint_dir,
+                history_path=history_path,
+            )
+        return self._rollback_monitor
+
     def _get_promotion_manager(self) -> Any:
         """Get or create the PromotionManager instance."""
         if self._promotion_manager is None:
@@ -324,6 +347,32 @@ class TrainingDaemon:
                     )
                 except Exception:
                     _log.exception("Promotion gate failed for %s", latest_checkpoint)
+
+            # Run rollback check on the current best
+            try:
+                from alpha4gate.learning.checkpoints import get_best_name
+
+                cp_dir = self._settings.data_dir / "checkpoints"
+                current_best = get_best_name(cp_dir)
+                if current_best is not None:
+                    monitor = self._get_rollback_monitor()
+                    rollback_decision = monitor.check_for_regression(current_best)
+                    if rollback_decision is not None:
+                        monitor.execute_rollback(rollback_decision)
+                        with self._lock:
+                            self._last_rollback = {
+                                "current_model": rollback_decision.current_model,
+                                "revert_to": rollback_decision.revert_to,
+                                "reason": rollback_decision.reason,
+                                "timestamp": rollback_decision.timestamp,
+                            }
+                        _log.info(
+                            "Rollback executed: %s -> %s",
+                            rollback_decision.current_model,
+                            rollback_decision.revert_to,
+                        )
+            except Exception:
+                _log.exception("Rollback check failed")
 
             # Update trigger tracking after successful run
             db_path = self._settings.data_dir / "training.db"

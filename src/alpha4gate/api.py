@@ -642,6 +642,63 @@ async def manual_promote(request: dict[str, Any]) -> JSONResponse | dict[str, An
     }
 
 
+@app.post("/api/training/rollback", response_model=None)
+async def manual_rollback(request: dict[str, Any]) -> JSONResponse | dict[str, Any]:
+    """Manually rollback to a previous checkpoint.
+
+    Body: {"checkpoint": "v3"}  — checkpoint name to revert to.
+    """
+    from alpha4gate.learning.checkpoints import get_best_name
+    from alpha4gate.learning.database import TrainingDB
+    from alpha4gate.learning.rollback import RollbackConfig, RollbackDecision, RollbackMonitor
+
+    checkpoint = request.get("checkpoint", "")
+    if not checkpoint:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "checkpoint is required"},
+        )
+
+    cp_dir = _data_dir / "checkpoints"
+    current_best = get_best_name(cp_dir)
+    if current_best is None:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "no current best checkpoint"},
+        )
+
+    if current_best == checkpoint:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"already on checkpoint {checkpoint}"},
+        )
+
+    db_path = _data_dir / "training.db"
+    db = TrainingDB(db_path)
+    monitor = RollbackMonitor(
+        db=db,
+        config=RollbackConfig(),
+        checkpoint_dir=cp_dir,
+        history_path=_data_dir / "promotion_history.json",
+    )
+    decision = RollbackDecision(
+        current_model=current_best,
+        revert_to=checkpoint,
+        current_win_rate=0.0,
+        promotion_win_rate=0.0,
+        games_played=0,
+        reason="manual rollback via API",
+    )
+    monitor.execute_rollback(decision)
+    db.close()
+
+    return {
+        "status": "rolled_back",
+        "old_best": current_best,
+        "new_best": checkpoint,
+    }
+
+
 @app.get("/api/reward-rules")
 async def get_reward_rules() -> dict[str, Any]:
     """Get current reward shaping rules."""

@@ -102,15 +102,21 @@ def load_checkpoint(checkpoint_dir: str | Path, name: str | None = None) -> Any:
 def promote_checkpoint(checkpoint_dir: str | Path, name: str) -> None:
     """Promote a checkpoint to best in the manifest.
 
+    Tracks the previous best in the ``previous_best`` field so that
+    the rollback monitor can revert if the new model regresses.
+
     Args:
         checkpoint_dir: Directory containing checkpoints.
         name: Checkpoint name to promote.
     """
     cp_dir = Path(checkpoint_dir)
     manifest = _load_manifest(cp_dir)
+    old_best = manifest.get("best")
+    if old_best is not None:
+        manifest["previous_best"] = old_best
     manifest["best"] = name
     _save_manifest(cp_dir, manifest)
-    _log.info("Promoted checkpoint to best: %s", name)
+    _log.info("Promoted checkpoint to best: %s (previous: %s)", name, old_best)
 
 
 def get_best_name(checkpoint_dir: str | Path) -> str | None:

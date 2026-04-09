@@ -314,6 +314,7 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 ### Step 6: Rollback mechanism
 
+- **Status:** DONE (2026-04-10)
 - **Issue:** #48
 - **Problem:** If a promoted model performs worse than expected over subsequent games,
   automatically revert to the previous best checkpoint.
