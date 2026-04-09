@@ -99,6 +99,20 @@ def load_checkpoint(checkpoint_dir: str | Path, name: str | None = None) -> Any:
     return PPO.load(str(cp_dir / name))
 
 
+def promote_checkpoint(checkpoint_dir: str | Path, name: str) -> None:
+    """Promote a checkpoint to best in the manifest.
+
+    Args:
+        checkpoint_dir: Directory containing checkpoints.
+        name: Checkpoint name to promote.
+    """
+    cp_dir = Path(checkpoint_dir)
+    manifest = _load_manifest(cp_dir)
+    manifest["best"] = name
+    _save_manifest(cp_dir, manifest)
+    _log.info("Promoted checkpoint to best: %s", name)
+
+
 def get_best_name(checkpoint_dir: str | Path) -> str | None:
     """Get the name of the best checkpoint, or None if no checkpoints exist."""
     manifest = _load_manifest(Path(checkpoint_dir))

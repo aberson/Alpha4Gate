@@ -167,10 +167,10 @@ class TestCycleTracking:
 class TestBestCheckpoint:
     @patch("alpha4gate.learning.trainer.TrainingOrchestrator._make_env")
     @patch("alpha4gate.learning.trainer.TrainingOrchestrator._init_or_resume_model")
-    def test_only_first_cycle_is_best_when_win_rate_zero(
+    def test_trainer_never_marks_best(
         self, mock_init: MagicMock, mock_env: MagicMock, tmp_path: Path
     ) -> None:
-        """When win rate stays at 0, only the first cycle should be marked best."""
+        """Trainer saves with is_best=False; promotion gate decides best."""
         mock_init.return_value = _mock_model()
         mock_env.return_value = MagicMock()
         db = TrainingDB(tmp_path / "train.db")
@@ -184,21 +184,20 @@ class TestBestCheckpoint:
 
         from alpha4gate.learning.checkpoints import get_best_name
 
-        # Win rate is 0.0 for all cycles (no games in DB), so first cycle
-        # sets best (0.0 > -1.0), subsequent cycles do NOT overwrite.
-        assert get_best_name(tmp_path / "cp") == "v1"
+        # Trainer no longer marks any checkpoint as best —
+        # the promotion gate is responsible for that.
+        assert get_best_name(tmp_path / "cp") is None
 
     @patch("alpha4gate.learning.trainer.TrainingOrchestrator._make_env")
     @patch("alpha4gate.learning.trainer.TrainingOrchestrator._init_or_resume_model")
-    def test_best_updates_when_win_rate_improves(
+    def test_checkpoints_saved_without_best(
         self, mock_init: MagicMock, mock_env: MagicMock, tmp_path: Path
     ) -> None:
-        """Best should update when a later cycle has a higher win rate."""
+        """All checkpoints should be saved even without best marking."""
         mock_init.return_value = _mock_model()
         mock_env.return_value = MagicMock()
         db_path = tmp_path / "train.db"
         db = TrainingDB(db_path)
-        # Seed two wins so get_recent_win_rate returns > 0
         db.store_game("g1", "Simple64", 1, "win", 60.0, 1.0, "v0")
         db.store_game("g2", "Simple64", 1, "win", 60.0, 1.0, "v0")
         db.close()
@@ -209,10 +208,13 @@ class TestBestCheckpoint:
         )
         orch.run(n_cycles=1, games_per_cycle=1)
 
-        from alpha4gate.learning.checkpoints import get_best_name
+        from alpha4gate.learning.checkpoints import get_best_name, list_checkpoints
 
-        # With wins in the DB, win rate > 0 → first cycle is best
-        assert get_best_name(tmp_path / "cp") == "v1"
+        # Checkpoint is saved but not marked as best
+        assert get_best_name(tmp_path / "cp") is None
+        cps = list_checkpoints(tmp_path / "cp")
+        assert len(cps) == 1
+        assert cps[0]["name"] == "v1"
 
 
 class TestCrashRecovery:

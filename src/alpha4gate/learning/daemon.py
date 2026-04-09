@@ -72,6 +72,9 @@ class TrainingDaemon:
         self._last_run_time: datetime = datetime.min
         self._training_active: bool = False
 
+        # Promotion manager (created lazily in _run_training)
+        self._promotion_manager: Any = None
+
     def start(self) -> None:
         """Start the daemon loop in a background thread.
 
@@ -258,6 +261,19 @@ class TrainingDaemon:
                 setattr(self._config, key, value)
         return self._config
 
+    def _get_promotion_manager(self) -> Any:
+        """Get or create the PromotionManager instance."""
+        if self._promotion_manager is None:
+            from alpha4gate.learning.database import TrainingDB
+            from alpha4gate.learning.evaluator import ModelEvaluator
+            from alpha4gate.learning.promotion import PromotionConfig, PromotionManager
+
+            db_path = self._settings.data_dir / "training.db"
+            db = TrainingDB(db_path)
+            evaluator = ModelEvaluator(self._settings, db)
+            self._promotion_manager = PromotionManager(evaluator, PromotionConfig())
+        return self._promotion_manager
+
     def _run_training(self) -> None:
         """Create a TrainingOrchestrator and run one training pass."""
         from alpha4gate.learning.database import TrainingDB
@@ -290,6 +306,25 @@ class TrainingDaemon:
                 games_per_cycle=self._config.games_per_cycle,
                 resume=True,
             )
+
+            # Run promotion gate on the latest checkpoint
+            cycle_results = result.get("cycle_results", [])
+            if cycle_results:
+                latest = cycle_results[-1]
+                latest_checkpoint = latest["checkpoint"]
+                current_difficulty = latest["difficulty"]
+                try:
+                    pm = self._get_promotion_manager()
+                    decision = pm.evaluate_and_promote(
+                        latest_checkpoint, current_difficulty
+                    )
+                    _log.info(
+                        "Promotion decision: %s (promoted=%s, reason=%s)",
+                        latest_checkpoint, decision.promoted, decision.reason,
+                    )
+                except Exception:
+                    _log.exception("Promotion gate failed for %s", latest_checkpoint)
+
             # Update trigger tracking after successful run
             db_path = self._settings.data_dir / "training.db"
             if db_path.exists():

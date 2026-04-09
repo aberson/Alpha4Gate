@@ -564,6 +564,53 @@ async def get_evaluation_status(job_id: str) -> JSONResponse | dict[str, Any]:
     return response
 
 
+# --- Promotion Endpoints ---
+
+# In-memory promotion manager (created lazily)
+_promotion_manager: Any = None
+
+
+def _get_promotion_manager() -> Any:
+    """Get or create the PromotionManager instance."""
+    global _promotion_manager
+    if _promotion_manager is None:
+        from alpha4gate.learning.promotion import PromotionConfig, PromotionManager
+
+        evaluator = _get_evaluator()
+        _promotion_manager = PromotionManager(evaluator, PromotionConfig())
+    return _promotion_manager
+
+
+@app.get("/api/training/promotions")
+async def get_promotions() -> dict[str, Any]:
+    """Get promotion decision history."""
+    pm = _get_promotion_manager()
+    return {"promotions": pm.get_history_dicts()}
+
+
+@app.post("/api/training/promote", response_model=None)
+async def manual_promote(request: dict[str, Any]) -> JSONResponse | dict[str, Any]:
+    """Manually promote a checkpoint (skips evaluation).
+
+    Body: {"checkpoint": "v5"}
+    """
+    checkpoint = request.get("checkpoint", "")
+    if not checkpoint:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "checkpoint is required"},
+        )
+
+    pm = _get_promotion_manager()
+    decision = pm.manual_promote(checkpoint)
+
+    return {
+        "status": "promoted",
+        "checkpoint": checkpoint,
+        "old_best": decision.old_best,
+    }
+
+
 @app.get("/api/reward-rules")
 async def get_reward_rules() -> dict[str, Any]:
     """Get current reward shaping rules."""
