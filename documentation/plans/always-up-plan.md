@@ -221,6 +221,7 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 ### Step 3: Model evaluator
 
+- **Status:** DONE (2026-04-10)
 - **Issue:** #45
 - **Problem:** Create a `ModelEvaluator` class in `src/alpha4gate/learning/evaluator.py`
   that runs N evaluation games with a specific checkpoint and returns win rate + stats.
