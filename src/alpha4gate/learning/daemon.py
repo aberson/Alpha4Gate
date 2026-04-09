@@ -67,6 +67,11 @@ class TrainingDaemon:
         self._last_error: str | None = None
         self._lock = threading.Lock()
 
+        # Trigger tracking
+        self._last_transition_count: int = 0
+        self._last_run_time: datetime = datetime.min
+        self._training_active: bool = False
+
     def start(self) -> None:
         """Start the daemon loop in a background thread.
 
@@ -143,13 +148,119 @@ class TrainingDaemon:
     def _should_train(self) -> bool:
         """Evaluate whether training should be triggered.
 
-        Stub for Step 1 -- always returns False.
-        Full trigger logic (transition count, hours since last run) is Step 2.
+        Two OR conditions (either triggers training):
+        1. Transition count: enough new transitions since last run.
+        2. Time: enough hours since last run.
+
+        Safety gates: never trigger if no transitions exist or training is active.
         """
-        return False
+        trigger_state = self._evaluate_triggers()
+        return bool(trigger_state["would_trigger"])
+
+    def _evaluate_triggers(self) -> dict[str, Any]:
+        """Compute trigger state without side effects.
+
+        Returns a dict with: transitions_since_last, hours_since_last,
+        would_trigger, reason.
+        """
+        from alpha4gate.learning.database import TrainingDB
+
+        db_path = self._settings.data_dir / "training.db"
+
+        # Default: no data
+        if not db_path.exists():
+            return {
+                "transitions_since_last": 0,
+                "hours_since_last": 0.0,
+                "would_trigger": False,
+                "reason": "no database file",
+            }
+
+        db = TrainingDB(db_path)
+        try:
+            total_transitions = db.get_transition_count()
+        finally:
+            db.close()
+
+        transitions_since_last = total_transitions - self._last_transition_count
+
+        now = datetime.now(UTC)
+        # _last_run_time uses datetime.min (no tzinfo) for "never ran" semantics
+        if self._last_run_time == datetime.min:
+            hours_since_last = float("inf")
+        else:
+            delta = now - self._last_run_time
+            hours_since_last = delta.total_seconds() / 3600.0
+
+        # Safety gate: no transitions at all
+        if total_transitions == 0:
+            return {
+                "transitions_since_last": 0,
+                "hours_since_last": hours_since_last,
+                "would_trigger": False,
+                "reason": "no transitions in database",
+            }
+
+        # Safety gate: training already in progress
+        if self._training_active:
+            return {
+                "transitions_since_last": transitions_since_last,
+                "hours_since_last": hours_since_last,
+                "would_trigger": False,
+                "reason": "training already in progress",
+            }
+
+        # Transition count trigger
+        if transitions_since_last >= self._config.min_transitions:
+            return {
+                "transitions_since_last": transitions_since_last,
+                "hours_since_last": hours_since_last,
+                "would_trigger": True,
+                "reason": (
+                    f"transition count trigger: {transitions_since_last} >= "
+                    f"{self._config.min_transitions}"
+                ),
+            }
+
+        # Time trigger
+        if hours_since_last >= self._config.min_hours_since_last:
+            return {
+                "transitions_since_last": transitions_since_last,
+                "hours_since_last": hours_since_last,
+                "would_trigger": True,
+                "reason": (
+                    f"time trigger: {hours_since_last:.1f}h >= "
+                    f"{self._config.min_hours_since_last}h"
+                ),
+            }
+
+        # Neither trigger met
+        return {
+            "transitions_since_last": transitions_since_last,
+            "hours_since_last": hours_since_last,
+            "would_trigger": False,
+            "reason": "no trigger condition met",
+        }
+
+    def get_trigger_state(self) -> dict[str, Any]:
+        """Return the current trigger evaluation state (for the API)."""
+        return self._evaluate_triggers()
+
+    def update_config(self, updates: dict[str, Any]) -> DaemonConfig:
+        """Update daemon config fields at runtime.
+
+        Only known DaemonConfig fields are applied; unknown keys are ignored.
+        Returns the updated config.
+        """
+        valid_fields = DaemonConfig.__dataclass_fields__
+        for key, value in updates.items():
+            if key in valid_fields:
+                setattr(self._config, key, value)
+        return self._config
 
     def _run_training(self) -> None:
         """Create a TrainingOrchestrator and run one training pass."""
+        from alpha4gate.learning.database import TrainingDB
         from alpha4gate.learning.trainer import TrainingOrchestrator
 
         _log.info(
@@ -157,6 +268,7 @@ class TrainingDaemon:
             self._config.cycles_per_run,
             self._config.games_per_cycle,
         )
+        self._training_active = True
         with self._lock:
             self._state = "training"
 
@@ -178,6 +290,14 @@ class TrainingDaemon:
                 games_per_cycle=self._config.games_per_cycle,
                 resume=True,
             )
+            # Update trigger tracking after successful run
+            db_path = self._settings.data_dir / "training.db"
+            if db_path.exists():
+                db = TrainingDB(db_path)
+                self._last_transition_count = db.get_transition_count()
+                db.close()
+            self._last_run_time = datetime.now(UTC)
+
             with self._lock:
                 self._last_result = result
                 self._last_error = None
@@ -189,3 +309,5 @@ class TrainingDaemon:
                 self._last_error = str(exc)
                 self._last_run = datetime.now(UTC)
             _log.exception("Daemon: training failed")
+        finally:
+            self._training_active = False

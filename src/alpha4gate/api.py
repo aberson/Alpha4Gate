@@ -449,6 +449,30 @@ async def get_daemon_status() -> dict[str, Any]:
     return _daemon.get_status()
 
 
+@app.get("/api/training/triggers")
+async def get_training_triggers() -> dict[str, Any]:
+    """Return current trigger evaluation state for debugging."""
+    if _daemon is None:
+        return {
+            "transitions_since_last": 0,
+            "hours_since_last": 0.0,
+            "would_trigger": False,
+            "reason": "daemon not configured",
+        }
+    return _daemon.get_trigger_state()
+
+
+@app.put("/api/training/daemon/config")
+async def update_daemon_config(request: dict[str, Any]) -> dict[str, Any]:
+    """Update daemon configuration at runtime."""
+    if _daemon is None:
+        return {"status": "error", "message": "Daemon not configured"}
+    from dataclasses import asdict
+
+    updated = _daemon.update_config(request)
+    return {"status": "updated", "config": asdict(updated)}
+
+
 @app.get("/api/reward-rules")
 async def get_reward_rules() -> dict[str, Any]:
     """Get current reward shaping rules."""

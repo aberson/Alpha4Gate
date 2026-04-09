@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
@@ -120,7 +122,8 @@ class TestTrainingDaemon:
         finally:
             daemon.stop()
 
-    def test_should_train_stub_returns_false(self, tmp_path: Path) -> None:
+    def test_should_train_no_db_returns_false(self, tmp_path: Path) -> None:
+        """No database file -> should not train."""
         settings = _make_settings(tmp_path)
         daemon = TrainingDaemon(settings, DaemonConfig())
         assert daemon._should_train() is False
@@ -242,6 +245,162 @@ class TestDaemonEndpoints:
         assert status["running"] is False
 
 
+# ------------------------------------------------------------------
+# Trigger logic tests (mocked DB)
+# ------------------------------------------------------------------
+
+
+def _seed_transitions(db_path: Path, count: int) -> None:
+    """Create a DB with *count* transitions and 1 game."""
+    from alpha4gate.learning.database import TrainingDB
+
+    db = TrainingDB(db_path)
+    db.store_game("g0", "Simple64", 1, "win", 300.0, 5.0, "v1")
+    state = np.zeros(17, dtype=np.float32)
+    for i in range(count):
+        db.store_transition("g0", i, float(i), state, 0, 0.1)
+    db.close()
+
+
+class TestTriggerLogic:
+    """Unit tests for _should_train / _evaluate_triggers."""
+
+    def test_no_db_file(self, tmp_path: Path) -> None:
+        settings = _make_settings(tmp_path)
+        daemon = TrainingDaemon(settings, DaemonConfig(min_transitions=10))
+        state = daemon.get_trigger_state()
+        assert state["would_trigger"] is False
+        assert "no database" in state["reason"]
+
+    def test_zero_transitions(self, tmp_path: Path) -> None:
+        """DB exists but has 0 transitions -> never trigger."""
+        from alpha4gate.learning.database import TrainingDB
+
+        settings = _make_settings(tmp_path)
+        db_path = settings.data_dir / "training.db"
+        db = TrainingDB(db_path)
+        db.close()
+
+        daemon = TrainingDaemon(settings, DaemonConfig(min_transitions=10))
+        state = daemon.get_trigger_state()
+        assert state["would_trigger"] is False
+        assert state["transitions_since_last"] == 0
+
+    def test_transition_count_trigger(self, tmp_path: Path) -> None:
+        """Enough new transitions triggers training."""
+        settings = _make_settings(tmp_path)
+        _seed_transitions(settings.data_dir / "training.db", 20)
+
+        daemon = TrainingDaemon(
+            settings,
+            DaemonConfig(min_transitions=10, min_hours_since_last=9999.0),
+        )
+        state = daemon.get_trigger_state()
+        assert state["would_trigger"] is True
+        assert "transition count trigger" in state["reason"]
+        assert state["transitions_since_last"] == 20
+
+    def test_transition_count_not_enough(self, tmp_path: Path) -> None:
+        """Not enough new transitions and time threshold not met."""
+        settings = _make_settings(tmp_path)
+        _seed_transitions(settings.data_dir / "training.db", 5)
+
+        daemon = TrainingDaemon(
+            settings,
+            DaemonConfig(min_transitions=10, min_hours_since_last=9999.0),
+        )
+        # Simulate a recent run so the time trigger won't fire
+        daemon._last_run_time = datetime.now(UTC)
+        state = daemon.get_trigger_state()
+        assert state["would_trigger"] is False
+        assert state["transitions_since_last"] == 5
+
+    def test_time_trigger_first_run(self, tmp_path: Path) -> None:
+        """First run (last_run_time=datetime.min) always triggers if transitions exist."""
+        settings = _make_settings(tmp_path)
+        _seed_transitions(settings.data_dir / "training.db", 3)
+
+        daemon = TrainingDaemon(
+            settings,
+            DaemonConfig(min_transitions=9999, min_hours_since_last=1.0),
+        )
+        # _last_run_time defaults to datetime.min -> hours_since_last = inf
+        state = daemon.get_trigger_state()
+        assert state["would_trigger"] is True
+        assert "time trigger" in state["reason"]
+
+    def test_time_trigger_after_interval(self, tmp_path: Path) -> None:
+        """Time trigger fires after enough hours since last run."""
+        settings = _make_settings(tmp_path)
+        _seed_transitions(settings.data_dir / "training.db", 3)
+
+        daemon = TrainingDaemon(
+            settings,
+            DaemonConfig(min_transitions=9999, min_hours_since_last=0.5),
+        )
+        # Simulate last run 2 hours ago
+        from datetime import timedelta
+
+        daemon._last_run_time = datetime.now(UTC) - timedelta(hours=2)
+        state = daemon.get_trigger_state()
+        assert state["would_trigger"] is True
+        assert "time trigger" in state["reason"]
+        assert state["hours_since_last"] >= 2.0
+
+    def test_safety_gate_training_active(self, tmp_path: Path) -> None:
+        """Never trigger if training is already in progress."""
+        settings = _make_settings(tmp_path)
+        _seed_transitions(settings.data_dir / "training.db", 1000)
+
+        daemon = TrainingDaemon(
+            settings,
+            DaemonConfig(min_transitions=10),
+        )
+        daemon._training_active = True
+        state = daemon.get_trigger_state()
+        assert state["would_trigger"] is False
+        assert "already in progress" in state["reason"]
+
+    def test_last_transition_count_updates_after_should_train(
+        self, tmp_path: Path
+    ) -> None:
+        """After _run_training, _last_transition_count is updated."""
+        settings = _make_settings(tmp_path)
+        _seed_transitions(settings.data_dir / "training.db", 50)
+
+        daemon = TrainingDaemon(
+            settings,
+            DaemonConfig(min_transitions=10),
+        )
+        # First check: should trigger
+        assert daemon._should_train() is True
+        # Manually set last_transition_count as _run_training would
+        daemon._last_transition_count = 50
+        daemon._last_run_time = datetime.now(UTC)
+        # Now it should not trigger (no new transitions, recent run)
+        assert daemon._should_train() is False
+
+
+class TestUpdateConfig:
+    def test_update_known_fields(self, tmp_path: Path) -> None:
+        settings = _make_settings(tmp_path)
+        daemon = TrainingDaemon(settings, DaemonConfig())
+        updated = daemon.update_config({
+            "min_transitions": 200,
+            "cycles_per_run": 3,
+        })
+        assert updated.min_transitions == 200
+        assert updated.cycles_per_run == 3
+        # Other fields unchanged
+        assert updated.check_interval_seconds == 60
+
+    def test_update_ignores_unknown_fields(self, tmp_path: Path) -> None:
+        settings = _make_settings(tmp_path)
+        daemon = TrainingDaemon(settings, DaemonConfig())
+        updated = daemon.update_config({"bogus_field": 42, "min_transitions": 100})
+        assert updated.min_transitions == 100
+
+
 class TestExistingTrainingEndpointsStillWork:
     """Ensure old training endpoints still return 200."""
 
@@ -256,6 +415,60 @@ class TestExistingTrainingEndpointsStillWork:
     def test_training_checkpoints(self, daemon_client: TestClient) -> None:
         resp = daemon_client.get("/api/training/checkpoints")
         assert resp.status_code == 200
+
+
+# ------------------------------------------------------------------
+# Trigger & config API endpoint tests
+# ------------------------------------------------------------------
+
+
+class TestTriggerEndpoint:
+    def test_triggers_no_db(self, daemon_client: TestClient) -> None:
+        resp = daemon_client.get("/api/training/triggers")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["would_trigger"] is False
+        assert isinstance(data["transitions_since_last"], int)
+        assert isinstance(data["reason"], str)
+
+    def test_triggers_with_transitions(
+        self, daemon_client: TestClient, tmp_path: Path
+    ) -> None:
+        _seed_transitions(tmp_path / "data" / "training.db", 600)
+        resp = daemon_client.get("/api/training/triggers")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["would_trigger"] is True
+        assert data["transitions_since_last"] == 600
+
+
+class TestDaemonConfigEndpoint:
+    def test_update_config(self, daemon_client: TestClient) -> None:
+        resp = daemon_client.put(
+            "/api/training/daemon/config",
+            json={"min_transitions": 200, "cycles_per_run": 3},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "updated"
+        assert data["config"]["min_transitions"] == 200
+        assert data["config"]["cycles_per_run"] == 3
+
+    def test_update_config_ignores_unknown(self, daemon_client: TestClient) -> None:
+        resp = daemon_client.put(
+            "/api/training/daemon/config",
+            json={"bogus": 42, "min_transitions": 100},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["config"]["min_transitions"] == 100
+
+    def test_config_reflected_in_status(self, daemon_client: TestClient) -> None:
+        daemon_client.put(
+            "/api/training/daemon/config",
+            json={"games_per_cycle": 20},
+        )
+        status = daemon_client.get("/api/training/daemon").json()
+        assert status["config"]["games_per_cycle"] == 20
 
 
 # ------------------------------------------------------------------
