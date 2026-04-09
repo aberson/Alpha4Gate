@@ -45,6 +45,7 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 ### Step 1: Audit current logging
 
+- **Issue:** #36
 - **Problem:** Verify what data is persisted vs ephemeral across the system. Confirm the
   gaps documented in `documentation/wiki/monitoring.md` are accurate against current code.
   Specifically verify: (1) action probabilities from NeuralDecisionEngine._last_probabilities
@@ -55,6 +56,7 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 ### Step 2: Persist decision logs with action probabilities
 
+- **Issue:** #37
 - **Problem:** Add action probability persistence so we can track how the model's decision
   distribution changes over time. Changes needed:
   (1) Add `action_probs TEXT DEFAULT NULL` column to transitions table in database.py
@@ -73,6 +75,7 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 ### Step 3: Make reward logging default
 
+- **Issue:** #38
 - **Problem:** Reward JSONL logging is currently opt-in via `--reward-log` flag and only
   works in --batch mode, not --train rl mode. Make it always-on so reward analysis is
   always available. Changes needed:
@@ -93,6 +96,7 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 ### Step 4: Per-checkpoint win rate tracking
 
+- **Issue:** #39
 - **Problem:** Win rates are currently queried as a sliding window over recent games
   regardless of which model played them. Add per-checkpoint tracking so we can compare
   model versions. Changes needed:
@@ -109,6 +113,7 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 ### Step 5: Dashboard — model comparison view
 
+- **Issue:** #40
 - **Problem:** Add a minimal model comparison table to the Training tab so users can see
   per-checkpoint performance at a glance. This is a minimal version — enhanced charts
   and visualizations are deferred to Phase 4. Changes needed:
@@ -125,6 +130,7 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 ### Step 6: Dashboard — improvement timeline
 
+- **Issue:** #41
 - **Problem:** Add a minimal improvement timeline to the Training tab showing how win
   rates have changed across model versions. This is a minimal version — charts deferred
   to Phase 4. Changes needed:
