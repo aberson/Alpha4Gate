@@ -410,22 +410,27 @@ implementation; the evaluation/training/monitoring loop is the real product.
 ## Current State (2026-04-10)
 
 **What exists:**
-- TrainingOrchestrator — full RL loop, but CLI-only, manual trigger
+- TrainingOrchestrator — full RL loop, CLI + daemon-triggered
+- TrainingDaemon — background thread with trigger logic, auto-training, curriculum persistence
+- ModelEvaluator — inference-only checkpoint evaluation with async job management
+- PromotionManager + PromotionLogger — automated promote gate with JSON + wiki logging
+- RollbackMonitor — regression detection, automatic revert, difficulty floor
+- Curriculum auto-advancement — persistent difficulty across daemon restarts, auto-advance on promotion
 - SQLite DB — games + transitions + action probabilities, win rate queries, per-model stats
 - WebSocket broadcasting — live game state, decisions, commands (ephemeral)
 - JSONL logging — per-game files in `data/reward_logs/` (always-on, opt-out via `--no-reward-log`)
 - React dashboard — LiveView, TrainingDashboard, ModelComparison, ImprovementTimeline, CheckpointList, RewardRuleEditor
 - Evaluation scripts — evaluate_model.py, analyze_rewards.py
-- Curriculum system — auto-increases difficulty when win_rate >= 0.8
 - Wiki — 15 pages documenting all systems (documentation/wiki/)
 - Per-checkpoint win rate tracking via `GET /api/training/models`
 - Persistent decision logs with action probability distributions
+- 15+ API endpoints for daemon control, triggers, evaluation, promotions, rollback, curriculum
 
 **What's missing:**
-- No daemon/scheduler (everything is CLI-triggered)
-- No model promotion/rollback
-- No training trigger from dashboard (endpoint is a placeholder)
-- No alerting
+- No training cycle status in dashboard (daemon runs but dashboard doesn't show live progress)
+- No alerting (win rate drops, training failures, disk usage)
+- No training trigger UI in dashboard (POST endpoint works but no React component wires to it)
+- No domain abstraction (SC2 code still interleaved with training loop)
 
 ## Decisions
 
