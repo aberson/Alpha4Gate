@@ -43,6 +43,8 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 **Goal:** Identify and fill gaps so we can see everything the system does.
 
+- **Status:** DONE (2026-04-09) — 6/6 steps, issues #36–#41 closed. 535 tests passing.
+
 ### Step 1: Audit current logging
 
 - **Status:** DONE (2026-04-09)
@@ -222,21 +224,20 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 **What exists:**
 - TrainingOrchestrator — full RL loop, but CLI-only, manual trigger
-- SQLite DB — games + transitions, win rate queries
+- SQLite DB — games + transitions + action probabilities, win rate queries, per-model stats
 - WebSocket broadcasting — live game state, decisions, commands (ephemeral)
-- JSONL logging — per-game logs (no reward data by default)
-- React dashboard — LiveView, TrainingDashboard, CheckpointList, RewardRuleEditor
-- Evaluation scripts — evaluate_model.py, analyze_rewards.py (manual, post-hoc)
+- JSONL logging — per-game files in `data/reward_logs/` (always-on, opt-out via `--no-reward-log`)
+- React dashboard — LiveView, TrainingDashboard, ModelComparison, ImprovementTimeline, CheckpointList, RewardRuleEditor
+- Evaluation scripts — evaluate_model.py, analyze_rewards.py
 - Curriculum system — auto-increases difficulty when win_rate >= 0.8
 - Wiki — 15 pages documenting all systems (documentation/wiki/)
+- Per-checkpoint win rate tracking via `GET /api/training/models`
+- Persistent decision logs with action probability distributions
 
 **What's missing:**
 - No daemon/scheduler (everything is CLI-triggered)
-- No persistent decision logs (WebSocket data lost on disconnect)
-- Reward logging is opt-in (`--reward-log` flag)
 - No model promotion/rollback
 - No training trigger from dashboard (endpoint is a placeholder)
-- No cross-checkpoint comparison
 - No alerting
 
 ## Decisions

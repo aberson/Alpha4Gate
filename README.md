@@ -9,7 +9,9 @@ A StarCraft II Protoss bot combining rule-based decision-making, a PPO neural po
 - **Evaluation metrics** — structured reward shaping, win-rate tracking, training diagnostics, and cross-game statistics
 - **Autonomous self-improvement** — train-play-evaluate loop that runs 24/7, getting stronger with each cycle
 
-**Current capability:** Wins reliably at difficulty 1-3 (Easy through Medium AI). Struggles at 4-5 (Hard). 500 unit tests passing, 0 type errors, 0 lint violations.
+**Phase 2 complete** — issues #36–#41 closed. Monitoring & observability gaps filled: persistent action probabilities, always-on reward logging, per-checkpoint win rate tracking, model comparison and improvement timeline dashboard components. 535 tests passing, 0 type errors, 0 lint violations.
+
+**Current capability:** Wins reliably at difficulty 1-3 (Easy through Medium AI). Struggles at 4-5 (Hard).
 
 ## Stack
 
@@ -23,7 +25,7 @@ A StarCraft II Protoss bot combining rule-based decision-making, a PPO neural po
 | Frontend | React + TypeScript + Vite | Live dashboard with game state streaming |
 | Deep learning | PyTorch + Stable Baselines 3 | PPO policy network for strategic decisions |
 | Training data | SQLite | Structured (s,a,r,s') transition storage |
-| Testing | pytest | 500 unit tests, SC2 integration markers |
+| Testing | pytest | 535 unit tests, SC2 integration markers |
 | Linting | ruff + mypy | Strict type checking, consistent style |
 
 ## Prerequisites
@@ -104,7 +106,7 @@ The bot follows a build order during the opening, then transitions to dynamic de
 ## Testing
 
 ```bash
-uv run pytest              # 500 unit tests (no SC2 needed)
+uv run pytest              # 535 unit tests (no SC2 needed)
 uv run pytest -m sc2       # SC2 integration tests (SC2 must be running)
 uv run ruff check .        # Lint
 uv run mypy src            # Type check
@@ -131,7 +133,7 @@ Alpha4Gate/
 │   ├── imitation.py         # Imitation pre-training from replays
 │   ├── api.py               # FastAPI server (REST + WebSocket)
 │   └── ...                  # scouting, config, logger, runner, etc.
-├── tests/                   # 34 test files, 500 tests
+├── tests/                   # 35 test files, 535 tests
 ├── frontend/                # React + TypeScript dashboard (Vite)
 ├── scripts/                 # Live test, training analysis, model evaluation
 ├── documentation/wiki/      # Project wiki (start with index.md)
