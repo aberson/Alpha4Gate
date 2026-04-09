@@ -35,6 +35,32 @@ def _make_settings(tmp_path: Path, port: int) -> Settings:
     )
 
 
+class TestBuildParser:
+    def test_no_reward_log_flag_default(self) -> None:
+        """--no-reward-log defaults to False (logging is on by default)."""
+        from alpha4gate.runner import build_parser
+
+        parser = build_parser()
+        args = parser.parse_args([])
+        assert args.no_reward_log is False
+
+    def test_no_reward_log_flag_set(self) -> None:
+        """--no-reward-log can be set to disable logging."""
+        from alpha4gate.runner import build_parser
+
+        parser = build_parser()
+        args = parser.parse_args(["--no-reward-log"])
+        assert args.no_reward_log is True
+
+    def test_old_reward_log_flag_removed(self) -> None:
+        """Old --reward-log flag should no longer be accepted."""
+        from alpha4gate.runner import build_parser
+
+        parser = build_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--reward-log"])
+
+
 class TestStartServerBackground:
     def test_server_starts_and_responds(self, tmp_path: Path) -> None:
         """Verify the background server starts and /api/commands/mode returns 200."""

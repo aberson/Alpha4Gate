@@ -48,19 +48,71 @@ class RewardRule:
 
 
 class RewardCalculator:
-    """Computes shaped rewards by evaluating rules against game state."""
+    """Computes shaped rewards by evaluating rules against game state.
+
+    Supports per-game JSONL logging via a log directory. Use ``log_dir`` to
+    enable always-on reward logging. Call :meth:`open_game_log` before each
+    game and :meth:`close_game_log` after to write per-game files.
+
+    Can also be used as a context manager::
+
+        with RewardCalculator(rules_path, log_dir=some_dir) as calc:
+            calc.open_game_log("game_abc")
+            ...
+    """
 
     def __init__(
         self,
         rules_path: str | Path | None = None,
         log_path: str | Path | None = None,
+        log_dir: str | Path | None = None,
     ) -> None:
         self._rules: list[RewardRule] = []
         self._log_file: Any | None = None
+        self._log_dir: Path | None = None
         if rules_path is not None:
             self.load_rules(rules_path)
-        if log_path is not None:
+        if log_dir is not None:
+            self._log_dir = Path(log_dir)
+            self._log_dir.mkdir(parents=True, exist_ok=True)
+        elif log_path is not None:
+            # Legacy single-file mode
             self._log_file = open(log_path, "a")  # noqa: SIM115
+
+    # -- context manager --------------------------------------------------
+
+    def __enter__(self) -> RewardCalculator:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    # -- per-game log lifecycle -------------------------------------------
+
+    def open_game_log(self, game_id: str) -> None:
+        """Open a per-game JSONL log file inside *log_dir*.
+
+        Closes any previously open game log first.
+        Requires that ``log_dir`` was set at construction time.
+        """
+        self.close_game_log()
+        if self._log_dir is not None:
+            path = self._log_dir / f"game_{game_id}.jsonl"
+            self._log_file = open(path, "a")  # noqa: SIM115
+
+    def close_game_log(self) -> None:
+        """Flush and close the current per-game log file (if any)."""
+        if self._log_file is not None and self._log_dir is not None:
+            self._log_file.flush()
+            self._log_file.close()
+            self._log_file = None
+
+    def close(self) -> None:
+        """Flush and close any open log file handle."""
+        if self._log_file is not None:
+            self._log_file.flush()
+            self._log_file.close()
+            self._log_file = None
 
     @property
     def rules(self) -> list[RewardRule]:

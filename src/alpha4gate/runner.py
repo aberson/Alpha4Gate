@@ -94,9 +94,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to SB3 PPO model checkpoint (required for neural/hybrid mode)",
     )
     parser.add_argument(
-        "--reward-log",
+        "--no-reward-log",
         action="store_true",
-        help="Enable per-step reward logging to data/reward_log.jsonl",
+        help="Disable per-step reward JSONL logging (enabled by default)",
     )
     return parser
 
@@ -206,9 +206,12 @@ def _start_server_background(settings: Settings) -> None:
 
 def _run_single_game(settings: Settings, args: argparse.Namespace) -> None:
     """Run a single game vs AI."""
+    import uuid
+
     from alpha4gate.bot import Alpha4GateBot
     from alpha4gate.connection import run_bot
     from alpha4gate.learning.neural_engine import DecisionMode
+    from alpha4gate.learning.rewards import RewardCalculator
     from alpha4gate.logger import GameLogger
 
     _start_server_background(settings)
@@ -228,6 +231,17 @@ def _run_single_game(settings: Settings, args: argparse.Namespace) -> None:
 
         claude_advisor = ClaudeAdvisor()
 
+    # Always-on reward logging (unless opted out)
+    settings.ensure_dirs()
+    log_dir = None if args.no_reward_log else settings.data_dir / "reward_logs"
+    reward_rules = settings.data_dir / "reward_rules.json"
+    reward_calc = RewardCalculator(
+        reward_rules if reward_rules.exists() else None,
+        log_dir=log_dir,
+    )
+    game_id = uuid.uuid4().hex[:12]
+    reward_calc.open_game_log(game_id)
+
     decision_mode = DecisionMode(args.decision_mode)
     bot = Alpha4GateBot(
         build_order=build_order,
@@ -235,6 +249,7 @@ def _run_single_game(settings: Settings, args: argparse.Namespace) -> None:
         decision_mode=decision_mode,
         model_path=args.model_path,
         claude_advisor=claude_advisor,
+        reward_calculator=reward_calc,
     )
     result = run_bot(
         bot,
@@ -245,6 +260,7 @@ def _run_single_game(settings: Settings, args: argparse.Namespace) -> None:
     )
 
     logger.stop()
+    reward_calc.close()
     print(f"\nGame result: {result}")
 
 
@@ -269,10 +285,10 @@ def _run_batch(settings: Settings, args: argparse.Namespace) -> None:
     settings.ensure_dirs()
     db = TrainingDB(settings.data_dir / "training.db")
     reward_rules = settings.data_dir / "reward_rules.json"
-    reward_log = settings.data_dir / "reward_log.jsonl" if args.reward_log else None
+    log_dir = None if args.no_reward_log else settings.data_dir / "reward_logs"
     reward_calc = RewardCalculator(
         reward_rules if reward_rules.exists() else None,
-        log_path=reward_log,
+        log_dir=log_dir,
     )
 
     claude_advisor = None
@@ -291,6 +307,7 @@ def _run_batch(settings: Settings, args: argparse.Namespace) -> None:
         logger.start()
 
         game_id = uuid.uuid4().hex[:12]
+        reward_calc.open_game_log(game_id)
         bot = Alpha4GateBot(
             build_order=build_order,
             logger=logger,
@@ -308,6 +325,7 @@ def _run_batch(settings: Settings, args: argparse.Namespace) -> None:
             realtime=False,
         )
         logger.stop()
+        reward_calc.close_game_log()
 
         result_str = "win" if result == Result.Victory else "loss"
 
@@ -335,6 +353,7 @@ def _run_batch(settings: Settings, args: argparse.Namespace) -> None:
         )
         print(f"Result: {result}")
 
+    reward_calc.close()
     transition_count = db.get_transition_count()
     db.close()
     save_stats(games, stats_path)

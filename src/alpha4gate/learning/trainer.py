@@ -37,6 +37,7 @@ class TrainingOrchestrator:
     ) -> None:
         self._checkpoint_dir = Path(checkpoint_dir)
         self._db_path = Path(db_path)
+        self._data_dir = self._db_path.parent
         self._reward_rules_path = reward_rules_path
         self._hyperparams_path = hyperparams_path
         self._map_name = map_name
@@ -274,10 +275,13 @@ class TrainingOrchestrator:
         from alpha4gate.learning.environment import SC2Env
         from alpha4gate.learning.rewards import RewardCalculator
 
+        log_dir = self._data_dir / "reward_logs"
         reward_calc = RewardCalculator(
-            self._reward_rules_path if self._reward_rules_path else None
+            self._reward_rules_path if self._reward_rules_path else None,
+            log_dir=log_dir,
         )
         game_id = f"rl_{uuid.uuid4().hex[:8]}"
+        reward_calc.open_game_log(game_id)
         return SC2Env(
             map_name=self._map_name,
             difficulty=self._difficulty,

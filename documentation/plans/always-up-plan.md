@@ -77,6 +77,7 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 ### Step 3: Make reward logging default
 
+- **Status:** DONE (2026-04-09)
 - **Issue:** #38
 - **Problem:** Reward JSONL logging is currently opt-in via `--reward-log` flag and only
   works in --batch mode, not --train rl mode. Make it always-on so reward analysis is

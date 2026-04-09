@@ -297,3 +297,86 @@ class TestEdgeCases:
             {"x": 5},
         )
         assert result is False
+
+
+class TestRewardLogging:
+    """Tests for always-on JSONL reward logging and per-game log files."""
+
+    def test_per_game_log_creates_file(self, tmp_path: Path) -> None:
+        """open_game_log creates a JSONL file in log_dir."""
+        calc = RewardCalculator(log_dir=tmp_path / "reward_logs")
+        calc.open_game_log("abc123")
+        calc.compute_step_reward(_state())
+        calc.close_game_log()
+        log_file = tmp_path / "reward_logs" / "game_abc123.jsonl"
+        assert log_file.exists()
+        lines = log_file.read_text().strip().split("\n")
+        assert len(lines) == 1
+        import json
+
+        entry = json.loads(lines[0])
+        assert "total_reward" in entry
+        assert "fired_rules" in entry
+
+    def test_multiple_games_separate_files(self, tmp_path: Path) -> None:
+        """Each game gets its own log file."""
+        calc = RewardCalculator(log_dir=tmp_path / "logs")
+        for gid in ("game1", "game2", "game3"):
+            calc.open_game_log(gid)
+            calc.compute_step_reward(_state())
+            calc.close_game_log()
+        assert (tmp_path / "logs" / "game_game1.jsonl").exists()
+        assert (tmp_path / "logs" / "game_game2.jsonl").exists()
+        assert (tmp_path / "logs" / "game_game3.jsonl").exists()
+
+    def test_close_flushes_log(self, tmp_path: Path) -> None:
+        """close() flushes and closes the log file."""
+        calc = RewardCalculator(log_dir=tmp_path / "logs")
+        calc.open_game_log("flush_test")
+        calc.compute_step_reward(_state())
+        calc.compute_step_reward(_state(), is_terminal=True, result="win")
+        calc.close()
+        log_file = tmp_path / "logs" / "game_flush_test.jsonl"
+        lines = log_file.read_text().strip().split("\n")
+        assert len(lines) == 2
+
+    def test_context_manager(self, tmp_path: Path) -> None:
+        """RewardCalculator works as a context manager."""
+        with RewardCalculator(log_dir=tmp_path / "logs") as calc:
+            calc.open_game_log("ctx_test")
+            calc.compute_step_reward(_state())
+        log_file = tmp_path / "logs" / "game_ctx_test.jsonl"
+        assert log_file.exists()
+        assert len(log_file.read_text().strip().split("\n")) == 1
+
+    def test_no_log_when_log_dir_none(self) -> None:
+        """No log file created when log_dir is None."""
+        calc = RewardCalculator()
+        calc.open_game_log("should_not_exist")
+        reward = calc.compute_step_reward(_state())
+        assert isinstance(reward, float)
+        calc.close()
+
+    def test_close_idempotent(self, tmp_path: Path) -> None:
+        """Calling close() multiple times does not raise."""
+        calc = RewardCalculator(log_dir=tmp_path / "logs")
+        calc.open_game_log("idem")
+        calc.compute_step_reward(_state())
+        calc.close()
+        calc.close()  # should not raise
+
+    def test_legacy_log_path_still_works(self, tmp_path: Path) -> None:
+        """Legacy log_path= parameter still creates a single log file."""
+        log_file = tmp_path / "legacy.jsonl"
+        calc = RewardCalculator(log_path=log_file)
+        calc.compute_step_reward(_state())
+        calc.close()
+        assert log_file.exists()
+        assert len(log_file.read_text().strip().split("\n")) == 1
+
+    def test_log_dir_created_if_missing(self, tmp_path: Path) -> None:
+        """log_dir is auto-created if it doesn't exist."""
+        deep_dir = tmp_path / "a" / "b" / "c"
+        calc = RewardCalculator(log_dir=deep_dir)
+        assert deep_dir.exists()
+        calc.close()
