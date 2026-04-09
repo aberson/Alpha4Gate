@@ -156,7 +156,9 @@ class TestTrainingEndpoints:
     def test_training_start(self, client: TestClient) -> None:
         resp = client.post("/api/training/start", json={"mode": "rl"})
         assert resp.status_code == 200
-        assert resp.json()["status"] == "accepted"
+        assert resp.json()["status"] == "started"
+        # Clean up: stop the daemon
+        client.post("/api/training/stop")
 
     def test_training_stop(self, client: TestClient) -> None:
         resp = client.post("/api/training/stop")

@@ -24,6 +24,7 @@ from alpha4gate.commands import (
     get_command_queue,
     get_command_settings,
 )
+from alpha4gate.learning.daemon import DaemonConfig, TrainingDaemon
 from alpha4gate.web_socket import (
     ConnectionManager,
     drain_broadcast_queue,
@@ -42,23 +43,41 @@ _command_history: list[dict[str, Any]] = []
 _interpreter: CommandInterpreter | None = None
 _parser = StructuredParser()
 
+# Training daemon (created in configure(), started via endpoint)
+_daemon: TrainingDaemon | None = None
+
 
 def configure(
     data_dir: Path,
     log_dir: Path,
     replay_dir: Path,
     api_key: str = "",
+    daemon_config: DaemonConfig | None = None,
 ) -> None:
     """Configure directory paths for the API.
 
     Called by the runner at startup.
     """
-    global _data_dir, _log_dir, _replay_dir, _interpreter
+    global _data_dir, _log_dir, _replay_dir, _interpreter, _daemon
     _data_dir = data_dir
     _log_dir = log_dir
     _replay_dir = replay_dir
     if api_key:
         _interpreter = CommandInterpreter(api_key)
+
+    # Build a Settings-like object for the daemon from the configured paths
+    from alpha4gate.config import Settings
+
+    settings = Settings(
+        sc2_path=Path("."),
+        log_dir=log_dir,
+        replay_dir=replay_dir,
+        data_dir=data_dir,
+        web_ui_port=0,
+        anthropic_api_key=api_key,
+        spawning_tool_api_key="",
+    )
+    _daemon = TrainingDaemon(settings, daemon_config or DaemonConfig())
 
 
 async def _drain_and_broadcast_once() -> int:
@@ -402,19 +421,32 @@ async def get_training_checkpoints() -> dict[str, Any]:
 
 @app.post("/api/training/start")
 async def start_training(request: dict[str, Any]) -> dict[str, Any]:
-    """Start training (placeholder — actual training runs via CLI)."""
-    mode = request.get("mode", "rl")
-    return {
-        "status": "accepted",
-        "mode": mode,
-        "message": f"Use CLI: uv run python -m alpha4gate.runner --train {mode}",
-    }
+    """Start the background training daemon."""
+    if _daemon is None:
+        return {"status": "error", "message": "Daemon not configured"}
+    if _daemon.is_running():
+        return {"status": "already_running"}
+    _daemon.start()
+    return {"status": "started"}
 
 
 @app.post("/api/training/stop")
 async def stop_training() -> dict[str, Any]:
-    """Stop training (placeholder — training runs in separate process)."""
-    return {"status": "not_running", "message": "Training is managed via CLI process"}
+    """Stop the background training daemon."""
+    if _daemon is None:
+        return {"status": "error", "message": "Daemon not configured"}
+    if not _daemon.is_running():
+        return {"status": "not_running"}
+    _daemon.stop()
+    return {"status": "stopped"}
+
+
+@app.get("/api/training/daemon")
+async def get_daemon_status() -> dict[str, Any]:
+    """Return current training daemon status."""
+    if _daemon is None:
+        return {"running": False, "state": "not_configured"}
+    return _daemon.get_status()
 
 
 @app.get("/api/reward-rules")

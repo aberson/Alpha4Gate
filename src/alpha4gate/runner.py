@@ -99,6 +99,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable per-step reward JSONL logging (enabled by default)",
     )
+    parser.add_argument(
+        "--daemon",
+        action="store_true",
+        help="Auto-start the training daemon when running --serve",
+    )
     return parser
 
 
@@ -116,7 +121,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.train is not None:
         _run_training(settings, args)
     elif args.serve:
-        _start_server(settings)
+        _start_server(settings, daemon=args.daemon)
     elif args.batch > 0:
         _run_batch(settings, args)
     elif args.multiplayer:
@@ -162,16 +167,27 @@ def _run_training(settings: Settings, args: argparse.Namespace) -> None:
         print(f"RL training complete: {result}")
 
 
-def _start_server(settings: Settings) -> None:
+def _start_server(settings: Settings, daemon: bool = False) -> None:
     """Start the FastAPI server (blocking)."""
     import uvicorn
 
     from alpha4gate.api import configure
+    from alpha4gate.learning.daemon import load_daemon_config
 
+    daemon_config = load_daemon_config(settings.data_dir / "daemon_config.json")
     configure(
         settings.data_dir, settings.log_dir, settings.replay_dir,
         api_key=settings.anthropic_api_key,
+        daemon_config=daemon_config,
     )
+
+    if daemon:
+        from alpha4gate.api import _daemon
+
+        if _daemon is not None:
+            _daemon.start()
+            _log.info("Training daemon auto-started (--daemon flag)")
+
     uvicorn.run(
         "alpha4gate.api:app",
         host="0.0.0.0",
