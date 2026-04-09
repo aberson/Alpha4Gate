@@ -1,7 +1,5 @@
 # Alpha4Gate — Project Instructions
 
-@../AGENTS.md
-
 ## Project overview
 
 SC2 Protoss bot: rule-based strategy + PPO neural policy + Claude AI advisor.
@@ -32,8 +30,9 @@ cd frontend && npm start                   # Frontend dev server (:3000 -> :8765
 - `tests/` — 32 test files
 - `frontend/` — React dashboard (LiveView, CommandPanel, TrainingDashboard, etc.)
 - `scripts/` — live-test.sh, analyze_rewards.py, evaluate_model.py, etc.
-- `docs/archived/` — Phase 1 + Phase 2 historical plan docs
-- `documentation/archived/` — completed improvement plans (army coherence, fortification, etc.)
+- `documentation/wiki/` — project wiki (start with `index.md` for system diagram + page map)
+- `documentation/plans/` — active plans (always-up-plan.md)
+- `documentation/archived/` — completed plans (Phase 1, Phase 2, improvement cycles)
 - `data/` — stats, training.db, checkpoints (gitignored)
 - `logs/` — JSONL game logs (gitignored)
 
@@ -48,7 +47,8 @@ WebSocket endpoints: /ws/game, /ws/decisions, /ws/commands.
 All Phase 1 (rule-based) and Phase 2 (deep learning) features complete.
 Five improvement cycles done: army coherence, natural denial, neural training, strategic commands, defensive fortification.
 Wins reliably at difficulty 1-3, struggles at 4-5.
-No active plan doc — next phase TBD.
+Active plan: `documentation/plans/always-up-plan.md` — autonomous improvement loop.
+Wiki: `documentation/wiki/index.md` — system diagram and deep-dive pages.
 
 ## SC2 requirements
 
