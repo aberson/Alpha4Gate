@@ -699,6 +699,42 @@ async def manual_rollback(request: dict[str, Any]) -> JSONResponse | dict[str, A
     }
 
 
+# --- Curriculum Endpoints ---
+
+
+@app.get("/api/training/curriculum")
+async def get_curriculum() -> dict[str, Any]:
+    """Return current curriculum state: difficulty, max, threshold, last advancement."""
+    if _daemon is None:
+        return {
+            "current_difficulty": 1,
+            "max_difficulty": 10,
+            "win_rate_threshold": 0.8,
+            "last_advancement": None,
+        }
+    return _daemon.get_curriculum_status()
+
+
+@app.put("/api/training/curriculum", response_model=None)
+async def set_curriculum(
+    request: dict[str, Any],
+) -> JSONResponse | dict[str, Any]:
+    """Manually set curriculum difficulty fields.
+
+    Body may include: current_difficulty, max_difficulty, win_rate_threshold.
+    """
+    if _daemon is None:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Daemon not configured"},
+        )
+    return _daemon.set_curriculum(
+        current_difficulty=request.get("current_difficulty"),
+        max_difficulty=request.get("max_difficulty"),
+        win_rate_threshold=request.get("win_rate_threshold"),
+    )
+
+
 @app.get("/api/reward-rules")
 async def get_reward_rules() -> dict[str, Any]:
     """Get current reward shaping rules."""

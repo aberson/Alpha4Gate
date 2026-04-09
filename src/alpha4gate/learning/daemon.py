@@ -23,6 +23,9 @@ class DaemonConfig:
     min_hours_since_last: float = 1.0
     cycles_per_run: int = 5
     games_per_cycle: int = 10
+    current_difficulty: int = 1
+    max_difficulty: int = 10
+    win_rate_threshold: float = 0.8
 
 
 def load_daemon_config(path: Path) -> DaemonConfig:
@@ -78,6 +81,9 @@ class TrainingDaemon:
         # Rollback monitor (created lazily)
         self._rollback_monitor: Any = None
         self._last_rollback: dict[str, Any] | None = None
+
+        # Curriculum tracking
+        self._last_advancement: str | None = None
 
     def start(self) -> None:
         """Start the daemon loop in a background thread.
@@ -266,6 +272,33 @@ class TrainingDaemon:
                 setattr(self._config, key, value)
         return self._config
 
+    def get_curriculum_status(self) -> dict[str, Any]:
+        """Return the current curriculum state."""
+        return {
+            "current_difficulty": self._config.current_difficulty,
+            "max_difficulty": self._config.max_difficulty,
+            "win_rate_threshold": self._config.win_rate_threshold,
+            "last_advancement": self._last_advancement,
+        }
+
+    def set_curriculum(
+        self,
+        current_difficulty: int | None = None,
+        max_difficulty: int | None = None,
+        win_rate_threshold: float | None = None,
+    ) -> dict[str, Any]:
+        """Manually set curriculum fields and persist to disk."""
+        if current_difficulty is not None:
+            self._config.current_difficulty = current_difficulty
+        if max_difficulty is not None:
+            self._config.max_difficulty = max_difficulty
+        if win_rate_threshold is not None:
+            self._config.win_rate_threshold = win_rate_threshold
+        # Persist
+        config_path = self._settings.data_dir / "daemon_config.json"
+        save_daemon_config(self._config, config_path)
+        return self.get_curriculum_status()
+
     def _get_rollback_monitor(self) -> Any:
         """Get or create the RollbackMonitor instance."""
         if self._rollback_monitor is None:
@@ -297,15 +330,21 @@ class TrainingDaemon:
             self._promotion_manager = PromotionManager(evaluator, PromotionConfig())
         return self._promotion_manager
 
+    def _persist_config(self) -> None:
+        """Write current daemon config to disk."""
+        config_path = self._settings.data_dir / "daemon_config.json"
+        save_daemon_config(self._config, config_path)
+
     def _run_training(self) -> None:
         """Create a TrainingOrchestrator and run one training pass."""
         from alpha4gate.learning.database import TrainingDB
         from alpha4gate.learning.trainer import TrainingOrchestrator
 
         _log.info(
-            "Daemon: starting training (%d cycles, %d games/cycle)",
+            "Daemon: starting training (%d cycles, %d games/cycle, difficulty=%d)",
             self._config.cycles_per_run,
             self._config.games_per_cycle,
+            self._config.current_difficulty,
         )
         self._training_active = True
         with self._lock:
@@ -323,12 +362,24 @@ class TrainingDaemon:
                 hyperparams_path=(
                     hyperparams if hyperparams.exists() else None
                 ),
+                initial_difficulty=self._config.current_difficulty,
+                max_difficulty=self._config.max_difficulty,
+                win_rate_threshold=self._config.win_rate_threshold,
             )
             result = orchestrator.run(
                 n_cycles=self._config.cycles_per_run,
                 games_per_cycle=self._config.games_per_cycle,
                 resume=True,
             )
+
+            # Persist final difficulty from the orchestrator back to config
+            final_difficulty = result.get("final_difficulty")
+            if final_difficulty is not None:
+                self._config.current_difficulty = final_difficulty
+                self._persist_config()
+                _log.info(
+                    "Daemon: persisted final difficulty %d", final_difficulty
+                )
 
             # Run promotion gate on the latest checkpoint
             cycle_results = result.get("cycle_results", [])
@@ -345,6 +396,34 @@ class TrainingDaemon:
                         "Promotion decision: %s (promoted=%s, reason=%s)",
                         latest_checkpoint, decision.promoted, decision.reason,
                     )
+
+                    # Curriculum-aware promotion: auto-advance difficulty
+                    if decision.promoted:
+                        win_rate = decision.new_eval.win_rate
+                        if (
+                            win_rate >= self._config.win_rate_threshold
+                            and self._config.current_difficulty
+                            < self._config.max_difficulty
+                        ):
+                            old_diff = self._config.current_difficulty
+                            self._config.current_difficulty += 1
+                            self._last_advancement = datetime.now(UTC).isoformat()
+                            self._persist_config()
+                            _log.info(
+                                "Curriculum advancement: difficulty %d -> %d "
+                                "(win_rate=%.2f >= threshold=%.2f)",
+                                old_diff,
+                                self._config.current_difficulty,
+                                win_rate,
+                                self._config.win_rate_threshold,
+                            )
+                            # Log advancement in promotion_history.json
+                            self._log_curriculum_advancement(
+                                latest_checkpoint,
+                                old_diff,
+                                self._config.current_difficulty,
+                                win_rate,
+                            )
                 except Exception:
                     _log.exception("Promotion gate failed for %s", latest_checkpoint)
 
@@ -358,7 +437,22 @@ class TrainingDaemon:
                     monitor = self._get_rollback_monitor()
                     rollback_decision = monitor.check_for_regression(current_best)
                     if rollback_decision is not None:
+                        # Revert difficulty to the level of the model we're
+                        # rolling back to (difficulty floor).
+                        reverted_difficulty = self._get_model_difficulty(
+                            rollback_decision.revert_to
+                        )
                         monitor.execute_rollback(rollback_decision)
+                        if reverted_difficulty is not None:
+                            old_diff = self._config.current_difficulty
+                            self._config.current_difficulty = reverted_difficulty
+                            self._persist_config()
+                            _log.info(
+                                "Difficulty reverted: %d -> %d (rollback to %s)",
+                                old_diff,
+                                reverted_difficulty,
+                                rollback_decision.revert_to,
+                            )
                         with self._lock:
                             self._last_rollback = {
                                 "current_model": rollback_decision.current_model,
@@ -395,3 +489,56 @@ class TrainingDaemon:
             _log.exception("Daemon: training failed")
         finally:
             self._training_active = False
+
+    def _log_curriculum_advancement(
+        self,
+        checkpoint: str,
+        old_difficulty: int,
+        new_difficulty: int,
+        win_rate: float,
+    ) -> None:
+        """Append a curriculum advancement entry to promotion_history.json."""
+        import json
+
+        history_path = self._settings.data_dir / "promotion_history.json"
+        entries: list[dict[str, Any]] = []
+        if history_path.exists():
+            entries = json.loads(history_path.read_text(encoding="utf-8"))
+
+        entries.append({
+            "timestamp": datetime.now(UTC).isoformat(),
+            "type": "curriculum_advancement",
+            "checkpoint": checkpoint,
+            "old_difficulty": old_difficulty,
+            "new_difficulty": new_difficulty,
+            "win_rate": win_rate,
+        })
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        history_path.write_text(
+            json.dumps(entries, indent=2) + "\n", encoding="utf-8"
+        )
+
+    def _get_model_difficulty(self, model: str) -> int | None:
+        """Look up the difficulty at which a model was promoted.
+
+        Searches promotion_history.json for the most recent promotion of
+        the given model. Returns the ``difficulty`` recorded at that time.
+        """
+        import json
+
+        history_path = self._settings.data_dir / "promotion_history.json"
+        if not history_path.exists():
+            return None
+
+        entries: list[dict[str, Any]] = json.loads(
+            history_path.read_text(encoding="utf-8")
+        )
+        for entry in reversed(entries):
+            if (
+                entry.get("new_checkpoint") == model
+                and entry.get("promoted") is True
+            ):
+                diff = entry.get("difficulty")
+                if diff is not None:
+                    return int(diff)
+        return None

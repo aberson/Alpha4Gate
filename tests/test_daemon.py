@@ -6,6 +6,7 @@ import json
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -53,6 +54,9 @@ class TestDaemonConfig:
         assert cfg.min_hours_since_last == 1.0
         assert cfg.cycles_per_run == 5
         assert cfg.games_per_cycle == 10
+        assert cfg.current_difficulty == 1
+        assert cfg.max_difficulty == 10
+        assert cfg.win_rate_threshold == 0.8
 
     def test_custom_values(self) -> None:
         cfg = DaemonConfig(check_interval_seconds=30, min_transitions=100)
@@ -490,3 +494,479 @@ class TestRunnerDaemonFlag:
         parser = build_parser()
         args = parser.parse_args(["--serve"])
         assert args.daemon is False
+
+
+# ------------------------------------------------------------------
+# Curriculum persistence tests
+# ------------------------------------------------------------------
+
+
+class TestCurriculumConfig:
+    def test_defaults_include_curriculum_fields(self) -> None:
+        cfg = DaemonConfig()
+        assert cfg.current_difficulty == 1
+        assert cfg.max_difficulty == 10
+        assert cfg.win_rate_threshold == 0.8
+
+    def test_save_and_load_curriculum(self, tmp_path: Path) -> None:
+        path = tmp_path / "cfg.json"
+        original = DaemonConfig(current_difficulty=3, max_difficulty=7, win_rate_threshold=0.75)
+        save_daemon_config(original, path)
+        loaded = load_daemon_config(path)
+        assert loaded.current_difficulty == 3
+        assert loaded.max_difficulty == 7
+        assert loaded.win_rate_threshold == 0.75
+
+
+class TestCurriculumPersistenceAcrossRestarts:
+    """Curriculum state persists in daemon_config.json across daemon restarts."""
+
+    def test_difficulty_persisted_after_training(self, tmp_path: Path) -> None:
+        """After a training run, final difficulty is written to daemon_config.json."""
+        settings = _make_settings(tmp_path)
+        cfg = DaemonConfig(
+            check_interval_seconds=1, current_difficulty=2, max_difficulty=10
+        )
+        daemon = TrainingDaemon(settings, cfg)
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.run.return_value = {
+            "cycles_completed": 1,
+            "final_difficulty": 4,
+            "cycle_results": [],
+            "total_games": 10,
+            "stopped": False,
+            "stop_reason": "",
+        }
+
+        with patch(
+            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            return_value=mock_orchestrator,
+        ):
+            daemon._run_training()
+
+        # Config should be updated in memory
+        assert daemon._config.current_difficulty == 4
+
+        # Config should be persisted to disk
+        config_path = settings.data_dir / "daemon_config.json"
+        assert config_path.exists()
+        loaded = load_daemon_config(config_path)
+        assert loaded.current_difficulty == 4
+
+    def test_difficulty_loaded_on_new_daemon(self, tmp_path: Path) -> None:
+        """A new daemon picks up persisted difficulty from config file."""
+        settings = _make_settings(tmp_path)
+        config_path = settings.data_dir / "daemon_config.json"
+        save_daemon_config(
+            DaemonConfig(current_difficulty=5, max_difficulty=10),
+            config_path,
+        )
+
+        loaded_cfg = load_daemon_config(config_path)
+        daemon = TrainingDaemon(settings, loaded_cfg)
+        assert daemon._config.current_difficulty == 5
+
+    def test_orchestrator_receives_daemon_difficulty(self, tmp_path: Path) -> None:
+        """TrainingOrchestrator is created with the daemon's curriculum state."""
+        settings = _make_settings(tmp_path)
+        cfg = DaemonConfig(
+            check_interval_seconds=1,
+            current_difficulty=3,
+            max_difficulty=8,
+            win_rate_threshold=0.75,
+        )
+        daemon = TrainingDaemon(settings, cfg)
+
+        captured_kwargs: dict[str, Any] = {}
+
+        class FakeOrchestrator:
+            def __init__(self, **kwargs: Any) -> None:
+                captured_kwargs.update(kwargs)
+
+            def run(self, **_: Any) -> dict[str, Any]:
+                return {
+                    "cycles_completed": 0,
+                    "final_difficulty": 3,
+                    "cycle_results": [],
+                    "total_games": 0,
+                    "stopped": False,
+                    "stop_reason": "",
+                }
+
+        with patch(
+            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            FakeOrchestrator,
+        ):
+            daemon._run_training()
+
+        assert captured_kwargs["initial_difficulty"] == 3
+        assert captured_kwargs["max_difficulty"] == 8
+        assert captured_kwargs["win_rate_threshold"] == 0.75
+
+
+class TestCurriculumAwarePromotion:
+    """When a model is promoted with high win rate, difficulty auto-advances."""
+
+    def test_auto_advance_on_promotion(self, tmp_path: Path) -> None:
+        settings = _make_settings(tmp_path)
+        cfg = DaemonConfig(
+            check_interval_seconds=1,
+            current_difficulty=3,
+            max_difficulty=10,
+            win_rate_threshold=0.8,
+        )
+        daemon = TrainingDaemon(settings, cfg)
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.run.return_value = {
+            "cycles_completed": 1,
+            "final_difficulty": 3,
+            "cycle_results": [
+                {"checkpoint": "v5", "difficulty": 3, "win_rate": 0.85},
+            ],
+            "total_games": 10,
+            "stopped": False,
+            "stop_reason": "",
+        }
+
+        from alpha4gate.learning.evaluator import EvalResult
+
+        mock_decision = MagicMock()
+        mock_decision.promoted = True
+        mock_decision.reason = "better"
+        mock_decision.new_eval = EvalResult(
+            checkpoint="v5",
+            games_played=20,
+            wins=17,
+            losses=3,
+            win_rate=0.85,
+            avg_reward=1.0,
+            avg_duration=300.0,
+            difficulty=3,
+            action_distribution=None,
+        )
+
+        mock_pm = MagicMock()
+        mock_pm.evaluate_and_promote.return_value = mock_decision
+        daemon._promotion_manager = mock_pm
+
+        with patch(
+            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            return_value=mock_orchestrator,
+        ):
+            daemon._run_training()
+
+        # Difficulty should have advanced from 3 to 4
+        assert daemon._config.current_difficulty == 4
+        assert daemon._last_advancement is not None
+
+        # Should be logged in promotion_history.json
+        history_path = settings.data_dir / "promotion_history.json"
+        assert history_path.exists()
+        entries = json.loads(history_path.read_text(encoding="utf-8"))
+        advancement_entries = [
+            e for e in entries if e.get("type") == "curriculum_advancement"
+        ]
+        assert len(advancement_entries) == 1
+        assert advancement_entries[0]["old_difficulty"] == 3
+        assert advancement_entries[0]["new_difficulty"] == 4
+
+    def test_no_advance_below_threshold(self, tmp_path: Path) -> None:
+        """Difficulty does not advance if win rate is below threshold."""
+        settings = _make_settings(tmp_path)
+        cfg = DaemonConfig(
+            check_interval_seconds=1,
+            current_difficulty=3,
+            max_difficulty=10,
+            win_rate_threshold=0.8,
+        )
+        daemon = TrainingDaemon(settings, cfg)
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.run.return_value = {
+            "cycles_completed": 1,
+            "final_difficulty": 3,
+            "cycle_results": [
+                {"checkpoint": "v5", "difficulty": 3, "win_rate": 0.6},
+            ],
+            "total_games": 10,
+            "stopped": False,
+            "stop_reason": "",
+        }
+
+        from alpha4gate.learning.evaluator import EvalResult
+
+        mock_decision = MagicMock()
+        mock_decision.promoted = True
+        mock_decision.reason = "better"
+        mock_decision.new_eval = EvalResult(
+            checkpoint="v5",
+            games_played=20,
+            wins=12,
+            losses=8,
+            win_rate=0.6,
+            avg_reward=1.0,
+            avg_duration=300.0,
+            difficulty=3,
+            action_distribution=None,
+        )
+
+        mock_pm = MagicMock()
+        mock_pm.evaluate_and_promote.return_value = mock_decision
+        daemon._promotion_manager = mock_pm
+
+        with patch(
+            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            return_value=mock_orchestrator,
+        ):
+            daemon._run_training()
+
+        # Difficulty should NOT have advanced
+        assert daemon._config.current_difficulty == 3
+        assert daemon._last_advancement is None
+
+    def test_no_advance_at_max(self, tmp_path: Path) -> None:
+        """Difficulty does not advance if already at max."""
+        settings = _make_settings(tmp_path)
+        cfg = DaemonConfig(
+            check_interval_seconds=1,
+            current_difficulty=10,
+            max_difficulty=10,
+            win_rate_threshold=0.8,
+        )
+        daemon = TrainingDaemon(settings, cfg)
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.run.return_value = {
+            "cycles_completed": 1,
+            "final_difficulty": 10,
+            "cycle_results": [
+                {"checkpoint": "v5", "difficulty": 10, "win_rate": 0.9},
+            ],
+            "total_games": 10,
+            "stopped": False,
+            "stop_reason": "",
+        }
+
+        from alpha4gate.learning.evaluator import EvalResult
+
+        mock_decision = MagicMock()
+        mock_decision.promoted = True
+        mock_decision.reason = "better"
+        mock_decision.new_eval = EvalResult(
+            checkpoint="v5",
+            games_played=20,
+            wins=18,
+            losses=2,
+            win_rate=0.9,
+            avg_reward=1.0,
+            avg_duration=300.0,
+            difficulty=10,
+            action_distribution=None,
+        )
+
+        mock_pm = MagicMock()
+        mock_pm.evaluate_and_promote.return_value = mock_decision
+        daemon._promotion_manager = mock_pm
+
+        with patch(
+            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            return_value=mock_orchestrator,
+        ):
+            daemon._run_training()
+
+        # Difficulty should stay at max
+        assert daemon._config.current_difficulty == 10
+
+
+class TestDifficultyRevertOnRollback:
+    """Difficulty reverts to the rolled-back model's training difficulty."""
+
+    def test_difficulty_reverts_on_rollback(self, tmp_path: Path) -> None:
+        settings = _make_settings(tmp_path)
+        cfg = DaemonConfig(
+            check_interval_seconds=1,
+            current_difficulty=5,
+            max_difficulty=10,
+        )
+        daemon = TrainingDaemon(settings, cfg)
+
+        # Write promotion history so _get_model_difficulty can find v3's diff
+        history_path = settings.data_dir / "promotion_history.json"
+        history_path.write_text(
+            json.dumps([
+                {
+                    "timestamp": "2026-01-01T00:00:00+00:00",
+                    "new_checkpoint": "v3",
+                    "old_best": "v2",
+                    "new_win_rate": 0.7,
+                    "old_win_rate": 0.5,
+                    "promoted": True,
+                    "reason": "better",
+                    "difficulty": 3,
+                }
+            ]),
+            encoding="utf-8",
+        )
+
+        # Set up checkpoint manifest
+        cp_dir = settings.data_dir / "checkpoints"
+        cp_dir.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "checkpoints": [],
+            "best": "v5",
+            "previous_best": "v3",
+        }
+        (cp_dir / "manifest.json").write_text(
+            json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+        )
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.run.return_value = {
+            "cycles_completed": 1,
+            "final_difficulty": 5,
+            "cycle_results": [],
+            "total_games": 10,
+            "stopped": False,
+            "stop_reason": "",
+        }
+
+        from alpha4gate.learning.rollback import RollbackDecision
+
+        mock_rollback_decision = RollbackDecision(
+            current_model="v5",
+            revert_to="v3",
+            current_win_rate=0.2,
+            promotion_win_rate=0.8,
+            games_played=15,
+            reason="regression detected",
+        )
+
+        mock_monitor = MagicMock()
+        mock_monitor.check_for_regression.return_value = mock_rollback_decision
+        daemon._rollback_monitor = mock_monitor
+
+        with patch(
+            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            return_value=mock_orchestrator,
+        ):
+            daemon._run_training()
+
+        # Difficulty should have reverted to v3's difficulty (3)
+        assert daemon._config.current_difficulty == 3
+
+        # Persisted to disk
+        config_path = settings.data_dir / "daemon_config.json"
+        loaded = load_daemon_config(config_path)
+        assert loaded.current_difficulty == 3
+
+    def test_no_revert_if_no_history(self, tmp_path: Path) -> None:
+        """If no promotion history exists for the revert target, difficulty stays."""
+        settings = _make_settings(tmp_path)
+        cfg = DaemonConfig(
+            check_interval_seconds=1,
+            current_difficulty=5,
+            max_difficulty=10,
+        )
+        daemon = TrainingDaemon(settings, cfg)
+
+        # No promotion history file
+        cp_dir = settings.data_dir / "checkpoints"
+        cp_dir.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "checkpoints": [],
+            "best": "v5",
+            "previous_best": "v3",
+        }
+        (cp_dir / "manifest.json").write_text(
+            json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+        )
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.run.return_value = {
+            "cycles_completed": 1,
+            "final_difficulty": 5,
+            "cycle_results": [],
+            "total_games": 10,
+            "stopped": False,
+            "stop_reason": "",
+        }
+
+        from alpha4gate.learning.rollback import RollbackDecision
+
+        mock_monitor = MagicMock()
+        mock_monitor.check_for_regression.return_value = RollbackDecision(
+            current_model="v5",
+            revert_to="v3",
+            current_win_rate=0.2,
+            promotion_win_rate=0.8,
+            games_played=15,
+            reason="regression",
+        )
+        daemon._rollback_monitor = mock_monitor
+
+        with patch(
+            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            return_value=mock_orchestrator,
+        ):
+            daemon._run_training()
+
+        # Difficulty unchanged (no history to look up)
+        assert daemon._config.current_difficulty == 5
+
+
+# ------------------------------------------------------------------
+# Curriculum API endpoint tests
+# ------------------------------------------------------------------
+
+
+class TestCurriculumEndpoints:
+    def test_get_curriculum_defaults(self, daemon_client: TestClient) -> None:
+        resp = daemon_client.get("/api/training/curriculum")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["current_difficulty"] == 1
+        assert data["max_difficulty"] == 10
+        assert data["win_rate_threshold"] == 0.8
+        assert data["last_advancement"] is None
+
+    def test_put_curriculum(self, daemon_client: TestClient) -> None:
+        resp = daemon_client.put(
+            "/api/training/curriculum",
+            json={"current_difficulty": 5, "max_difficulty": 8},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["current_difficulty"] == 5
+        assert data["max_difficulty"] == 8
+
+        # Verify reflected in GET
+        resp2 = daemon_client.get("/api/training/curriculum")
+        assert resp2.json()["current_difficulty"] == 5
+        assert resp2.json()["max_difficulty"] == 8
+
+    def test_put_curriculum_partial(self, daemon_client: TestClient) -> None:
+        """Only specified fields are updated."""
+        daemon_client.put(
+            "/api/training/curriculum",
+            json={"current_difficulty": 3},
+        )
+        resp = daemon_client.get("/api/training/curriculum")
+        data = resp.json()
+        assert data["current_difficulty"] == 3
+        # Others remain at defaults
+        assert data["max_difficulty"] == 10
+
+    def test_put_curriculum_persists(
+        self, daemon_client: TestClient, tmp_path: Path
+    ) -> None:
+        """PUT persists to daemon_config.json on disk."""
+        daemon_client.put(
+            "/api/training/curriculum",
+            json={"current_difficulty": 7},
+        )
+        config_path = tmp_path / "data" / "daemon_config.json"
+        assert config_path.exists()
+        loaded = load_daemon_config(config_path)
+        assert loaded.current_difficulty == 7
