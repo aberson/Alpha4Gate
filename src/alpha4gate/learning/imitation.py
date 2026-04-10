@@ -11,7 +11,6 @@ import torch
 
 from alpha4gate.learning.checkpoints import save_checkpoint
 from alpha4gate.learning.database import TrainingDB
-from alpha4gate.learning.features import FEATURE_DIM
 
 _log = logging.getLogger(__name__)
 
@@ -45,9 +44,9 @@ def run_imitation_training(
         Dict with training stats (epochs, final_loss, agreement, saved_path).
     """
     import gymnasium
-    from gymnasium import spaces
     from stable_baselines3 import PPO
 
+    from alpha4gate.learning.environment import SC2Env
     from alpha4gate.learning.hyperparams import load_hyperparams, to_ppo_kwargs
 
     # Load all transitions
@@ -66,14 +65,12 @@ def run_imitation_training(
     for i, (_, divisor) in enumerate(_FEATURE_SPEC):
         norm_states[:, i] = np.clip(states[:, i] / divisor, 0.0, 1.0)
 
-    # Create a dummy gym env for SB3 model initialization
-    obs_space = spaces.Box(low=0.0, high=1.0, shape=(FEATURE_DIM,), dtype=np.float32)
-    act_space: spaces.Discrete = spaces.Discrete(5)  # type: ignore[type-arg]
-    dummy_env = gymnasium.make(
-        "CartPole-v1"  # just for init, replaced below
-    )
-    dummy_env.observation_space = obs_space
-    dummy_env.action_space = act_space
+    # Create a dummy gym env for SB3 model initialization. Spaces are read
+    # from SC2Env (single source of truth) so the imitation model and the
+    # RL trainer always agree on shape — Phase 4.5 finding F8.
+    dummy_env = gymnasium.make("CartPole-v1")
+    dummy_env.observation_space = SC2Env.observation_space
+    dummy_env.action_space = SC2Env.action_space
 
     # Build PPO model with target architecture
     ppo_kwargs: dict[str, Any] = {"policy_kwargs": {"net_arch": [128, 128]}}

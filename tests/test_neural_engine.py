@@ -93,7 +93,16 @@ class TestNeuralDecisionEngine:
         snap = GameSnapshot(enemy_army_near_base=True)
         result = engine.predict(snap)
         assert result == StrategicState.DEFEND
-        assert engine.last_probabilities == [0.0, 0.0, 0.0, 1.0, 0.0]
+
+        # Probability vector should be one-hot on DEFEND, sized to the
+        # canonical action list (Phase 4.5 F9 fix: was hardcoded to 5
+        # elements, now derived from ACTION_TO_STATE)
+        from alpha4gate.decision_engine import ACTION_TO_STATE
+
+        assert len(engine.last_probabilities) == len(ACTION_TO_STATE)
+        defend_idx = ACTION_TO_STATE.index(StrategicState.DEFEND)
+        for i, p in enumerate(engine.last_probabilities):
+            assert p == (1.0 if i == defend_idx else 0.0)
 
     def test_hybrid_no_override_when_safe(self) -> None:
         mock_model = _make_mock_model(action=2)  # ATTACK

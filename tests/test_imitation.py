@@ -88,3 +88,30 @@ class TestImitationTraining:
         # Should stop before 100 epochs
         assert result["epochs"] < 100
         assert result["agreement"] >= 0.50
+
+    def test_imitation_model_uses_sc2env_spaces(
+        self, populated_db: TrainingDB, tmp_path: Path
+    ) -> None:
+        """Phase 4.5 F8 regression guard.
+
+        Imitation must build its dummy env with SC2Env's spaces, not with
+        hardcoded literals. The trainer fix in commit afaeda5 patched
+        trainer.py but missed this duplicate copy in imitation.py.
+        """
+        from stable_baselines3 import PPO
+
+        from alpha4gate.learning.environment import SC2Env
+
+        cp_dir = tmp_path / "checkpoints"
+        result = run_imitation_training(
+            db=populated_db,
+            checkpoint_dir=cp_dir,
+            max_epochs=2,
+            checkpoint_name="space_check",
+        )
+        saved = Path(result["saved_path"])
+        assert saved.exists()
+        # Load the saved model and assert its spaces match SC2Env
+        model = PPO.load(str(saved.with_suffix("")))
+        assert model.observation_space == SC2Env.observation_space
+        assert model.action_space == SC2Env.action_space

@@ -9,19 +9,21 @@ from typing import Any
 
 import numpy as np
 
-from alpha4gate.decision_engine import GameSnapshot, StrategicState
+from alpha4gate.decision_engine import (
+    ACTION_TO_STATE as _ACTION_TO_STATE,
+)
+from alpha4gate.decision_engine import (
+    GameSnapshot,
+    StrategicState,
+)
 from alpha4gate.learning.features import encode
 
 _log = logging.getLogger(__name__)
 
-# Map action indices to StrategicState (must match plan's action space)
-_ACTION_TO_STATE: list[StrategicState] = [
-    StrategicState.OPENING,
-    StrategicState.EXPAND,
-    StrategicState.ATTACK,
-    StrategicState.DEFEND,
-    StrategicState.LATE_GAME,
-]
+# Index of DEFEND in the action list — used for the hybrid override below.
+# Computed once at import time so adding/removing actions can never make it
+# point at the wrong slot.
+_DEFEND_IDX: int = _ACTION_TO_STATE.index(StrategicState.DEFEND)
 
 
 class DecisionMode(StrEnum):
@@ -73,7 +75,9 @@ class NeuralDecisionEngine:
         """
         # Hybrid override: rule-based DEFEND
         if self._mode == DecisionMode.HYBRID and snapshot.enemy_army_near_base:
-            self._last_probabilities = [0.0, 0.0, 0.0, 1.0, 0.0]
+            probs = [0.0] * len(_ACTION_TO_STATE)
+            probs[_DEFEND_IDX] = 1.0
+            self._last_probabilities = probs
             _log.info("Hybrid override: DEFEND (enemy near base)")
             return StrategicState.DEFEND
 

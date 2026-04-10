@@ -20,6 +20,27 @@ class StrategicState(StrEnum):
     FORTIFY = "fortify"
 
 
+# Single source of truth for the RL action space.
+#
+# The trainer (SC2Env), the imitation learner, the neural decision engine,
+# and any future component that maps PPO action indices to strategic states
+# must import THIS list — never define their own copy. Phase 4.5 found two
+# bugs (F6, F9) where duplicate copies of this list drifted out of sync.
+#
+# Adding or removing an entry changes the model's action space; any
+# previously-trained checkpoint becomes incompatible and must be re-trained.
+ACTION_TO_STATE: list[StrategicState] = [
+    StrategicState.OPENING,
+    StrategicState.EXPAND,
+    StrategicState.ATTACK,
+    StrategicState.DEFEND,
+    StrategicState.LATE_GAME,
+    StrategicState.FORTIFY,
+]
+
+NUM_ACTIONS: int = len(ACTION_TO_STATE)
+
+
 @dataclass
 class GameSnapshot:
     """Minimal game state needed for decision-making."""

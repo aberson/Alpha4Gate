@@ -13,22 +13,19 @@ import numpy as np
 from gymnasium import spaces
 from numpy.typing import NDArray
 
-from alpha4gate.decision_engine import GameSnapshot, StrategicState
+from alpha4gate.decision_engine import (
+    ACTION_TO_STATE as _ACTION_TO_STATE,
+)
+from alpha4gate.decision_engine import (
+    NUM_ACTIONS,
+    GameSnapshot,
+    StrategicState,
+)
 from alpha4gate.learning.database import TrainingDB
 from alpha4gate.learning.features import FEATURE_DIM, encode
 from alpha4gate.learning.rewards import RewardCalculator
 
 _log = logging.getLogger(__name__)
-
-# Map action index → StrategicState (same as neural_engine)
-_ACTION_TO_STATE: list[StrategicState] = [
-    StrategicState.OPENING,
-    StrategicState.EXPAND,
-    StrategicState.ATTACK,
-    StrategicState.DEFEND,
-    StrategicState.LATE_GAME,
-    StrategicState.FORTIFY,
-]
 
 # How many game steps per env step (match bot.py observation frequency)
 STEPS_PER_ACTION: int = 22
@@ -54,7 +51,7 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
     observation_space: spaces.Box = spaces.Box(
         low=0.0, high=1.0, shape=(FEATURE_DIM,), dtype=np.float32
     )
-    action_space: spaces.Discrete = spaces.Discrete(6)  # type: ignore[type-arg]
+    action_space: spaces.Discrete = spaces.Discrete(NUM_ACTIONS)  # type: ignore[type-arg]
 
     def __init__(
         self,

@@ -257,3 +257,48 @@ class TestFortifyState:
         assert "Fortifying" in fortify_entry.reason
 
 
+class TestActionToStateSourceOfTruth:
+    """Phase 4.5 F6+F9 regression guard.
+
+    ``ACTION_TO_STATE`` is the single source of truth for the RL action
+    space. Every consumer (SC2Env, NeuralDecisionEngine, trainer model
+    init, imitation model init) must derive its action count from this
+    list — never define their own copy. Two prior bugs (F6: env had 6
+    actions but trainer hardcoded 5; F9: neural_engine had its own
+    5-entry copy missing FORTIFY) shipped because of duplicate copies
+    drifting out of sync.
+    """
+
+    def test_action_to_state_has_six_entries(self) -> None:
+        from alpha4gate.decision_engine import ACTION_TO_STATE, NUM_ACTIONS
+
+        assert len(ACTION_TO_STATE) == NUM_ACTIONS
+        assert NUM_ACTIONS == 6
+        assert StrategicState.FORTIFY in ACTION_TO_STATE
+
+    def test_sc2env_action_space_matches_num_actions(self) -> None:
+        from alpha4gate.decision_engine import NUM_ACTIONS
+        from alpha4gate.learning.environment import SC2Env
+
+        assert SC2Env.action_space.n == NUM_ACTIONS
+
+    def test_neural_engine_uses_shared_action_list(self) -> None:
+        """neural_engine must import the canonical list, not redefine it."""
+        from alpha4gate.decision_engine import ACTION_TO_STATE
+        from alpha4gate.learning.neural_engine import (
+            _ACTION_TO_STATE as ne_action_to_state,
+        )
+
+        # Same object identity — proves neural_engine imports rather than copies
+        assert ne_action_to_state is ACTION_TO_STATE
+
+    def test_environment_uses_shared_action_list(self) -> None:
+        """environment must import the canonical list, not redefine it."""
+        from alpha4gate.decision_engine import ACTION_TO_STATE
+        from alpha4gate.learning.environment import (
+            _ACTION_TO_STATE as env_action_to_state,
+        )
+
+        assert env_action_to_state is ACTION_TO_STATE
+
+

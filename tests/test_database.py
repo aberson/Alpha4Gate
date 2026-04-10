@@ -274,3 +274,125 @@ class TestAllModelStats:
         assert stats[1]["wins"] == 2
         assert stats[1]["losses"] == 1
         assert abs(stats[1]["win_rate"] - 2 / 3) < 1e-9
+
+
+class TestLegacySchemaMigration:
+    """Phase 4.5 F7 regression guard.
+
+    A DB file created before later columns were added must get those
+    columns ALTERed in on next open. ``CREATE TABLE IF NOT EXISTS`` will
+    NOT add columns to an existing table, so the migration must walk the
+    expected-later list explicitly.
+    """
+
+    def _create_legacy_db(self, path: Path) -> None:
+        """Create a transitions table with the original (pre-cannon_count) schema.
+
+        This is the schema that shipped before any of the ``_LATER_ADDED_COLS``
+        existed: original (s, a, r, s') with the 9 base state features + their
+        next_* counterparts, no game_time_secs, no structure counts, no
+        action_probs.
+        """
+        import sqlite3
+
+        conn = sqlite3.connect(str(path))
+        conn.executescript(
+            """
+            CREATE TABLE games (
+                game_id TEXT PRIMARY KEY,
+                map_name TEXT NOT NULL,
+                difficulty INTEGER NOT NULL,
+                result TEXT NOT NULL,
+                duration_secs REAL NOT NULL,
+                total_reward REAL NOT NULL,
+                model_version TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE TABLE transitions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id TEXT NOT NULL,
+                step_index INTEGER NOT NULL,
+                game_time REAL NOT NULL,
+                supply_used INTEGER NOT NULL,
+                supply_cap INTEGER NOT NULL,
+                minerals INTEGER NOT NULL,
+                vespene INTEGER NOT NULL,
+                army_supply INTEGER NOT NULL,
+                worker_count INTEGER NOT NULL,
+                base_count INTEGER NOT NULL,
+                enemy_near INTEGER NOT NULL,
+                enemy_supply INTEGER NOT NULL,
+                action INTEGER NOT NULL,
+                reward REAL NOT NULL,
+                next_supply_used INTEGER,
+                next_supply_cap INTEGER,
+                next_minerals INTEGER,
+                next_vespene INTEGER,
+                next_army_supply INTEGER,
+                next_worker_count INTEGER,
+                next_base_count INTEGER,
+                next_enemy_near INTEGER,
+                next_enemy_supply INTEGER,
+                done INTEGER NOT NULL DEFAULT 0
+            );
+            """
+        )
+        conn.commit()
+        conn.close()
+
+    def test_legacy_db_gets_all_later_columns_added(self, tmp_path: Path) -> None:
+        from alpha4gate.learning.database import _LATER_ADDED_COLS
+
+        legacy_path = tmp_path / "legacy.db"
+        self._create_legacy_db(legacy_path)
+
+        # Pre-condition: legacy table has none of the later columns
+        import sqlite3
+
+        conn = sqlite3.connect(str(legacy_path))
+        before = {r[1] for r in conn.execute("PRAGMA table_info(transitions)").fetchall()}
+        conn.close()
+        for col_name, _ in _LATER_ADDED_COLS:
+            assert col_name not in before, f"legacy DB should not have {col_name}"
+
+        # Open via TrainingDB — migration should run
+        db = TrainingDB(legacy_path)
+        try:
+            conn = sqlite3.connect(str(legacy_path))
+            after = {
+                r[1] for r in conn.execute("PRAGMA table_info(transitions)").fetchall()
+            }
+            conn.close()
+            for col_name, _ in _LATER_ADDED_COLS:
+                assert col_name in after, f"migration should have added {col_name}"
+        finally:
+            db.close()
+
+    def test_legacy_db_can_store_new_transition_after_migration(
+        self, tmp_path: Path
+    ) -> None:
+        """The migrated legacy DB must accept the full 17-feature transition."""
+        legacy_path = tmp_path / "legacy.db"
+        self._create_legacy_db(legacy_path)
+
+        db = TrainingDB(legacy_path)
+        try:
+            db.store_game("g1", "Simple64", 1, "win", 60.0, 1.0, "v0")
+            vals = [50, 100, 800, 400, 30, 22, 2, 1, 15, 60.0, 3, 1, 1, 2, 0, 5, 2]
+            assert len(vals) == FEATURE_DIM
+            state = np.array(vals, dtype=np.float32)
+            db.store_transition("g1", 0, 60.0, state, action=2, reward=0.1)
+            assert db.get_transition_count() == 1
+        finally:
+            db.close()
+
+    def test_migration_is_idempotent(self, tmp_path: Path) -> None:
+        """Calling migrate twice (e.g. opening DB twice) must not fail."""
+        legacy_path = tmp_path / "legacy.db"
+        self._create_legacy_db(legacy_path)
+
+        db1 = TrainingDB(legacy_path)
+        db1.close()
+        # Second open re-runs migration on the now-already-migrated table
+        db2 = TrainingDB(legacy_path)
+        db2.close()

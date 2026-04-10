@@ -86,6 +86,38 @@ _STATE_COLS = [
 _NEXT_STATE_COLS = [f"next_{c}" for c in _STATE_COLS]
 
 
+# Columns added to ``transitions`` AFTER the original schema shipped. Each
+# entry is ``(column_name, sql_type_with_default)``. ``__init__`` walks this
+# list and ALTER-TABLE-ADD-COLUMNs any that are missing — SQLite's
+# ``CREATE TABLE IF NOT EXISTS`` is a no-op for existing tables, so a fresh
+# schema string in this file does NOT migrate older DB files. Phase 4.5
+# Step 2 found this the hard way (finding F7): a smoke test crashed because
+# ``data/training.db`` was created before ``cannon_count`` was added.
+#
+# Adding a new column to the ``transitions`` schema also requires adding it
+# here. Tests in test_database.py exercise the migration on a synthetic
+# legacy DB to catch drift.
+_LATER_ADDED_COLS: list[tuple[str, str]] = [
+    ("game_time_secs", "REAL DEFAULT 0.0"),
+    ("gateway_count", "INTEGER DEFAULT 0"),
+    ("robo_count", "INTEGER DEFAULT 0"),
+    ("forge_count", "INTEGER DEFAULT 0"),
+    ("upgrade_count", "INTEGER DEFAULT 0"),
+    ("enemy_structure_count", "INTEGER DEFAULT 0"),
+    ("cannon_count", "INTEGER DEFAULT 0"),
+    ("battery_count", "INTEGER DEFAULT 0"),
+    ("next_game_time_secs", "REAL DEFAULT 0.0"),
+    ("next_gateway_count", "INTEGER DEFAULT 0"),
+    ("next_robo_count", "INTEGER DEFAULT 0"),
+    ("next_forge_count", "INTEGER DEFAULT 0"),
+    ("next_upgrade_count", "INTEGER DEFAULT 0"),
+    ("next_enemy_structure_count", "INTEGER DEFAULT 0"),
+    ("next_cannon_count", "INTEGER DEFAULT 0"),
+    ("next_battery_count", "INTEGER DEFAULT 0"),
+    ("action_probs", "TEXT DEFAULT NULL"),
+]
+
+
 class TrainingDB:
     """SQLite database for storing training game data and transitions."""
 
@@ -94,17 +126,25 @@ class TrainingDB:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self._path))
         self._conn.executescript(_SCHEMA)
-        self._migrate_action_probs()
+        self._migrate_columns()
 
-    def _migrate_action_probs(self) -> None:
-        """Add action_probs column to transitions table if it doesn't exist (idempotent)."""
+    def _migrate_columns(self) -> None:
+        """ALTER any columns from ``_LATER_ADDED_COLS`` that are missing.
+
+        ``CREATE TABLE IF NOT EXISTS`` does NOT add new columns to a table
+        that already exists, so DB files created before a column was added
+        to the schema will be missing that column even though the .py
+        schema string is correct. This walks the expected-later list and
+        adds any missing columns. Idempotent — safe to call on every open.
+        """
         cursor = self._conn.execute("PRAGMA table_info(transitions)")
-        columns = {row[1] for row in cursor.fetchall()}
-        if "action_probs" not in columns:
-            self._conn.execute(
-                "ALTER TABLE transitions ADD COLUMN action_probs TEXT DEFAULT NULL"
-            )
-            self._conn.commit()
+        existing = {row[1] for row in cursor.fetchall()}
+        for col_name, col_def in _LATER_ADDED_COLS:
+            if col_name not in existing:
+                self._conn.execute(
+                    f"ALTER TABLE transitions ADD COLUMN {col_name} {col_def}"
+                )
+        self._conn.commit()
 
     def close(self) -> None:
         """Close the database connection."""
