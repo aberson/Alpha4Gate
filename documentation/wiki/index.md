@@ -33,11 +33,15 @@
    └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Today:** The PLAY and TRAIN boxes work (manually triggered). EVALUATE is partial
-(scripts, not continuous). PROMOTE and the loop itself don't exist yet. The dashboard
-observes PLAY but not TRAIN or EVALUATE in depth.
+**Today:** All four stages exist and run autonomously. PLAY runs games and streams state,
+EVALUATE compares checkpoints via `ModelEvaluator`, TRAIN runs PPO cycles via the
+`TrainingDaemon` background thread, PROMOTE/ROLLBACK gate model changes via
+`PromotionManager` + `RollbackMonitor`. The dashboard observes all four through the
+Live, Stats, Decisions, Training, Loop, Improvements, and Alerts tabs (Phases 3 + 4).
 
-**Goal:** All four stages run autonomously. The dashboard observes everything.
+**Validation gap:** The autonomous loop has been built and unit-tested but never observed
+running unattended for hours against a real SC2 client. Phase 4.5 (the "First Real Soak
+Test") closes that gap before Phase 5 (domain abstraction) begins.
 
 ---
 
@@ -54,13 +58,12 @@ observes PLAY but not TRAIN or EVALUATE in depth.
 
 ### Core Systems (autonomous loop)
 
-| Page | Description | Exists Today? |
-|------|-------------|---------------|
-| [Evaluation Pipeline](evaluation-pipeline.md) | How the bot knows if it's improving — metrics, win rates, reward analysis | Partial |
-| [Training Pipeline](training-pipeline.md) | PPO training, imitation learning, curriculum, checkpoints | Yes (manual) |
-| [Monitoring & Observability](monitoring.md) | WebSocket streams, JSONL logs, what's persisted vs ephemeral | Partial |
-| [Promotion History](promotions.md) | Model promotion log — when checkpoints became "best" and why | Manual |
-| [Autonomous Loop](autonomous-loop.md) | Scheduler, triggers, model promotion — the "always up" infrastructure | Not yet |
+| Page | Description | Status |
+|------|-------------|--------|
+| [Evaluation Pipeline](evaluation-pipeline.md) | How the bot knows if it's improving — metrics, win rates, reward analysis, `ModelEvaluator` | Yes |
+| [Training Pipeline](training-pipeline.md) | PPO training, imitation learning, curriculum auto-advancement, checkpoints, `TrainingDaemon` background thread | Yes (autonomous) |
+| [Monitoring & Observability](monitoring.md) | WebSocket streams, per-game JSONL reward logs, what's persisted vs ephemeral, `reward_aggregator` | Yes |
+| [Promotion History](promotions.md) | Model promotion log — `PromotionManager` + `RollbackMonitor` decisions, auto-updated table | Yes |
 
 ### Domain Layer (SC2 bot)
 

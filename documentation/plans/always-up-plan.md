@@ -16,6 +16,20 @@ implementation; the evaluation/training/monitoring loop is the real product.
 - **Progressive automation** — each phase reduces manual steps until the system runs
   unattended
 
+## How to read this plan
+
+Each step has a `**Flags:**` line like `--isolation worktree --reviewers code`. Those
+are arguments to the `/build-step` skill (defined in `dev/.claude/skills/build-step/SKILL.md`),
+which is the standard way of executing one build step end-to-end. Phases are run
+via `/build-phase --plan documentation/plans/always-up-plan.md`, which iterates
+build-step over each step in order. A fresh model running this plan should treat
+those flags as runtime knobs for build-step, not as anything that needs to be
+re-derived.
+
+Phase 4.5 step `**Issue:** #` lines are intentionally blank — issues for that
+phase will be created via `/repo-sync --plan documentation/plans/always-up-plan.md`
+just before Phase 4.5 starts, so they reflect the current GitHub issue numbering.
+
 ---
 
 ## Phase 1: Wiki & Documentation

@@ -9,7 +9,7 @@ A StarCraft II Protoss bot combining rule-based decision-making, a PPO neural po
 - **Evaluation metrics** — structured reward shaping, win-rate tracking, training diagnostics, and cross-game statistics
 - **Autonomous self-improvement** — train-play-evaluate loop that runs 24/7, getting stronger with each cycle
 
-**Phase 2 complete** — issues #36–#41 closed. Monitoring & observability gaps filled: persistent action probabilities, always-on reward logging, per-checkpoint win rate tracking, model comparison and improvement timeline dashboard components. 535 tests passing, 0 type errors, 0 lint violations.
+**Phase 4 complete** — issues #50–#59 closed. Transparency dashboard shipped: 9-tab SPA with Loop, Improvements, and Alerts tabs; live daemon control + manual evaluate/promote/rollback; per-rule reward trend visualization (Recharts); client-side alert engine with 6 rules and localStorage-backed ack/dismiss. New backend module `learning/reward_aggregator.py`, new endpoint `GET /api/training/reward-trends`, new field `reward_logs_size_bytes` on `/api/training/status`. Frontend test infrastructure (vitest + jsdom + @testing-library/react) added. 682 Python tests + 105 frontend tests passing, 0 type errors, 0 lint violations. (Phase 3 — Autonomous Training Loop, issues #43–#49 — closed previously.)
 
 **Current capability:** Wins reliably at difficulty 1-3 (Easy through Medium AI). Struggles at 4-5 (Hard).
 
@@ -25,8 +25,26 @@ A StarCraft II Protoss bot combining rule-based decision-making, a PPO neural po
 | Frontend | React + TypeScript + Vite | Live dashboard with game state streaming |
 | Deep learning | PyTorch + Stable Baselines 3 | PPO policy network for strategic decisions |
 | Training data | SQLite | Structured (s,a,r,s') transition storage |
-| Testing | pytest | 535 unit tests, SC2 integration markers |
+| Charts | Recharts 3.8 | Per-rule reward trend visualization |
+| Testing (Python) | pytest | 682 unit tests, SC2 integration markers |
+| Testing (Frontend) | vitest + jsdom + @testing-library/react | 105 component / hook / lib tests |
 | Linting | ruff + mypy | Strict type checking, consistent style |
+
+## Dashboard tabs
+
+| Tab | Purpose |
+|---|---|
+| Live | Real-time game state stream (WebSocket) |
+| Stats | Cross-game win rates and aggregate stats |
+| Build Orders | Spawning Tool build order browser + editor |
+| Replays | Match replay browser and analysis |
+| Decisions | Live decision log with rule firings and Claude advice |
+| Training | Model comparison + improvement timeline (Phase 2) |
+| Loop | Daemon state, trigger evaluation, full daemon control panel (Phase 4) |
+| Improvements | Recent promotions/rollbacks + per-rule reward trend chart (Phase 4) |
+| Alerts | Severity-filtered alert list with ack/dismiss + unread badge in nav (Phase 4) |
+
+In-app `AlertToast` lives at the App root and shows new alerts as they fire, regardless of which tab is active.
 
 ## Prerequisites
 
