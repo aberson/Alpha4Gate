@@ -593,6 +593,7 @@ pass.
 - **Depends on:** Step 3
 
 ### Step 5: LoopStatus component (Phase 4 plan Step 1)
+- **Status:** DONE (2026-04-10)
 - **Problem:** Build the live training cycle status component and add a new
   "Loop" tab to the dashboard.
   (1) Create `frontend/src/hooks/useDaemonStatus.ts`. Polls

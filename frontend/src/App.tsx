@@ -9,9 +9,17 @@ import { CheckpointList } from "./components/CheckpointList";
 import { RewardRuleEditor } from "./components/RewardRuleEditor";
 import { ModelComparison } from "./components/ModelComparison";
 import { ImprovementTimeline } from "./components/ImprovementTimeline";
+import { LoopStatus } from "./components/LoopStatus";
 import "./App.css";
 
-type Tab = "live" | "stats" | "builds" | "replays" | "decisions" | "training";
+type Tab =
+  | "live"
+  | "stats"
+  | "builds"
+  | "replays"
+  | "decisions"
+  | "training"
+  | "loop";
 
 function App() {
   const [tab, setTab] = useState<Tab>("live");
@@ -45,6 +53,12 @@ function App() {
           >
             Training
           </button>
+          <button
+            onClick={() => setTab("loop")}
+            className={tab === "loop" ? "active" : ""}
+          >
+            Loop
+          </button>
         </nav>
       </header>
       <main>
@@ -62,6 +76,7 @@ function App() {
             <RewardRuleEditor />
           </>
         )}
+        {tab === "loop" && <LoopStatus />}
       </main>
     </div>
   );
