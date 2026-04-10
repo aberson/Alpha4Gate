@@ -392,6 +392,187 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 ---
 
+## Phase 4.5: First Real Soak Test
+
+**Goal:** Prove the autonomous improvement loop actually works end-to-end with real
+SC2 game data, not just unit-tested components. This is the first time the system runs
+unattended for hours and we observe the loop instead of inferring it from passing tests.
+
+**Why this phase exists:** Phases 2-4 ship a daemon, evaluator, promotion gate, rollback
+monitor, and a dashboard to observe all of them. Every component has unit tests with
+mocked dependencies. **Nothing has actually validated that the daemon, when left
+running for hours against a real SC2 client, will autonomously trigger training, evaluate
+checkpoints, promote a better model, and recover from a regression.** The 661 unit tests
+prove the components work in isolation. They do not prove the components work *together*
+under real game variance, real PPO failure modes, real disk growth, and real timing.
+
+This is the elephant-in-the-room validation gap. Phase 4.5 closes it before Phase 5
+(domain abstraction) starts pulling things apart for refactoring, because once you start
+refactoring you want a known-good baseline to compare against.
+
+**What this phase is NOT:**
+- Not a code-writing phase. The output is a soak-test procedure, observed evidence,
+  and a backlog of issues found.
+- Not a "fix everything you find" phase. Bugs found go into a Phase 4.5 followup
+  backlog and are triaged, not auto-fixed.
+- Not a benchmark of the bot's strategic skill. The win rate against built-in AI is
+  not the metric being measured here — the metric is "did the autonomous loop run
+  unattended without breaking."
+
+### Step 1: Document the soak test procedure
+
+- **Problem:** Write `documentation/soak-test.md` describing the full procedure to run
+  Alpha4Gate in autonomous mode for several hours and observe the loop. The procedure
+  must be precise enough that someone (or a future model) can run it without prior
+  context. Include:
+  (1) **Prerequisites:** SC2 client installed at `C:\Program Files (x86)\StarCraft II\`,
+  maps downloaded from Blizzard CDN (NOT the Git LFS pointers in the repo), Python
+  environment installed via `uv sync`, frontend deps installed via
+  `cd frontend && npm install`.
+  (2) **Pre-soak checklist:** clean `data/` directory or known-state snapshot, daemon
+  config values to use (`min_transitions`, `min_hours_since_last`, `cycles_per_run`,
+  `games_per_cycle`, `current_difficulty`), expected disk usage budget, expected
+  duration window (start at 4 hours; the procedure should also accept "until N
+  promotions occur" as a stop condition).
+  (3) **Startup sequence:** exact commands to start SC2 client, start the backend with
+  daemon enabled (`uv run python -m alpha4gate.runner --serve --daemon`),
+  start the frontend dev server, open the dashboard. Document any required SC2 client
+  state (in main menu, not in a game, etc.).
+  (4) **Observation protocol:** what to watch on the dashboard, what counts as a
+  successful cycle, what counts as a failure mode, when to intervene vs let it run.
+  Include a screenshot checklist for each dashboard tab showing the kind of state
+  evidence you want captured.
+  (5) **Stop and post-soak protocol:** how to stop cleanly (daemon stop button vs
+  `--no-daemon` shutdown), what to capture (training.db copy, full data/ snapshot,
+  daemon log, frontend console log, screenshots of all dashboard tabs in their final
+  state), how to file findings.
+- **Issue:** #
+- **Flags:** --reviewers code
+- **Produces:** `documentation/soak-test.md`
+- **Done when:** doc reviewed for self-containment via `/session-check`. A fresh
+  context model could run the procedure without asking questions.
+- **Depends on:** Phase 4 complete (dashboard exists to observe)
+
+### Step 2: Verify daemon mode is actually wired
+
+- **Problem:** Phase 3 added a `--daemon` flag to `runner.py` but the autonomous loop
+  has never been observed running in this mode end-to-end. Before the soak test, do a
+  short smoke test to verify the daemon mode actually does what's expected:
+  (1) Start `uv run python -m alpha4gate.runner --serve --daemon` (or whatever the
+  exact CLI is — verify against the current `runner.py`).
+  (2) Confirm via `GET /api/training/daemon` that `running: true` and `state` cycles
+  through values, not stuck.
+  (3) Manually populate the training database with enough transitions to cross
+  `min_transitions` (or temporarily lower the threshold) and confirm the daemon
+  *attempts* to fire a training run within `check_interval_seconds`.
+  (4) Stop daemon, verify clean shutdown and no leaked processes.
+  (5) Record exact CLI flags, observed behavior, and any required environment setup
+  in `documentation/soak-test.md` from Step 1.
+- **Issue:** #
+- **Flags:** --reviewers runtime
+- **Produces:** observation notes in `documentation/soak-test.md`. No code changes
+  expected — but if the CLI is missing or broken, this step pivots to fixing it
+  (and that fix becomes its own commit).
+- **Done when:** daemon can be started, observed, and stopped cleanly via the CLI
+  documented in the soak test procedure.
+- **Depends on:** Step 1
+
+### Step 3: Run the soak test (4-hour run)
+
+- **Problem:** Execute the procedure from Step 1 for at least 4 hours of unattended
+  runtime, or until N promotions have occurred (whichever comes first). The goal is
+  evidence collection, not bug-fixing. While the loop runs:
+  (1) Capture screenshots of every dashboard tab at start, midpoint, and end. The
+  Loop tab should show daemon state transitions; the Improvements tab should show
+  any promotions or rollbacks; the Alerts tab should show any alerts that fired.
+  (2) Note every alert that fires, with timestamp and severity. Note false positives
+  (alerts that fired but shouldn't have).
+  (3) Note every daemon state transition manually observed. Compare against
+  `runs_completed` counter and `last_run` timestamp at the end.
+  (4) Watch for: daemon getting stuck in a state, training runs that never complete,
+  promotion logic firing incorrectly, dashboard showing stale data, frontend losing
+  connection, browser console errors, backend log errors, disk usage growing
+  unexpectedly fast, SC2 client crashes, the bot itself crashing mid-game.
+  (5) Save the final `data/` directory as `data-soak-test-<date>.zip` for postmortem.
+- **Issue:** #
+- **Flags:** --reviewers runtime
+- **Produces:** `documentation/soak-test-<date>-results.md` with observations,
+  screenshot inventory, alert log, and a raw findings list (each finding gets a
+  one-line description, severity, and suggested category: dashboard / daemon /
+  training / alert tuning / docs / unknown).
+- **Done when:** soak test ran for the target duration, all observations captured,
+  results doc written. Pass/fail of the soak test itself is irrelevant — the doc IS
+  the deliverable. Even if the loop completely failed in the first 5 minutes, the
+  finding "loop dies after 5 minutes for reason X" is the most valuable possible
+  output.
+- **Depends on:** Step 2
+
+### Step 4: Triage findings into a Phase 4.5 backlog
+
+- **Problem:** Process the raw findings from Step 3 into actionable categories:
+  (1) **Blockers:** the autonomous loop cannot run unattended for the target duration
+  without manual intervention. These must be fixed before Phase 5 starts.
+  (2) **Alert tuning:** alert thresholds that were too tight or too loose under real
+  variance. Adjust constants in `frontend/src/lib/alertRules.ts` and re-soak.
+  (3) **Dashboard polish:** UX issues found while watching the dashboard for hours
+  (e.g., timestamps not updating, polling stale, tab order awkward, missing context
+  on a card). File as a "Phase 4 polish" mini-backlog.
+  (4) **Daemon tuning:** values like `min_transitions`, `cycles_per_run`,
+  `check_interval_seconds` that are wrong for actual usage. Update the
+  `data/daemon_config.json` defaults in code.
+  (5) **Documentation gaps:** wiki pages or plan sections that don't match reality
+  after seeing the loop run.
+  (6) **Phase 5 inputs:** anything that suggests the domain abstraction in Phase 5
+  needs to account for something not yet considered.
+- **Issue:** #
+- **Flags:** --reviewers code
+- **Produces:** GitHub issues created for each Blocker and Alert Tuning finding.
+  A `documentation/plans/phase-4-5-backlog.md` file documenting the Dashboard Polish,
+  Daemon Tuning, and Documentation Gaps lists. Phase 5 inputs noted in
+  `always-up-plan.md` Phase 5 section.
+- **Done when:** every finding from Step 3 is in one of the six buckets, blockers
+  have GitHub issues, the backlog file exists.
+- **Depends on:** Step 3
+
+### Step 5: Fix blockers and re-soak (conditional)
+
+- **Problem:** If Step 4 identified any Blockers (autonomous loop cannot run
+  unattended), fix them and run a second soak test. Repeat until the loop can run
+  for the target duration without manual intervention. If Step 4 identified zero
+  Blockers, **skip this step entirely** and mark Phase 4.5 as complete.
+- **Issue:** #
+- **Flags:** --reviewers code (for fixes), --reviewers runtime (for re-soak)
+- **Produces:** fixes for each blocker, a second soak-test results doc.
+- **Done when:** the autonomous loop has run for the target duration without manual
+  intervention OR the user has decided the remaining issues are acceptable to defer
+  into Phase 5.
+- **Depends on:** Step 4 found at least one Blocker
+
+### Notes on Phase 4.5
+
+- **Why a separate phase, not part of Phase 4:** Phase 4 is about *building* the
+  observation infrastructure. Phase 4.5 is about *using* that infrastructure to
+  observe something real for the first time. They have different definitions of
+  "done" — Phase 4 done = code shipped + tests pass, Phase 4.5 done = the system
+  has been observed running unattended.
+- **Time budget:** Steps 1, 2, 4, 5 are short (hours each). Step 3 is the long pole
+  (4+ hours of wall-clock runtime, mostly waiting). Total elapsed time is likely
+  1-2 days depending on findings.
+- **Hardware:** This is the most resource-intensive phase. SC2 client + bot +
+  backend + frontend + Claude advisor (if enabled) = significant CPU and possibly
+  GPU usage. Plan accordingly.
+- **What success looks like:** Not "the bot wins more games." Not "the model gets
+  better." Success is **the dashboard accurately reflects what the loop did, the
+  loop did not crash, and any problems found are documented as actionable items.**
+  The bot's actual training improvements are out of scope — that's a separate
+  ongoing concern that lives in the daily-use loop after Phase 4.5 ships.
+- **Relationship to Phase 5:** Phase 4.5 findings about coupling between SC2 and
+  the loop infrastructure feed directly into Phase 5 design. A finding like
+  "the daemon assumes a single SC2 client process" is a Phase 5 input even if it's
+  not blocking the soak test itself.
+
+---
+
 ## Phase 5: Domain Abstraction
 
 **Goal:** Clean separation so the training/eval/monitoring loop works with any domain.
