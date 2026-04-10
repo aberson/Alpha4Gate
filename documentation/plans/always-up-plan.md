@@ -26,9 +26,9 @@ build-step over each step in order. A fresh model running this plan should treat
 those flags as runtime knobs for build-step, not as anything that needs to be
 re-derived.
 
-Phase 4.5 step `**Issue:** #` lines are intentionally blank — issues for that
-phase will be created via `/repo-sync --plan documentation/plans/always-up-plan.md`
-just before Phase 4.5 starts, so they reflect the current GitHub issue numbering.
+Phase 4.5 issues are #61–#65 (created via `/repo-sync` on 2026-04-10). Use
+`/repo-sync` again if Phase 5 step bodies get fleshed out and need their own
+issue numbers.
 
 ---
 
@@ -503,7 +503,7 @@ refactoring you want a known-good baseline to compare against.
   `--no-daemon` shutdown), what to capture (training.db copy, full data/ snapshot,
   daemon log, frontend console log, screenshots of all dashboard tabs in their final
   state), how to file findings.
-- **Issue:** #
+- **Issue:** #61
 - **Flags:** --reviewers code
 - **Produces:** `documentation/soak-test.md`
 - **Done when:** doc reviewed for self-containment via `/session-check`. A fresh
@@ -525,7 +525,7 @@ refactoring you want a known-good baseline to compare against.
   (4) Stop daemon, verify clean shutdown and no leaked processes.
   (5) Record exact CLI flags, observed behavior, and any required environment setup
   in `documentation/soak-test.md` from Step 1.
-- **Issue:** #
+- **Issue:** #62
 - **Flags:** --reviewers runtime
 - **Produces:** observation notes in `documentation/soak-test.md`. No code changes
   expected — but if the CLI is missing or broken, this step pivots to fixing it
@@ -551,7 +551,7 @@ refactoring you want a known-good baseline to compare against.
   connection, browser console errors, backend log errors, disk usage growing
   unexpectedly fast, SC2 client crashes, the bot itself crashing mid-game.
   (5) Save the final `data/` directory as `data-soak-test-<date>.zip` for postmortem.
-- **Issue:** #
+- **Issue:** #63
 - **Flags:** --reviewers runtime
 - **Produces:** `documentation/soak-test-<date>-results.md` with observations,
   screenshot inventory, alert log, and a raw findings list (each finding gets a
@@ -581,7 +581,7 @@ refactoring you want a known-good baseline to compare against.
   after seeing the loop run.
   (6) **Phase 5 inputs:** anything that suggests the domain abstraction in Phase 5
   needs to account for something not yet considered.
-- **Issue:** #
+- **Issue:** #64
 - **Flags:** --reviewers code
 - **Produces:** GitHub issues created for each Blocker and Alert Tuning finding.
   A `documentation/plans/phase-4-5-backlog.md` file documenting the Dashboard Polish,
@@ -597,7 +597,7 @@ refactoring you want a known-good baseline to compare against.
   unattended), fix them and run a second soak test. Repeat until the loop can run
   for the target duration without manual intervention. If Step 4 identified zero
   Blockers, **skip this step entirely** and mark Phase 4.5 as complete.
-- **Issue:** #
+- **Issue:** #65
 - **Flags:** --reviewers code (for fixes), --reviewers runtime (for re-soak)
 - **Produces:** fixes for each blocker, a second soak-test results doc.
 - **Done when:** the autonomous loop has run for the target duration without manual
