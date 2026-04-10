@@ -798,6 +798,7 @@ pass.
 - **Depends on:** Step 4, Step 5
 
 ### Step 10: Wiki + plan doc updates
+- **Status:** DONE (2026-04-10)
 - **Problem:** Update documentation to reflect Phase 4 final state.
   (1) Update `documentation/wiki/frontend.md`:
     - Add new tabs (Loop, Improvements, Alerts) to the tab table.

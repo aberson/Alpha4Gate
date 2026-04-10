@@ -9,7 +9,7 @@ Goal: AI-vs-AI competition with transparent model introspection and autonomous s
 
 - Python 3.12, uv, burnysc2 v7.1.3, FastAPI, React+TypeScript+Vite
 - Deep learning: PyTorch, Stable Baselines 3 (PPO), SQLite for training data
-- Testing: pytest (535 unit tests), ruff, mypy strict mode
+- Testing: pytest (682 unit tests) + vitest (105 frontend tests), ruff, mypy strict mode
 
 ## Commands
 
@@ -17,7 +17,7 @@ Goal: AI-vs-AI competition with transparent model introspection and autonomous s
 uv sync                                    # Install deps
 uv run python -m alpha4gate.runner --map Simple64  # Run game
 uv run python -m alpha4gate.runner --serve         # Dashboard API only
-uv run pytest                              # 535 unit tests
+uv run pytest                              # 682 unit tests
 uv run pytest -m sc2                       # SC2 integration tests (SC2 must be running)
 uv run ruff check .                        # Lint
 uv run mypy src                            # Type check

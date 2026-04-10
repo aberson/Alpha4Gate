@@ -375,20 +375,63 @@ implementation; the evaluation/training/monitoring loop is the real product.
 
 **Goal:** Full visibility into the autonomous loop from the browser.
 
-### Step 1: Training cycle status
-- **Problem:** Show running/idle, current cycle, games completed, ETA in the dashboard.
+- **Status:** DONE (2026-04-09) — 10/10 steps, issues #50–#59. 682 Python tests + 105
+  frontend vitest tests passing. Detail plan:
+  `documentation/plans/phase-4-transparency-dashboard-plan.md`.
 
-### Step 2: Recent improvements view
-- **Problem:** Show what changed in the last N promotions, how it played out (enhanced version of Phase 2 timeline).
+The legacy 5-step outline below maps to the 10 detailed steps in the transparency
+dashboard plan:
 
-### Step 3: Per-rule reward trends
-- **Problem:** Show which reward rules fire most often and how their contribution changes over time.
+| Legacy step | Description | Detail-plan step(s) | Deliverable(s) |
+|-------------|-------------|---------------------|----------------|
+| 1 | Training cycle status | Step 5 | `useDaemonStatus.ts`, `LoopStatus.tsx` |
+| 2 | Recent improvements view | Step 7 | `RecentImprovements.tsx` (splits promotions vs rollbacks) |
+| 3 | Per-rule reward trends | Steps 1, 2, 8 | `learning/reward_aggregator.py`, `GET /api/training/reward-trends`, `RewardTrends.tsx` |
+| 4 | Alerting | Step 9 | `alertRules.ts`, `alertStorage.ts`, `useAlerts.ts`, `AlertToast.tsx`, `AlertsPanel.tsx` |
+| 5 | Training trigger UI | Step 6 | `TriggerControls.tsx` (wired to existing start/stop/config endpoints) |
 
-### Step 4: Alerting
-- **Problem:** Notify if win rate drops, training fails, disk fills up, or model regresses.
+Detail-plan Steps 3 (frontend vitest infra), 4 (`ConfirmDialog` reusable modal), and
+10 (this docs pass) are infrastructure / docs that the legacy outline did not
+enumerate.
 
-### Step 5: Training trigger UI
-- **Problem:** Start/stop/configure training from the dashboard (the POST endpoint is currently a placeholder).
+### Step 1: Training cycle status — DONE
+- Legacy item for "show running/idle, current cycle, games completed, ETA in the
+  dashboard." Delivered by the Loop tab (`LoopStatus` + `useDaemonStatus`), which
+  polls `/api/training/daemon` + `/api/training/status` every 5s and surfaces daemon
+  state, last/next run timestamps, `runs_completed`, trigger preview, and reward-log
+  disk usage.
+
+### Step 2: Recent improvements view — DONE
+- Delivered by `RecentImprovements` on the Improvements tab, which consumes
+  `/api/training/promotions/history` and splits promotions from rollbacks
+  (`promoted: false` + `reason` starting with `rollback:`).
+
+### Step 3: Per-rule reward trends — DONE
+- Backend: `src/alpha4gate/learning/reward_aggregator.py` walks per-game JSONL files
+  under `data/reward_logs/`, unpacks the `fired_rules` array per line, and aggregates
+  totals + fire counts per rule.
+- API: `GET /api/training/reward-trends?games=N` (default 100, min 1, max 1000).
+- Frontend: `RewardTrends.tsx` on the Improvements tab.
+
+### Step 4: Alerting — DONE
+- Client-side only — no alert backend. `useAlerts` polls training endpoints,
+  `alertRules.ts` evaluates rules against the snapshot, `alertStorage.ts` persists
+  history + acks to `localStorage`. Surfaces: `AlertToast` overlay for new alerts,
+  `AlertsPanel` for full history on the Alerts tab, unread count badge on the tab.
+
+### Step 5: Training trigger UI — DONE
+- `TriggerControls.tsx` on the Loop tab. Start/stop buttons gated by a
+  `ConfirmDialog`, plus editable daemon config (check interval, min transitions,
+  min hours, cycles per run, games per cycle) persisted via
+  `PUT /api/training/daemon/config`. Wired to the existing `POST /api/training/start`
+  and `/stop` endpoints (previously placeholder-only from the frontend's perspective).
+
+### Deferred (Phase 4 decision reaffirmed)
+- **WebSocket upgrade for training data.** Phase 4 stayed on 5s REST polling for the
+  Loop, Improvements, and Alerts tabs. A dedicated `/ws/training` channel that
+  pushes daemon state transitions, new promotions, and new alerts as they happen
+  remains deferred — reconsider after Phase 4.5 soak-test findings. Live game data
+  on the Live and Decisions tabs continues to use WebSockets.
 
 ---
 
@@ -588,7 +631,7 @@ refactoring you want a known-good baseline to compare against.
 
 ---
 
-## Current State (2026-04-10)
+## Current State (2026-04-09)
 
 **What exists:**
 - TrainingOrchestrator — full RL loop, CLI + daemon-triggered
@@ -597,21 +640,36 @@ refactoring you want a known-good baseline to compare against.
 - PromotionManager + PromotionLogger — automated promote gate with JSON + wiki logging
 - RollbackMonitor — regression detection, automatic revert, difficulty floor
 - Curriculum auto-advancement — persistent difficulty across daemon restarts, auto-advance on promotion
+- `learning/reward_aggregator.py` — per-rule reward contribution aggregator over
+  `data/reward_logs/` JSONL files (Phase 4 Step 1)
 - SQLite DB — games + transitions + action probabilities, win rate queries, per-model stats
 - WebSocket broadcasting — live game state, decisions, commands (ephemeral)
 - JSONL logging — per-game files in `data/reward_logs/` (always-on, opt-out via `--no-reward-log`)
-- React dashboard — LiveView, TrainingDashboard, ModelComparison, ImprovementTimeline, CheckpointList, RewardRuleEditor
+- React dashboard (9 tabs) — Live, Stats, Builds, Replays, Decisions, Training, Loop,
+  Improvements, Alerts. Training tab: TrainingDashboard + ModelComparison +
+  ImprovementTimeline + CheckpointList + RewardRuleEditor. Loop tab: LoopStatus +
+  TriggerControls (with ConfirmDialog). Improvements tab: RecentImprovements +
+  RewardTrends. Alerts tab: AlertsPanel + global AlertToast overlay.
+- Frontend test infrastructure — vitest + jsdom, `frontend/vitest.config.ts`, shared
+  setup in `frontend/src/test/setup.ts`, 105 tests currently passing.
+- Client-side alert engine — `alertRules.ts`, `alertStorage.ts`, `useAlerts` hook.
+  No alert backend; rules evaluated on each 5s poll, persisted to `localStorage`.
 - Evaluation scripts — evaluate_model.py, analyze_rewards.py
 - Wiki — 15 pages documenting all systems (documentation/wiki/)
 - Per-checkpoint win rate tracking via `GET /api/training/models`
 - Persistent decision logs with action probability distributions
-- 15+ API endpoints for daemon control, triggers, evaluation, promotions, rollback, curriculum
+- 15+ API endpoints for daemon control, triggers, evaluation, promotions, rollback,
+  curriculum. **New in Phase 4:** `GET /api/training/reward-trends?games=N` (Step 2)
+  and `reward_logs_size_bytes` field added to `GET /api/training/status` (Step 1).
+- 682 Python unit tests + 105 frontend vitest tests passing.
 
 **What's missing:**
-- No training cycle status in dashboard (daemon runs but dashboard doesn't show live progress)
-- No alerting (win rate drops, training failures, disk usage)
-- No training trigger UI in dashboard (POST endpoint works but no React component wires to it)
-- No domain abstraction (SC2 code still interleaved with training loop)
+- No real end-to-end soak test yet — the autonomous loop has never been observed
+  running unattended against SC2 for hours (addressed by Phase 4.5).
+- No WebSocket channel for training/loop events — Loop, Improvements, and Alerts
+  tabs still poll every 5s. Decision reaffirmed as deferred in Phase 4; revisit
+  after soak-test findings.
+- No domain abstraction (SC2 code still interleaved with training loop — Phase 5).
 
 ## Decisions
 
