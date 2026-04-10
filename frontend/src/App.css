@@ -451,3 +451,134 @@
   font-size: 12px;
   color: var(--text);
 }
+
+/* --- Phase 4 scaffolding: confirm dialog, alert toast, severity, unread badge --- */
+
+.confirm-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.confirm-dialog {
+  position: relative;
+  z-index: 101;
+}
+
+.confirm-dialog-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px 24px;
+  min-width: 320px;
+  max-width: 480px;
+  box-shadow: var(--shadow);
+  color: var(--text-h);
+
+  h3 {
+    margin: 0 0 12px;
+    font-size: 18px;
+    color: var(--text-h);
+  }
+
+  p {
+    margin: 0 0 16px;
+    font-size: 14px;
+    color: var(--text);
+  }
+
+  .confirm-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  button {
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text-h);
+    cursor: pointer;
+    font-size: 14px;
+
+    &:hover {
+      border-color: var(--accent-border);
+    }
+
+    &.primary {
+      background: var(--accent-bg);
+      color: var(--accent);
+      border-color: var(--accent-border);
+    }
+  }
+}
+
+.alert-toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  min-width: 280px;
+  max-width: 420px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--code-bg);
+  color: var(--text-h);
+  font-size: 14px;
+  box-shadow: var(--shadow);
+  z-index: 90;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.alert-toast-enter {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.alert-toast-exit {
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+}
+
+.severity-info {
+  color: #60a5fa;
+  border-left: 3px solid #60a5fa;
+  padding-left: 8px;
+}
+
+.severity-warning {
+  color: #f59e0b;
+  border-left: 3px solid #f59e0b;
+  padding-left: 8px;
+}
+
+.severity-error {
+  color: #dc2626;
+  border-left: 3px solid #dc2626;
+  padding-left: 8px;
+}
+
+.unread-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  margin-left: 6px;
+}

@@ -542,6 +542,7 @@ pass.
 - **Depends on:** Step 1
 
 ### Step 3: Frontend test infrastructure (vitest + Recharts + CSS scaffolding)
+- **Status:** DONE (2026-04-10)
 - **Problem:** One-time frontend infra setup that unblocks all later steps.
   (1) Add to `frontend/package.json` devDependencies: `vitest`,
   `@testing-library/react`, `@testing-library/jest-dom`, `jsdom`. Configure via

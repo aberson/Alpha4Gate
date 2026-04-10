@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 
 interface ModelStats {
   model_version: string;
@@ -56,7 +56,7 @@ export function ImprovementTimeline() {
             const prevRate = idx > 0 ? data.models[idx - 1].win_rate : null;
             const delta = prevRate !== null ? model.win_rate - prevRate : null;
 
-            let changeDisplay: JSX.Element;
+            let changeDisplay: ReactNode;
             if (delta === null) {
               changeDisplay = <span>—</span>;
             } else if (delta > 0) {
