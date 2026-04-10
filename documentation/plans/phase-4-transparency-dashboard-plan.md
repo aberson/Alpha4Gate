@@ -700,6 +700,7 @@ pass.
 - **Depends on:** Step 4
 
 ### Step 8: RewardTrends component (Phase 4 plan Step 3)
+- **Status:** DONE (2026-04-10)
 - **Problem:** Build the per-rule reward trend visualization using Recharts.
   Renders inside the Improvements tab below `RecentImprovements` (NOT a new
   tab — logically part of improvements).

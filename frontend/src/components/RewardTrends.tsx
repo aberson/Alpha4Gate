@@ -1,0 +1,405 @@
+import { useEffect, useMemo, useState } from "react";
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+
+/**
+ * Response shape from GET /api/training/reward-trends.
+ *
+ * Source of truth:
+ *   src/alpha4gate/learning/reward_aggregator.py :: aggregate_reward_trends
+ *
+ * Each rule has a `points` list ordered by the aggregator (most-recent-game
+ * first, since the backend sorts files by mtime descending). Each point has
+ * a `game_id` (string, from the filename stem), a `timestamp` (ISO UTC from
+ * file mtime), and the rule's summed `contribution` for that single game.
+ *
+ * `total_contribution` is the sum across all returned games for the rule;
+ * `contribution_per_game` is total_contribution / (games_with_data_for_rule).
+ */
+export interface RewardTrendPoint {
+  game_id: string;
+  timestamp: string;
+  contribution: number;
+}
+
+export interface RewardTrendRule {
+  rule_id: string;
+  total_contribution: number;
+  contribution_per_game: number;
+  points: RewardTrendPoint[];
+}
+
+export interface RewardTrendsResponse {
+  rules: RewardTrendRule[];
+  n_games: number;
+  generated_at: string;
+}
+
+export type SortColumn =
+  | "rule_id"
+  | "total_contribution"
+  | "contribution_per_game";
+export type SortDirection = "asc" | "desc";
+
+const POLL_INTERVAL_MS = 5000;
+const DEFAULT_GAMES = 100;
+const GAMES_OPTIONS: readonly number[] = [50, 100, 200, 500] as const;
+
+// Distinct-ish palette for rule lines. Cycles if more rules than colors.
+const LINE_COLORS: readonly string[] = [
+  "#2ecc71",
+  "#3498db",
+  "#e74c3c",
+  "#f1c40f",
+  "#9b59b6",
+  "#1abc9c",
+  "#e67e22",
+  "#ecf0f1",
+];
+
+function colorForIndex(index: number): string {
+  return LINE_COLORS[index % LINE_COLORS.length]!;
+}
+
+/**
+ * Build the x-axis chart series. Each row is { game: <index>, <rule_id>: number | null }.
+ *
+ * The backend returns one `points` list per rule, but rules may have different
+ * numbers of points (a rule only has a point for games where it fired). We
+ * build a row-major table keyed by a shared game index 0..n-1 where n is the
+ * max length across all rules' points arrays. For rules with fewer points we
+ * write `null` so recharts breaks the line rather than zero-filling.
+ *
+ * NOTE: game index is NOT a stable identifier across rules (rule A's game 0
+ * may be a different game than rule B's game 0 since their points lists are
+ * independent). This is an acceptable simplification for a trend view — we
+ * only need rough per-rule shapes. Tooltip shows the raw contribution value.
+ */
+export function buildChartData(
+  rules: RewardTrendRule[],
+): Array<Record<string, number | string | null>> {
+  if (rules.length === 0) return [];
+  const maxLen = rules.reduce((max, r) => Math.max(max, r.points.length), 0);
+  const rows: Array<Record<string, number | string | null>> = [];
+  for (let i = 0; i < maxLen; i += 1) {
+    const row: Record<string, number | string | null> = { game: i };
+    for (const rule of rules) {
+      const point = rule.points[i];
+      row[rule.rule_id] =
+        point && typeof point.contribution === "number"
+          ? point.contribution
+          : null;
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+/**
+ * Sort helper for the summary table. Pure function so it can be tested
+ * without mounting the component.
+ */
+export function sortRules(
+  rules: RewardTrendRule[],
+  column: SortColumn,
+  direction: SortDirection,
+): RewardTrendRule[] {
+  const copy = [...rules];
+  copy.sort((a, b) => {
+    let cmp = 0;
+    if (column === "rule_id") {
+      cmp = a.rule_id.localeCompare(b.rule_id);
+    } else if (column === "total_contribution") {
+      cmp = a.total_contribution - b.total_contribution;
+    } else {
+      cmp = a.contribution_per_game - b.contribution_per_game;
+    }
+    return direction === "asc" ? cmp : -cmp;
+  });
+  return copy;
+}
+
+interface RewardTrendsProps {
+  pollIntervalMs?: number;
+  defaultGames?: number;
+}
+
+export function RewardTrends({
+  pollIntervalMs = POLL_INTERVAL_MS,
+  defaultGames = DEFAULT_GAMES,
+}: RewardTrendsProps) {
+  const [data, setData] = useState<RewardTrendsResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [games, setGames] = useState<number>(defaultGames);
+  const [sortColumn, setSortColumn] = useState<SortColumn>("total_contribution");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [hiddenRules, setHiddenRules] = useState<Set<string>>(() => new Set());
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load(): Promise<void> {
+      try {
+        const response = await fetch(
+          `/api/training/reward-trends?games=${games}`,
+        );
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const body = (await response.json()) as RewardTrendsResponse;
+        if (cancelled) return;
+        const safeRules = Array.isArray(body?.rules) ? body.rules : [];
+        setData({
+          rules: safeRules,
+          n_games: typeof body?.n_games === "number" ? body.n_games : 0,
+          generated_at:
+            typeof body?.generated_at === "string" ? body.generated_at : "",
+        });
+        setError(null);
+      } catch (ex) {
+        if (cancelled) return;
+        setError(ex instanceof Error ? ex.message : "failed to load reward trends");
+      }
+    }
+
+    void load();
+    const handle = setInterval(() => {
+      void load();
+    }, pollIntervalMs);
+    return () => {
+      cancelled = true;
+      clearInterval(handle);
+    };
+  }, [games, pollIntervalMs]);
+
+  const sortedRules = useMemo<RewardTrendRule[]>(() => {
+    if (!data) return [];
+    return sortRules(data.rules, sortColumn, sortDirection);
+  }, [data, sortColumn, sortDirection]);
+
+  const chartData = useMemo(() => {
+    if (!data) return [];
+    return buildChartData(data.rules);
+  }, [data]);
+
+  function handleSortClick(column: SortColumn): void {
+    if (column === sortColumn) {
+      setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setSortColumn(column);
+      setSortDirection("desc");
+    }
+  }
+
+  function handleLegendClick(data: { dataKey?: unknown }): void {
+    const key = typeof data?.dataKey === "string" ? data.dataKey : null;
+    if (!key) return;
+    setHiddenRules((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }
+
+  function sortIndicator(column: SortColumn): string {
+    if (column !== sortColumn) return "";
+    return sortDirection === "asc" ? " \u25B2" : " \u25BC";
+  }
+
+  if (error && data === null) {
+    return (
+      <div className="reward-trends error" style={{ color: "#e74c3c" }}>
+        Error: {error}
+      </div>
+    );
+  }
+
+  if (data === null) {
+    return <div className="reward-trends">Loading...</div>;
+  }
+
+  const isEmpty = data.rules.length === 0 || data.n_games === 0;
+
+  return (
+    <div className="reward-trends training-dashboard">
+      <h2>Reward Trends</h2>
+
+      <div
+        className="reward-trends-controls"
+        role="group"
+        aria-label="Reward trends controls"
+        style={{ marginBottom: "12px" }}
+      >
+        <label htmlFor="reward-trends-games" style={{ marginRight: "8px" }}>
+          Games window:
+        </label>
+        <select
+          id="reward-trends-games"
+          value={games}
+          onChange={(e) => setGames(Number(e.target.value))}
+          aria-label="Games window"
+        >
+          {GAMES_OPTIONS.map((opt) => (
+            <option key={opt} value={opt}>
+              {opt}
+            </option>
+          ))}
+        </select>
+        <span style={{ marginLeft: "12px", color: "#888" }}>
+          Scanned {data.n_games} game{data.n_games === 1 ? "" : "s"}
+        </span>
+      </div>
+
+      {error ? (
+        <div
+          className="control-error"
+          role="alert"
+          style={{ color: "#e74c3c", marginBottom: "8px" }}
+        >
+          {error}
+        </div>
+      ) : null}
+
+      {isEmpty ? (
+        <div
+          className="reward-trends-empty"
+          style={{ color: "#888", padding: "12px 0" }}
+        >
+          No reward logs yet. Play some games to populate reward trends.
+        </div>
+      ) : (
+        <>
+          <table
+            className="reward-trends-table"
+            style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              marginBottom: "16px",
+            }}
+          >
+            <thead>
+              <tr>
+                <th
+                  onClick={() => handleSortClick("rule_id")}
+                  style={{
+                    cursor: "pointer",
+                    textAlign: "left",
+                    borderBottom: "1px solid rgba(255,255,255,0.2)",
+                    padding: "6px 8px",
+                  }}
+                  aria-sort={
+                    sortColumn === "rule_id"
+                      ? sortDirection === "asc"
+                        ? "ascending"
+                        : "descending"
+                      : "none"
+                  }
+                >
+                  rule_id{sortIndicator("rule_id")}
+                </th>
+                <th
+                  onClick={() => handleSortClick("total_contribution")}
+                  style={{
+                    cursor: "pointer",
+                    textAlign: "right",
+                    borderBottom: "1px solid rgba(255,255,255,0.2)",
+                    padding: "6px 8px",
+                  }}
+                  aria-sort={
+                    sortColumn === "total_contribution"
+                      ? sortDirection === "asc"
+                        ? "ascending"
+                        : "descending"
+                      : "none"
+                  }
+                >
+                  total_contribution{sortIndicator("total_contribution")}
+                </th>
+                <th
+                  onClick={() => handleSortClick("contribution_per_game")}
+                  style={{
+                    cursor: "pointer",
+                    textAlign: "right",
+                    borderBottom: "1px solid rgba(255,255,255,0.2)",
+                    padding: "6px 8px",
+                  }}
+                  aria-sort={
+                    sortColumn === "contribution_per_game"
+                      ? sortDirection === "asc"
+                        ? "ascending"
+                        : "descending"
+                      : "none"
+                  }
+                >
+                  contribution_per_game{sortIndicator("contribution_per_game")}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedRules.map((rule) => (
+                <tr key={rule.rule_id}>
+                  <td style={{ padding: "6px 8px" }}>{rule.rule_id}</td>
+                  <td style={{ padding: "6px 8px", textAlign: "right" }}>
+                    {rule.total_contribution.toFixed(2)}
+                  </td>
+                  <td style={{ padding: "6px 8px", textAlign: "right" }}>
+                    {rule.contribution_per_game.toFixed(2)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div
+            className="reward-trends-chart"
+            style={{ width: "100%", height: 320 }}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                <XAxis
+                  dataKey="game"
+                  label={{ value: "game index", position: "insideBottom", offset: -4 }}
+                />
+                <YAxis
+                  label={{
+                    value: "contribution",
+                    angle: -90,
+                    position: "insideLeft",
+                  }}
+                />
+                <Tooltip />
+                <Legend onClick={handleLegendClick} />
+                {data.rules.map((rule, index) => (
+                  <Line
+                    key={rule.rule_id}
+                    type="monotone"
+                    dataKey={rule.rule_id}
+                    stroke={colorForIndex(index)}
+                    dot={false}
+                    connectNulls
+                    hide={hiddenRules.has(rule.rule_id)}
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+export default RewardTrends;

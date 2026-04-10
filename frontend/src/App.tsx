@@ -12,6 +12,7 @@ import { ImprovementTimeline } from "./components/ImprovementTimeline";
 import { LoopStatus } from "./components/LoopStatus";
 import { TriggerControls } from "./components/TriggerControls";
 import { RecentImprovements } from "./components/RecentImprovements";
+import { RewardTrends } from "./components/RewardTrends";
 import "./App.css";
 
 type Tab =
@@ -91,7 +92,12 @@ function App() {
             <TriggerControls />
           </>
         )}
-        {tab === "improvements" && <RecentImprovements />}
+        {tab === "improvements" && (
+          <>
+            <RecentImprovements />
+            <RewardTrends />
+          </>
+        )}
       </main>
     </div>
   );
