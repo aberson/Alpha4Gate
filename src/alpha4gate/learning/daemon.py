@@ -381,10 +381,16 @@ class TrainingDaemon:
                     "Daemon: persisted final difficulty %d", final_difficulty
                 )
 
-            # Run promotion gate on the latest checkpoint
+            # Run promotion gate on the latest *successful* checkpoint.
+            # Crashed cycles have status="crashed" and no "checkpoint" field;
+            # they must not feed the promotion gate (a phantom checkpoint
+            # would silently advance the curriculum on zero training).
             cycle_results = result.get("cycle_results", [])
-            if cycle_results:
-                latest = cycle_results[-1]
+            successful_cycles = [
+                c for c in cycle_results if c.get("status") != "crashed"
+            ]
+            if successful_cycles:
+                latest = successful_cycles[-1]
                 latest_checkpoint = latest["checkpoint"]
                 current_difficulty = latest["difficulty"]
                 try:

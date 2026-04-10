@@ -970,3 +970,118 @@ class TestCurriculumEndpoints:
         assert config_path.exists()
         loaded = load_daemon_config(config_path)
         assert loaded.current_difficulty == 7
+
+
+class TestCrashedCyclesSkipPromotion:
+    """Phase 4.5 Step 2 finding F2 regression guard.
+
+    The daemon must NOT run the promotion gate against a crashed cycle.
+    Crashed cycles have ``status="crashed"`` and no ``checkpoint`` key;
+    feeding them to the evaluator would launch real SC2 games against an
+    unchanged model and silently advance the curriculum.
+    """
+
+    def test_promotion_skipped_when_only_crashed_cycles(
+        self, tmp_path: Path
+    ) -> None:
+        settings = _make_settings(tmp_path)
+        cfg = DaemonConfig(current_difficulty=3)
+        daemon = TrainingDaemon(settings, cfg)
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.run.return_value = {
+            "cycles_completed": 2,
+            "final_difficulty": 3,
+            "cycle_results": [
+                {
+                    "cycle": 1,
+                    "difficulty": 3,
+                    "status": "crashed",
+                    "error": "ValueError: space mismatch",
+                },
+                {
+                    "cycle": 2,
+                    "difficulty": 3,
+                    "status": "crashed",
+                    "error": "ValueError: space mismatch",
+                },
+            ],
+            "total_games": 0,
+            "stopped": False,
+            "stop_reason": "",
+        }
+
+        mock_pm = MagicMock()
+        daemon._promotion_manager = mock_pm
+
+        with patch(
+            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            return_value=mock_orchestrator,
+        ):
+            daemon._run_training()
+
+        # Promotion gate must NOT have been called
+        mock_pm.evaluate_and_promote.assert_not_called()
+        # Curriculum must NOT have advanced
+        assert daemon._config.current_difficulty == 3
+
+    def test_promotion_uses_latest_successful_cycle(
+        self, tmp_path: Path
+    ) -> None:
+        """If a run has [success, crash], promotion runs against the success."""
+        settings = _make_settings(tmp_path)
+        cfg = DaemonConfig(current_difficulty=2)
+        daemon = TrainingDaemon(settings, cfg)
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.run.return_value = {
+            "cycles_completed": 2,
+            "final_difficulty": 2,
+            "cycle_results": [
+                {
+                    "cycle": 1,
+                    "checkpoint": "v7",
+                    "difficulty": 2,
+                    "win_rate": 0.5,
+                },
+                {
+                    "cycle": 2,
+                    "difficulty": 2,
+                    "status": "crashed",
+                    "error": "boom",
+                },
+            ],
+            "total_games": 5,
+            "stopped": False,
+            "stop_reason": "",
+        }
+
+        from alpha4gate.learning.evaluator import EvalResult
+
+        mock_decision = MagicMock()
+        mock_decision.promoted = False
+        mock_decision.reason = "not better"
+        mock_decision.new_eval = EvalResult(
+            checkpoint="v7",
+            games_played=20,
+            wins=10,
+            losses=10,
+            win_rate=0.5,
+            avg_reward=0.0,
+            avg_duration=300.0,
+            difficulty=2,
+            action_distribution=None,
+        )
+        mock_pm = MagicMock()
+        mock_pm.evaluate_and_promote.return_value = mock_decision
+        daemon._promotion_manager = mock_pm
+
+        with patch(
+            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            return_value=mock_orchestrator,
+        ):
+            daemon._run_training()
+
+        # Promotion gate called against the SUCCESSFUL checkpoint, not the
+        # crashed one (which has no checkpoint key at all)
+        mock_pm.evaluate_and_promote.assert_called_once_with("v7", 2)

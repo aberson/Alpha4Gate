@@ -234,3 +234,104 @@ class TestCrashRecovery:
         )
         orch.run(n_cycles=1, games_per_cycle=1, resume=True)
         mock_init.assert_called_once_with(True)
+
+
+class TestCrashedCycleHandling:
+    """Crashed cycles must NOT advance the curriculum or save phantom checkpoints.
+
+    Regression guard for Phase 4.5 Step 2 finding F2: previously a crash in
+    `model.set_env`/`model.learn` was caught and silently ignored, then the
+    success-path code below the try block ran anyway — reading stale win
+    rates, advancing the curriculum, and saving a checkpoint of an unchanged
+    model. The trainer reported the cycle as successful.
+    """
+
+    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._make_env")
+    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._init_or_resume_model")
+    def test_crashed_cycle_records_status_and_skips_post_training(
+        self, mock_init: MagicMock, mock_env: MagicMock, tmp_path: Path
+    ) -> None:
+        model = _mock_model()
+        # Simulate the real failure: SB3's check_for_correct_spaces raising
+        # when set_env is called with a mismatched observation space.
+        model.set_env.side_effect = ValueError(
+            "Observation spaces do not match: Box((15,)) != Box((17,))"
+        )
+        mock_init.return_value = model
+        mock_env.return_value = MagicMock()
+        db = TrainingDB(tmp_path / "train.db")
+        db.close()
+
+        orch = TrainingOrchestrator(
+            checkpoint_dir=str(tmp_path / "cp"),
+            db_path=str(tmp_path / "train.db"),
+            initial_difficulty=3,
+        )
+        result = orch.run(n_cycles=2, games_per_cycle=4)
+
+        # Result must report 2 cycles, both crashed
+        assert result["cycles_completed"] == 2
+        cycle_results = result["cycle_results"]
+        assert len(cycle_results) == 2
+        for cr in cycle_results:
+            assert cr["status"] == "crashed"
+            assert "Observation spaces do not match" in cr["error"]
+            assert "checkpoint" not in cr  # no phantom checkpoint key
+
+        # Curriculum must NOT have advanced
+        assert orch.difficulty == 3, "crashed cycles must not advance curriculum"
+
+        # No real games were played
+        assert orch.total_games == 0, "crashed cycles must not credit games"
+
+        # No checkpoints written to disk
+        from alpha4gate.learning.checkpoints import list_checkpoints
+
+        cps = list_checkpoints(tmp_path / "cp")
+        assert cps == [], "crashed cycles must not save phantom checkpoints"
+
+        # model.learn was attempted but never reached past set_env
+        assert model.set_env.call_count == 2
+        assert model.learn.call_count == 0
+
+    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._make_env")
+    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._init_or_resume_model")
+    def test_mixed_success_and_crash_cycles(
+        self, mock_init: MagicMock, mock_env: MagicMock, tmp_path: Path
+    ) -> None:
+        """One successful cycle followed by one crashed cycle leaves only
+        the successful cycle's checkpoint and curriculum state intact.
+        """
+        model = _mock_model()
+        # First call succeeds, second raises
+        model.set_env.side_effect = [None, ValueError("space mismatch")]
+        mock_init.return_value = model
+        mock_env.return_value = MagicMock()
+        db = TrainingDB(tmp_path / "train.db")
+        db.close()
+
+        orch = TrainingOrchestrator(
+            checkpoint_dir=str(tmp_path / "cp"),
+            db_path=str(tmp_path / "train.db"),
+            initial_difficulty=2,
+        )
+        result = orch.run(n_cycles=2, games_per_cycle=3)
+
+        cycle_results = result["cycle_results"]
+        assert len(cycle_results) == 2
+        # First cycle is the success path (has a checkpoint)
+        assert cycle_results[0].get("status") != "crashed"
+        assert cycle_results[0]["checkpoint"] == "v1"
+        # Second cycle is crashed
+        assert cycle_results[1]["status"] == "crashed"
+        assert "checkpoint" not in cycle_results[1]
+
+        # Only one checkpoint written (from cycle 1)
+        from alpha4gate.learning.checkpoints import list_checkpoints
+
+        cps = list_checkpoints(tmp_path / "cp")
+        assert len(cps) == 1
+        assert cps[0]["name"] == "v1"
+
+        # total_games = 3 (one successful cycle) not 4 (no +1 for the crash)
+        assert orch.total_games == 3

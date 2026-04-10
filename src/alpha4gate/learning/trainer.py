@@ -154,6 +154,8 @@ class TrainingOrchestrator:
             # SB3 PPO is on-policy: model.learn() internally calls env.reset()
             # and env.step() to collect rollouts, then runs PPO updates.
             env = self._make_env(db)
+            cycle_failed = False
+            cycle_error: str | None = None
             try:
                 model.set_env(env)
                 # Estimate total timesteps: games_per_cycle games, each ~15
@@ -165,11 +167,31 @@ class TrainingOrchestrator:
                 )
                 model.learn(total_timesteps=est_steps, reset_num_timesteps=False)
                 self._total_games += games_per_cycle
-            except Exception:
+            except Exception as exc:
                 _log.exception("Training cycle %d crashed", self._cycle)
-                self._total_games += 1  # at least one game attempted
+                cycle_failed = True
+                cycle_error = f"{type(exc).__name__}: {exc}"
             finally:
                 env.close()
+
+            # If the cycle crashed, skip the entire post-training block:
+            # no win-rate read (would use stale DB data), no curriculum
+            # advancement, no phantom checkpoint save, no fake "complete"
+            # cycle_result. Record the failure honestly so the daemon and
+            # promotion gate know to bail out.
+            if cycle_failed:
+                cycle_result = {
+                    "cycle": self._cycle,
+                    "difficulty": self._difficulty,
+                    "status": "crashed",
+                    "error": cycle_error,
+                }
+                results.append(cycle_result)
+                _log.warning(
+                    "Cycle %d skipped post-training block (crashed: %s)",
+                    self._cycle, cycle_error,
+                )
+                continue
 
             # Check win rate for curriculum
             recent_win_rate = db.get_recent_win_rate(games_per_cycle * 2)
