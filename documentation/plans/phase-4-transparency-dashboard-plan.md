@@ -631,6 +631,7 @@ pass.
 - **Depends on:** Step 4
 
 ### Step 6: TriggerControls component (Phase 4 plan Step 5)
+- **Status:** DONE (2026-04-10)
 - **Problem:** Build the training trigger UI with full daemon control. Renders
   inside the Loop tab below `LoopStatus`.
   (1) Create `frontend/src/components/TriggerControls.tsx` with five panels:

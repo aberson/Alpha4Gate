@@ -10,6 +10,7 @@ import { RewardRuleEditor } from "./components/RewardRuleEditor";
 import { ModelComparison } from "./components/ModelComparison";
 import { ImprovementTimeline } from "./components/ImprovementTimeline";
 import { LoopStatus } from "./components/LoopStatus";
+import { TriggerControls } from "./components/TriggerControls";
 import "./App.css";
 
 type Tab =
@@ -76,7 +77,12 @@ function App() {
             <RewardRuleEditor />
           </>
         )}
-        {tab === "loop" && <LoopStatus />}
+        {tab === "loop" && (
+          <>
+            <LoopStatus />
+            <TriggerControls />
+          </>
+        )}
       </main>
     </div>
   );
