@@ -528,7 +528,7 @@ refactoring you want a known-good baseline to compare against.
   in `documentation/soak-test.md` from Step 1.
 - **Issue:** #62
 - **Flags:** --reviewers runtime
-- **Status:** DONE (2026-04-10) — wiring verified; smoke test surfaced 3 BLOCKERS that must be triaged before Step 3 can run. See `documentation/soak-test-runs/smoke-2026-04-10.md`.
+- **Status:** DONE (2026-04-10) — wiring verified end-to-end. Smoke tests surfaced 9 findings (F1-F9) ALL fixed across commits 6d0b4c9 (F2 fallthrough), afaeda5 (F1+F6 spaces, F5 docs), c120e7b (F7+F8+F9 single-source-of-truth audit). Smoke 4 ran a full training cycle in 61s and started a real promotion eval. 695 pytest passing. Pre-Step-3 cleanup: `rm data/daemon_config.json` to restore 5×10 defaults. See `documentation/soak-test-runs/smoke-2026-04-10d.md` for the final run log + closing summary.
 - **Produces:** observation notes in `documentation/soak-test.md`. No code changes
   expected — but if the CLI is missing or broken, this step pivots to fixing it
   (and that fix becomes its own commit).
