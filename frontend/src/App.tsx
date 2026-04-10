@@ -13,6 +13,9 @@ import { LoopStatus } from "./components/LoopStatus";
 import { TriggerControls } from "./components/TriggerControls";
 import { RecentImprovements } from "./components/RecentImprovements";
 import { RewardTrends } from "./components/RewardTrends";
+import { AlertsPanel } from "./components/AlertsPanel";
+import { AlertToast } from "./components/AlertToast";
+import { useAlerts } from "./hooks/useAlerts";
 import "./App.css";
 
 type Tab =
@@ -23,13 +26,25 @@ type Tab =
   | "decisions"
   | "training"
   | "loop"
-  | "improvements";
+  | "improvements"
+  | "alerts";
 
 function App() {
   const [tab, setTab] = useState<Tab>("live");
+  const {
+    alerts,
+    ackedIds,
+    unreadCount,
+    newAlertsThisPoll,
+    ackAlert,
+    dismissAlert,
+    markAllRead,
+    clearHistory,
+  } = useAlerts();
 
   return (
     <div className="app">
+      <AlertToast newAlerts={newAlertsThisPoll} onView={() => setTab("alerts")} />
       <header>
         <h1>Alpha4Gate Dashboard</h1>
         <nav>
@@ -69,6 +84,17 @@ function App() {
           >
             Improvements
           </button>
+          <button
+            onClick={() => setTab("alerts")}
+            className={tab === "alerts" ? "active" : ""}
+          >
+            Alerts
+            {unreadCount > 0 ? (
+              <span className="unread-badge" aria-label={`${unreadCount} unread alerts`}>
+                {unreadCount}
+              </span>
+            ) : null}
+          </button>
         </nav>
       </header>
       <main>
@@ -97,6 +123,16 @@ function App() {
             <RecentImprovements />
             <RewardTrends />
           </>
+        )}
+        {tab === "alerts" && (
+          <AlertsPanel
+            alerts={alerts}
+            ackedIds={ackedIds}
+            onAck={ackAlert}
+            onDismiss={dismissAlert}
+            onMarkAllRead={markAllRead}
+            onClearHistory={clearHistory}
+          />
         )}
       </main>
     </div>

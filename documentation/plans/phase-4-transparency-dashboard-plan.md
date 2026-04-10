@@ -728,6 +728,7 @@ pass.
 - **Depends on:** Step 2, Step 4, Step 7
 
 ### Step 9: Alerts — rules, panel, toast, badge, localStorage (Phase 4 plan Step 4)
+- **Status:** DONE (2026-04-10)
 - **Problem:** Build the full in-app alert system end-to-end. Kept as a single
   step because alert rules, storage, hook, panel, and toast share types and
   state — splitting forces them to be designed twice.
