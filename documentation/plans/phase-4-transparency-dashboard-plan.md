@@ -616,7 +616,7 @@ pass.
   (5) Manual verification: start the daemon via `POST /api/training/start`,
   visit the Loop tab, confirm state updates within 2 seconds.
 - **Issue:** #54
-- **Flags:** --reviewers runtime --ui
+- **Flags:** --reviewers runtime --ui --start-cmd "bash scripts/start-dev.sh" --url http://localhost:3000 --ready-url http://localhost:8765/api/status
 - **Produces:** `frontend/src/hooks/useDaemonStatus.ts`,
   `frontend/src/components/LoopStatus.tsx`,
   `frontend/src/components/LoopStatus.test.tsx`, updated
@@ -659,7 +659,7 @@ pass.
   save, refresh, confirm value persisted. Trigger a manual rollback in a test
   environment, confirm dialog appears.
 - **Issue:** #55
-- **Flags:** --reviewers runtime --ui
+- **Flags:** --reviewers runtime --ui --start-cmd "bash scripts/start-dev.sh" --url http://localhost:3000 --ready-url http://localhost:8765/api/status
 - **Produces:** `frontend/src/components/TriggerControls.tsx` (~250 lines),
   `frontend/src/components/TriggerControls.test.tsx`, updated Loop tab in
   `App.tsx`.
@@ -684,7 +684,7 @@ pass.
   (3) Add unit test `RecentImprovements.test.tsx` covering: loading state,
   empty state, populated state, filter toggle, delta calculation correctness.
 - **Issue:** #56
-- **Flags:** --reviewers runtime --ui
+- **Flags:** --reviewers runtime --ui --start-cmd "bash scripts/start-dev.sh" --url http://localhost:3000 --ready-url http://localhost:8765/api/status
 - **Produces:** `frontend/src/components/RecentImprovements.tsx` (~150 lines),
   test file, updated `App.tsx`.
 - **Done when:** `npm run test:run` passes; `npx tsc --noEmit` clean;
@@ -711,7 +711,7 @@ pass.
   populated, sort toggle, window selector. Mock the `/api/training/reward-trends`
   endpoint.
 - **Issue:** #57
-- **Flags:** --reviewers runtime --ui
+- **Flags:** --reviewers runtime --ui --start-cmd "bash scripts/start-dev.sh" --url http://localhost:3000 --ready-url http://localhost:8765/api/status
 - **Produces:** `frontend/src/components/RewardTrends.tsx` (~180 lines), test
   file, updated Improvements tab.
 - **Done when:** `npm run test:run` passes; `npx tsc --noEmit` clean;
@@ -776,7 +776,7 @@ pass.
     - `AlertToast.test.tsx` — appears on new alert, auto-dismisses after
       timeout (use `vi.useFakeTimers`).
 - **Issue:** #58
-- **Flags:** --reviewers runtime --ui
+- **Flags:** --reviewers runtime --ui --start-cmd "bash scripts/start-dev.sh" --url http://localhost:3000 --ready-url http://localhost:8765/api/status
 - **Produces:** `frontend/src/lib/alertRules.ts` (~150 lines),
   `frontend/src/lib/alertStorage.ts` (~50 lines),
   `frontend/src/hooks/useAlerts.ts` (~80 lines),
@@ -895,8 +895,8 @@ After Step 10:
 5. `uv run ruff check .` — clean
 6. `cd frontend && npm run test:run && npx tsc --noEmit && npm run build` —
    clean
-7. Start backend: `uv run python -m alpha4gate.runner --serve`
-8. Start frontend: `cd frontend && npm start`
+7. Start backend: `uv run python -m alpha4gate.runner --serve` (or use `bash scripts/start-dev.sh` to start both in one terminal)
+8. Start frontend: `cd frontend && npm run dev`
 9. Visit `http://localhost:3000`, verify all 9 tabs render
 10. Start the daemon via the Loop tab, watch state update within 2 seconds
 11. Edit a daemon config field, save, refresh, confirm value persisted

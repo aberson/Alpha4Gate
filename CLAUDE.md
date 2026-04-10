@@ -21,7 +21,8 @@ uv run pytest                              # 535 unit tests
 uv run pytest -m sc2                       # SC2 integration tests (SC2 must be running)
 uv run ruff check .                        # Lint
 uv run mypy src                            # Type check
-cd frontend && npm start                   # Frontend dev server (:3000 -> :8765)
+cd frontend && npm run dev                 # Frontend dev server (:3000 -> :8765)
+bash scripts/start-dev.sh                  # Start backend + frontend together (used by build-step --ui)
 ```
 
 ## Directory layout
