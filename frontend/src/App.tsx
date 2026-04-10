@@ -11,6 +11,7 @@ import { ModelComparison } from "./components/ModelComparison";
 import { ImprovementTimeline } from "./components/ImprovementTimeline";
 import { LoopStatus } from "./components/LoopStatus";
 import { TriggerControls } from "./components/TriggerControls";
+import { RecentImprovements } from "./components/RecentImprovements";
 import "./App.css";
 
 type Tab =
@@ -20,7 +21,8 @@ type Tab =
   | "replays"
   | "decisions"
   | "training"
-  | "loop";
+  | "loop"
+  | "improvements";
 
 function App() {
   const [tab, setTab] = useState<Tab>("live");
@@ -60,6 +62,12 @@ function App() {
           >
             Loop
           </button>
+          <button
+            onClick={() => setTab("improvements")}
+            className={tab === "improvements" ? "active" : ""}
+          >
+            Improvements
+          </button>
         </nav>
       </header>
       <main>
@@ -83,6 +91,7 @@ function App() {
             <TriggerControls />
           </>
         )}
+        {tab === "improvements" && <RecentImprovements />}
       </main>
     </div>
   );

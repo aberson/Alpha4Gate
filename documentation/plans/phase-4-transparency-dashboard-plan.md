@@ -675,6 +675,7 @@ pass.
 - **Depends on:** Step 4, Step 5
 
 ### Step 7: RecentImprovements component (Phase 4 plan Step 2)
+- **Status:** DONE (2026-04-10)
 - **Problem:** Build the "Improvements" tab showing recent promotions and
   rollbacks with context.
   (1) Create `frontend/src/components/RecentImprovements.tsx`. Polls
