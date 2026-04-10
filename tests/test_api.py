@@ -162,6 +162,102 @@ class TestTrainingEndpoints:
         data = resp.json()
         assert data["reward_logs_size_bytes"] == len(payload_a) + len(payload_b)
 
+    def test_reward_trends_empty_no_directory(self, client: TestClient) -> None:
+        resp = client.get("/api/training/reward-trends")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["rules"] == []
+        assert data["n_games"] == 0
+        assert isinstance(data["generated_at"], str)
+
+    def test_reward_trends_populated(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        reward_logs = tmp_path / "data" / "reward_logs"
+        reward_logs.mkdir()
+        game_a_lines = [
+            {
+                "game_time": 1.0,
+                "total_reward": 0.3,
+                "fired_rules": [
+                    {"id": "army_supply_growth", "reward": 0.1},
+                    {"id": "expand_bonus", "reward": 0.2},
+                ],
+                "is_terminal": False,
+                "result": None,
+            },
+            {
+                "game_time": 2.0,
+                "total_reward": 0.4,
+                "fired_rules": [
+                    {"id": "army_supply_growth", "reward": 0.4},
+                ],
+                "is_terminal": True,
+                "result": "win",
+            },
+        ]
+        game_b_lines = [
+            {
+                "game_time": 1.5,
+                "total_reward": 0.25,
+                "fired_rules": [
+                    {"id": "army_supply_growth", "reward": 0.25},
+                ],
+                "is_terminal": True,
+                "result": "loss",
+            },
+        ]
+        (reward_logs / "game_a.jsonl").write_text(
+            "\n".join(json.dumps(r) for r in game_a_lines) + "\n",
+            encoding="utf-8",
+        )
+        (reward_logs / "game_b.jsonl").write_text(
+            "\n".join(json.dumps(r) for r in game_b_lines) + "\n",
+            encoding="utf-8",
+        )
+
+        resp = client.get("/api/training/reward-trends")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["n_games"] == 2
+        rules_by_id = {r["rule_id"]: r for r in data["rules"]}
+        assert set(rules_by_id.keys()) == {"army_supply_growth", "expand_bonus"}
+        assert rules_by_id["army_supply_growth"]["total_contribution"] == pytest.approx(
+            0.1 + 0.4 + 0.25
+        )
+        # army_supply_growth appeared in both games
+        assert len(rules_by_id["army_supply_growth"]["points"]) == 2
+        assert rules_by_id["army_supply_growth"]["contribution_per_game"] == pytest.approx(
+            (0.1 + 0.4 + 0.25) / 2
+        )
+        # expand_bonus only appeared in game_a
+        assert rules_by_id["expand_bonus"]["total_contribution"] == pytest.approx(0.2)
+        assert len(rules_by_id["expand_bonus"]["points"]) == 1
+
+    def test_reward_trends_default_games_param(self, client: TestClient) -> None:
+        resp = client.get("/api/training/reward-trends")
+        assert resp.status_code == 200
+        assert resp.json()["n_games"] == 0
+
+    def test_reward_trends_explicit_games_param(self, client: TestClient) -> None:
+        resp = client.get("/api/training/reward-trends?games=10")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["rules"] == []
+        assert data["n_games"] == 0
+
+    def test_reward_trends_games_below_min(self, client: TestClient) -> None:
+        resp = client.get("/api/training/reward-trends?games=0")
+        assert resp.status_code == 422
+
+    def test_reward_trends_games_above_max(self, client: TestClient) -> None:
+        resp = client.get("/api/training/reward-trends?games=1001")
+        assert resp.status_code == 422
+
+    def test_reward_trends_games_non_numeric(self, client: TestClient) -> None:
+        resp = client.get("/api/training/reward-trends?games=abc")
+        assert resp.status_code == 422
+
     def test_training_history_empty(self, client: TestClient) -> None:
         resp = client.get("/api/training/history")
         assert resp.status_code == 200

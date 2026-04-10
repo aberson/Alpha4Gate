@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 from alpha4gate.commands import (
@@ -383,6 +383,22 @@ def _compute_reward_logs_size(reward_logs_dir: Path) -> int:
         except OSError:
             continue
     return total
+
+
+@app.get("/api/training/reward-trends")
+async def get_training_reward_trends(
+    games: int = Query(default=100, ge=1, le=1000),
+) -> dict[str, Any]:
+    """Aggregate per-rule reward contributions across recent games.
+
+    The ``games`` query parameter caps how many of the most recent reward
+    log files are scanned (default 100, min 1, max 1000). Missing reward_logs
+    directories yield an empty-but-valid response.
+    """
+    from alpha4gate.learning.reward_aggregator import aggregate_reward_trends
+
+    reward_logs_dir = _data_dir / "reward_logs"
+    return aggregate_reward_trends(reward_logs_dir, games)
 
 
 @app.get("/api/training/history")

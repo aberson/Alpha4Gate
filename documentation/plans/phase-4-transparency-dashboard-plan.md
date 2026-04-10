@@ -519,6 +519,7 @@ pass.
 - **Depends on:** none
 
 ### Step 2: Reward trends API endpoint
+- **Status:** DONE (2026-04-09)
 - **Problem:** Add `GET /api/training/reward-trends?games=100` endpoint to
   `src/alpha4gate/api.py`. The endpoint:
   (1) Accepts an optional `games` query parameter (int, default 100, min 1,
