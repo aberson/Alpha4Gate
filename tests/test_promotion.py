@@ -35,7 +35,10 @@ def _mock_model() -> MagicMock:
 
 
 def _make_eval_result(
-    checkpoint: str, win_rate: float, games: int = 20
+    checkpoint: str,
+    win_rate: float,
+    games: int = 20,
+    crashed: int = 0,
 ) -> EvalResult:
     wins = int(games * win_rate)
     return EvalResult(
@@ -43,6 +46,7 @@ def _make_eval_result(
         games_played=games,
         wins=wins,
         losses=games - wins,
+        crashed=crashed,
         win_rate=win_rate,
         avg_reward=1.0,
         avg_duration=300.0,
@@ -123,9 +127,7 @@ class TestPromotionManagerPromotes:
         evaluator._checkpoint_dir = tmp_path
 
         # v2 has 0.7 win rate, v1 has 0.5 -- delta of 0.2 > 0.05 threshold
-        def eval_side_effect(
-            checkpoint: str, n_games: int, difficulty: int
-        ) -> EvalResult:
+        def eval_side_effect(checkpoint: str, n_games: int, difficulty: int) -> EvalResult:
             if checkpoint == "v2":
                 return _make_eval_result("v2", 0.7, n_games)
             return _make_eval_result("v1", 0.5, n_games)
@@ -167,9 +169,7 @@ class TestPromotionManagerPromotes:
         evaluator = MagicMock()
         evaluator._checkpoint_dir = tmp_path
 
-        def eval_side_effect(
-            checkpoint: str, n_games: int, difficulty: int
-        ) -> EvalResult:
+        def eval_side_effect(checkpoint: str, n_games: int, difficulty: int) -> EvalResult:
             if checkpoint == "v2":
                 return _make_eval_result("v2", 0.3, n_games)
             return _make_eval_result("v1", 0.7, n_games)
@@ -192,9 +192,7 @@ class TestPromotionManagerPromotes:
         evaluator._checkpoint_dir = tmp_path
 
         # Use only 2 games each (total 4 < min_eval_games=10)
-        def eval_side_effect(
-            checkpoint: str, n_games: int, difficulty: int
-        ) -> EvalResult:
+        def eval_side_effect(checkpoint: str, n_games: int, difficulty: int) -> EvalResult:
             if checkpoint == "v2":
                 return _make_eval_result("v2", 1.0, games=2)
             return _make_eval_result("v1", 0.0, games=2)
@@ -206,6 +204,102 @@ class TestPromotionManagerPromotes:
 
         assert decision.promoted is False
         assert "insufficient eval games" in decision.reason
+
+
+class TestPromotionGateCrashRefusal:
+    """Phase 4.5 blocker #67: refuse to promote if either eval had crashes.
+
+    The win_rate on a partially-crashed eval run cannot be trusted -- the
+    old behavior silently counted crashes as losses. The promotion gate
+    now requires both the new and old eval results to have
+    ``crashed <= max_crashed`` (default 0) before even looking at the
+    win_rate delta.
+    """
+
+    def test_refuses_when_new_eval_has_crashes(self, tmp_path: Path) -> None:
+        model = _mock_model()
+        save_checkpoint(model, tmp_path, "v1", is_best=True)
+        save_checkpoint(model, tmp_path, "v2")
+
+        evaluator = MagicMock()
+        evaluator._checkpoint_dir = tmp_path
+
+        def eval_side_effect(checkpoint: str, n_games: int, difficulty: int) -> EvalResult:
+            if checkpoint == "v2":
+                return _make_eval_result("v2", 0.9, crashed=2)
+            return _make_eval_result("v1", 0.5, crashed=0)
+
+        evaluator.evaluate.side_effect = eval_side_effect
+
+        pm = PromotionManager(evaluator, PromotionConfig())
+        decision = pm.evaluate_and_promote("v2", difficulty=1)
+
+        assert decision.promoted is False
+        assert "crashed" in decision.reason
+        # The old best MUST still be v1 (the promotion was refused, not
+        # just delayed).
+        assert get_best_name(tmp_path) == "v1"
+
+    def test_refuses_when_old_eval_has_crashes(self, tmp_path: Path) -> None:
+        model = _mock_model()
+        save_checkpoint(model, tmp_path, "v1", is_best=True)
+        save_checkpoint(model, tmp_path, "v2")
+
+        evaluator = MagicMock()
+        evaluator._checkpoint_dir = tmp_path
+
+        def eval_side_effect(checkpoint: str, n_games: int, difficulty: int) -> EvalResult:
+            if checkpoint == "v2":
+                return _make_eval_result("v2", 0.9, crashed=0)
+            return _make_eval_result("v1", 0.5, crashed=3)
+
+        evaluator.evaluate.side_effect = eval_side_effect
+
+        pm = PromotionManager(evaluator, PromotionConfig())
+        decision = pm.evaluate_and_promote("v2", difficulty=1)
+
+        assert decision.promoted is False
+        assert "crashed" in decision.reason
+        assert get_best_name(tmp_path) == "v1"
+
+    def test_refuses_first_checkpoint_with_crashes(self, tmp_path: Path) -> None:
+        """Even the 'no previous best' fast path must refuse on crashes."""
+        model = _mock_model()
+        save_checkpoint(model, tmp_path, "v1", is_best=False)
+
+        evaluator = MagicMock()
+        evaluator._checkpoint_dir = tmp_path
+        evaluator.evaluate.return_value = _make_eval_result("v1", 0.6, crashed=1)
+
+        pm = PromotionManager(evaluator, PromotionConfig())
+        decision = pm.evaluate_and_promote("v1", difficulty=1)
+
+        assert decision.promoted is False
+        assert "crashed" in decision.reason
+        # Nothing was promoted.
+        assert get_best_name(tmp_path) is None
+
+    def test_promotes_when_crashes_within_tolerance(self, tmp_path: Path) -> None:
+        """A non-zero ``max_crashed`` lets small crash counts through."""
+        model = _mock_model()
+        save_checkpoint(model, tmp_path, "v1", is_best=True)
+        save_checkpoint(model, tmp_path, "v2")
+
+        evaluator = MagicMock()
+        evaluator._checkpoint_dir = tmp_path
+
+        def eval_side_effect(checkpoint: str, n_games: int, difficulty: int) -> EvalResult:
+            if checkpoint == "v2":
+                return _make_eval_result("v2", 0.9, crashed=1)
+            return _make_eval_result("v1", 0.5, crashed=0)
+
+        evaluator.evaluate.side_effect = eval_side_effect
+
+        pm = PromotionManager(evaluator, PromotionConfig(max_crashed=2))
+        decision = pm.evaluate_and_promote("v2", difficulty=1)
+
+        assert decision.promoted is True
+        assert get_best_name(tmp_path) == "v2"
 
 
 class TestPromotionManagerManual:
@@ -403,21 +497,18 @@ class TestActionDistributionShift:
         evaluator = MagicMock()
         evaluator._checkpoint_dir = tmp_path
 
-        def eval_side_effect(
-            checkpoint: str, n_games: int, difficulty: int
-        ) -> EvalResult:
+        def eval_side_effect(checkpoint: str, n_games: int, difficulty: int) -> EvalResult:
             dist = [0.6, 0.4] if checkpoint == "v2" else [0.3, 0.7]
             return EvalResult(
                 checkpoint=checkpoint,
                 games_played=n_games,
-                wins=(
-                    int(n_games * 0.7) if checkpoint == "v2" else int(n_games * 0.5)
-                ),
+                wins=(int(n_games * 0.7) if checkpoint == "v2" else int(n_games * 0.5)),
                 losses=(
                     n_games - int(n_games * 0.7)
                     if checkpoint == "v2"
                     else n_games - int(n_games * 0.5)
                 ),
+                crashed=0,
                 win_rate=0.7 if checkpoint == "v2" else 0.5,
                 avg_reward=1.0,
                 avg_duration=300.0,
@@ -488,15 +579,20 @@ class TestPromotionLogger:
         wiki.write_text("| Date |\n|------|\n", encoding="utf-8")
 
         d1 = PromotionDecision(
-            new_checkpoint="v1", old_best="none",
+            new_checkpoint="v1",
+            old_best="none",
             new_eval=_make_eval_result("v1", 0.6),
-            old_eval=None, promoted=True, reason="first",
+            old_eval=None,
+            promoted=True,
+            reason="first",
         )
         d2 = PromotionDecision(
-            new_checkpoint="v2", old_best="v1",
+            new_checkpoint="v2",
+            old_best="v1",
             new_eval=_make_eval_result("v2", 0.8),
             old_eval=_make_eval_result("v1", 0.6),
-            promoted=True, reason="better",
+            promoted=True,
+            reason="better",
         )
 
         logger.log_decision(d1)
@@ -523,10 +619,13 @@ class TestPromotionLogger:
         )
 
         decision = PromotionDecision(
-            new_checkpoint="v3", old_best="v2",
+            new_checkpoint="v3",
+            old_best="v2",
             new_eval=_make_eval_result("v3", 0.8),
             old_eval=_make_eval_result("v2", 0.6),
-            promoted=True, reason="improved", difficulty=2,
+            promoted=True,
+            reason="improved",
+            difficulty=2,
         )
         logger.log_decision(decision)
 
@@ -555,9 +654,12 @@ class TestPromotionLogger:
 
         for name in ["v1", "v2", "v3"]:
             d = PromotionDecision(
-                new_checkpoint=name, old_best="prev",
+                new_checkpoint=name,
+                old_best="prev",
                 new_eval=_make_eval_result(name, 0.7),
-                old_eval=None, promoted=True, reason="test",
+                old_eval=None,
+                promoted=True,
+                reason="test",
             )
             logger.log_decision(d)
 
@@ -575,11 +677,14 @@ class TestPromotionLogger:
         wiki.write_text("# Promotions\n", encoding="utf-8")
 
         decision = PromotionDecision(
-            new_checkpoint="v5", old_best="v4",
+            new_checkpoint="v5",
+            old_best="v4",
             new_eval=_make_eval_result("v5", 0.75),
             old_eval=_make_eval_result("v4", 0.65),
-            promoted=True, reason="delta sufficient",
-            difficulty=3, action_distribution_shift=0.15,
+            promoted=True,
+            reason="delta sufficient",
+            difficulty=3,
+            action_distribution_shift=0.15,
         )
         logger.log_decision(decision)
 

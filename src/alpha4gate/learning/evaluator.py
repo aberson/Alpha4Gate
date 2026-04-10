@@ -15,12 +15,21 @@ _log = logging.getLogger(__name__)
 
 @dataclass
 class EvalResult:
-    """Result of evaluating a checkpoint over N games."""
+    """Result of evaluating a checkpoint over N games.
+
+    ``games_played`` counts ONLY valid games that produced a real outcome
+    (wins + losses). Games whose inference loop raised or that completed
+    without a result row in the DB are tracked separately in ``crashed``
+    and are EXCLUDED from ``games_played``, ``win_rate``, ``avg_reward``,
+    and ``avg_duration``. See Phase 4.5 blocker #67: crashed games used to
+    be silently counted as losses, which corrupted promotion decisions.
+    """
 
     checkpoint: str
     games_played: int
     wins: int
     losses: int
+    crashed: int
     win_rate: float
     avg_reward: float
     avg_duration: float
@@ -88,18 +97,35 @@ class ModelEvaluator:
         total_duration = 0.0
         wins = 0
         losses = 0
+        crashed = 0
         all_action_probs: list[list[float]] = []
 
         for game_idx in range(n_games):
             game_id = f"eval_{checkpoint_name}_{uuid.uuid4().hex[:8]}"
             _log.info(
                 "Eval game %d/%d (checkpoint=%s, difficulty=%d)",
-                game_idx + 1, n_games, checkpoint_name, difficulty,
+                game_idx + 1,
+                n_games,
+                checkpoint_name,
+                difficulty,
             )
 
             result = self._run_single_game(
-                model, game_id, checkpoint_name, difficulty, all_action_probs,
+                model,
+                game_id,
+                checkpoint_name,
+                difficulty,
+                all_action_probs,
             )
+            if result["outcome"] == "crashed":
+                # Do NOT count crashed games' reward or duration in the
+                # averages -- the partial reward from a crashed game is not
+                # comparable to a full game's reward, and including it
+                # skews the average. Crashes are surfaced via the separate
+                # ``crashed`` counter and the promotion gate refuses to
+                # promote when ``crashed > 0``.
+                crashed += 1
+                continue
             total_reward += result["reward"]
             total_duration += result["duration"]
             if result["outcome"] == "win":
@@ -112,6 +138,19 @@ class ModelEvaluator:
         avg_duration = total_duration / games_played if games_played > 0 else 0.0
         win_rate = wins / games_played if games_played > 0 else 0.0
 
+        if crashed > 0:
+            _log.warning(
+                "Eval of %s on difficulty %d completed with %d/%d crashed "
+                "games (%d valid). win_rate %.3f computed over valid games "
+                "only.",
+                checkpoint_name,
+                difficulty,
+                crashed,
+                n_games,
+                games_played,
+                win_rate,
+            )
+
         # Compute average action distribution across all games
         action_dist = self._average_action_probs(all_action_probs)
 
@@ -120,6 +159,7 @@ class ModelEvaluator:
             games_played=games_played,
             wins=wins,
             losses=losses,
+            crashed=crashed,
             win_rate=win_rate,
             avg_reward=avg_reward,
             avg_duration=avg_duration,
@@ -251,12 +291,23 @@ class ModelEvaluator:
         """Run a single inference-only game and return outcome + stats.
 
         Returns:
-            Dict with keys: outcome ("win"/"loss"), reward, duration.
+            Dict with keys: outcome ("win" | "loss" | "crashed"), reward,
+            duration. The "crashed" outcome means the inference loop raised
+            OR the game completed but no result row was recorded -- either
+            way, the game's outcome is unknown and must NOT be silently
+            counted as a loss by the caller. See Phase 4.5 blocker #67.
         """
         env = self._create_env(game_id, checkpoint_name, difficulty)
 
         total_reward = 0.0
         duration = 0.0
+        crashed = False
+        # Collect into a LOCAL list. We only merge into the shared
+        # ``all_action_probs`` after we know the game completed cleanly
+        # AND a result row was recorded -- otherwise we would poison the
+        # eval's action_distribution with partial data from crashed
+        # games. See Phase 4.5 blocker #67.
+        local_action_probs: list[list[float]] = []
         try:
             obs, _info = env.reset()
             done = False
@@ -269,30 +320,55 @@ class ModelEvaluator:
                 # Collect action probabilities if available
                 action_probs = info.get("action_probs")
                 if action_probs is not None:
-                    all_action_probs.append(action_probs)
+                    local_action_probs.append(action_probs)
 
             duration = info.get("game_time", 0.0)
         except Exception:
             _log.exception("Eval game %s crashed", game_id)
+            crashed = True
         finally:
             env.close()
 
-        outcome = self._get_game_result(game_id)
+        if crashed:
+            return {
+                "outcome": "crashed",
+                "reward": total_reward,
+                "duration": duration,
+            }
 
+        outcome = self._get_game_result(game_id)
+        if outcome is None:
+            # The game completed without raising, but no result row landed
+            # in the DB. Treat this as crashed too -- we have no truthful
+            # outcome to report and the silent-loss default is exactly what
+            # #67 forbids.
+            _log.error(
+                "Eval game %s completed but no result row was recorded; treating as crashed",
+                game_id,
+            )
+            return {
+                "outcome": "crashed",
+                "reward": total_reward,
+                "duration": duration,
+            }
+
+        # Game completed cleanly with a recorded result -- safe to merge
+        # the collected action probs into the shared list.
+        all_action_probs.extend(local_action_probs)
         return {
             "outcome": outcome,
             "reward": total_reward,
             "duration": duration,
         }
 
-    def _get_game_result(self, game_id: str) -> str:
-        """Look up a specific game's result from the database."""
-        row = self._db._conn.execute(
-            "SELECT result FROM games WHERE game_id = ?", (game_id,)
-        ).fetchone()
-        if row is not None:
-            return str(row[0])
-        return "loss"  # default if game crashed before recording
+    def _get_game_result(self, game_id: str) -> str | None:
+        """Look up a specific game's result from the database.
+
+        Returns None if the game has no result row (caller must handle).
+        Delegates to ``TrainingDB.get_game_result`` so the underlying
+        SQLite access is properly locked -- see Phase 4.5 blocker #66.
+        """
+        return self._db.get_game_result(game_id)
 
     @staticmethod
     def _average_action_probs(

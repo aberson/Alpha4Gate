@@ -280,6 +280,22 @@ class TrainingDB:
         rewards = np.array([r[FEATURE_DIM + 1] for r in rows], dtype=np.float32)
         return states, actions, rewards
 
+    def get_game_result(self, game_id: str) -> str | None:
+        """Look up a specific game's recorded result.
+
+        Returns the result string ("win", "loss", etc.) if a row exists for
+        this game_id, or None if no row was recorded (e.g., the game crashed
+        before the writer ran). Callers MUST treat None as "unknown" -- do
+        NOT default to "loss" silently. See Phase 4.5 blocker #67.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT result FROM games WHERE game_id = ?", (game_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return str(row[0])
+
     def get_recent_win_rate(self, n_games: int) -> float:
         """Win rate over the most recent n_games. Returns 0.0 if no games."""
         with self._lock:

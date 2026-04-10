@@ -21,6 +21,12 @@ class PromotionConfig:
     eval_games: int = 20
     win_rate_threshold: float = 0.05
     min_eval_games: int = 10
+    # Maximum number of crashed eval games tolerated per EvalResult. Any
+    # crashed games are a strong signal that the evaluator cannot trust
+    # the reported win_rate -- crashed games used to be silently counted
+    # as losses (Phase 4.5 blocker #67). Default 0: refuse to promote if
+    # ANY eval game crashed on either the new or the old checkpoint.
+    max_crashed: int = 0
 
 
 @dataclass
@@ -75,12 +81,29 @@ class PromotionManager:
         checkpoint_dir = self._evaluator._checkpoint_dir
         old_best = get_best_name(checkpoint_dir)
 
-        # If there's no current best, promote unconditionally
+        # If there's no current best, promote unconditionally -- UNLESS
+        # the eval run itself had too many crashes, in which case the
+        # reported win_rate is untrustworthy (Phase 4.5 blocker #67).
         if old_best is None:
             _log.info("No current best checkpoint -- promoting %s", new_checkpoint)
-            new_eval = self._evaluator.evaluate(
-                new_checkpoint, self._config.eval_games, difficulty
-            )
+            new_eval = self._evaluator.evaluate(new_checkpoint, self._config.eval_games, difficulty)
+            if new_eval.crashed > self._config.max_crashed:
+                reason = (
+                    f"too many crashed eval games: new={new_eval.crashed} "
+                    f"(max_crashed={self._config.max_crashed})"
+                )
+                _log.warning("Not promoted (no previous best): %s", reason)
+                decision = PromotionDecision(
+                    new_checkpoint=new_checkpoint,
+                    old_best="none",
+                    new_eval=new_eval,
+                    old_eval=None,
+                    promoted=False,
+                    reason=reason,
+                    difficulty=difficulty,
+                )
+                self._history.append(decision)
+                return decision
             promote_checkpoint(checkpoint_dir, new_checkpoint)
             decision = PromotionDecision(
                 new_checkpoint=new_checkpoint,
@@ -97,14 +120,46 @@ class PromotionManager:
         # Evaluate both checkpoints
         _log.info(
             "Evaluating promotion: %s vs %s (%d games, difficulty %d)",
-            new_checkpoint, old_best, self._config.eval_games, difficulty,
+            new_checkpoint,
+            old_best,
+            self._config.eval_games,
+            difficulty,
         )
-        new_eval = self._evaluator.evaluate(
-            new_checkpoint, self._config.eval_games, difficulty
-        )
-        old_eval = self._evaluator.evaluate(
-            old_best, self._config.eval_games, difficulty
-        )
+        new_eval = self._evaluator.evaluate(new_checkpoint, self._config.eval_games, difficulty)
+        old_eval = self._evaluator.evaluate(old_best, self._config.eval_games, difficulty)
+
+        # Refuse to promote if either eval had too many crashes. Crashed
+        # games used to be silently counted as losses (Phase 4.5 blocker
+        # #67) -- now they are surfaced and a promotion decision built on
+        # a partially-crashed eval run is not trustworthy. Check this
+        # BEFORE the win-rate comparison so a crashed-eval rejection
+        # short-circuits the happy path.
+        if (
+            new_eval.crashed > self._config.max_crashed
+            or old_eval.crashed > self._config.max_crashed
+        ):
+            reason = (
+                f"too many crashed eval games: new={new_eval.crashed}, "
+                f"old={old_eval.crashed} (max_crashed="
+                f"{self._config.max_crashed})"
+            )
+            _log.warning("Not promoted: %s", reason)
+            shift = compute_action_distribution_shift(
+                old_eval.action_distribution,
+                new_eval.action_distribution,
+            )
+            decision = PromotionDecision(
+                new_checkpoint=new_checkpoint,
+                old_best=old_best,
+                new_eval=new_eval,
+                old_eval=old_eval,
+                promoted=False,
+                reason=reason,
+                difficulty=difficulty,
+                action_distribution_shift=shift,
+            )
+            self._history.append(decision)
+            return decision
 
         # Check if new checkpoint is better by threshold
         delta = new_eval.win_rate - old_eval.win_rate
@@ -122,10 +177,7 @@ class PromotionManager:
             _log.info("Promoted %s -> %s: %s", old_best, new_checkpoint, reason)
         elif not enough_games:
             promoted = False
-            reason = (
-                f"insufficient eval games: {total_games} < "
-                f"{self._config.min_eval_games}"
-            )
+            reason = f"insufficient eval games: {total_games} < {self._config.min_eval_games}"
             _log.info("Not promoted: %s", reason)
         else:
             promoted = False
@@ -180,6 +232,7 @@ class PromotionManager:
                 games_played=0,
                 wins=0,
                 losses=0,
+                crashed=0,
                 win_rate=0.0,
                 avg_reward=0.0,
                 avg_duration=0.0,
@@ -244,9 +297,7 @@ class PromotionLogger:
     def _write_history(self, entries: list[dict[str, Any]]) -> None:
         """Write history list to JSON file (pretty-printed)."""
         self._history_path.parent.mkdir(parents=True, exist_ok=True)
-        self._history_path.write_text(
-            json.dumps(entries, indent=2) + "\n", encoding="utf-8"
-        )
+        self._history_path.write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8")
 
     def log_decision(self, decision: PromotionDecision) -> dict[str, Any]:
         """Append a decision to the JSON log and update the wiki page.
@@ -263,9 +314,12 @@ class PromotionLogger:
         # Append row to wiki page
         self._append_wiki_row(decision)
 
-        _log.info("Logged promotion decision: %s -> %s (%s)",
-                  decision.old_best, decision.new_checkpoint,
-                  "promoted" if decision.promoted else "rejected")
+        _log.info(
+            "Logged promotion decision: %s -> %s (%s)",
+            decision.old_best,
+            decision.new_checkpoint,
+            "promoted" if decision.promoted else "rejected",
+        )
         return entry
 
     def get_history(self) -> list[dict[str, Any]]:
@@ -313,11 +367,7 @@ class PromotionLogger:
         except (ValueError, TypeError):
             date_str = decision.timestamp[:16]
 
-        old_wr = (
-            f"{decision.old_eval.win_rate:.0%}"
-            if decision.old_eval
-            else "\u2014"
-        )
+        old_wr = f"{decision.old_eval.win_rate:.0%}" if decision.old_eval else "\u2014"
         new_wr = f"{decision.new_eval.win_rate:.0%}"
         win_rate_str = f"{old_wr}\u2192{new_wr}"
 

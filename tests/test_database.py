@@ -80,6 +80,27 @@ class TestWinRate:
         assert db.get_recent_win_rate(2) == 1.0
 
 
+class TestGetGameResult:
+    """Tests for ``TrainingDB.get_game_result`` (Phase 4.5 blocker #67)."""
+
+    def test_returns_result_for_existing_row(self, db: TrainingDB) -> None:
+        db.store_game("g1", "Simple64", 1, "win", 300.0, 5.0, "v0")
+        assert db.get_game_result("g1") == "win"
+
+    def test_returns_none_for_missing_row(self, db: TrainingDB) -> None:
+        """Blocker #67: missing rows MUST return None, not a default 'loss'.
+
+        Callers treat None as "unknown" and refuse to promote. The old
+        silent-default-to-loss behavior corrupted promotion decisions by
+        materializing crashed games as fake losses.
+        """
+        db.store_game("g1", "Simple64", 1, "win", 300.0, 5.0, "v0")
+        assert db.get_game_result("nonexistent_game") is None
+
+    def test_returns_none_on_empty_table(self, db: TrainingDB) -> None:
+        assert db.get_game_result("any_game") is None
+
+
 class TestActionProbs:
     """Tests for action probability persistence."""
 

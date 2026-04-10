@@ -66,6 +66,7 @@ class TestEvalResult:
             games_played=10,
             wins=7,
             losses=3,
+            crashed=0,
             win_rate=0.7,
             avg_reward=5.5,
             avg_duration=300.0,
@@ -76,6 +77,7 @@ class TestEvalResult:
         assert result.games_played == 10
         assert result.wins == 7
         assert result.losses == 3
+        assert result.crashed == 0
         assert result.win_rate == 0.7
         assert result.avg_reward == 5.5
         assert result.difficulty == 3
@@ -88,6 +90,7 @@ class TestEvalResult:
             games_played=5,
             wins=3,
             losses=2,
+            crashed=0,
             win_rate=0.6,
             avg_reward=2.0,
             avg_duration=200.0,
@@ -101,10 +104,14 @@ class TestEvalResult:
 
 class TestComparisonResult:
     def test_dataclass_fields(self) -> None:
-        a = EvalResult("v1", 10, 6, 4, 0.6, 3.0, 300.0, 1, None)
-        b = EvalResult("v2", 10, 8, 2, 0.8, 5.0, 250.0, 1, None)
+        a = EvalResult("v1", 10, 6, 4, 0, 0.6, 3.0, 300.0, 1, None)
+        b = EvalResult("v2", 10, 8, 2, 0, 0.8, 5.0, 250.0, 1, None)
         comp = ComparisonResult(
-            a=a, b=b, winner="v2", win_rate_delta=-0.2, significant=True,
+            a=a,
+            b=b,
+            winner="v2",
+            win_rate_delta=-0.2,
+            significant=True,
         )
         assert comp.winner == "v2"
         assert comp.win_rate_delta == pytest.approx(-0.2)
@@ -185,7 +192,8 @@ class TestEvaluateWithMockedEnv:
             patch.object(evaluator, "_load_model", return_value=model),
             patch.object(evaluator, "_create_env", return_value=env),
             patch.object(
-                evaluator, "_get_game_result",
+                evaluator,
+                "_get_game_result",
                 side_effect=lambda _gid: next(outcomes),
             ),
         ):
@@ -214,10 +222,16 @@ class TestEvaluateWithMockedEnv:
 
         assert result.action_distribution is None
 
-    def test_evaluate_env_crash_counts_as_loss(
-        self, evaluator: ModelEvaluator,
+    def test_evaluate_env_crash_counts_as_crashed_not_loss(
+        self,
+        evaluator: ModelEvaluator,
     ) -> None:
-        """When env.reset() crashes, the game counts as a loss."""
+        """When env.reset() crashes, the game counts as crashed, NOT loss.
+
+        This is the Phase 4.5 blocker #67 behavior: crashed games must be
+        surfaced as ``crashed`` so the promotion gate can refuse. The old
+        behavior silently converted every crash into a fake loss.
+        """
         model = MagicMock()
 
         env = MagicMock()
@@ -226,12 +240,22 @@ class TestEvaluateWithMockedEnv:
         with (
             patch.object(evaluator, "_load_model", return_value=model),
             patch.object(evaluator, "_create_env", return_value=env),
-            patch.object(evaluator, "_get_game_result", return_value="loss"),
+            # _get_game_result should NOT be consulted at all when the
+            # inference loop raises -- _run_single_game returns "crashed"
+            # directly. We assert that below.
+            patch.object(
+                evaluator,
+                "_get_game_result",
+                side_effect=AssertionError("_get_game_result must not be called after a crash"),
+            ),
         ):
             result = evaluator.evaluate("v1", 1, difficulty=1)
 
-        assert result.losses == 1
+        assert result.losses == 0
         assert result.wins == 0
+        assert result.crashed == 1
+        assert result.games_played == 0
+        assert result.win_rate == 0.0
 
     def test_evaluate_multi_step_game(self, evaluator: ModelEvaluator) -> None:
         """Game that takes multiple steps before done."""
@@ -312,7 +336,8 @@ class TestCompare:
         assert comp.significant is False
 
     def test_compare_not_significant_with_few_games(
-        self, evaluator: ModelEvaluator,
+        self,
+        evaluator: ModelEvaluator,
     ) -> None:
         """Small sample (<10 total games) => not significant even with big delta."""
         model = MagicMock()
@@ -407,7 +432,8 @@ class TestJobManagement:
         """Job failure is recorded."""
         job_id = evaluator.submit_job("missing", 1, 1)
         with patch.object(
-            evaluator, "_load_model",
+            evaluator,
+            "_load_model",
             side_effect=FileNotFoundError("no checkpoint"),
         ):
             evaluator.run_job(job_id)
@@ -425,11 +451,266 @@ class TestGetGameResult:
         result = evaluator._get_game_result("eval_test_1")
         assert result == "win"
 
-    def test_missing_game_defaults_to_loss(
-        self, evaluator: ModelEvaluator,
+    def test_missing_game_returns_none(
+        self,
+        evaluator: ModelEvaluator,
     ) -> None:
+        """Phase 4.5 blocker #67: missing rows now return None, not "loss".
+
+        The old silent-default-to-loss behavior converted crashed games
+        into fake losses and corrupted promotion decisions.
+        """
         result = evaluator._get_game_result("nonexistent_game")
-        assert result == "loss"
+        assert result is None
+
+
+class TestRunSingleGameCrashHandling:
+    """Regression tests for Phase 4.5 blocker #67.
+
+    The old ``_run_single_game`` swallowed inference-loop exceptions,
+    fell through, and then called ``_get_game_result`` which silently
+    defaulted to ``"loss"``. The new behavior returns ``outcome="crashed"``
+    so the caller can distinguish crashes from real losses.
+    """
+
+    def test_marks_crashed_when_inference_raises(
+        self,
+        evaluator: ModelEvaluator,
+    ) -> None:
+        """When ``model.predict`` raises, outcome must be "crashed"."""
+        model = MagicMock()
+        call_count = [0]
+
+        def predict_side_effect(*_args: Any, **_kw: Any) -> tuple[Any, Any]:
+            call_count[0] += 1
+            if call_count[0] >= 2:
+                raise RuntimeError("simulated mid-game failure")
+            return (np.array(0), None)
+
+        model.predict.side_effect = predict_side_effect
+
+        env = MagicMock()
+        obs = np.zeros(FEATURE_DIM, dtype=np.float32)
+        env.reset.return_value = (obs, {})
+        # First step OK, second step never reached because predict raises.
+        env.step.return_value = (obs, 0.5, False, False, {"game_time": 50.0})
+
+        with patch.object(evaluator, "_create_env", return_value=env):
+            result = evaluator._run_single_game(
+                model,
+                game_id="eval_crash_1",
+                checkpoint_name="v1",
+                difficulty=1,
+                all_action_probs=[],
+            )
+
+        assert result["outcome"] == "crashed"
+        # env.close() must still run (the finally block).
+        env.close.assert_called_once()
+
+    def test_marks_crashed_when_no_db_row(
+        self,
+        evaluator: ModelEvaluator,
+        db: TrainingDB,
+    ) -> None:
+        """Inference loop completes normally, but no DB row was written.
+
+        This simulates the case where the SC2 game ended without the
+        reward writer hitting ``store_game`` (e.g., the game thread died
+        between the last step and the result recording). The old code
+        silently returned ``"loss"``; the new code returns ``"crashed"``.
+        """
+        model = MagicMock()
+        model.predict.return_value = (np.array(0), None)
+        env = _mock_env()
+
+        with patch.object(evaluator, "_create_env", return_value=env):
+            result = evaluator._run_single_game(
+                model,
+                game_id="eval_missing_row",
+                checkpoint_name="v1",
+                difficulty=1,
+                all_action_probs=[],
+            )
+
+        assert result["outcome"] == "crashed"
+        env.close.assert_called_once()
+
+    def test_marks_win_when_row_present(
+        self,
+        evaluator: ModelEvaluator,
+        db: TrainingDB,
+    ) -> None:
+        """Sanity check: a normal game with a "win" row still returns "win"."""
+        db.store_game("eval_ok_1", "Simple64", 1, "win", 300.0, 5.0, "v1")
+
+        model = MagicMock()
+        model.predict.return_value = (np.array(0), None)
+        env = _mock_env()
+
+        with patch.object(evaluator, "_create_env", return_value=env):
+            result = evaluator._run_single_game(
+                model,
+                game_id="eval_ok_1",
+                checkpoint_name="v1",
+                difficulty=1,
+                all_action_probs=[],
+            )
+
+        assert result["outcome"] == "win"
+
+    def test_crashed_games_do_not_pollute_action_probs(
+        self,
+        evaluator: ModelEvaluator,
+    ) -> None:
+        """A crashed game must not contribute to the shared action_probs list.
+
+        Reproduces the iteration-1 finding: action_probs collected mid-game
+        were leaking into the eval result even when the game crashed,
+        biasing EvalResult.action_distribution toward early-game states
+        of crashed runs.
+        """
+        model = MagicMock()
+        call_count = [0]
+
+        def predict_side_effect(*_args: Any, **_kw: Any) -> tuple[Any, Any]:
+            call_count[0] += 1
+            if call_count[0] >= 3:
+                raise RuntimeError("simulated mid-game failure")
+            return (np.array(0), None)
+
+        model.predict.side_effect = predict_side_effect
+
+        env = MagicMock()
+        obs = np.zeros(FEATURE_DIM, dtype=np.float32)
+        env.reset.return_value = (obs, {})
+        # First two steps succeed and report action_probs. The third
+        # predict() raises, so those two probs should be discarded.
+        env.step.return_value = (
+            obs,
+            0.5,
+            False,
+            False,
+            {
+                "game_time": 50.0,
+                "action_probs": [0.2, 0.3, 0.1, 0.1, 0.2, 0.1],
+            },
+        )
+
+        all_probs: list[list[float]] = []
+        with patch.object(evaluator, "_create_env", return_value=env):
+            result = evaluator._run_single_game(
+                model,
+                game_id="eval_pollute_crash",
+                checkpoint_name="v1",
+                difficulty=1,
+                all_action_probs=all_probs,
+            )
+
+        assert result["outcome"] == "crashed"
+        # Nothing leaked from the crashed game, even though the env
+        # produced action_probs on the steps that DID run.
+        assert all_probs == []
+        env.close.assert_called_once()
+
+    def test_no_db_row_does_not_pollute_action_probs(
+        self,
+        evaluator: ModelEvaluator,
+    ) -> None:
+        """The completed-but-no-row branch must also discard action_probs.
+
+        The inference loop completes normally, action_probs were
+        collected step-by-step, but ``_get_game_result`` returns None
+        because no row was ever recorded. That path returns "crashed",
+        so the collected probs must NOT leak into the shared list.
+        """
+        model = MagicMock()
+        model.predict.return_value = (np.array(0), None)
+        env = _mock_env({"action_probs": [0.2, 0.3, 0.1, 0.1, 0.2, 0.1]})
+
+        all_probs: list[list[float]] = []
+        with patch.object(evaluator, "_create_env", return_value=env):
+            result = evaluator._run_single_game(
+                model,
+                game_id="eval_pollute_no_row",
+                checkpoint_name="v1",
+                difficulty=1,
+                all_action_probs=all_probs,
+            )
+
+        assert result["outcome"] == "crashed"
+        assert all_probs == []
+        env.close.assert_called_once()
+
+
+class TestEvaluateSeparatesCrashes:
+    """Regression tests for Phase 4.5 blocker #67.
+
+    ``EvalResult.crashed`` tracks crashed games separately from wins and
+    losses. ``win_rate`` is computed over VALID games only, so a partially
+    crashed eval run does not report a fraudulently inflated (or deflated)
+    win rate.
+    """
+
+    def test_evaluate_separates_crashed_from_losses(
+        self,
+        evaluator: ModelEvaluator,
+    ) -> None:
+        """3 wins + 2 crashes => wins=3, losses=0, crashed=2, win_rate=1.0."""
+        outcomes = iter(
+            [
+                {"outcome": "win", "reward": 1.0, "duration": 200.0},
+                {"outcome": "crashed", "reward": 0.0, "duration": 0.0},
+                {"outcome": "win", "reward": 1.0, "duration": 200.0},
+                {"outcome": "crashed", "reward": 0.0, "duration": 0.0},
+                {"outcome": "win", "reward": 1.0, "duration": 200.0},
+            ]
+        )
+
+        model = MagicMock()
+        with (
+            patch.object(evaluator, "_load_model", return_value=model),
+            patch.object(
+                evaluator,
+                "_run_single_game",
+                side_effect=lambda *_a, **_kw: next(outcomes),
+            ),
+        ):
+            result = evaluator.evaluate("v1", 5, difficulty=1)
+
+        assert result.wins == 3
+        assert result.losses == 0
+        assert result.crashed == 2
+        assert result.games_played == 3  # crashes excluded
+        assert result.win_rate == pytest.approx(1.0)  # 3/3, not 3/5
+        # Averages computed over VALID games only.
+        assert result.avg_reward == pytest.approx(1.0)
+        assert result.avg_duration == pytest.approx(200.0)
+
+    def test_evaluate_all_crashed(self, evaluator: ModelEvaluator) -> None:
+        """All games crash => zero valid games, win_rate=0.0 defensively."""
+        model = MagicMock()
+        with (
+            patch.object(evaluator, "_load_model", return_value=model),
+            patch.object(
+                evaluator,
+                "_run_single_game",
+                return_value={
+                    "outcome": "crashed",
+                    "reward": 0.0,
+                    "duration": 0.0,
+                },
+            ),
+        ):
+            result = evaluator.evaluate("v1", 3, difficulty=1)
+
+        assert result.wins == 0
+        assert result.losses == 0
+        assert result.crashed == 3
+        assert result.games_played == 0
+        assert result.win_rate == 0.0
+        assert result.avg_reward == 0.0
+        assert result.avg_duration == 0.0
 
 
 class TestEvalAPIEndpoints:
@@ -461,7 +742,9 @@ class TestEvalAPIEndpoints:
 
     @patch("alpha4gate.api._get_evaluator")
     def test_start_and_poll_evaluation(
-        self, mock_get_eval: MagicMock, client: Any,
+        self,
+        mock_get_eval: MagicMock,
+        client: Any,
     ) -> None:
         """Submit a job and poll for status."""
         mock_evaluator = MagicMock()
@@ -479,17 +762,31 @@ class TestEvalAPIEndpoints:
 
     @patch("alpha4gate.api._get_evaluator")
     def test_poll_completed_job(
-        self, mock_get_eval: MagicMock, client: Any,
+        self,
+        mock_get_eval: MagicMock,
+        client: Any,
     ) -> None:
         """Poll a completed job returns the result."""
         result = EvalResult(
-            checkpoint="v5", games_played=3, wins=2, losses=1,
-            win_rate=0.667, avg_reward=3.0, avg_duration=250.0,
-            difficulty=2, action_distribution=None,
+            checkpoint="v5",
+            games_played=3,
+            wins=2,
+            losses=1,
+            crashed=0,
+            win_rate=0.667,
+            avg_reward=3.0,
+            avg_duration=250.0,
+            difficulty=2,
+            action_distribution=None,
         )
         job = EvalJob(
-            job_id="job456", status="completed", checkpoint="v5",
-            n_games=3, difficulty=2, result=result, games_completed=3,
+            job_id="job456",
+            status="completed",
+            checkpoint="v5",
+            n_games=3,
+            difficulty=2,
+            result=result,
+            games_completed=3,
         )
         mock_evaluator = MagicMock()
         mock_evaluator.get_job.return_value = job
