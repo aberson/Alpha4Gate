@@ -555,6 +555,7 @@ refactoring you want a known-good baseline to compare against.
   (5) Save the final `data/` directory as `data-soak-test-<date>.zip` for postmortem.
 - **Issue:** #63
 - **Flags:** --reviewers runtime
+- **Status:** DONE (2026-04-10) — soak run #1 completed. Section 4.2 six-step success criterion met at 14:32:57 with v5 promoted to best after 5 training cycles + 20-game eval. Run stopped at ~14:44 on the early-stop-on-N=1-promotions condition (Section 2.4). **17 findings catalogued: 3 BLOCKERS (B6 SQLite thread bug at `database.py:127`, B7 silent eval-game crash recovery same as F2 antipattern, B10 30% data-loss rate is guaranteed not occasional), 7 majors (M14 alerts pipeline never fired despite 7 backend exceptions, M11 first-cycle promotion is unconditional so gating logic untested, others), 5 minors, 2 resolved during analysis.** Step 5 will need to pre-seed `manifest.best` so the gate's comparison logic actually executes. Deliverables: `documentation/soak-test-runs/soak-2026-04-10.md` (run log), `~/soak-artifacts/2026-04-10/backend.log` (1.2 MB backend log evidence with all 7 game-thread tracebacks + the promotion line), `scripts/soak_poll.py` (new 60s state poller, surfaced Findings #1/#4/#12 in real time). Commit `21d774c`.
 - **Produces:** `documentation/soak-test-<date>-results.md` with observations,
   screenshot inventory, alert log, and a raw findings list (each finding gets a
   one-line description, severity, and suggested category: dashboard / daemon /
