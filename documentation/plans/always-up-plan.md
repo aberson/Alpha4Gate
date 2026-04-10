@@ -505,6 +505,7 @@ refactoring you want a known-good baseline to compare against.
   state), how to file findings.
 - **Issue:** #61
 - **Flags:** --reviewers code
+- **Status:** DONE (2026-04-10)
 - **Produces:** `documentation/soak-test.md`
 - **Done when:** doc reviewed for self-containment via `/session-check`. A fresh
   context model could run the procedure without asking questions.
