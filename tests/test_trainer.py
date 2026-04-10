@@ -236,6 +236,29 @@ class TestCrashRecovery:
         mock_init.assert_called_once_with(True)
 
 
+class TestModelInitMatchesEnv:
+    """Phase 4.5 F1+F6 regression guard.
+
+    A freshly initialised PPO model must use the same observation and action
+    spaces as ``SC2Env``. Two prior incidents (F1: obs space drift 15→17,
+    F6: action space drift 5→6) shipped because ``_init_or_resume_model``
+    hardcoded space dimensions instead of reading them from the env.
+    """
+
+    def test_fresh_model_uses_sc2env_spaces(self, tmp_path: Path) -> None:
+        from alpha4gate.learning.environment import SC2Env
+
+        orch = TrainingOrchestrator(
+            checkpoint_dir=str(tmp_path / "cp"),
+            db_path=str(tmp_path / "train.db"),
+        )
+        model = orch._init_or_resume_model(resume=False)
+
+        # Spaces must equal the SC2Env class-level spaces, not hardcoded values
+        assert model.observation_space == SC2Env.observation_space
+        assert model.action_space == SC2Env.action_space
+
+
 class TestCrashedCycleHandling:
     """Crashed cycles must NOT advance the curriculum or save phantom checkpoints.
 

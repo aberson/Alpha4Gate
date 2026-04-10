@@ -420,11 +420,30 @@ will shut down; because `TrainingDaemon` is a Python daemon thread, it will be
 killed when the process exits — this is less clean than Option A but is the
 correct fallback if the UI is gone.
 
-After stopping via either option:
+**Option C — Force-kill the backend process tree (last resort).**
+If both Option A and Option B fail (backend hung, dashboard unresponsive, terminal
+unresponsive), find the backend PID with `netstat -ano | grep ":8765" | grep LISTENING`
+and kill the entire process tree. **In Git Bash on Windows, you must wrap `taskkill`
+in `cmd.exe //c "..."` because Git Bash's MSYS path translation will mangle `/T`
+into `T:/` if you call `taskkill` directly:**
+
+```bash
+cmd.exe //c "taskkill /T /F /PID <pid>"
+```
+
+The `//c` is the Git Bash escape for `/c` to cmd.exe. The `/T` flag kills the
+entire process tree (backend python + any SC2 child processes the evaluator
+spawned). The `/F` forces termination. This will also kill any SC2 instances
+the daemon's evaluator launched, but **not** an SC2 instance you launched
+manually for the soak — those are separate process trees.
+
+After stopping via any option:
 
 - Wait until the backend process has fully exited before touching `data/`.
-- Confirm there are no orphan `SC2_x64.exe` processes left behind (Task Manager).
-  Kill any you find.
+- Confirm there are no orphan `SC2_x64.exe` processes left behind (Task Manager
+  or `tasklist | grep SC2_x64`). Kill any you find using the same `cmd.exe //c`
+  wrapper if needed. Your manually-launched SC2 (the one at the main menu) will
+  have a distinct PID — don't kill it unless you mean to.
 - Close the frontend dev server (`Ctrl+C` in its terminal).
 
 ### 5.2 Capture evidence for postmortem

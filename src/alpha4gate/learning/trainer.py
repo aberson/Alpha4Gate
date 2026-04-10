@@ -309,13 +309,19 @@ class TrainingOrchestrator:
         )
 
     def _init_or_resume_model(self, resume: bool) -> Any:
-        """Initialize a new PPO model or load from latest checkpoint."""
+        """Initialize a new PPO model or load from latest checkpoint.
+
+        The dummy env's observation and action spaces are read directly from
+        ``SC2Env`` so the model is guaranteed to match whatever the real env
+        will hand it later. Hardcoding spaces here was the root cause of two
+        Phase 4.5 findings (F1: obs space drift 15→17, F6: action space drift
+        5→6) — the model and env must use a single source of truth.
+        """
         import gymnasium
-        from gymnasium import spaces
         from stable_baselines3 import PPO
 
         from alpha4gate.learning.checkpoints import get_best_name, load_checkpoint
-        from alpha4gate.learning.features import FEATURE_DIM
+        from alpha4gate.learning.environment import SC2Env
         from alpha4gate.learning.hyperparams import load_hyperparams, to_ppo_kwargs
 
         if resume:
@@ -324,14 +330,11 @@ class TrainingOrchestrator:
                 _log.info("Resuming from checkpoint: %s", best)
                 return load_checkpoint(self._checkpoint_dir, best)
 
-        # Create new model
-        import numpy as np
-
-        obs_space = spaces.Box(low=0.0, high=1.0, shape=(FEATURE_DIM,), dtype=np.float32)
-        act_space: spaces.Discrete = spaces.Discrete(5)  # type: ignore[type-arg]
+        # Create new model. Read spaces from SC2Env (the producer) so model
+        # init can never silently drift from what the env actually provides.
         dummy_env = gymnasium.make("CartPole-v1")
-        dummy_env.observation_space = obs_space
-        dummy_env.action_space = act_space
+        dummy_env.observation_space = SC2Env.observation_space
+        dummy_env.action_space = SC2Env.action_space
 
         ppo_kwargs: dict[str, Any] = {"policy_kwargs": {"net_arch": [128, 128]}}
         if self._hyperparams_path is not None:
