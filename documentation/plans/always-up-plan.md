@@ -586,6 +586,7 @@ refactoring you want a known-good baseline to compare against.
   needs to account for something not yet considered.
 - **Issue:** #64
 - **Flags:** --reviewers code
+- **Status:** DONE (2026-04-10) — 17 findings triaged into 6 buckets. 4 blockers consolidated into 2 issues by root cause: [#66](https://github.com/aberson/Alpha4Gate/issues/66) (SQLite thread-safety + 30% loss + cycle-uniformity, covering findings #6/#10/#17) and [#67](https://github.com/aberson/Alpha4Gate/issues/67) (silent eval-game crash recovery, finding #7). Alert tuning: [#68](https://github.com/aberson/Alpha4Gate/issues/68) (alerts pipeline fired zero alerts, finding #14). Dashboard polish, daemon tuning, and docs gaps documented in [phase-4-5-backlog.md](phase-4-5-backlog.md). Phase 5 inputs (#11, #12) recorded in the Phase 5 section below. Issue [#65](https://github.com/aberson/Alpha4Gate/issues/65) (Step 5) updated with the full Step 5 pre-flight checklist (manifest pre-seed, tee-from-start, synthetic alert verification).
 - **Produces:** GitHub issues created for each Blocker and Alert Tuning finding.
   A `documentation/plans/phase-4-5-backlog.md` file documenting the Dashboard Polish,
   Daemon Tuning, and Documentation Gaps lists. Phase 5 inputs noted in
@@ -645,6 +646,13 @@ refactoring you want a known-good baseline to compare against.
 
 ### Step 3: Validate with toy domain
 - **Problem:** Prove generality by running the full loop with CartPole or similar simple environment.
+
+### Inputs from Phase 4.5 soak run #1 (2026-04-10)
+
+The first end-to-end soak run surfaced two findings whose resolution should shape Phase 5 design decisions rather than be patched in place. Triaged in [phase-4-5-backlog.md](phase-4-5-backlog.md) and recorded here so they are not lost between phases.
+
+- **Promotion-gate bootstrap is unconditional (Finding #11).** The 14:32:57 promotion in soak run #1 fired with `reason=no previous best checkpoint`, short-circuiting the win-rate comparison entirely. Any checkpoint passed to the gate when `manifest.best == null` will promote — the comparison code path was never executed even after a full 5-cycle + 20-game-eval run. Phase 5's domain interface should make the gate's bootstrap policy explicit (e.g., a `PromotionPolicy` with separate `bootstrap()` and `compare(new, best)` methods) so that the toy-domain validation in Step 3 can exercise the comparison path on cycle 1 rather than only on cycle 2+. Soak Step 5 (#65) handles the immediate workaround by pre-seeding `manifest.best` before launch; Phase 5 should make the workaround unnecessary.
+- **Daemon idle deadlock (Finding #12).** After run #1 completed, the daemon went `state=idle, transitions_since_last=0` and could not produce more transitions because no games run while idle. The transition trigger (`min_transitions=500`) is unreachable in this state; the only escape is the time trigger (`min_hours_since_last=1.0`). For an unattended run this hard-caps cycle rate at ~1/hour. The Phase 5 domain abstraction should treat "transition supply" as a property of the environment, not the daemon — domains where idle generates no data (SC2, anything that needs an external client) need an explicit "background self-play" or "warm pool" affordance that the daemon can rely on, separate from the trigger logic. The Daemon tuning bucket in `phase-4-5-backlog.md` covers the immediate fix; Phase 5 should make the abstraction load-bearing.
 
 ---
 
