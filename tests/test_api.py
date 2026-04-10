@@ -141,6 +141,26 @@ class TestTrainingEndpoints:
         data = resp.json()
         assert data["total_games"] == 0
         assert data["current_checkpoint"] is None
+        # Step 1: reward_logs directory does not exist in the empty fixture.
+        assert data["reward_logs_size_bytes"] == 0
+
+    def test_training_status_reward_logs_size_with_files(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        reward_logs = tmp_path / "data" / "reward_logs"
+        reward_logs.mkdir()
+        payload_a = b'{"game_time": 1.0, "total_reward": 0.1, "fired_rules": []}\n'
+        payload_b = (
+            b'{"game_time": 2.0, "total_reward": 0.2, "fired_rules": [], '
+            b'"is_terminal": true, "result": "win"}\n'
+        )
+        (reward_logs / "game_a.jsonl").write_bytes(payload_a)
+        (reward_logs / "game_b.jsonl").write_bytes(payload_b)
+
+        resp = client.get("/api/training/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["reward_logs_size_bytes"] == len(payload_a) + len(payload_b)
 
     def test_training_history_empty(self, client: TestClient) -> None:
         resp = client.get("/api/training/history")

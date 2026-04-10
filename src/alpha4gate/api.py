@@ -341,6 +341,7 @@ async def get_training_status() -> dict[str, Any]:
 
     cp_dir = _data_dir / "checkpoints"
     db_path = _data_dir / "training.db"
+    reward_logs_dir = _data_dir / "reward_logs"
 
     status: dict[str, Any] = {
         "training_active": False,
@@ -349,6 +350,7 @@ async def get_training_status() -> dict[str, Any]:
         "total_games": 0,
         "total_transitions": 0,
         "db_size_bytes": 0,
+        "reward_logs_size_bytes": _compute_reward_logs_size(reward_logs_dir),
     }
 
     if cp_dir.exists():
@@ -364,6 +366,23 @@ async def get_training_status() -> dict[str, Any]:
         db.close()
 
     return status
+
+
+def _compute_reward_logs_size(reward_logs_dir: Path) -> int:
+    """Sum the sizes of all files in the reward logs directory.
+
+    Returns 0 if the directory does not exist. Unreadable entries are skipped.
+    """
+    if not reward_logs_dir.exists() or not reward_logs_dir.is_dir():
+        return 0
+    total = 0
+    for entry in reward_logs_dir.rglob("*"):
+        try:
+            if entry.is_file():
+                total += entry.stat().st_size
+        except OSError:
+            continue
+    return total
 
 
 @app.get("/api/training/history")

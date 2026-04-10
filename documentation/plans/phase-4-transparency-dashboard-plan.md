@@ -472,6 +472,7 @@ pass.
 ---
 
 ### Step 1: Status endpoint disk size + reward aggregator backend
+- **Status:** DONE (2026-04-09)
 - **Problem:** (1) Add `reward_logs_size_bytes` field to `GET /api/training/status`
   response in `src/alpha4gate/api.py`. Computed by walking `data/reward_logs/`
   directory and summing file sizes. Handle missing directory (return 0). The
