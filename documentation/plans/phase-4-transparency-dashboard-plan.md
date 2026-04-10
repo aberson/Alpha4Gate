@@ -568,6 +568,7 @@ pass.
 - **Depends on:** none (can run in parallel with Steps 1-2)
 
 ### Step 4: ConfirmDialog component
+- **Status:** DONE (2026-04-10)
 - **Problem:** Build the reusable confirmation modal that destructive actions in
   Step 6 will use. Also serves as the first proof that the Step 3 vitest setup
   works for real components.
