@@ -234,10 +234,16 @@ so this step is manual.
 
 ### 3.2 Start the backend with the daemon enabled
 
-In a terminal at the project root:
+In a terminal at the project root. **You must tee stdout to a file from
+the very first launch** — never rely on terminal scrollback to capture
+a multi-hour run, because soak run #1 lost the first 51 minutes of
+backend log to scrollback overflow. Use this exact form, with
+`DEBUG_ENDPOINTS=1` set so the 3.5 pre-flight can fire a synthetic
+error:
 
 ```bash
-uv run python -m alpha4gate.runner --serve --daemon
+DEBUG_ENDPOINTS=1 uv run python -m alpha4gate.runner --serve --daemon 2>&1 \
+  | tee logs/soak-<YYYY-MM-DD>-backend.log
 ```
 
 Verified against `src/alpha4gate/runner.py`: the flag is `--daemon` (not
@@ -246,6 +252,25 @@ argument parser and is only honored when `--serve` is also set. Running with
 `--daemon` alone (without `--serve`) is silently ignored — the bot will run a
 single game and exit without ever starting the training daemon. The server
 binds to `0.0.0.0:<web_ui_port>` (default `8765`).
+
+**Hard pre-flight verification (within 30 seconds of launch):**
+
+```bash
+ls -la logs/soak-<YYYY-MM-DD>-backend.log
+wc -l logs/soak-<YYYY-MM-DD>-backend.log
+```
+
+Both checks must succeed:
+
+1. The file must exist (`ls` returns a real entry with a non-zero byte
+   count — not "No such file or directory").
+2. The line count must be greater than 50 within 30 seconds of launch.
+   Uvicorn plus the daemon emit that many banner/startup lines by
+   the time the server is ready to serve.
+
+If either check fails, the tee is not wired correctly — **abort the
+run**, kill the backend, and relaunch with the exact command above.
+Scrollback is no longer an acceptable fallback.
 
 Expected log output within the first few seconds:
 
@@ -284,6 +309,47 @@ DevTools console log can be exported at the end). Confirm:
 
 Once the dashboard is up and happy, the startup sequence is complete. Log the
 wall-clock time as `T0` in the "Start time" field of the run log.
+
+### 3.5 Synthetic alert pre-flight (alerts pipeline verification)
+
+Before committing the next four hours to a run, prove the alerts pipeline
+is alive. The dashboard's Alerts tab is the primary observability
+surface — a soak run with broken alerts is invalid evidence (Phase 4.5
+issue #68).
+
+1. Confirm `DEBUG_ENDPOINTS=1` is set in the backend's environment when
+   launched (see section 3.2). If it is not, kill the backend and
+   relaunch with the env var set.
+2. Trigger a synthetic error from any terminal:
+
+   ```bash
+   curl -X POST http://localhost:8765/api/debug/raise_error \
+     -H "Content-Type: application/json" \
+     -d '{"message": "soak preflight test"}'
+   ```
+
+   Expect an HTTP 200 response body of
+   `{"status":"ok","logged":"soak preflight test"}`.
+3. Within ONE polling cycle (~5 seconds), verify the dashboard's
+   Alerts tab shows a new alert with title `Backend errors (1)` (or a
+   higher count if other errors fired concurrently) and severity
+   `error`. The `ruleBackendErrors` rule is marked `persistent` so the
+   toast will **not** auto-dismiss after 8 seconds — the operator
+   must actively clear it.
+4. If the alert does NOT appear within ~10 seconds:
+   - Check that the backend logged the synthetic error:
+     `tail logs/soak-<YYYY-MM-DD>-backend.log`. Look for the line
+     `synthetic error: soak preflight test`.
+   - Check the dashboard's network tab: `/api/training/status` should
+     return `error_count_since_start >= 1` and the synthetic error in
+     `recent_errors`.
+   - If the field is present but the alert does not render, the alerts
+     UI is broken. **ABORT the run** and file a follow-up issue.
+   - If the field is NOT present, the error_log_buffer is not wired.
+     **ABORT the run.**
+5. Once the synthetic alert appears, dismiss it from the Alerts tab,
+   record `synthetic preflight: OK` in the run log Timeline, then
+   proceed to Section 4 (during-run watching).
 
 ---
 
@@ -500,9 +566,10 @@ Collect the artifacts in this order:
    ```
 
    Then at stop time, copy `logs/soak-<YYYY-MM-DD>-backend.log` to
-   `<artifact-dir>/backend.log`. If you forgot to tee, fall back to
-   scrollback-copying the backend terminal into `<artifact-dir>/backend.log`
-   before closing the terminal.
+   `<artifact-dir>/backend.log`. **If you forgot to tee, the run is
+   invalid and must be re-run.** Scrollback overflow lost the first 51
+   minutes of soak run #1 backend log — never again. Tee is mandatory
+   from the first launch (see Section 3.2).
 4. **Save per-game JSONL game logs** from `logs/` — these are written by
    `GameLogger` independently of stdout and contain per-game bot state. Copy
    any relevant game log files into `<artifact-dir>/` (or snapshot the whole

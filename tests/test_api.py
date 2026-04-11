@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from alpha4gate.api import app, configure
+from alpha4gate.error_log import get_error_log_buffer
 
 
 @pytest.fixture()
@@ -22,6 +25,21 @@ def client(tmp_path: Path) -> TestClient:
     replay_dir.mkdir()
     configure(data_dir, log_dir, replay_dir)
     return TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def clean_error_buffer() -> Iterator[None]:
+    """Reset the process-wide error log buffer between tests.
+
+    The buffer is a singleton and the ``_ErrorBufferHandler`` is installed
+    on the root logger by ``configure()`` (which the ``client`` fixture
+    runs before every test in this module), so any test that triggers
+    an ERROR-level log would otherwise leak its count into subsequent
+    tests. Autouse to guarantee isolation on this file.
+    """
+    get_error_log_buffer().reset()
+    yield
+    get_error_log_buffer().reset()
 
 
 class TestStatusEndpoint:
@@ -143,6 +161,11 @@ class TestTrainingEndpoints:
         assert data["current_checkpoint"] is None
         # Step 1: reward_logs directory does not exist in the empty fixture.
         assert data["reward_logs_size_bytes"] == 0
+        # Phase 4.5 #68: the alerts pipeline fields must always be present.
+        assert "error_count_since_start" in data
+        assert isinstance(data["error_count_since_start"], int)
+        assert "recent_errors" in data
+        assert isinstance(data["recent_errors"], list)
 
     def test_training_status_reward_logs_size_with_files(
         self, client: TestClient, tmp_path: Path
@@ -170,9 +193,7 @@ class TestTrainingEndpoints:
         assert data["n_games"] == 0
         assert isinstance(data["generated_at"], str)
 
-    def test_reward_trends_populated(
-        self, client: TestClient, tmp_path: Path
-    ) -> None:
+    def test_reward_trends_populated(self, client: TestClient, tmp_path: Path) -> None:
         reward_logs = tmp_path / "data" / "reward_logs"
         reward_logs.mkdir()
         game_a_lines = [
@@ -308,6 +329,83 @@ class TestTrainingEndpoints:
         assert models[1]["model_version"] == "v2"
         assert models[1]["wins"] == 1
         assert models[1]["total"] == 1
+
+
+class TestErrorLogStatusFields:
+    """Phase 4.5 #68: /api/training/status surfaces backend ERROR events."""
+
+    def test_emitting_error_increments_status_count(self, client: TestClient) -> None:
+        """End-to-end: an ERROR-level log lands in /api/training/status.
+
+        This proves the full wire-up: root logger -> ``_ErrorBufferHandler``
+        -> ``ErrorLogBuffer`` -> ``get_training_status`` -> JSON response.
+        A regression in any link of that chain (handler install missed,
+        level filter broken, propagation disabled) is caught here. Keep
+        direct ``buffer.emit()`` testing in ``tests/test_error_log_buffer.py``.
+        """
+        resp_before = client.get("/api/training/status")
+        assert resp_before.status_code == 200
+        assert resp_before.json()["error_count_since_start"] == 0
+        assert resp_before.json()["recent_errors"] == []
+
+        # Emit via the real logging API, not buffer.emit() — exercises
+        # the full handler chain and the %d substitution in getMessage().
+        test_logger = logging.getLogger("alpha4gate.test_api")
+        test_logger.error("synthetic test error %d", 42)
+
+        resp_after = client.get("/api/training/status")
+        assert resp_after.status_code == 200
+        body = resp_after.json()
+        assert body["error_count_since_start"] == 1
+        assert len(body["recent_errors"]) == 1
+        record = body["recent_errors"][0]
+        assert record["level"] == "ERROR"
+        assert "alpha4gate.test_api" in record["logger"]
+        assert "synthetic test error 42" in record["message"]
+
+
+class TestDebugRaiseErrorEndpoint:
+    """Phase 4.5 #68: synthetic error trigger for soak-test pre-flight."""
+
+    def test_returns_404_when_flag_unset(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("DEBUG_ENDPOINTS", raising=False)
+        resp = client.post("/api/debug/raise_error", json={})
+        assert resp.status_code == 404
+        # And the buffer count must not have moved.
+        assert get_error_log_buffer().snapshot()[0] == 0
+
+    def test_returns_200_and_logs_when_flag_set(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DEBUG_ENDPOINTS", "1")
+        resp = client.post("/api/debug/raise_error", json={})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        assert body["logged"] == "Synthetic alerts pre-flight test"
+        total, records = get_error_log_buffer().snapshot()
+        assert total == 1
+        assert "synthetic error: Synthetic alerts pre-flight test" in records[0]["message"]
+
+    def test_custom_message_is_used(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DEBUG_ENDPOINTS", "1")
+        resp = client.post("/api/debug/raise_error", json={"message": "operator preflight"})
+        assert resp.status_code == 200
+        assert resp.json()["logged"] == "operator preflight"
+        _, records = get_error_log_buffer().snapshot()
+        assert "operator preflight" in records[0]["message"]
+
+    def test_flag_accepts_truthy_values(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for value in ("true", "TRUE", "yes", "1"):
+            monkeypatch.setenv("DEBUG_ENDPOINTS", value)
+            resp = client.post("/api/debug/raise_error", json={})
+            assert resp.status_code == 200, f"value={value!r}"
 
 
 class TestRewardRulesEndpoints:

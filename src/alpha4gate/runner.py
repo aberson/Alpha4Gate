@@ -172,7 +172,14 @@ def _start_server(settings: Settings, daemon: bool = False) -> None:
     import uvicorn
 
     from alpha4gate.api import configure
+    from alpha4gate.error_log import install_error_log_handler
     from alpha4gate.learning.daemon import load_daemon_config
+
+    # Attach the ERROR-level log ring buffer to the root logger as
+    # early as possible so backend errors that happen *during* startup
+    # (not just after the FastAPI lifespan fires) still land in the
+    # alerts pipeline. Idempotent.
+    install_error_log_handler()
 
     daemon_config = load_daemon_config(settings.data_dir / "daemon_config.json")
     configure(

@@ -27,6 +27,13 @@ export interface Alert {
   title: string;
   message: string;
   timestamp: string;
+  /**
+   * When true, the toast renderer must not auto-dismiss this alert.
+   * Phase 4.5 #68 backend-error alerts are marked persistent so the
+   * operator has to actively acknowledge a backend failure rather than
+   * relying on scrollback once the 8s toast timer elapses.
+   */
+  persistent?: boolean;
 }
 
 /**
@@ -47,6 +54,17 @@ export interface TrainingHistoryResponse {
 }
 
 /**
+ * One backend log record as surfaced by ``/api/training/status``.
+ * Mirrors the dict shape produced by ``alpha4gate.error_log.ErrorLogBuffer``.
+ */
+export interface BackendErrorRecord {
+  ts: string;
+  level: string;
+  logger: string;
+  message: string;
+}
+
+/**
  * Response shape from GET /api/training/status.
  * Mirrors src/alpha4gate/api.py `get_training_status`.
  */
@@ -58,6 +76,10 @@ export interface TrainingStatusResponse {
   total_transitions: number;
   db_size_bytes: number;
   reward_logs_size_bytes: number;
+  /** Phase 4.5 #68 — running count of ERROR/CRITICAL log records since app startup. */
+  error_count_since_start?: number;
+  /** Phase 4.5 #68 — capped ring buffer (50 entries) of recent ERROR-level log records. */
+  recent_errors?: BackendErrorRecord[];
 }
 
 /**
@@ -218,6 +240,46 @@ export function ruleRollbackFired(state: AlertState): Alert | null {
   };
 }
 
+/**
+ * Rule (g): backend logged ERROR-level events (Phase 4.5 #68).
+ *
+ * Fires whenever ``error_count_since_start`` is a positive number. The
+ * alert id is hashed on the count AND the latest record's timestamp,
+ * so a recurrence with a new error produces a fresh alert (matches the
+ * "stable per state, fresh per recurrence" discipline at the top of
+ * this file). Severity is "error" — the project's existing union is
+ * ``"info" | "warning" | "error"`` and that IS the critical level; we
+ * deliberately do not introduce a new severity tier here.
+ *
+ * This is the alerts pipeline that #68 wires up. The synthetic error
+ * pre-flight in soak-test.md Section 3.5 depends on this rule firing
+ * within one polling cycle of ``POST /api/debug/raise_error``.
+ */
+export function ruleBackendErrors(state: AlertState): Alert | null {
+  const status = state.status;
+  if (!status) return null;
+  const count = status.error_count_since_start;
+  if (typeof count !== "number" || count <= 0) return null;
+  const recent = status.recent_errors ?? [];
+  const latest = recent.length > 0 ? recent[recent.length - 1] : null;
+  // Stamp is the latest error's timestamp so the id rotates when a new
+  // error arrives. If the buffer is empty (should only happen if the
+  // count is >0 but recent_errors is empty — e.g. all errors evicted
+  // past MAX_RECENT and none since), fall back to the count itself.
+  const stamp = latest?.ts ?? `count:${count}`;
+  return {
+    id: `backend_error:${count}:${stamp}`,
+    ruleId: "backend_error",
+    severity: "error",
+    title: `Backend errors (${count})`,
+    message: latest
+      ? `${latest.logger}: ${latest.message}`
+      : `Backend logged ${count} ERROR-level events.`,
+    timestamp: state.now,
+    persistent: true,
+  };
+}
+
 /** Rule (f): daemon is running but no training has occurred in N hours. */
 export function ruleNoTrainingInHours(state: AlertState): Alert | null {
   const daemon = state.daemon;
@@ -243,6 +305,7 @@ export function evaluateAlertRules(state: AlertState): Alert[] {
   const rules: Array<(s: AlertState) => Alert | null> = [
     ruleWinRateDropped,
     ruleTrainingFailed,
+    ruleBackendErrors,
     ruleDaemonStoppedUnexpectedly,
     ruleDiskUsageHigh,
     ruleRollbackFired,

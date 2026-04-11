@@ -3,6 +3,7 @@ import {
   evaluateAlertRules,
   ruleWinRateDropped,
   ruleTrainingFailed,
+  ruleBackendErrors,
   ruleDaemonStoppedUnexpectedly,
   ruleDiskUsageHigh,
   ruleRollbackFired,
@@ -11,6 +12,8 @@ import {
   DISK_USAGE_WARNING_GB,
   NO_TRAINING_HOURS,
   type AlertState,
+  type BackendErrorRecord,
+  type TrainingStatusResponse,
 } from "./alertRules";
 import type { DaemonStatus, TriggerState } from "../hooks/useDaemonStatus";
 
@@ -316,6 +319,135 @@ describe("ruleNoTrainingInHours", () => {
   });
 });
 
+describe("ruleBackendErrors", () => {
+  const BASE_STATUS: TrainingStatusResponse = {
+    training_active: false,
+    current_checkpoint: null,
+    total_checkpoints: 0,
+    total_games: 0,
+    total_transitions: 0,
+    db_size_bytes: 0,
+    reward_logs_size_bytes: 0,
+  };
+
+  function mkRecord(overrides: Partial<BackendErrorRecord> = {}): BackendErrorRecord {
+    return {
+      ts: "2026-04-10T12:34:56+00:00",
+      level: "ERROR",
+      logger: "alpha4gate.daemon",
+      message: "Game thread crashed",
+      ...overrides,
+    };
+  }
+
+  it("returns null when error_count_since_start is undefined", () => {
+    const state = mkState({ status: BASE_STATUS });
+    expect(ruleBackendErrors(state)).toBeNull();
+  });
+
+  it("returns null when error_count_since_start is 0", () => {
+    const state = mkState({
+      status: { ...BASE_STATUS, error_count_since_start: 0, recent_errors: [] },
+    });
+    expect(ruleBackendErrors(state)).toBeNull();
+  });
+
+  it("returns null when status itself is missing", () => {
+    const state = mkState();
+    expect(ruleBackendErrors(state)).toBeNull();
+  });
+
+  it("fires with a single error present", () => {
+    const record = mkRecord();
+    const state = mkState({
+      status: {
+        ...BASE_STATUS,
+        error_count_since_start: 1,
+        recent_errors: [record],
+      },
+    });
+    const alert = ruleBackendErrors(state);
+    expect(alert).not.toBeNull();
+    expect(alert?.ruleId).toBe("backend_error");
+    expect(alert?.severity).toBe("error");
+    expect(alert?.title).toBe("Backend errors (1)");
+    expect(alert?.id).toBe(`backend_error:1:${record.ts}`);
+  });
+
+  it("uses the latest (last) record for the message body", () => {
+    const older = mkRecord({
+      ts: "2026-04-10T11:00:00+00:00",
+      logger: "alpha4gate.daemon",
+      message: "older",
+    });
+    const newer = mkRecord({
+      ts: "2026-04-10T12:00:00+00:00",
+      logger: "alpha4gate.evaluator",
+      message: "Game thread crashed",
+    });
+    const state = mkState({
+      status: {
+        ...BASE_STATUS,
+        error_count_since_start: 2,
+        recent_errors: [older, newer],
+      },
+    });
+    const alert = ruleBackendErrors(state);
+    expect(alert?.message).toBe("alpha4gate.evaluator: Game thread crashed");
+    expect(alert?.id).toBe(`backend_error:2:${newer.ts}`);
+  });
+
+  it("produces a different id when the count increases from 3 to 4", () => {
+    const rec3 = mkRecord({ ts: "2026-04-10T12:00:00+00:00" });
+    const rec4 = mkRecord({ ts: "2026-04-10T12:05:00+00:00" });
+    const state3 = mkState({
+      status: {
+        ...BASE_STATUS,
+        error_count_since_start: 3,
+        recent_errors: [rec3],
+      },
+    });
+    const state4 = mkState({
+      status: {
+        ...BASE_STATUS,
+        error_count_since_start: 4,
+        recent_errors: [rec3, rec4],
+      },
+    });
+    const a = ruleBackendErrors(state3);
+    const b = ruleBackendErrors(state4);
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    expect(a?.id).not.toBe(b?.id);
+  });
+
+  it("marks the alert as persistent (skips toast auto-dismiss)", () => {
+    const state = mkState({
+      status: {
+        ...BASE_STATUS,
+        error_count_since_start: 1,
+        recent_errors: [mkRecord()],
+      },
+    });
+    const alert = ruleBackendErrors(state);
+    expect(alert?.persistent).toBe(true);
+  });
+
+  it("falls back to a count-derived message when recent_errors is empty", () => {
+    const state = mkState({
+      status: {
+        ...BASE_STATUS,
+        error_count_since_start: 7,
+        recent_errors: [],
+      },
+    });
+    const alert = ruleBackendErrors(state);
+    expect(alert).not.toBeNull();
+    expect(alert?.message).toBe("Backend logged 7 ERROR-level events.");
+    expect(alert?.id).toBe("backend_error:7:count:7");
+  });
+});
+
 describe("evaluateAlertRules", () => {
   it("returns empty array for empty state", () => {
     expect(evaluateAlertRules(mkState())).toEqual([]);
@@ -331,5 +463,31 @@ describe("evaluateAlertRules", () => {
       "training_failed",
       "win_rate_drop",
     ]);
+  });
+
+  it("includes ruleBackendErrors when status has backend errors", () => {
+    const state = mkState({
+      status: {
+        training_active: false,
+        current_checkpoint: null,
+        total_checkpoints: 0,
+        total_games: 0,
+        total_transitions: 0,
+        db_size_bytes: 0,
+        reward_logs_size_bytes: 0,
+        error_count_since_start: 2,
+        recent_errors: [
+          {
+            ts: "2026-04-10T12:00:00+00:00",
+            level: "ERROR",
+            logger: "alpha4gate.daemon",
+            message: "Game thread crashed",
+          },
+        ],
+      },
+    });
+    const alerts = evaluateAlertRules(state);
+    const ruleIds = alerts.map((a) => a.ruleId);
+    expect(ruleIds).toContain("backend_error");
   });
 });

@@ -82,4 +82,25 @@ describe("AlertToast", () => {
     rerender(<AlertToast newAlerts={[mkAlert("a")]} onView={() => {}} />);
     expect(screen.getAllByText("Title a")).toHaveLength(1);
   });
+
+  it("persistent alerts are not auto-dismissed by the timer", () => {
+    // Phase 4.5 #68: backend_error alerts are marked persistent so the
+    // timer branch in AlertToast must skip them entirely. A regression
+    // that drops the `if (v.alert.persistent) continue;` check would
+    // cause this test to fail.
+    const persistentAlert: Alert = {
+      ...mkAlert("p1", "backend_error"),
+      persistent: true,
+    };
+    render(<AlertToast newAlerts={[persistentAlert]} onView={() => {}} />);
+    expect(screen.getByText("Title p1")).toBeInTheDocument();
+
+    // Advance well past the auto-dismiss window. Persistent alerts must
+    // remain visible because the timer is skipped.
+    act(() => {
+      vi.advanceTimersByTime(TOAST_AUTO_DISMISS_MS + 5000);
+    });
+
+    expect(screen.getByText("Title p1")).toBeInTheDocument();
+  });
 });

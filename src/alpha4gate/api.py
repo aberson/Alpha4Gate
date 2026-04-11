@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import os
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -11,7 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 from alpha4gate.commands import (
@@ -24,12 +26,15 @@ from alpha4gate.commands import (
     get_command_queue,
     get_command_settings,
 )
+from alpha4gate.error_log import get_error_log_buffer, install_error_log_handler
 from alpha4gate.learning.daemon import DaemonConfig, TrainingDaemon
 from alpha4gate.web_socket import (
     ConnectionManager,
     drain_broadcast_queue,
     drain_command_event_queue,
 )
+
+_log = logging.getLogger(__name__)
 
 ws_manager = ConnectionManager()
 
@@ -56,9 +61,14 @@ def configure(
 ) -> None:
     """Configure directory paths for the API.
 
-    Called by the runner at startup.
+    Called by the runner at startup. Also installs the root-logger
+    ERROR-buffer handler (Phase 4.5 #68) so tests that drive the API
+    via ``TestClient`` (which does not enter the FastAPI lifespan by
+    default) still capture backend errors in the alerts pipeline.
+    ``install_error_log_handler`` is idempotent.
     """
     global _data_dir, _log_dir, _replay_dir, _interpreter, _daemon
+    install_error_log_handler()
     _data_dir = data_dir
     _log_dir = log_dir
     _replay_dir = replay_dir
@@ -114,6 +124,11 @@ async def _game_state_broadcast_loop() -> None:
 @asynccontextmanager
 async def _lifespan(application: FastAPI) -> AsyncIterator[None]:
     """Start the game-state broadcast loop on startup."""
+    # Attach the ERROR-level log ring buffer to the root logger so the
+    # alerts pipeline can surface backend errors to the dashboard
+    # (Phase 4.5 #68). Idempotent — safe if a test or a prior --serve
+    # invocation already installed it.
+    install_error_log_handler()
     task = asyncio.create_task(_game_state_broadcast_loop())
     yield
     task.cancel()
@@ -365,7 +380,37 @@ async def get_training_status() -> dict[str, Any]:
         status["db_size_bytes"] = db.get_db_size_bytes()
         db.close()
 
+    # Phase 4.5 #68: surface the backend ERROR log ring buffer so the
+    # frontend alerts pipeline can fire on actual backend failures.
+    buffer = get_error_log_buffer()
+    total_errors, recent_errors = buffer.snapshot()
+    status["error_count_since_start"] = total_errors
+    status["recent_errors"] = recent_errors
+
     return status
+
+
+@app.post("/api/debug/raise_error")
+async def debug_raise_error(
+    request: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Synthetic error trigger for the alerts pre-flight check.
+
+    Behind the ``DEBUG_ENDPOINTS`` env flag — returns 404 unless the
+    flag is set to a truthy value. The endpoint logs an ERROR-level
+    message that ``ErrorLogBuffer`` will capture and the frontend
+    alerts rule will fire on. Used during soak-test pre-flight to
+    verify the alerts pipeline is alive end-to-end before committing
+    four hours to a run (see ``documentation/soak-test.md`` Section 3.5).
+    """
+    if os.environ.get("DEBUG_ENDPOINTS", "").lower() not in ("1", "true", "yes"):
+        raise HTTPException(status_code=404, detail="Debug endpoints disabled")
+    message = "Synthetic alerts pre-flight test"
+    if request is not None and isinstance(request.get("message"), str):
+        message = request["message"]
+    debug_logger = logging.getLogger("alpha4gate.debug")
+    debug_logger.error("synthetic error: %s", message)
+    return {"status": "ok", "logged": message}
 
 
 def _compute_reward_logs_size(reward_logs_dir: Path) -> int:

@@ -61,10 +61,13 @@ export function AlertToast({ newAlerts, onView }: AlertToastProps) {
   }, [newAlerts]);
 
   // Manage one auto-dismiss timer per visible toast.
+  // Persistent alerts (Phase 4.5 #68 backend errors) skip the timer
+  // entirely so the operator must actively dismiss them.
   useEffect(() => {
     const timers = timersRef.current;
     for (const v of visible) {
       if (timers.has(v.seq)) continue;
+      if (v.alert.persistent) continue;
       const handle = setTimeout(() => {
         setVisible((current) => current.filter((x) => x.seq !== v.seq));
         timers.delete(v.seq);
