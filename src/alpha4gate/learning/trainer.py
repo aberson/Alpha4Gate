@@ -13,6 +13,48 @@ _log = logging.getLogger(__name__)
 DEFAULT_DISK_LIMIT_GB: float = 200.0
 
 
+def compute_adjusted_win_rate(
+    db: Any,
+    expected_games: int,
+    failed_games: int,
+) -> float:
+    """Shrink the tail window passed to ``db.get_recent_win_rate``.
+
+    Subtracts ``failed_games`` from ``expected_games`` before querying,
+    so the ``failed_games`` rows that never made it into the DB do not
+    silently pull an equal number of even older rows into the tail
+    window.
+
+    NOTE: this does NOT guarantee the remaining window contains only
+    current-cycle live games. ``TrainingOrchestrator.run`` calls this
+    helper with ``expected_games = games_per_cycle * 2`` — a two-cycle
+    smoothing window — so the tail still absorbs prior-cycle rows
+    whenever the current cycle is short. That behavior is intentional
+    and carried over from the pre-fix code; it matches the existing
+    2x-cycle smoothing convention in the trainer. All this helper
+    corrects is the "failed games silently replaced by older games"
+    drift, not the underlying 2x smoothing approximation.
+    If every game in the cycle failed, or the adjusted window is empty,
+    returns 0.0 — the caller should not advance the difficulty
+    curriculum on a zero-signal cycle.
+
+    Args:
+        db: A ``TrainingDB``-like object exposing ``get_recent_win_rate``.
+        expected_games: Number of games the cycle was supposed to
+            produce (passed directly to ``get_recent_win_rate`` when
+            nothing failed). In the trainer this is ``games_per_cycle * 2``.
+        failed_games: Count of games whose ``store_game`` raised (read
+            from ``SC2Env.game_store_failed_count``).
+
+    Returns:
+        Adjusted win rate in ``[0.0, 1.0]``.
+    """
+    live_games = expected_games - failed_games
+    if live_games <= 0:
+        return 0.0
+    return float(db.get_recent_win_rate(live_games))
+
+
 class TrainingOrchestrator:
     """Manages the RL training loop: games → PPO update → checkpoint → repeat.
 
@@ -156,6 +198,7 @@ class TrainingOrchestrator:
             env = self._make_env(db)
             cycle_failed = False
             cycle_error: str | None = None
+            cycle_failed_games: int = 0
             try:
                 model.set_env(env)
                 # Estimate total timesteps: games_per_cycle games, each ~15
@@ -172,6 +215,20 @@ class TrainingOrchestrator:
                 cycle_failed = True
                 cycle_error = f"{type(exc).__name__}: {exc}"
             finally:
+                # Bug B (soak-2026-04-11): read the per-env failure
+                # counter BEFORE ``env.close()`` so the cycle code can
+                # adjust the win-rate denominator. The counter lives on
+                # the SC2Env instance so it survives until we close the
+                # env here. If any games crashed inside the game thread
+                # they'll be visible as ``cycle_failed_games > 0`` and
+                # will be logged loudly below. We accept only a real
+                # int and fall back to 0 when tests hand us a
+                # ``MagicMock`` env whose attribute access returns a
+                # ``MagicMock`` instead of a real count.
+                raw_failed = getattr(env, "game_store_failed_count", 0)
+                cycle_failed_games = (
+                    raw_failed if isinstance(raw_failed, int) else 0
+                )
                 env.close()
 
             # If the cycle crashed, skip the entire post-training block:
@@ -193,8 +250,27 @@ class TrainingOrchestrator:
                 )
                 continue
 
-            # Check win rate for curriculum
-            recent_win_rate = db.get_recent_win_rate(games_per_cycle * 2)
+            # Check win rate for curriculum. Bug B (soak-2026-04-11):
+            # games whose ``store_game`` raised were excluded from the
+            # ``games`` table, so a plain ``get_recent_win_rate(N)`` call
+            # would silently absorb older games into its tail window.
+            # ``compute_adjusted_win_rate`` shrinks the window so only
+            # live (DB-written) games count toward the denominator.
+            if cycle_failed_games > 0:
+                _log.error(
+                    "Cycle %d: %d games failed to store — "
+                    "shrinking win-rate window by %d "
+                    "(base window=%d)",
+                    self._cycle,
+                    cycle_failed_games,
+                    cycle_failed_games,
+                    games_per_cycle * 2,
+                )
+            recent_win_rate = compute_adjusted_win_rate(
+                db,
+                expected_games=games_per_cycle * 2,
+                failed_games=cycle_failed_games,
+            )
             if self.should_increase_difficulty(recent_win_rate):
                 self.increase_difficulty()
 
@@ -226,6 +302,7 @@ class TrainingOrchestrator:
                 "difficulty": self._difficulty,
                 "win_rate": recent_win_rate,
                 "checkpoint": checkpoint_name,
+                "failed_games": cycle_failed_games,
             }
             results.append(cycle_result)
             _log.info("Cycle %d complete: %s", self._cycle, cycle_result)

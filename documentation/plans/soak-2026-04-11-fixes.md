@@ -21,7 +21,7 @@ The soak run on 2026-04-11 (`documentation/soak-test-runs/soak-2026-04-11.md`) r
 
 ### Phase 4.6 Step 1: Fix `game_id` collision + stop silent exception fallthrough
 
-- **Status:** NOT STARTED
+- **Status:** DONE (2026-04-11, iter 2/3, reviewers=code)
 - **Issue:** #75
 - **Problem:** During soak-2026-04-11 cycle 5, the trainer hit `sqlite3.IntegrityError: UNIQUE constraint failed: games.game_id` in `database.py:194` `store_game()` called from `environment.py:282` `_sync_game()`. Full stack trace in `documentation/soak-test-runs/soak-2026-04-11.md` Finding 5 evidence row. The exception was caught and swallowed somewhere up the call stack — the cycle continued, reported `win_rate=0.29`, and saved checkpoint v5 as if nothing happened. This is the silent-exception-fallthrough pattern from `feedback_silent_exception_fallthrough.md`.
 

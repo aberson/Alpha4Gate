@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import queue
+import sqlite3
 import threading
+import uuid
 from dataclasses import asdict
 from typing import Any
 
@@ -74,7 +76,14 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         self._difficulty = difficulty
         self._reward_calc = reward_calculator or RewardCalculator()
         self._db = db
-        self._game_id = game_id or "unnamed"
+        # ``_base_game_id`` is the human-readable label supplied by the
+        # trainer (e.g. ``"rl_ab12cd34"``). The per-game ``_game_id`` that
+        # actually lands in ``training.db`` is derived from it in every
+        # ``reset()`` by appending a fresh UUID suffix so sequential games
+        # within a single ``SC2Env`` instance can never collide on the
+        # ``games.game_id`` UNIQUE constraint (soak-2026-04-11 cycle 5).
+        self._base_game_id = game_id or "unnamed"
+        self._game_id = self._base_game_id
         self._model_version = model_version
         self._realtime = realtime
 
@@ -87,6 +96,27 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         self._last_snapshot: GameSnapshot | None = None
         self._total_reward: float = 0.0
         self._game_start_time: float = 0.0
+        # Soak-2026-04-11: when ``_sync_game`` or ``_run_game_thread``
+        # catches an exception from ``store_game`` (or any unexpected
+        # error in the game thread) this counter is incremented. The
+        # trainer reads it after ``model.learn()`` returns so the cycle
+        # win-rate calculation can exclude games whose rows never made
+        # it into the DB, and so the number of failed games is logged
+        # loudly instead of silently dropping out of ``get_recent_win_rate``.
+        # See Bug B in the soak-2026-04-11 cycle 5 postmortem.
+        self._game_store_failed_count: int = 0
+
+    @property
+    def game_store_failed_count(self) -> int:
+        """Number of games in this env whose row never made it into ``training.db``.
+
+        Incremented whenever ``_sync_game`` catches an exception from
+        ``store_game`` or ``_run_game_thread`` catches an unexpected
+        exception from ``_sync_game``. The trainer reads this after
+        ``model.learn()`` returns to adjust the cycle's win-rate
+        denominator (see Bug B in soak-2026-04-11 cycle 5).
+        """
+        return self._game_store_failed_count
 
     def reset(
         self,
@@ -97,6 +127,25 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         """Launch a new SC2 game and return the first observation."""
         super().reset(seed=seed, options=options)
         self.close()  # Kill any existing game
+
+        # Bug A fix (soak-2026-04-11 cycle 5): allocate a fresh per-game
+        # id so the new game's row cannot collide with a still-written
+        # row from the prior game on this env. The old code reused
+        # ``self._game_id`` across every reset on the same env instance,
+        # so the second ``store_game`` would raise
+        # ``sqlite3.IntegrityError: UNIQUE constraint failed: games.game_id``
+        # as soon as two games ran in one cycle. UUID4 hex guarantees
+        # uniqueness without relying on a global counter or wall clock.
+        # Fallback to ``self._game_id`` or the literal ``"unnamed"`` when
+        # tests instantiate via ``SC2Env.__new__`` without running
+        # __init__, so ``reset()`` stays usable in unit-level repros.
+        base = (
+            getattr(self, "_base_game_id", None)
+            or getattr(self, "_game_id", None)
+            or "unnamed"
+        )
+        self._base_game_id = base
+        self._game_id = f"{base}_{uuid.uuid4().hex[:12]}"
 
         self._step_index = 0
         self._total_reward = 0.0
@@ -213,7 +262,25 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         try:
             self._sync_game(obs_queue, action_queue)
         except Exception:
-            _log.exception("Game thread crashed")
+            # Bug B (Option 2 — mark-and-continue) from soak-2026-04-11:
+            # the gauntlet requires an *observable* failure when the game
+            # thread crashes. Logging at ERROR (via ``log.exception``)
+            # already satisfies the #73 watchdog, but we ALSO bump
+            # ``_game_store_failed_count`` so the trainer's cycle code
+            # can subtract this game from the win-rate denominator
+            # after ``model.learn()`` returns. Without this counter,
+            # the failed game silently drops out of
+            # ``db.get_recent_win_rate`` (which pulls from the tail of
+            # the ``games`` table) and an older game is used instead,
+            # drifting the displayed win-rate away from the cycle that
+            # actually ran.
+            prior = getattr(self, "_game_store_failed_count", 0)
+            self._game_store_failed_count = prior + 1
+            _log.exception(
+                "Game thread crashed — marking failed, "
+                "running total failed=%d",
+                self._game_store_failed_count,
+            )
             # Send terminal observation so step() doesn't hang
             obs = np.zeros(FEATURE_DIM, dtype=np.float32)
             obs_queue.put((obs, {}, True, "loss"))
@@ -279,15 +346,58 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         game_time = bot.time if hasattr(bot, "time") else 0.0
 
         if self._db is not None:
-            self._db.store_game(
-                game_id=self._game_id,
-                map_name=self._map_name,
-                difficulty=self._difficulty,
-                result=result_str,
-                duration_secs=game_time,
-                total_reward=self._total_reward,
-                model_version=self._model_version,
-            )
+            # Bug B (Option 2 — mark-and-continue) from soak-2026-04-11:
+            # wrap the ``store_game`` call so an ``IntegrityError`` (or
+            # any other DB failure) does NOT propagate out of the game
+            # thread as a generic "Game thread crashed" — instead we log
+            # the precise reason at ERROR level (the #73 watchdog will
+            # see it) and bump ``_game_store_failed_count`` so the
+            # trainer can exclude this game from the cycle win-rate
+            # denominator. We chose mark-and-continue over propagate
+            # (Option 1) because ERROR-level logs are already the
+            # primary signal for the soak watchdog and an accurate
+            # adjusted win-rate is more useful to the cycle bookkeeping
+            # than a re-raised exception that forces the whole cycle
+            # to abort. If future work needs harder failure semantics,
+            # swap the ``continue``-equivalent below for a ``raise``.
+            try:
+                self._db.store_game(
+                    game_id=self._game_id,
+                    map_name=self._map_name,
+                    difficulty=self._difficulty,
+                    result=result_str,
+                    duration_secs=game_time,
+                    total_reward=self._total_reward,
+                    model_version=self._model_version,
+                )
+            # We deliberately do NOT catch ``sqlite3.DatabaseError`` here.
+            # ``DatabaseError`` is a broad parent that also catches
+            # ``sqlite3.ProgrammingError`` ("Cannot operate on a closed
+            # database", misuse of cursors, etc.) — those are programming
+            # bugs, not runtime hazards, and silently swallowing them would
+            # mask real defects. ``OperationalError`` is the specific
+            # superclass for runtime hazards we want to tolerate under load
+            # (``database is locked``, ``disk I/O error``, ``disk full``).
+            except sqlite3.IntegrityError:
+                self._game_store_failed_count += 1
+                _log.exception(
+                    "store_game failed with IntegrityError for "
+                    "game_id=%s (base=%s) — likely a stale row from a "
+                    "prior game on this env. Marking failed, running "
+                    "total failed=%d",
+                    self._game_id,
+                    self._base_game_id,
+                    self._game_store_failed_count,
+                )
+            except sqlite3.OperationalError:
+                self._game_store_failed_count += 1
+                _log.exception(
+                    "store_game failed with OperationalError for "
+                    "game_id=%s — running total failed=%d "
+                    "(disk full / database locked / disk I/O error)",
+                    self._game_id,
+                    self._game_store_failed_count,
+                )
 
     def _snapshot_to_raw(self, snap: GameSnapshot) -> NDArray[np.float32]:
         """Convert snapshot to raw (un-normalized) feature vector for DB storage."""

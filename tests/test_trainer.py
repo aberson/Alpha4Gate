@@ -6,10 +6,14 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
 from alpha4gate.learning.database import TrainingDB
 from alpha4gate.learning.features import FEATURE_DIM
-from alpha4gate.learning.trainer import TrainingOrchestrator
+from alpha4gate.learning.trainer import (
+    TrainingOrchestrator,
+    compute_adjusted_win_rate,
+)
 
 
 def _mock_model() -> MagicMock:
@@ -137,6 +141,14 @@ class TestCycleTracking:
         # Verify model.learn() was called each cycle
         model = mock_init.return_value
         assert model.learn.call_count == 3
+        # Regression guard for the trainer's ``isinstance(raw_failed, int)``
+        # fallback branch: ``mock_env.return_value`` is a bare ``MagicMock``
+        # whose ``game_store_failed_count`` attribute is itself a
+        # ``MagicMock`` (not an int). The trainer must still record
+        # ``failed_games == 0`` for those cycles rather than passing a
+        # ``MagicMock`` into the cycle_result dict.
+        for cr in result["cycle_results"]:
+            assert cr["failed_games"] == 0
 
     @patch("alpha4gate.learning.trainer.TrainingOrchestrator._make_env")
     @patch("alpha4gate.learning.trainer.TrainingOrchestrator._init_or_resume_model")
@@ -358,3 +370,142 @@ class TestCrashedCycleHandling:
 
         # total_games = 3 (one successful cycle) not 4 (no +1 for the crash)
         assert orch.total_games == 3
+
+
+class TestAdjustedWinRate:
+    """Bug B (soak-2026-04-11 cycle 5): games whose ``store_game``
+    raised never got a row in the ``games`` table, so a plain
+    ``get_recent_win_rate(N)`` call silently absorbed older games in
+    the tail window and drifted the cycle win-rate away from what
+    actually happened. ``compute_adjusted_win_rate`` shrinks the
+    tail window so only live (DB-written) games count toward the
+    denominator.
+    """
+
+    def test_excludes_failed_games_from_denominator(self) -> None:
+        """With ``failed_games=3``, the helper must query the DB for
+        ``expected_games - failed_games`` rows instead of
+        ``expected_games`` rows — so the stale filler rows from older
+        cycles don't contaminate the denominator.
+        """
+        db = MagicMock()
+        db.get_recent_win_rate.return_value = 0.5
+
+        rate = compute_adjusted_win_rate(
+            db, expected_games=10, failed_games=3
+        )
+
+        assert rate == 0.5
+        # The helper asked the DB for the LIVE game count, not the
+        # expected count. That's the point: the denominator excludes
+        # the 3 crashed games.
+        db.get_recent_win_rate.assert_called_once_with(7)
+
+    def test_no_failures_queries_full_expected_window(self) -> None:
+        """Happy path: failed_games=0 means the helper should ask the
+        DB for the full expected window (same behavior as before)."""
+        db = MagicMock()
+        db.get_recent_win_rate.return_value = 0.75
+
+        rate = compute_adjusted_win_rate(
+            db, expected_games=8, failed_games=0
+        )
+        assert rate == 0.75
+        db.get_recent_win_rate.assert_called_once_with(8)
+
+    def test_cycle_failed_games_flows_from_env_to_cycle_result(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """End-to-end integration test for the Bug B wiring.
+
+        Every piece (env counter, trainer ``finally`` block,
+        ``compute_adjusted_win_rate`` helper, cycle_result dict) is
+        tested in isolation elsewhere. THIS test drives one full
+        cycle and asserts that an ``SC2Env.game_store_failed_count = 2``
+        actually flows through the trainer's ``finally`` block, is
+        read as a real int (surviving the ``isinstance`` guard),
+        shrinks the win-rate query window by 2, and lands in
+        ``results[0]["failed_games"] == 2``. This is the exact
+        integration seam identified in the soak-2026-04-11 postmortem.
+        """
+
+        class FakeEnv:
+            """Minimal stand-in for SC2Env. Real int attribute, real close()."""
+
+            def __init__(self) -> None:
+                self.game_store_failed_count: int = 2
+                self.closed: bool = False
+
+            def close(self) -> None:
+                self.closed = True
+
+        fake_env = FakeEnv()
+        fake_db = MagicMock()
+        fake_db.get_recent_win_rate.return_value = 0.42
+
+        games_per_cycle = 5
+        expected_base_window = games_per_cycle * 2  # 10
+        expected_shrunken_window = expected_base_window - 2  # 8
+
+        with (
+            patch(
+                "alpha4gate.learning.trainer.TrainingOrchestrator._make_env",
+                return_value=fake_env,
+            ),
+            patch(
+                "alpha4gate.learning.trainer.TrainingOrchestrator._init_or_resume_model",
+                return_value=_mock_model(),
+            ),
+            patch(
+                "alpha4gate.learning.database.TrainingDB",
+                return_value=fake_db,
+            ),
+            caplog.at_level("ERROR", logger="alpha4gate.learning.trainer"),
+        ):
+            orch = TrainingOrchestrator(
+                checkpoint_dir=str(tmp_path / "cp"),
+                db_path=str(tmp_path / "train.db"),
+            )
+            result = orch.run(n_cycles=1, games_per_cycle=games_per_cycle)
+
+        # 1) The failed count flowed into the cycle_result dict as a real int.
+        cycle_results = result["cycle_results"]
+        assert len(cycle_results) == 1
+        assert cycle_results[0]["failed_games"] == 2
+        assert isinstance(cycle_results[0]["failed_games"], int)
+
+        # 2) The DB was queried with the SHRUNKEN window, not the base window.
+        fake_db.get_recent_win_rate.assert_called_once_with(
+            expected_shrunken_window
+        )
+
+        # 3) The win_rate result from the adjusted call made it into cycle_result.
+        assert cycle_results[0]["win_rate"] == 0.42
+
+        # 4) The ERROR-level log line fired so the soak watchdog can see it.
+        error_records = [
+            r for r in caplog.records
+            if r.levelname == "ERROR"
+            and "failed to store" in r.getMessage()
+        ]
+        assert len(error_records) == 1, (
+            f"expected exactly one 'failed to store' ERROR log, got "
+            f"{[r.getMessage() for r in caplog.records]}"
+        )
+
+        # 5) env.close() was called (the trainer's ``finally`` block ran).
+        assert fake_env.closed is True
+
+    def test_all_games_failed_returns_zero(self) -> None:
+        """When every game in the cycle crashed, the helper must
+        return 0.0 without asking the DB — a 0-game window is not a
+        meaningful curriculum signal and we don't want to trigger
+        difficulty advancement off of it."""
+        db = MagicMock()
+        rate = compute_adjusted_win_rate(
+            db, expected_games=4, failed_games=4
+        )
+        assert rate == 0.0
+        db.get_recent_win_rate.assert_not_called()

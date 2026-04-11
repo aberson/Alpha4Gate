@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import queue
+import sqlite3
 import threading
 import time
 from dataclasses import asdict
@@ -434,6 +435,312 @@ class TestKillSwitchHygiene:
         assert KillSwitch._to_kill == [], (
             "KillSwitch._to_kill must be drained after a game thread "
             "exits, or sibling game threads will cross-kill each other."
+        )
+
+
+class TestGameIdUniquenessAcrossResets:
+    """Bug A (soak-2026-04-11 cycle 5): two sequential ``reset()`` calls
+    on the same ``SC2Env`` instance MUST produce different ``_game_id``
+    values. The old code reused the constructor-supplied ``game_id``
+    for every game in the cycle, so the second game's ``store_game``
+    always collided with the first on ``games.game_id``'s UNIQUE
+    constraint, raising ``sqlite3.IntegrityError`` and crashing the
+    cycle 14 seconds after an unrelated episode timeout.
+    """
+
+    def _bare_env(self, base: str = "rl_abc") -> SC2Env:
+        """Build an SC2Env without running any real game — we only
+        exercise ``reset()``'s id-allocation path, not the live
+        SC2 subprocess.
+        """
+        env = SC2Env.__new__(SC2Env)
+        env._map_name = "Simple64"
+        env._difficulty = 1
+        env._reward_calc = RewardCalculator()
+        env._db = None
+        env._base_game_id = base
+        env._game_id = base
+        env._model_version = "test"
+        env._realtime = False
+        env._obs_queue = queue.Queue()
+        env._action_queue = queue.Queue()
+        env._game_thread = None
+        env._step_index = 0
+        env._last_snapshot = None
+        env._total_reward = 0.0
+        env._game_start_time = 0.0
+        env._game_store_failed_count = 0
+        return env
+
+    def test_two_resets_produce_distinct_game_ids(self) -> None:
+        env = self._bare_env(base="rl_cycle5")
+
+        def fake_start(thread: threading.Thread) -> None:
+            new_obs_q = thread._args[0]  # type: ignore[attr-defined]
+            new_obs_q.put(
+                (
+                    np.zeros(FEATURE_DIM, dtype=np.float32),
+                    {"strategic_state": "OPENING"},
+                    False,
+                    None,
+                )
+            )
+
+        with patch.object(threading.Thread, "start", fake_start):
+            env.reset()
+            first_id = env._game_id
+            first_base = env._base_game_id
+            env.reset()
+            second_id = env._game_id
+            second_base = env._base_game_id
+
+        assert first_id != second_id, (
+            "reset() must allocate a FRESH per-game id; the old code "
+            "reused the constructor game_id across every reset on the "
+            "same env and hit `UNIQUE constraint failed: games.game_id` "
+            "as soon as two games ran in one cycle."
+        )
+        # Both should share the base label so operators can correlate
+        # the per-cycle reward log with the per-game DB rows.
+        assert first_id.startswith("rl_cycle5_"), first_id
+        assert second_id.startswith("rl_cycle5_"), second_id
+        # Neither should be exactly equal to the base — a fresh suffix
+        # must have been added.
+        assert first_id != "rl_cycle5"
+        # Regression signal: the base label must stay put across resets.
+        # If someone accidentally reassigns ``_base_game_id = self._game_id``
+        # in ``reset()``, the base would accumulate suffixes
+        # (``rl_cycle5_AAA_BBB``) and the trainer's correlation between
+        # the per-cycle reward log and per-game DB rows would break.
+        assert first_base == "rl_cycle5"
+        assert second_base == "rl_cycle5"
+
+    def test_store_game_under_real_db_does_not_collide_across_resets(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        """End-to-end repro with a REAL ``TrainingDB``.
+
+        Before Bug A was fixed, calling ``reset()`` twice on a single
+        ``SC2Env`` and then manually calling ``store_game`` with
+        ``env._game_id`` would raise ``sqlite3.IntegrityError`` on the
+        second call because both calls used the identical
+        constructor-supplied id. With the fix, each ``reset()``
+        regenerates the id so both stores succeed.
+        """
+        from alpha4gate.learning.database import TrainingDB
+
+        db = TrainingDB(tmp_path / "train.db")
+        env = self._bare_env(base="rl_integration")
+        env._db = db
+
+        def fake_start(thread: threading.Thread) -> None:
+            new_obs_q = thread._args[0]  # type: ignore[attr-defined]
+            new_obs_q.put(
+                (
+                    np.zeros(FEATURE_DIM, dtype=np.float32),
+                    {"strategic_state": "OPENING"},
+                    False,
+                    None,
+                )
+            )
+
+        with patch.object(threading.Thread, "start", fake_start):
+            env.reset()
+            first_id = env._game_id
+            db.store_game(
+                game_id=first_id,
+                map_name="Simple64",
+                difficulty=1,
+                result="win",
+                duration_secs=300.0,
+                total_reward=10.0,
+                model_version="v1",
+            )
+
+            env.reset()
+            second_id = env._game_id
+            # This is the line that used to raise IntegrityError.
+            db.store_game(
+                game_id=second_id,
+                map_name="Simple64",
+                difficulty=1,
+                result="loss",
+                duration_secs=250.0,
+                total_reward=-5.0,
+                model_version="v1",
+            )
+
+        assert db.get_game_count() == 2
+        db.close()
+
+
+class TestSyncGameStoreFailureObservable:
+    """Bug B (soak-2026-04-11 cycle 5): when ``store_game`` inside
+    ``_sync_game`` raises, the failure MUST be observable.
+
+    We chose Option 2 (mark-and-continue): log at ERROR and bump
+    ``_game_store_failed_count``. The trainer reads that counter
+    after ``model.learn()`` returns and excludes failed games from
+    the cycle win-rate denominator via ``compute_adjusted_win_rate``.
+    Documented on the ``_sync_game`` try/except block.
+    """
+
+    def _env_with_mock_db(self, raising: Exception | None) -> SC2Env:
+        env = SC2Env.__new__(SC2Env)
+        env._map_name = "Simple64"
+        env._difficulty = 1
+        env._reward_calc = RewardCalculator()
+        env._base_game_id = "rl_test"
+        env._game_id = "rl_test_deadbeef0000"
+        env._model_version = "test"
+        env._realtime = False
+        env._total_reward = 5.0
+        env._game_store_failed_count = 0
+
+        mock_db = MagicMock()
+        if raising is not None:
+            mock_db.store_game.side_effect = raising
+        env._db = mock_db  # type: ignore[assignment]
+        return env
+
+    def _patch_run_game(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Stub the ``sc2`` imports that ``_sync_game`` pulls in so the
+        method runs without launching a real SC2 process.
+
+        ``_sync_game`` imports ``sc2.maps``, ``sc2.player.Bot``,
+        ``sc2.player.Computer``, and ``sc2.main.run_game`` lazily on
+        every call. We replace each with a harmless stub so the method
+        reaches the ``store_game`` call site — which is the line under
+        test.
+        """
+        import sc2.main
+        import sc2.maps
+        import sc2.player
+
+        # ``_make_training_bot`` pulls in ``alpha4gate.bot`` which itself
+        # reaches deep into burnysc2 internals. Swap it for a lightweight
+        # fake whose ``time`` attribute is all ``_sync_game`` needs.
+        fake_bot = MagicMock()
+        fake_bot.time = 123.4
+        import alpha4gate.learning.environment as env_mod
+
+        monkeypatch.setattr(
+            env_mod, "_make_training_bot", lambda *a, **kw: fake_bot
+        )
+
+        # Stub the sc2.player.Bot constructor to accept any ai arg
+        # (the real one asserts ``isinstance(ai, BotAI)``).
+        monkeypatch.setattr(
+            sc2.player, "Bot", lambda *a, **kw: MagicMock()
+        )
+        monkeypatch.setattr(
+            sc2.player, "Computer", lambda *a, **kw: MagicMock()
+        )
+        monkeypatch.setattr(
+            sc2.maps, "get", lambda *a, **kw: MagicMock()
+        )
+
+        # ``run_game`` returns a result whose ``str(result)`` either
+        # matches ``"Result.Victory"`` (→ "win") or something else
+        # (→ "loss"). A plain string works because ``str(s) == s``.
+        monkeypatch.setattr(
+            sc2.main, "run_game", lambda *a, **kw: "Result.Defeat"
+        )
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            sqlite3.IntegrityError("UNIQUE constraint failed: games.game_id"),
+            sqlite3.OperationalError("database is locked"),
+        ],
+        ids=["IntegrityError", "OperationalError"],
+    )
+    def test_store_game_sqlite_error_is_caught_and_counted(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        exc: Exception,
+    ) -> None:
+        """The soak-2026-04-11 cycle 5 crash path, exactly reproduced.
+
+        ``store_game`` raises ``sqlite3.IntegrityError`` (the actual
+        cycle 5 crash) OR ``sqlite3.OperationalError`` (the parent we
+        catch for runtime hazards like ``database is locked`` and
+        ``disk I/O error``). In either case ``_sync_game`` must NOT
+        propagate the exception; it must log at ERROR and bump
+        ``_game_store_failed_count`` so the trainer can exclude this
+        game from the win-rate denominator.
+
+        Both branches are exercised in one method to cover the
+        ``except IntegrityError`` and ``except OperationalError`` arms
+        without 30 lines of duplicated scaffolding.
+        """
+        env = self._env_with_mock_db(exc)
+        self._patch_run_game(monkeypatch)
+
+        obs_q: queue.Queue[Any] = queue.Queue()
+        act_q: queue.Queue[Any] = queue.Queue()
+
+        # No exception should escape — mark-and-continue semantics.
+        env._sync_game(obs_q, act_q)
+
+        assert env._game_store_failed_count == 1, (
+            "store_game error must bump the failure counter so the "
+            "cycle win-rate denominator can exclude it"
+        )
+
+    def test_store_game_success_leaves_counter_at_zero(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Happy path: ``store_game`` returns cleanly, counter stays 0."""
+        env = self._env_with_mock_db(raising=None)
+        self._patch_run_game(monkeypatch)
+
+        obs_q: queue.Queue[Any] = queue.Queue()
+        act_q: queue.Queue[Any] = queue.Queue()
+        env._sync_game(obs_q, act_q)
+
+        assert env._game_store_failed_count == 0
+        assert env._db.store_game.called  # type: ignore[attr-defined]
+
+    def test_run_game_thread_broad_catch_also_bumps_counter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If ``_sync_game`` raises something NOT caught by its inner
+        try/except (e.g. a burnysc2 ``WSMessageTypeError``), the
+        broad catch in ``_run_game_thread`` must still bump the
+        failure counter so the cycle code sees a non-zero count.
+        """
+        from sc2.sc2process import KillSwitch
+
+        env = SC2Env.__new__(SC2Env)
+        env._map_name = "Simple64"
+        env._difficulty = 1
+        env._reward_calc = RewardCalculator()
+        env._db = None
+        env._base_game_id = "rl_test"
+        env._game_id = "rl_test_abc"
+        env._model_version = "test"
+        env._realtime = False
+        env._total_reward = 0.0
+        env._game_store_failed_count = 0
+
+        monkeypatch.setattr(KillSwitch, "_to_kill", [])
+
+        def raising_sync_game(
+            _obs_q: queue.Queue[Any],
+            _act_q: queue.Queue[Any],
+        ) -> None:
+            raise RuntimeError("simulated WSMessageTypeError")
+
+        env._sync_game = raising_sync_game  # type: ignore[assignment,method-assign]
+        env._run_game_thread(queue.Queue(), queue.Queue())
+
+        assert env._game_store_failed_count == 1, (
+            "broad exception catch in _run_game_thread must also "
+            "bump the failure counter"
         )
 
 
