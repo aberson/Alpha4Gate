@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1089,3 +1090,237 @@ class TestCrashedCyclesSkipPromotion:
         # Promotion gate called against the SUCCESSFUL checkpoint, not the
         # crashed one (which has no checkpoint key at all)
         mock_pm.evaluate_and_promote.assert_called_once_with("v7", 2)
+
+
+class TestAllCrashedTrainingRunIsFailure:
+    """Phase 4.5 #71 regression guard.
+
+    When every cycle of a training run crashes, the daemon must report
+    the run as a failure — it must NOT increment ``_runs_completed``, it
+    MUST set ``_last_error`` to a descriptive string, log at ERROR
+    level, and the record MUST reach ``ErrorLogBuffer`` so
+    ``/api/training/status.recent_errors`` surfaces a daemon-level
+    entry. See issue #71 for the full root cause analysis.
+    """
+
+    def _install_buffer(self) -> tuple[Any, Any]:
+        """Install a fresh handler + buffer on the root logger.
+
+        Returns ``(buffer, handler)`` so the caller can assert against
+        the buffer and detach the handler in a ``finally`` clause.
+        The module-level singleton in ``error_log`` is shared across
+        tests, so we attach a local handler bound to a *new* buffer
+        instance to avoid cross-test contamination.
+        """
+        from alpha4gate.error_log import ErrorLogBuffer, _ErrorBufferHandler
+
+        buffer = ErrorLogBuffer()
+        handler = _ErrorBufferHandler(buffer)
+        logging.getLogger().addHandler(handler)
+        return buffer, handler
+
+    def test_all_crashed_run_does_not_increment_runs_completed(
+        self, tmp_path: Path
+    ) -> None:
+        """Acceptance criterion 1: the three-part daemon-level failure.
+
+        - ``_runs_completed`` MUST NOT advance
+        - ``_last_error`` MUST name the crash count and first error
+        - an ERROR record MUST reach the ``ErrorLogBuffer``
+        """
+        settings = _make_settings(tmp_path)
+        cfg = DaemonConfig(current_difficulty=3)
+        daemon = TrainingDaemon(settings, cfg)
+        assert daemon._runs_completed == 0
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.run.return_value = {
+            "cycles_completed": 5,
+            "final_difficulty": 3,
+            "total_games": 0,
+            "stopped": False,
+            "stop_reason": "",
+            "cycle_results": [
+                {
+                    "cycle": i + 1,
+                    "difficulty": 3,
+                    "status": "crashed",
+                    "error": "ValueError: Observation spaces do not match",
+                }
+                for i in range(5)
+            ],
+        }
+
+        buffer, handler = self._install_buffer()
+        try:
+            with patch(
+                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                return_value=mock_orchestrator,
+            ):
+                daemon._run_training()
+        finally:
+            logging.getLogger().removeHandler(handler)
+
+        # (1) runs_completed did NOT tick up.
+        assert daemon._runs_completed == 0
+
+        # (2) last_error is a non-empty string naming the crash count
+        # and carrying the first per-cycle error message.
+        assert daemon._last_error is not None
+        assert "5" in daemon._last_error
+        assert "crashed" in daemon._last_error.lower()
+        assert "Observation spaces do not match" in daemon._last_error
+
+        # (3) an ERROR-level record reached ErrorLogBuffer with the
+        # same message (not merely the per-cycle trainer.py exceptions).
+        total, records = buffer.snapshot()
+        assert total >= 1
+        daemon_errors = [
+            r for r in records if r["logger"] == "alpha4gate.learning.daemon"
+        ]
+        assert len(daemon_errors) == 1, (
+            f"expected one daemon-level ERROR; got {daemon_errors}"
+        )
+        assert daemon_errors[0]["level"] == "ERROR"
+        assert "Observation spaces do not match" in daemon_errors[0]["message"]
+
+        # Status surface reports the failure.
+        status = daemon.get_status()
+        assert status["runs_completed"] == 0
+        assert status["last_error"] is not None
+        assert "5" in status["last_error"]
+
+    def test_all_crashed_run_does_not_call_promotion_gate(
+        self, tmp_path: Path
+    ) -> None:
+        """All-crashed guard still skips the promotion gate (#67 / #71)."""
+        settings = _make_settings(tmp_path)
+        daemon = TrainingDaemon(settings, DaemonConfig(current_difficulty=2))
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.run.return_value = {
+            "cycles_completed": 2,
+            "final_difficulty": 2,
+            "total_games": 0,
+            "stopped": False,
+            "stop_reason": "",
+            "cycle_results": [
+                {"cycle": 1, "difficulty": 2, "status": "crashed", "error": "boom"},
+                {"cycle": 2, "difficulty": 2, "status": "crashed", "error": "boom"},
+            ],
+        }
+        mock_pm = MagicMock()
+        daemon._promotion_manager = mock_pm
+
+        buffer, handler = self._install_buffer()
+        try:
+            with patch(
+                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                return_value=mock_orchestrator,
+            ):
+                daemon._run_training()
+        finally:
+            logging.getLogger().removeHandler(handler)
+
+        mock_pm.evaluate_and_promote.assert_not_called()
+        assert daemon._runs_completed == 0
+
+    def test_successful_run_clears_last_error_and_increments_counter(
+        self, tmp_path: Path
+    ) -> None:
+        """Acceptance criterion 5: unchanged behaviour for a good run.
+
+        Regression guard: confirm the all-crashed branch did not
+        accidentally break the success path.
+        """
+        settings = _make_settings(tmp_path)
+        daemon = TrainingDaemon(settings, DaemonConfig(current_difficulty=2))
+        # Pre-seed a stale error to prove it is cleared on success.
+        daemon._last_error = "stale error from a previous run"
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.run.return_value = {
+            "cycles_completed": 1,
+            "final_difficulty": 2,
+            "total_games": 10,
+            "stopped": False,
+            "stop_reason": "",
+            "cycle_results": [
+                {"cycle": 1, "checkpoint": "v9", "difficulty": 2, "win_rate": 0.5},
+            ],
+        }
+
+        from alpha4gate.learning.evaluator import EvalResult
+
+        mock_decision = MagicMock()
+        mock_decision.promoted = False
+        mock_decision.reason = "not better"
+        mock_decision.new_eval = EvalResult(
+            checkpoint="v9",
+            games_played=10,
+            wins=5,
+            losses=5,
+            crashed=0,
+            win_rate=0.5,
+            avg_reward=0.0,
+            avg_duration=300.0,
+            difficulty=2,
+            action_distribution=None,
+        )
+        mock_pm = MagicMock()
+        mock_pm.evaluate_and_promote.return_value = mock_decision
+        daemon._promotion_manager = mock_pm
+
+        with patch(
+            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            return_value=mock_orchestrator,
+        ):
+            daemon._run_training()
+
+        assert daemon._runs_completed == 1
+        assert daemon._last_error is None
+        assert daemon._last_result is not None
+        assert daemon._last_result["cycles_completed"] == 1
+
+    def test_empty_cycle_results_with_zero_cycles_treated_as_failure(
+        self, tmp_path: Path
+    ) -> None:
+        """Acceptance criterion 3: empty cycle_results + cycles_completed=0.
+
+        Documented choice: when the orchestrator returns before any
+        cycle started (no per-cycle breakdown, 0 cycles completed),
+        treat it as all-crashed so the daemon-level failure is
+        observable rather than silently advancing the runs counter.
+        """
+        settings = _make_settings(tmp_path)
+        daemon = TrainingDaemon(settings, DaemonConfig(current_difficulty=2))
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.run.return_value = {
+            "cycles_completed": 0,
+            "final_difficulty": 2,
+            "total_games": 0,
+            "stopped": True,
+            "stop_reason": "early failure",
+            "cycle_results": [],
+        }
+
+        buffer, handler = self._install_buffer()
+        try:
+            with patch(
+                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                return_value=mock_orchestrator,
+            ):
+                daemon._run_training()
+        finally:
+            logging.getLogger().removeHandler(handler)
+
+        assert daemon._runs_completed == 0
+        assert daemon._last_error is not None
+
+        _, records = buffer.snapshot()
+        daemon_errors = [
+            r for r in records if r["logger"] == "alpha4gate.learning.daemon"
+        ]
+        assert len(daemon_errors) == 1
+        assert daemon_errors[0]["level"] == "ERROR"

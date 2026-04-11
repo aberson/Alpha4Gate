@@ -389,6 +389,26 @@ class TrainingDaemon:
             successful_cycles = [
                 c for c in cycle_results if c.get("status") != "crashed"
             ]
+            crashed_cycles = [
+                c for c in cycle_results if c.get("status") == "crashed"
+            ]
+            # Decide whether the run as a whole is a failure.
+            #
+            # Failure conditions (issue #71):
+            #   1. cycle_results non-empty AND every entry is "crashed".
+            #   2. cycle_results empty AND cycles_completed == 0 — the
+            #      orchestrator returned without starting any cycle (e.g.
+            #      early env-build failure). Treat as all-crashed so the
+            #      daemon-level failure is observable instead of silently
+            #      ticking runs_completed. If cycle_results is empty but
+            #      cycles_completed > 0 we trust the aggregate count and
+            #      treat it as success (defensive default; no observed
+            #      orchestrator path returns that shape today).
+            cycles_completed = int(result.get("cycles_completed", 0))
+            if cycle_results:
+                all_crashed = not successful_cycles
+            else:
+                all_crashed = cycles_completed == 0
             if successful_cycles:
                 latest = successful_cycles[-1]
                 latest_checkpoint = latest["checkpoint"]
@@ -474,7 +494,19 @@ class TrainingDaemon:
             except Exception:
                 _log.exception("Rollback check failed")
 
-            # Update trigger tracking after successful run
+            # Update trigger tracking regardless of per-cycle outcome.
+            #
+            # We intentionally refresh _last_run_time even on all-crashed
+            # so the time trigger does not fire again inside
+            # ``min_hours_since_last``. The alternative — leaving the
+            # timestamp stale — would cause the daemon to retry every
+            # check interval and crash-loop against the same underlying
+            # fault (e.g. observation-space mismatch in issue #71's
+            # original soak-2 observation). The daemon-level ERROR log
+            # below and the persistent ``_last_error`` field are the
+            # supported observability surface for the failure; operators
+            # see it on the Alerts tab and can intervene before the next
+            # natural retry. (Issue #71 question 1.)
             db_path = self._settings.data_dir / "training.db"
             if db_path.exists():
                 db = TrainingDB(db_path)
@@ -484,10 +516,31 @@ class TrainingDaemon:
 
             with self._lock:
                 self._last_result = result
-                self._last_error = None
-                self._runs_completed += 1
                 self._last_run = datetime.now(UTC)
-            _log.info("Daemon: training complete -- %s", result)
+                if all_crashed:
+                    crash_count = len(crashed_cycles) if crashed_cycles else cycles_completed
+                    first_error = (
+                        crashed_cycles[0].get("error", "unknown")
+                        if crashed_cycles
+                        else "orchestrator returned no cycle results"
+                    )
+                    error_msg = (
+                        f"All {crash_count} training cycles crashed; "
+                        f"first error: {first_error}"
+                    )
+                    self._last_error = error_msg
+                else:
+                    self._last_error = None
+                    self._runs_completed += 1
+            if all_crashed:
+                # ERROR-level so the root ``_ErrorBufferHandler`` routes
+                # this into ``ErrorLogBuffer`` and ``/api/training/status.
+                # recent_errors`` surfaces a daemon-level entry — not
+                # just the per-cycle trainer exceptions that fire from
+                # inside the orchestrator loop.
+                _log.error("Daemon: training failed -- %s", error_msg)
+            else:
+                _log.info("Daemon: training complete -- %s", result)
         except Exception as exc:
             with self._lock:
                 self._last_error = str(exc)
