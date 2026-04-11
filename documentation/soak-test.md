@@ -296,26 +296,50 @@ binds to `0.0.0.0:<web_ui_port>` (default `8765`).
 
 ```bash
 ls -la logs/soak-<YYYY-MM-DD>-backend.log
-wc -l logs/soak-<YYYY-MM-DD>-backend.log
+grep -c "Uvicorn running on" logs/soak-<YYYY-MM-DD>-backend.log
+grep -c "Training daemon started" logs/soak-<YYYY-MM-DD>-backend.log
+grep -cE "Traceback|^ERROR|ERROR:" logs/soak-<YYYY-MM-DD>-backend.log
 ```
 
-Both checks must succeed:
+All four checks must succeed within 30 seconds of launch:
 
 1. The file must exist (`ls` returns a real entry with a non-zero byte
    count — not "No such file or directory").
-2. The line count must be greater than 50 within 30 seconds of launch.
-   Uvicorn plus the daemon emit that many banner/startup lines by
-   the time the server is ready to serve.
+2. `Uvicorn running on` must appear at least once (uvicorn has bound its
+   listening socket and is serving requests).
+3. `Training daemon started` must appear at least once (the daemon
+   thread is up and polling — confirmed via
+   `TrainingDaemon.start()` at `src/alpha4gate/learning/daemon.py:119`).
+4. Neither `Traceback` nor a top-of-line `ERROR` must appear in the
+   first-30-seconds window (clean startup — no stack trace before
+   uvicorn banners, and no ERROR-level log record from the daemon or
+   env bootstrap).
 
-If either check fails, the tee is not wired correctly — **abort the
-run**, kill the backend, and relaunch with the exact command above.
+If any check fails, the tee is not wired correctly OR the backend
+errored on startup — **abort the run**, kill the backend, fix the
+underlying issue, and relaunch with the exact command above.
 Scrollback is no longer an acceptable fallback.
+
+### Why the substring gate, not a line count
+
+Previous revisions of this doc required `wc -l logs/... > 50` as the
+gate, on the assumption that uvicorn + daemon emit >50 banner/startup
+lines. That assumption was stale: the current backend startup produces
+roughly **7 substantive lines** (1 `VIRTUAL_ENV` warning + 2 daemon
+lines + 4 uvicorn banner lines). soak-2026-04-11b hit this stale gate
+on every launch and had to be hand-waived past it — exactly the kind
+of "pre-flight that cries wolf" that erodes soak-test discipline.
+Phase 4.7 Step 4 (#85) replaced the arithmetic gate with substring
+checks that directly assert the two things we actually care about
+(uvicorn is bound, daemon is polling) and that we actively *want* to
+see failure on (tracebacks, daemon-level ERRORs).
 
 Expected log output within the first few seconds:
 
 - `Training daemon started (interval=60s)` — from `TrainingDaemon.start()`
 - `Uvicorn running on http://0.0.0.0:8765` — from uvicorn
-- No stack traces before the uvicorn banner
+- Current baseline: **~7 substantive lines** in the first 30 seconds
+  (for reference only — do NOT gate on the numeric count)
 
 If the daemon log line does **not** appear, the daemon did not start — stop, check
 that `--daemon` is really on the command line, and check `daemon_config.json` for

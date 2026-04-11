@@ -397,6 +397,8 @@ Step 3's fix while every game is also misclassified as crashed.
 
 **Commit message:** `docs(phase4.7-step4): replace soak-test.md §3.2 stale line-count gate`
 
+**Status:** DONE (2026-04-11)
+
 **Problem.**
 soak-test.md §3.2 says: "The line count must be greater than 50 within 30
 seconds of launch." Actual current uvicorn + daemon startup emits **7
