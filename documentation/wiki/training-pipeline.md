@@ -102,6 +102,19 @@ For each cycle (1 to n_cycles):
 (900s max game time / 22 steps per action ~= 13.6, rounded up). This is passed to
 `model.learn(total_timesteps=...)`.
 
+**Cycle ≠ game count (Phase 4.7 Step 5, #86):** the `games_per_cycle * 15`
+calculation above is an **upper bound**, not a target. Under `realtime=False`
+(the default for training), a single SC2 game typically consumes the full PPO
+timestep budget before the game actually finishes, so one cycle runs closer to
+"1 game" than "`games_per_cycle` games". The trainer per-cycle log line is
+framed as `Training cycle K: PPO.learn(total_timesteps=N)` — NOT
+`Training: N games` — so operators watching logs do not sit waiting for
+`games_per_cycle` sc2 game completions that will not arrive. The
+`games_per_cycle` configuration field is retained because the win-rate window
+downstream (`db.get_recent_win_rate(games_per_cycle * 2)`) still uses it as its
+window size; it just does not correspond to a per-cycle game count under
+`realtime=False`.
+
 ### Imitation pre-training
 
 `run_imitation_training(db, checkpoint_dir, ...)` → `dict`

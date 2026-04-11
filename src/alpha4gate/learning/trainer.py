@@ -215,10 +215,21 @@ class TrainingOrchestrator:
                 model.set_env(env)
                 # Estimate total timesteps: games_per_cycle games, each ~15
                 # decisions (300 game-seconds / 22 steps-per-action ≈ 15).
+                # NOTE: this is an UPPER BOUND on how many games might
+                # actually be played. Under ``realtime=False`` a single
+                # game can consume the whole budget before it finishes,
+                # so the cycle runs closer to "1 game" than
+                # "games_per_cycle games". Phase 4.7 Step 5 (#86) renamed
+                # the per-cycle log below from "Training: N games, ~M
+                # timesteps" to a PPO-budget framing so operators do not
+                # sit watching for N game completions per cycle that will
+                # not arrive. ``games_per_cycle`` still governs the
+                # win-rate window downstream (``get_recent_win_rate``)
+                # which is why the field is retained.
                 est_steps = games_per_cycle * 15
                 _log.info(
-                    "Training: %d games, ~%d timesteps",
-                    games_per_cycle, est_steps,
+                    "Training cycle %d: PPO.learn(total_timesteps=%d)",
+                    self._cycle, est_steps,
                 )
                 model.learn(total_timesteps=est_steps, reset_num_timesteps=False)
                 self._total_games += games_per_cycle

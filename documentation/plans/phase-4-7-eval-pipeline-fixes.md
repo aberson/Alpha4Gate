@@ -427,6 +427,8 @@ finding candidate at 07:06:40).
 
 **Commit message:** `docs(phase4.7-step5): rename trainer "10 games" log to timestep budget`
 
+**Status:** DONE (2026-04-11)
+
 **Problem.**
 `trainer.py` emits `Training: 10 games, ~150 timesteps` at cycle start. Under
 `realtime=False`, one game consumes the full 150-timestep PPO budget, so the
