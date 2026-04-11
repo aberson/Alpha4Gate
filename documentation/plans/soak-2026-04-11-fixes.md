@@ -168,8 +168,11 @@ The soak run on 2026-04-11 (`documentation/soak-test-runs/soak-2026-04-11.md`) r
 
 ### Phase 4.6 Step 7: Win-probability forecast investigation (low priority, investigate-only)
 
-- **Status:** NOT STARTED
+- **Status:** DONE — REPORT ONLY (2026-04-11, investigate-only)
 - **Issue:** #81
+- **Output:** `documentation/win-probability-forecast-investigation.md` (318 lines)
+- **Recommendation:** Option (c) weighted-feature heuristic deferred to Phase 5. Option (b) learned classifier is a **data-size blocker** — only 8 labeled games available, LogReg overfits to majority class. Option (a) PPO value head explicitly out of scope.
+- **Bonus bugs found (file as follow-ups):** (1) 262 orphaned transitions in soak artifact (Phase 4.6 Step 1 `b27c6cc` fixes this going forward); (2) `transitions.action_probs` column is 100% NULL despite environment wiring — `_GymStateProxy.last_probabilities` was never populated during the soak run.
 - **Problem:** Currently the only signal of "is the bot doing well" during a game is the post-game `Result.Victory` / `Result.Defeat`. There is no per-step or per-decision estimate of how likely the bot is to win at any given moment. Adding a **win-probability forecast** — a model that takes the current game state (plus any other useful features) and outputs `P(win)` — could be valuable in several ways:
   1. **As a debugging surface for operators.** A live "win probability" curve on the Live tab would let an operator see *when* the game is going wrong, not just *that* it went wrong. Did the bot lose at minute 2 or minute 10?
   2. **As a training signal candidate.** Currently the trainer uses a hand-crafted reward function (12 reward rules visible in the dashboard with hand-tuned weights). A learned win-probability could replace or augment that with a less-hand-crafted signal — every step's reward becomes the change in `P(win)`. This is a well-known approach (similar to how AlphaZero uses value heads).
