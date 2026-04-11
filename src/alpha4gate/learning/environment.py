@@ -33,6 +33,12 @@ STEPS_PER_ACTION: int = 22
 # Max game time in seconds before forcing a timeout (prevents 20+ min passive games)
 MAX_GAME_TIME_SECONDS: float = 900.0  # 15 minutes
 
+# Single source of truth for the bridge observation tuple shape:
+# (obs_vector, info_dict, done_flag, result_string).
+# All queue annotations in this module reference this alias; see
+# feedback_duplicate_shape_constants.md on why we don't inline it.
+type _ObsTuple = tuple[NDArray[np.float32], dict[str, Any], bool, str | None]
+
 
 class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
     """Gymnasium environment wrapping a burnysc2 SC2 game.
@@ -73,7 +79,6 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         self._realtime = realtime
 
         # Communication queues between gym thread and game thread
-        _ObsTuple = tuple[NDArray[np.float32], dict[str, Any], bool, str | None]
         self._obs_queue: queue.Queue[_ObsTuple] = queue.Queue()
         self._action_queue: queue.Queue[int | None] = queue.Queue()  # None = shutdown
 
@@ -97,9 +102,20 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         self._total_reward = 0.0
         self._last_snapshot = None
 
+        # Create FRESH queues for the new game. Issue #72: if the previous
+        # game_thread was orphaned (for example because close() timed out
+        # joining it), the zombie still holds a reference to the queues it
+        # was created with. Creating new queue objects here guarantees that
+        # the zombie's residual put()s go to a dead queue and cannot
+        # contaminate the new game's observation stream.
+        self._obs_queue = queue.Queue[_ObsTuple]()
+        self._action_queue = queue.Queue[int | None]()
+
         # Launch game in background thread
         self._game_thread = threading.Thread(
-            target=self._run_game_thread, daemon=True
+            target=self._run_game_thread,
+            args=(self._obs_queue, self._action_queue),
+            daemon=True,
         )
         self._game_thread.start()
 
@@ -170,7 +186,11 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
                 except queue.Empty:
                     break
 
-    def _run_game_thread(self) -> None:
+    def _run_game_thread(
+        self,
+        obs_queue: queue.Queue[_ObsTuple],
+        action_queue: queue.Queue[int | None],
+    ) -> None:
         """Run the SC2 game in a background thread.
 
         sc2.main.run_game() is synchronous and calls asyncio.run() internally,
@@ -178,22 +198,50 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
 
         burnysc2's SC2Process sets signal handlers which only work in the main
         thread, so we monkey-patch signal.signal to a no-op here.
+
+        The queues are passed in explicitly (rather than read from ``self``)
+        so that this thread — and the bot it spawns — keeps writing to the
+        same queue pair for its entire lifetime. If ``SC2Env.reset()``
+        swaps in fresh queues mid-run (because an earlier game thread was
+        orphaned), this zombie thread still writes to its own dead queue
+        and cannot contaminate the new game's observation stream (#72).
         """
         import signal
 
         _orig_signal = signal.signal
         signal.signal = lambda *_args, **_kw: signal.SIG_DFL  # noqa: E731
         try:
-            self._sync_game()
+            self._sync_game(obs_queue, action_queue)
         except Exception:
             _log.exception("Game thread crashed")
             # Send terminal observation so step() doesn't hang
             obs = np.zeros(FEATURE_DIM, dtype=np.float32)
-            self._obs_queue.put((obs, {}, True, "loss"))
+            obs_queue.put((obs, {}, True, "loss"))
         finally:
             signal.signal = _orig_signal
+            # Defensive cleanup: even after _sync_game returns normally,
+            # burnysc2's ``KillSwitch._to_kill`` class-level list still
+            # holds references to every SC2Process it has ever seen
+            # (it is never pruned on ``__aexit__``). If another game
+            # thread starts later in this process, that thread's end-of-
+            # game ``KillSwitch.kill_all()`` will iterate the stale
+            # entries and happily terminate any still-live SC2 binary it
+            # finds — closing its websocket mid-request and crashing the
+            # live game with ``WSMessageTypeError(257, None)``. Clearing
+            # the list when this thread's game is done means the next
+            # thread starts from a clean slate. See issue #72.
+            try:
+                from sc2.sc2process import KillSwitch
 
-    def _sync_game(self) -> None:
+                KillSwitch._to_kill.clear()
+            except Exception:  # pragma: no cover - defensive only
+                _log.debug("Could not clear KillSwitch._to_kill", exc_info=True)
+
+    def _sync_game(
+        self,
+        obs_queue: queue.Queue[_ObsTuple],
+        action_queue: queue.Queue[int | None],
+    ) -> None:
         """Run the actual SC2 game with a custom bot that bridges to the queues."""
         import sc2.maps
         from sc2.data import Difficulty, Race
@@ -201,8 +249,8 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         from sc2.player import Bot, Computer
 
         bot = _make_training_bot(
-            obs_queue=self._obs_queue,
-            action_queue=self._action_queue,
+            obs_queue=obs_queue,
+            action_queue=action_queue,
             reward_calc=self._reward_calc,
         )
 
@@ -281,7 +329,7 @@ class _GymStateProxy:
 
 
 def _make_training_bot(
-    obs_queue: queue.Queue[tuple[NDArray[np.float32], dict[str, Any], bool, str | None]],
+    obs_queue: queue.Queue[_ObsTuple],
     action_queue: queue.Queue[int | None],
     reward_calc: RewardCalculator,
 ) -> Any:
@@ -306,6 +354,31 @@ def _make_training_bot(
             self._action_queue_train = action_queue
             self._reward_calc_train = reward_calc
             self._gym_state: StrategicState | None = None
+            # Once the episode is torn down (timeout, gym shutdown, or the
+            # bot has already resigned) this flag is flipped true and every
+            # subsequent ``on_step`` becomes a no-op until ``_play_game_ai``
+            # notices ``client.in_game`` is false and returns. Without this,
+            # non-realtime SC2 keeps ticking game-time forward while the
+            # bot re-enters the timeout branch every 22 iterations and
+            # floods the obs queue with phantom terminal observations —
+            # exactly the crash pattern logged in issue #72.
+            self._episode_done: bool = False
+
+        async def _resign_and_mark_done(self) -> None:
+            """Leave the SC2 game and mark the episode as terminated.
+
+            Calls ``self.client.leave()`` so burnysc2's ``_play_game_ai``
+            loop observes ``client.in_game is False`` on its next tick and
+            returns, which lets ``SC2Process.__aexit__`` run and frees the
+            SC2 binary. Errors during ``leave()`` are logged but swallowed:
+            the game is already in a broken state, so we just want to
+            stop pumping more observations into the queue.
+            """
+            self._episode_done = True
+            try:
+                await self.client.leave()
+            except Exception:  # pragma: no cover - defensive
+                _log.debug("client.leave() raised during teardown", exc_info=True)
 
         async def on_step(self, iteration: int) -> None:
             """Run full Alpha4GateBot logic, but override strategic state from gym.
@@ -315,6 +388,13 @@ def _make_training_bot(
             neural engine so Alpha4GateBot.on_step() uses the gym-chosen state
             for all macro/micro decisions.
             """
+            if self._episode_done:
+                # Episode is torn down; do nothing until burnysc2's game
+                # loop notices and exits. Crucially, do NOT run the parent
+                # on_step (it assumes a live game) and do NOT push more
+                # observations onto the queue.
+                return
+
             if iteration % STEPS_PER_ACTION == 0:
                 snapshot = self._build_snapshot()
                 obs = encode(snapshot)
@@ -348,13 +428,38 @@ def _make_training_bot(
                         snapshot.game_time_seconds,
                     )
                     self._obs_queue_train.put((obs, info, True, "timeout"))
-                    return  # Stop playing — SC2Env will close the game
+                    # Surrender so the game actually ends. Without this,
+                    # non-realtime SC2 would keep ticking and on_step would
+                    # re-fire indefinitely until something external killed
+                    # the SC2 subprocess (see issue #72).
+                    await self._resign_and_mark_done()
+                    return
 
                 self._obs_queue_train.put((obs, info, False, None))
 
-                action = self._action_queue_train.get(timeout=120)
+                try:
+                    action = self._action_queue_train.get(timeout=120)
+                except queue.Empty:
+                    # Gym side never delivered an action within the
+                    # window. This is the same "episode must exit via
+                    # client.leave()" invariant as the shutdown and
+                    # timeout branches: surrender, flip _episode_done,
+                    # and stop pumping observations. Without this the
+                    # bot could re-enter the decision path on the next
+                    # STEPS_PER_ACTION tick and re-fire the same timeout
+                    # branch indefinitely (issue #72 reviewer M2).
+                    _log.warning(
+                        "action_queue.get timed out after 120s — "
+                        "surrendering episode"
+                    )
+                    await self._resign_and_mark_done()
+                    return
                 if action is None:
-                    return  # Shutdown signal
+                    # Gym signalled shutdown (SC2Env.close()). Leave the
+                    # game so the thread exits cleanly rather than
+                    # becoming an orphaned zombie that keeps SC2 alive.
+                    await self._resign_and_mark_done()
+                    return
                 if 0 <= action < len(_ACTION_TO_STATE):
                     self._gym_state = _ACTION_TO_STATE[action]
                     # Inject gym state via the neural engine proxy so

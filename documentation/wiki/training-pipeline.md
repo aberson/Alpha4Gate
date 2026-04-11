@@ -178,6 +178,48 @@ Main Thread (SB3/Trainer)              Background Thread (SC2 Game)
 main thread. Since the game runs in a background thread, `_run_game_thread()` monkey-patches
 `signal.signal` to a no-op before launching, then restores it afterward.
 
+**Episode teardown contract (#72 blocker):**
+Every exit from an episode — whether the bot times out (`game_time_seconds >=
+MAX_GAME_TIME_SECONDS`), gym signals shutdown (`action=None` from
+`SC2Env.close()`), or the parent loop decides to reset — MUST call
+`await self.client.leave()` and flip `_FullTrainingBot._episode_done = True`
+before returning from `on_step`. This matters because:
+
+1. `sc2.main._play_game_ai` drives the bot loop synchronously; the only way
+   for the game to end from inside `on_step` is for `client.in_game` to
+   become `False`, which `client.leave()` achieves. Just `return`-ing leaves
+   SC2 running and — because the trainer runs `realtime=False` — game-time
+   ticks forward as fast as the CPU allows, so `on_step` is immediately
+   re-entered on the next tick.
+2. If the bot re-enters the timeout branch on every subsequent tick it
+   floods `_obs_queue` with phantom terminal observations and the thread
+   orphans (because it never reads the `None` shutdown signal from
+   `_action_queue`).
+3. Orphaned threads compound: on the next `reset()`, `close()` joins with a
+   30 s timeout, the join times out, `reset()` spawns a *new* game thread
+   alongside the zombie, and burnysc2's `KillSwitch._to_kill` starts
+   accumulating references. When one of the sibling threads eventually
+   exits normally, its `SC2Process.__aexit__` calls `KillSwitch.kill_all()`
+   which iterates the class-level list and `_clean()`s **every** registered
+   process — including the other sibling's live `SC2Process`. The live
+   sibling's next `receive_bytes` call then returns `WSMessageTypeError(257,
+   None)` (type 257 = `WSMsgType.CLOSED`), which burnysc2 wraps as
+   `ConnectionAlreadyClosedError` and the training cycle crashes.
+
+**Queue isolation on reset:** `SC2Env.reset()` allocates *fresh*
+`queue.Queue` instances and passes them into `_run_game_thread` as
+arguments. The bot's closure captures those specific queue references at
+construction time, so a hypothetical zombie thread from a previous episode
+can only push into its own dead queue — it cannot contaminate the new
+game's observation stream.
+
+**`KillSwitch._to_kill` hygiene:** `_run_game_thread` clears
+`sc2.sc2process.KillSwitch._to_kill` in its `finally` block. burnysc2 never
+prunes that class-level list on its own, so across many sequential games
+the dead references accumulate and a later `kill_all()` would cross-kill
+unrelated processes. Draining it per-thread is the only safe defensive
+measure short of patching burnysc2.
+
 ### Inference path (using the trained model)
 
 During actual gameplay (not training), the model is loaded via `NeuralDecisionEngine`:
