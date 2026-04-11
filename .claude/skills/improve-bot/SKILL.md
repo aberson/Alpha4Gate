@@ -1,31 +1,45 @@
 ---
 name: improve-bot
-description: Run a long autonomous session to improve the Alpha4Gate bot's performance along a measurable axis. Supports training-only soak runs, plan-based dev work, and (with --self-improve) fully autonomous reactive hybrid loops. Designed for overnight / unattended runs.
+description: Run a long autonomous session to improve the Alpha4Gate bot's performance along a measurable axis. Supports demo (no mutations), training-only soak runs (learning self-improvement via the daemon), plan-based dev work, and (with --self-improve-code) fully autonomous reactive hybrid loops. Designed for overnight / unattended runs.
 user-invocable: true
-argument: The improvement suggestion (optional). Examples: "raise win rate vs diff 1 past 50%", "fix orphaned transitions", "run overnight and improve the bot's performance". Append `--self-improve` to allow autonomous code changes during the run.
+argument: The improvement suggestion (optional). Examples: "raise win rate vs diff 1 past 50%", "fix orphaned transitions", "run overnight and improve the bot's performance". Flags - `--demo` for pure observation (no mutations), `--self-improve-code` to allow autonomous code changes during the run.
 ---
 
 # /improve-bot
 
-Entry point for a long autonomous run that aims to improve the Alpha4Gate bot along some measurable axis. Three flavors:
+Entry point for a long autonomous run that aims to improve the Alpha4Gate bot along some measurable axis.
 
-| Flavor        | What it does                                                        | When to use                                       |
-|---------------|---------------------------------------------------------------------|---------------------------------------------------|
-| **training**  | Soak run, no code changes, captures metric deltas + findings writeup | You want to observe improvement without code edits |
-| **dev**       | Plan doc → `/build-phase` → commits                                 | You already know what to fix                      |
-| **hybrid**    | Training reacts to failures, opens issues, spawns `/build-step` work, loops | Overnight unattended self-improvement      |
+## Three camps of "improvement"
 
-The `--self-improve` flag gates autonomous code changes. Without the flag, this skill is training + writeup only. With the flag, the hybrid loop is allowed to merge and push to master on its own.
+| Camp | Flavors | What changes | Flag |
+|---|---|---|---|
+| **Code self-improvement** | `dev`, `hybrid` | source code, branches, master, remote | `--self-improve-code` (gates `hybrid`) |
+| **Learning self-improvement** | `training` | `data/hyperparams.json`, `data/reward_rules.json`, checkpoints, `training.db` (the training daemon mutates these during normal operation) | *(no flag — default)* |
+| **Demo** | `demo` | nothing (backend runs **without** `--daemon`, pure observation) | `--demo` |
+
+## Flavors
+
+| Flavor        | What it does                                                                 | When to use                                       |
+|---------------|------------------------------------------------------------------------------|---------------------------------------------------|
+| **demo**      | Backend without `--daemon`, dashboard + alerts observation only, no mutations | Rehearsal, pre-flight drill, dashboard/alert verification |
+| **training**  | Soak run with daemon ON. Daemon trains + updates weights. No source edits. Captures metric deltas + findings writeup | You want to observe learning-side improvement without code edits |
+| **dev**       | Plan doc → `/build-phase` → commits                                          | You already know what to fix                      |
+| **hybrid**    | Training reacts to failures, opens issues, spawns `/build-step` work, loops  | Overnight unattended code self-improvement        |
+
+The `--self-improve-code` flag gates autonomous **source-code** changes (Phase 4 hybrid loop). Without it, the skill will not merge or push code on its own. The `--demo` flag forces the demo flavor and disables all mutation paths (daemon off, `data/` snapshot-verified, no git writes).
 
 ---
 
 ## Phase 0: Classify the suggestion
 
-Parse the argument. Separate any flags (`--self-improve`) from the suggestion text. Pick a flavor:
+Parse the argument. Separate any flags (`--demo`, `--self-improve-code`) from the suggestion text. Pick a flavor in this order:
 
-- **training** — suggestion names a metric axis or is absent (e.g. "raise win rate vs diff 1", or empty)
-- **dev** — suggestion names a known bug or a concrete code change (e.g. "fix orphaned transitions", references a GH issue)
-- **hybrid** — suggestion is open-ended AND `--self-improve` is set (e.g. "run overnight and improve the bot's performance")
+1. **demo** — `--demo` flag is set (regardless of suggestion text). Daemon OFF, no mutations, rehearsal/observation only.
+2. **hybrid** — suggestion is open-ended AND `--self-improve-code` is set (e.g. "run overnight and improve the bot's performance").
+3. **dev** — suggestion names a known bug or a concrete code change (e.g. "fix orphaned transitions", references a GH issue). `--self-improve-code` is not required for dev because the user has already authorized a specific fix by naming it.
+4. **training** — default: suggestion names a metric axis or is absent (e.g. "raise win rate vs diff 1", or empty). Daemon ON, learning self-improvement via normal training loop.
+
+Flag conflicts: `--demo` + `--self-improve-code` is contradictory — stop and ask which one the user meant. `--demo` silently disables any `--self-improve-code` authorization for the duration of the run.
 
 If the suggestion is ambiguous, ask ONE disambiguating question, then proceed. Do not punt with "too vague" — the whole point of this skill is that "improve the bot's performance" IS a valid request, you just need to pick the measure.
 
@@ -46,17 +60,19 @@ These questions lock the run down so it can go unattended. Scale them down based
    Multi-measure is fine. Default when unspecified: **win rate vs difficulty 1**.
 
 2. **Stop conditions** (whichever fires first):
-   - Wall clock — default **4h**
+   - Wall clock — default **2h** (for `demo` flavor, default **30 min**)
    - Game count — default none
-   - Error budget — default **4/5** (matches soak-3 convention)
+   - Error budget — default **4/5** (matches soak-3 convention). **Demo flavor: N/A** (no daemon, no error counter).
    - First promotion event — default no
-   - Watchdog trip — **always on**
+   - Watchdog trip — **always on** in training/hybrid. **Demo flavor: N/A** (no daemon, no watchdog).
 
-3. **`data/` state** — fresh empty or continue from current? Check the current state and the most recent soak log to propose a default (fresh empty was the soak-4 plan per memory).
+3. **`data/` state**:
+   - **demo**: snapshot `data/` at start (`cp -r data data.demo-snapshot-$TS`); at stop, diff/hash-compare to prove nothing mutated. Never mutate `data/`; if a mutation is detected, flag it loudly in the writeup as a demo-contract violation.
+   - **training/hybrid**: fresh empty or continue from current? Check the current state and the most recent soak log to propose a default (fresh empty was the soak-4 plan per memory).
 
-4. **Self-improve confirmation** — if flavor is hybrid, confirm `--self-improve` is set and explicitly confirm the user OKs autonomous commit/merge/push/issue-create for the duration of the run.
+4. **Self-improve-code confirmation** — if flavor is `hybrid`, confirm `--self-improve-code` is set and explicitly confirm the user OKs autonomous commit/merge/push/issue-create for the duration of the run. If flavor is `demo`, confirm the user understands no learning or code improvement will happen this run — it is rehearsal/observation only.
 
-Print the full run plan (flavor, measures, stops, data state, self-improve on/off) in one message and wait for user OK before entering Phase 2.
+Print the full run plan (flavor, measures, stops, data state, flags on/off) in one message and wait for user OK before entering Phase 2.
 
 ---
 
@@ -70,11 +86,11 @@ Any failure here stops the run before it goes unattended.
 git status                            # clean, on master
 git rev-parse --abbrev-ref HEAD       # == master
 git fetch origin && git status -sb    # up to date with origin/master
-gh auth status                        # authenticated
-gh api user                           # returns 200
+gh auth status                        # authenticated (skip for demo)
+gh api user                           # returns 200 (skip for demo)
 ```
 
-Dry-run commit (confirms no hook blocks the operations the loop will use):
+Dry-run commit (confirms no hook blocks the operations the loop will use). **Skip this block for `demo` flavor** — demo performs no git writes, so there's nothing to verify:
 
 ```bash
 TS=$(date +%s)
@@ -84,11 +100,12 @@ git checkout master
 git branch -D improve-bot/preflight-$TS
 ```
 
-Explicitly list the operations the run may perform and have the user approve them as a set:
+Explicitly list the operations the run may perform and have the user approve them as a set. The set depends on flavor:
 
-- `git add`, `commit`, `tag`, `branch`, `checkout`, `merge --no-ff`
-- `git push origin <branch>`, `git push origin master`, `git push origin --tags`
-- `gh issue create`, `gh issue comment`, `gh issue close`
+- **demo**: none — no git writes, no GitHub writes, no `data/` writes. Approval set is empty; confirm the user understands this.
+- **training**: local `data/` mutations only (via the daemon). No git writes beyond the baseline tag (`git tag`, `git push origin <tag>`).
+- **dev**: `git add`, `commit`, `tag`, `branch`, `checkout`, `push origin <branch>`, `push origin master`, `push origin --tags`; `gh issue create`, `gh issue comment`, `gh issue close`.
+- **hybrid** (requires `--self-improve-code`): same as dev, plus `git merge --no-ff` on master and the automatic-rollback `push origin master --force-with-lease` path documented in Phase 4.
 
 **Forbidden, ever:** `git push --force`, `reset --hard` to any remote ref, rebase of published history, `--no-verify`, deleting `baseline`/`merged` tags.
 
@@ -98,7 +115,8 @@ Explicitly list the operations the run may perform and have the user approve the
 ls -la data/
 ```
 
-If fresh was chosen: `mv data data.bak-$TS && mkdir data`. Never `rm -rf data/`.
+- **demo**: `cp -r data data.demo-snapshot-$TS` (the snapshot is the contract — at stop, the skill will diff `data/` against this snapshot; any diff is a demo-contract violation). Never `mv`, never `mkdir` over it.
+- **training / dev / hybrid**: if fresh was chosen: `mv data data.bak-$TS && mkdir data`. Never `rm -rf data/`.
 
 ### Soak-test pre-flight checklists
 
@@ -109,11 +127,15 @@ Canonical pre-flight lives in `documentation/soak-test.md`. Execute both of thes
 
 Note that §3.5 specifically is the alerts-pipeline verification — do not conflate it with "the pre-flight" broadly. Both §2 and §3 must pass.
 
+For **demo** flavor, §2 still applies (minus daemon config values, since the daemon is off), and §3 still applies except §3.2 runs **without** `--daemon`. Run §3.5 as written — the alerts-pipeline verification is exactly what demo mode is for.
+
 If either document's section numbers drift, read `documentation/soak-test.md` top-to-bottom to find the current checklist boundaries and adapt. Do not invent pre-flight items that aren't in the doc.
 
-### Soak launch command
+### Launch command
 
 Read the most recent `documentation/soak-test-runs/soak-*.md` to learn the current soak-launch convention. **Mimic it exactly** — do not invent a new invocation. If the convention is unclear, stop and ask.
+
+For **demo** flavor, take the most recent soak launch command and remove the `--daemon` flag — everything else stays (env vars, tee, DEBUG_ENDPOINTS, etc.). Do not invent a different backend entry point.
 
 ### Stdout buffering + tee from start
 
@@ -134,7 +156,7 @@ All subsequent soak launches use `2>&1 | tee -a "$LOGFILE"`.
 
 ## Phase 3: Launch
 
-### Baseline tag (always, for every flavor)
+### Baseline tag (training / dev / hybrid; skipped for demo)
 
 ```bash
 RUN_TS=$(date +%Y%m%d-%H%M)
@@ -142,15 +164,25 @@ git tag "improve-bot/run/$RUN_TS/baseline"
 git push origin "improve-bot/run/$RUN_TS/baseline"
 ```
 
+For **demo** flavor, do NOT create or push any tag — demo is a no-git-writes contract. Still set `RUN_TS` as a local var for logging.
+
 Write a run-start header to `$LOGFILE`:
 - Suggestion text
-- Flavor, measures, stop conditions, data state, `--self-improve` on/off
-- Baseline tag + SHA
-- Baseline metric values (read from dashboard state at start)
+- Flavor, measures, stop conditions, data state, `--demo` / `--self-improve-code` flags on/off
+- Baseline tag + SHA (or "n/a (demo)" for demo)
+- Baseline metric values (read from dashboard state at start; for demo, these are observation baselines only)
+
+### Flavor: demo
+
+- Launch the backend **without** `--daemon` (e.g. `DEBUG_ENDPOINTS=1 PYTHONUNBUFFERED=1 uv run python -m alpha4gate.runner --serve 2>&1 | tee -a "$LOGFILE"`). Start frontend as normal.
+- Run §3.5 synthetic alert pre-flight — this is the primary value of demo mode.
+- Observe the dashboard for the wall-clock window. Log anything notable (alert-pipeline behavior, UI regressions, dashboard drift).
+- At stop: diff `data/` against the `data.demo-snapshot-$TS` taken in Phase 2. Any diff is a demo-contract violation — flag loudly in the writeup.
+- Move to Phase 5.
 
 ### Flavor: training
 
-- Launch the soak run in the background with tee (exact invocation from most recent soak log).
+- Launch the soak run in the background with tee (exact invocation from most recent soak log, **with** `--daemon`).
 - Use the Monitor tool on `$LOGFILE` to watch stdout lines without polling.
 - Trip on any configured stop condition; on trip, capture final metrics, stop the run, move to Phase 5.
 
@@ -164,12 +196,12 @@ Write a run-start header to `$LOGFILE`:
 
 ### Flavor: hybrid
 
-- If `--self-improve` is NOT set: degrade to training-only and capture findings to the writeup. Do not touch code.
-- If `--self-improve` IS set: enter Phase 4.
+- If `--self-improve-code` is NOT set: degrade to training-only and capture findings to the writeup. Do not touch code.
+- If `--self-improve-code` IS set: enter Phase 4.
 
 ---
 
-## Phase 4: Self-improve loop (hybrid + `--self-improve` only)
+## Phase 4: Self-improve-code loop (hybrid + `--self-improve-code` only)
 
 Inner loop. Alternates a short training window with a reactive dev attempt. Repeats until wall-clock budget exhausted OR 3 consecutive failed attempts OR a watchdog trip during a validation soak.
 
@@ -282,6 +314,7 @@ Post a short summary comment to an umbrella GitHub issue (create one at run star
 - Never `git reset --hard` to a remote ref — only to a local tag the skill itself created during this run.
 - Never delete `baseline`, `merged`, or `final` tags — they are the user's audit trail.
 - All autonomous dev work lives under `improve-bot/run/$RUN_TS/` so `git tag -l 'improve-bot/*'` tells the whole story.
-- `--self-improve` is required for ANY autonomous code change. Without it, this skill is strictly training + writeup.
+- `--self-improve-code` is required for ANY autonomous **source-code** change (Phase 4 hybrid loop). Without it, the skill will not merge or push code on its own. Learning self-improvement (daemon-driven weight/hyperparam updates) happens under plain `training` flavor without any flag.
+- `--demo` is a strict no-mutation contract. Demo runs must not write to `data/`, must not create git tags/branches/commits, must not touch GitHub. If the skill cannot verify this (e.g. cannot snapshot `data/`), abort before launching.
 - If the skill hits any situation it can't resolve autonomously (missing soak convention, ambiguous metric, unknown pre-flight item, force-with-lease refusal), STOP and leave state as-is for human review. Do not guess.
 - `/improve-bot` is not a substitute for `/build-phase --plan <path>` when the user already has a plan doc. Prefer the plan-based path when one exists.
