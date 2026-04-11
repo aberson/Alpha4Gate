@@ -7,13 +7,19 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
+from alpha4gate.audit_log import record_decision
 from alpha4gate.commands.primitives import (
     CommandAction,
     CommandPrimitive,
     CommandSource,
 )
+
+if TYPE_CHECKING:
+    from alpha4gate.web_socket import ConnectionManager
 
 _log = logging.getLogger(__name__)
 
@@ -241,12 +247,23 @@ class ClaudeAdvisor:
         self,
         model: str = "sonnet",
         rate_limit_seconds: float = 30.0,
+        data_dir: Path | None = None,
+        ws_manager: ConnectionManager | None = None,
     ) -> None:
         self._model = model
         self._rate_limiter = RateLimiter(rate_limit_seconds)
         self._pending_task: asyncio.Task[AdvisorResponse | None] | None = None
         self._last_response: AdvisorResponse | None = None
         self._enabled = True
+        # Optional audit wiring: when both are set, successful responses are
+        # recorded to ``data_dir/decision_audit.json`` and broadcast via
+        # ``/ws/decisions``. Left unset in existing tests so they keep
+        # passing without needing a temp dir.
+        self._data_dir = data_dir
+        self._ws_manager = ws_manager
+        # Last request's game_time, captured in request_advice and consumed
+        # when collect_response pairs the response with its request.
+        self._pending_game_time: float | None = None
         _log.info("ClaudeAdvisor: enabled=%s model=%s", self._enabled, self._model)
 
     @property
@@ -285,6 +302,7 @@ class ClaudeAdvisor:
             return False
 
         self._rate_limiter.record_call(game_time_seconds)
+        self._pending_game_time = game_time_seconds
         self._pending_task = asyncio.create_task(self._call_api(prompt))
         _log.info("Advisor: request fired at game_time=%.1f", game_time_seconds)
         return True
@@ -307,10 +325,56 @@ class ClaudeAdvisor:
             result = None
 
         self._pending_task = None
+        pending_game_time = self._pending_game_time
+        self._pending_game_time = None
         if result is not None:
             _log.debug("Advisor: collected %d commands", len(result.commands))
             self._last_response = result
+            self._record_successful_decision(result, pending_game_time)
         return result
+
+    def _record_successful_decision(
+        self,
+        response: AdvisorResponse,
+        game_time: float | None,
+    ) -> None:
+        """Append a successful advisor response to the decision audit log.
+
+        No-op unless both ``data_dir`` and ``ws_manager`` were passed to the
+        constructor -- existing tests and call sites that don't wire audit
+        remain unaffected.
+        """
+        if self._data_dir is None or self._ws_manager is None:
+            return
+        try:
+            decision: dict[str, Any] = {
+                "timestamp": datetime.now(UTC).isoformat(),
+                "source": "claude_advisor",
+                "model": self._model,
+                "game_time": game_time,
+                "request_summary": (
+                    f"bot state at game_time={game_time:.1f}"
+                    if game_time is not None
+                    else "bot state (game_time unknown)"
+                ),
+                "response_commands": [
+                    {
+                        "action": cmd.action.value,
+                        "target": cmd.target,
+                        "location": cmd.location,
+                        "priority": cmd.priority,
+                        "id": cmd.id,
+                    }
+                    for cmd in response.commands
+                ],
+                "suggestion": response.suggestion,
+                "urgency": response.urgency,
+                "reasoning": response.reasoning,
+            }
+            record_decision(self._data_dir, self._ws_manager, decision)
+        except Exception:
+            # Audit logging must never break the game loop.
+            _log.exception("Advisor: failed to record decision audit entry")
 
     async def _call_api(self, prompt: str) -> AdvisorResponse | None:
         """Call the Claude CLI in print mode.

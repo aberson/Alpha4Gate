@@ -237,6 +237,160 @@ class TestClaudeAdvisorAsync:
         finally:
             loop.close()
 
+    def test_successful_response_records_audit_entry(self) -> None:
+        """When data_dir+ws_manager are supplied, success writes an audit entry."""
+        import tempfile
+        from pathlib import Path
+
+        loop = asyncio.new_event_loop()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                data_dir = Path(tmp)
+                ws = MagicMock()
+                ws.broadcast_decision = AsyncMock()
+
+                advisor = ClaudeAdvisor(data_dir=data_dir, ws_manager=ws)
+                mock_proc = self._make_mock_process(
+                    stdout=self._make_canned_response().encode(),
+                    stderr=b"",
+                    returncode=0,
+                )
+
+                async def run() -> AdvisorResponse | None:
+                    with patch(
+                        "asyncio.create_subprocess_exec",
+                        AsyncMock(return_value=mock_proc),
+                    ):
+                        advisor.request_advice("test prompt", 123.0)
+                        await advisor._pending_task
+                    result = advisor.collect_response()
+                    # Let the broadcast task run.
+                    await asyncio.sleep(0)
+                    return result
+
+                result = loop.run_until_complete(run())
+                assert result is not None
+                assert len(result.commands) == 1
+
+                audit_path = data_dir / "decision_audit.json"
+                assert audit_path.exists()
+                payload = json.loads(audit_path.read_text(encoding="utf-8"))
+                assert len(payload["entries"]) == 1
+                entry = payload["entries"][0]
+                assert entry["source"] == "claude_advisor"
+                assert entry["model"] == "sonnet"
+                assert entry["game_time"] == 123.0
+                assert entry["suggestion"] == "Build a gateway"
+                assert len(entry["response_commands"]) == 1
+                assert entry["response_commands"][0]["action"] == "build"
+                assert entry["response_commands"][0]["target"] == "gateway"
+
+                ws.broadcast_decision.assert_called_once()
+        finally:
+            loop.close()
+
+    def test_no_audit_when_data_dir_not_configured(self) -> None:
+        """Default ClaudeAdvisor(no kwargs) must not attempt any audit write.
+
+        This protects every pre-existing test that constructs ClaudeAdvisor()
+        without audit wiring.
+        """
+        loop = asyncio.new_event_loop()
+        try:
+            advisor = ClaudeAdvisor()
+            assert advisor._data_dir is None
+            assert advisor._ws_manager is None
+
+            mock_proc = self._make_mock_process(
+                stdout=self._make_canned_response().encode(),
+                stderr=b"",
+                returncode=0,
+            )
+
+            async def run() -> AdvisorResponse | None:
+                with patch(
+                    "asyncio.create_subprocess_exec",
+                    AsyncMock(return_value=mock_proc),
+                ):
+                    advisor.request_advice("test prompt", 10.0)
+                    await advisor._pending_task
+                return advisor.collect_response()
+
+            # Should not raise, and should produce a valid response.
+            result = loop.run_until_complete(run())
+            assert result is not None
+        finally:
+            loop.close()
+
+    def test_failed_response_does_not_record_audit(self) -> None:
+        """When the CLI fails (rc != 0), no audit entry is written."""
+        import tempfile
+        from pathlib import Path
+
+        loop = asyncio.new_event_loop()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                data_dir = Path(tmp)
+                ws = MagicMock()
+                ws.broadcast_decision = AsyncMock()
+
+                advisor = ClaudeAdvisor(data_dir=data_dir, ws_manager=ws)
+                mock_proc = self._make_mock_process(
+                    stdout=b"",
+                    stderr=b"auth failed",
+                    returncode=1,
+                )
+
+                async def run() -> AdvisorResponse | None:
+                    with patch(
+                        "asyncio.create_subprocess_exec",
+                        AsyncMock(return_value=mock_proc),
+                    ):
+                        advisor.request_advice("test prompt", 0.0)
+                        await advisor._pending_task
+                    return advisor.collect_response()
+
+                result = loop.run_until_complete(run())
+                assert result is None
+
+                audit_path = data_dir / "decision_audit.json"
+                assert not audit_path.exists()
+                ws.broadcast_decision.assert_not_called()
+        finally:
+            loop.close()
+
+    def test_subprocess_exception_does_not_record_audit(self) -> None:
+        """When create_subprocess_exec raises, no audit entry is written."""
+        import tempfile
+        from pathlib import Path
+
+        loop = asyncio.new_event_loop()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                data_dir = Path(tmp)
+                ws = MagicMock()
+                ws.broadcast_decision = AsyncMock()
+
+                advisor = ClaudeAdvisor(data_dir=data_dir, ws_manager=ws)
+
+                async def run() -> AdvisorResponse | None:
+                    with patch(
+                        "asyncio.create_subprocess_exec",
+                        AsyncMock(side_effect=FileNotFoundError("claude not found")),
+                    ):
+                        advisor.request_advice("test prompt", 0.0)
+                        await advisor._pending_task
+                    return advisor.collect_response()
+
+                result = loop.run_until_complete(run())
+                assert result is None
+
+                audit_path = data_dir / "decision_audit.json"
+                assert not audit_path.exists()
+                ws.broadcast_decision.assert_not_called()
+        finally:
+            loop.close()
+
     def test_call_api_subprocess_raises(self, caplog: object) -> None:
         """create_subprocess_exec raising logs 'Advisor CLI call failed'."""
         import _pytest.logging

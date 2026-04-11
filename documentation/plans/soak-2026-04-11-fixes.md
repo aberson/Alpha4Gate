@@ -83,8 +83,9 @@ The soak run on 2026-04-11 (`documentation/soak-test-runs/soak-2026-04-11.md`) r
 
 ### Phase 4.6 Step 3: Add Decision Log producer
 
-- **Status:** NOT STARTED
+- **Status:** DONE (2026-04-11, iter 2/3, reviewers=code)
 - **Issue:** #77
+- **Scope locked at Claude advisor only.** Rule-based decision engine and PPO action audit are follow-ups. New `audit_log.py` module with canonical GC-resistant asyncio pattern (pending-broadcasts set + done_callback). ClaudeAdvisor threads data_dir/ws_manager through as optional kwargs for backward compat.
 - **Problem:** The Decision Log feature is dead on arrival across all game modes. `GET /api/decision-log` reads `data/decision_audit.json` ([api.py:319-326](../../src/alpha4gate/api.py#L319-L326)) but no code in `src/` writes that file. `/ws/decisions` broadcasts via `broadcast_decision()` ([web_socket.py:52](../../src/alpha4gate/web_socket.py#L52)) but no code calls it. Even rule-based games with the Claude advisor (which DOES log decisions to stdout via the Python logger) don't reach the audit pipeline.
 
   **Scope decision (locked in by this plan):** start narrow. Wire the **Claude advisor's responses** into the audit log only — that's the most concrete decision producer in the codebase. Defer rule-based decision-engine audit and PPO action audit to follow-up issues; trying to do all three in one step risks a vague scope.

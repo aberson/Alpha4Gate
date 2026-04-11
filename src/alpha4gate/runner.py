@@ -252,9 +252,13 @@ def _run_single_game(settings: Settings, args: argparse.Namespace) -> None:
     elif shutil.which("claude") is None:
         _log.info("ClaudeAdvisor: disabled (claude CLI not found on PATH)")
     else:
+        from alpha4gate.api import ws_manager
         from alpha4gate.claude_advisor import ClaudeAdvisor
 
-        claude_advisor = ClaudeAdvisor()
+        claude_advisor = ClaudeAdvisor(
+            data_dir=settings.data_dir,
+            ws_manager=ws_manager,
+        )
 
     # Always-on reward logging (unless opted out)
     settings.ensure_dirs()
@@ -322,9 +326,13 @@ def _run_batch(settings: Settings, args: argparse.Namespace) -> None:
     elif shutil.which("claude") is None:
         _log.info("ClaudeAdvisor: disabled (claude CLI not found on PATH)")
     else:
+        from alpha4gate.api import ws_manager
         from alpha4gate.claude_advisor import ClaudeAdvisor
 
-        claude_advisor = ClaudeAdvisor()
+        claude_advisor = ClaudeAdvisor(
+            data_dir=settings.data_dir,
+            ws_manager=ws_manager,
+        )
 
     # Determine model_version label for this batch
     decision_mode = getattr(args, "decision_mode", "rules")
