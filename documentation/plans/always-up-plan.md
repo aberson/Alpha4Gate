@@ -603,6 +603,13 @@ refactoring you want a known-good baseline to compare against.
   Blockers, **skip this step entirely** and mark Phase 4.5 as complete.
 - **Issue:** #65
 - **Flags:** --reviewers code (for fixes), --reviewers runtime (for re-soak)
+- **Status:** Blocker fix code work DONE (2026-04-11). Re-soak pending operator.
+  - [#66](https://github.com/aberson/Alpha4Gate/issues/66) SQLite thread-safety + write serialization — fixed in `49c4a97` (4-pass code review, 2 iterations; iter 2 added read-method locking after the bug reviewer caught that Python's sqlite3 connection is not safe for concurrent cross-thread use even in WAL mode).
+  - [#67](https://github.com/aberson/Alpha4Gate/issues/67) Silent eval-game crash recovery + promotion gate refusal + action_probs pollution fix — fixed in `d2170e3` (2 iterations; iter 2 added the action_probs pollution fix after the bug reviewer caught that crashed games were leaking partial probs into `EvalResult.action_distribution`).
+  - [#68](https://github.com/aberson/Alpha4Gate/issues/68) Backend ERROR log ring buffer + `/api/training/status` fields + `ruleBackendErrors` frontend rule (persistent) + `/api/debug/raise_error` synthetic pre-flight endpoint + `soak-test.md` Section 3.5 pre-flight procedure — fixed in `98e822f` (2 iterations).
+  - Follow-ups (not blocking re-soak): [#69](https://github.com/aberson/Alpha4Gate/issues/69) `run_job` all-crashed status, [#70](https://github.com/aberson/Alpha4Gate/issues/70) `environment.py:188` training-path cousin of #67.
+  - Test counts: 724 Python (was 695, +29) and 115 frontend (was 105, +10), mypy strict clean, ruff clean.
+  - Operator action remaining: pre-seed `data/checkpoints/manifest.json` (`best` currently points to the tainted soak-1 `v5`), launch with `DEBUG_ENDPOINTS=1` + `tee` from start, run the synthetic alert pre-flight at T0, then commit to the 4-hour soak.
 - **Produces:** fixes for each blocker, a second soak-test results doc.
 - **Done when:** the autonomous loop has run for the target duration without manual
   intervention OR the user has decided the remaining issues are acceptable to defer
@@ -678,7 +685,12 @@ The first end-to-end soak run surfaced two findings whose resolution should shap
 - Frontend test infrastructure — vitest + jsdom, `frontend/vitest.config.ts`, shared
   setup in `frontend/src/test/setup.ts`, 105 tests currently passing.
 - Client-side alert engine — `alertRules.ts`, `alertStorage.ts`, `useAlerts` hook.
-  No alert backend; rules evaluated on each 5s poll, persisted to `localStorage`.
+  Rules evaluated on each 5s poll, persisted to `localStorage`. **Phase 4.5 #68:**
+  backend now exposes a bounded ring buffer of ERROR-level log records via
+  `error_count_since_start` and `recent_errors[]` on `GET /api/training/status`,
+  and the new `ruleBackendErrors` rule (severity `error`, `persistent: true` — no
+  auto-dismiss) fires on any non-zero count. `POST /api/debug/raise_error` behind
+  `DEBUG_ENDPOINTS=1` provides the synthetic pre-flight trigger.
 - Evaluation scripts — evaluate_model.py, analyze_rewards.py
 - Wiki — 15 pages documenting all systems (documentation/wiki/)
 - Per-checkpoint win rate tracking via `GET /api/training/models`
@@ -686,7 +698,7 @@ The first end-to-end soak run surfaced two findings whose resolution should shap
 - 15+ API endpoints for daemon control, triggers, evaluation, promotions, rollback,
   curriculum. **New in Phase 4:** `GET /api/training/reward-trends?games=N` (Step 2)
   and `reward_logs_size_bytes` field added to `GET /api/training/status` (Step 1).
-- 682 Python unit tests + 105 frontend vitest tests passing.
+- 724 Python unit tests + 115 frontend vitest tests passing (as of Phase 4.5 Step 5 blocker fixes, 2026-04-11).
 
 **What's missing:**
 - No real end-to-end soak test yet — the autonomous loop has never been observed
