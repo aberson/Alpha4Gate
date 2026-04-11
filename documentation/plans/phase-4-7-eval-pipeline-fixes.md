@@ -286,6 +286,8 @@ prove the post-fix watchdog catches it.
 
 **Commit message:** `fix(phase4.7-step3): push terminal sentinel on _obs_queue at game-end`
 
+**Status:** DONE (2026-04-11)
+
 **Problem.**
 Six of twelve eval games in soak-4 hit the pattern:
 

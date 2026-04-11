@@ -357,6 +357,54 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
             obs_queue.put((obs, {}, True, "loss"))
         finally:
             signal.signal = _orig_signal
+            # Phase 4.7 Step 3 (#84): unconditional terminal sentinel on
+            # ``_obs_queue`` so ``SC2Env.step()`` never stalls for the
+            # full 300-second timeout after a normal game end.
+            #
+            # Soak-2026-04-11b symptom: 6 of 12 eval games produced
+            # ``sc2.main Status.ended + Result for player 1: Defeat``
+            # followed by exactly 5 minutes of silence and then
+            # ``environment.py ERROR Timeout waiting for observation
+            # from game thread``. Root cause: when SC2 transitions to
+            # ``Status.ended`` outside the bot's control, the bot's
+            # ``on_end`` hook runs but does NOT push a terminal
+            # (done=True) tuple onto ``_obs_queue``; ``_sync_game``
+            # finishes its DB/stats bookkeeping and returns; the
+            # consumer ``step()`` keeps blocking on ``get(timeout=300)``
+            # until the timeout fires.
+            #
+            # This is a DIFFERENT path from ``_resign_and_mark_done``
+            # (Phase 4.5 #72): that helper covers EARLY termination
+            # where the bot voluntarily leaves the game (timeout,
+            # queue.Empty, shutdown-sentinel). Step 3 covers the
+            # NORMAL end-of-game where sc2 ends the game on its own
+            # and the bot's ``on_end`` is not one of the
+            # ``_resign_and_mark_done`` call sites.
+            #
+            # Sentinel shape matches the exception-path tuple below
+            # (``done=True``) but uses ``result=None`` rather than
+            # ``"loss"`` because the real result — if any — has
+            # already been written to the DB by ``_sync_game``'s
+            # ``store_game`` call and the bot's terminal reward push
+            # (if it happened) has already settled the reward total.
+            # ``result=None`` means "terminal, no outcome attached"
+            # and ``RewardCalculator.compute_step_reward`` handles
+            # that path gracefully (no terminal bonus is added).
+            #
+            # This push is unconditional: on the exception branch
+            # above we already put a ``("loss", done=True)`` tuple
+            # on the queue, so the consumer will see TWO terminal
+            # tuples in that case. The consumer processes the first
+            # and exits its loop via ``done=True``; the second sits
+            # unused and is drained by ``SC2Env.close()``.
+            try:
+                obs_queue.put((np.zeros(FEATURE_DIM, dtype=np.float32), {}, True, None))
+            except Exception:  # pragma: no cover - defensive only
+                _log.debug(
+                    "Could not push terminal sentinel to obs_queue",
+                    exc_info=True,
+                )
+
             # Defensive cleanup: even after _sync_game returns normally,
             # burnysc2's ``KillSwitch._to_kill`` class-level list still
             # holds references to every SC2Process it has ever seen

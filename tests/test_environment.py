@@ -427,10 +427,19 @@ class TestKillSwitchHygiene:
 
         if sync_game_raises:
             # The crash-path terminal observation reached the caller queue.
-            assert obs_q.qsize() == 1
+            # Phase 4.7 Step 3 (#84): the ``finally`` block now pushes an
+            # unconditional ``(done=True, result=None)`` sentinel as well,
+            # so the queue holds TWO terminal tuples on the raise path —
+            # the "loss" from the exception branch (consumed first by
+            # the real ``step()``) and the ``None`` sentinel from the
+            # finally (drained unused by ``close()``).
+            assert obs_q.qsize() == 2
             _obs, _info, done, result = obs_q.get_nowait()
             assert done is True
             assert result == "loss"
+            _obs2, _info2, done2, result2 = obs_q.get_nowait()
+            assert done2 is True
+            assert result2 is None
 
         assert KillSwitch._to_kill == [], (
             "KillSwitch._to_kill must be drained after a game thread "
