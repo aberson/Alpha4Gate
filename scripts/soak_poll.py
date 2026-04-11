@@ -26,7 +26,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -58,7 +58,7 @@ def poll_once(base_url: str) -> dict[str, Any]:
     """Hit every endpoint once and return a single row dict."""
     row: dict[str, Any] = {
         "ts_local": datetime.now().isoformat(timespec="seconds"),
-        "ts_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "ts_utc": datetime.now(UTC).isoformat(timespec="seconds"),
     }
     for key, path in ENDPOINTS.items():
         row[key] = fetch_json(base_url + path)
