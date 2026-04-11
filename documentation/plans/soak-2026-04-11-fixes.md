@@ -221,8 +221,10 @@ The soak run on 2026-04-11 (`documentation/soak-test-runs/soak-2026-04-11.md`) r
 
 ### Phase 4.6 Step 6: Headless SC2 investigation (low priority, investigate-only)
 
-- **Status:** NOT STARTED
+- **Status:** DONE — REPORT ONLY (2026-04-11, investigate-only)
 - **Issue:** #80
+- **Output:** `documentation/headless-sc2-investigation.md` (160 lines)
+- **Recommendation:** **Not feasible with burnysc2 v7.1.3 on Windows — defer.** No `extra_args` / `launch_args` kwarg on `run_game`; `render=True` path is Linux-only (`libEGL.so`); Windows `-HeadlessNoRender` is a pysc2/Linux artifact not documented for retail `SC2_x64.exe`. Practical alternative: OS-level tooling (window minimize, focus assist, separate user session) for zero-code screen-off wins during soaks.
 - **Problem:** During soak-2026-04-11 the trainer's training-cycle games ran at ~12-15 sec each (already at API speed via `realtime=False`), but the eval games were taking ~6 minutes each — and the SC2 client was rendering each game visibly. This step investigates whether burnysc2 / SC2 supports a fully headless mode that skips graphics rendering entirely, to (a) reduce GPU contention, (b) eliminate window-focus issues, (c) potentially squeeze additional speed out of trainer cycles, and (d) let soaks run with the screen off.
 
   **Per operator direction:** investigate and report. Only commit a code change if the wiring is clean and small. If it requires Windows-specific yak shaving or burnysc2 monkey-patches, write up the findings and stop — do not commit.
