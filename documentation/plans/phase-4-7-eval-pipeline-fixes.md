@@ -1,8 +1,10 @@
 # Phase 4.7 — Eval pipeline fixes (soak-2026-04-11b aftermath)
 
-**Status:** REVIEWED + repo-synced — ready for `/build-phase`
+**Status:** DONE (2026-04-11) — all 5 steps landed, all 5 issues closed. 808 passed + 1 deselected (baseline 799 + 1; net +9 tests). mypy 45/45 strict-clean, ruff check clean.
 
-**GitHub issues:** #82 (Step 1, BLOCKER), #83 (Step 2), #84 (Step 3, sibling of #70), #85 (Step 4, docs), #86 (Step 5, docs)
+**Commits (master):** `c37492d` (Step 1 / #82), `937da81` (Step 2 / #83), `ca4e73a` (Step 3 / #84), `8f8f9b4` (Step 4 / #85), `e43a5ab` (Step 5 / #86). Plus `e6dc0d0` docs(phase4.7) — plan + soak-4 run log + 5 GitHub issue references (the phase-start commit).
+
+**GitHub issues:** #82 (Step 1, BLOCKER) — CLOSED. #83 (Step 2) — CLOSED. #84 (Step 3, sibling of #70) — CLOSED. #85 (Step 4, docs) — CLOSED. #86 (Step 5, docs) — CLOSED.
 
 **Source soak run:** [soak-2026-04-11b.md](../soak-test-runs/soak-2026-04-11b.md)
 

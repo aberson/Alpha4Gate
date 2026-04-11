@@ -187,6 +187,22 @@ Main Thread (SB3/Trainer)              Background Thread (SC2 Game)
 | `on_step()` waiting for action | 120s | Returns (triggers shutdown) |
 | `close()` joining thread | 30s | Continues anyway, sets thread=None |
 
+**Normal-end path is fast (Phase 4.7 Step 3 / #84).** The 300s `step()`
+timeout above is a fallback for genuine hangs. On the normal
+end-of-game path — where sc2 transitions to `Status.ended` on its own
+and `_sync_game` returns cleanly — `_run_game_thread`'s `finally`
+block pushes an unconditional terminal sentinel
+`(zeros, {}, True, None)` onto `_obs_queue`, so the next `step()` call
+returns with `done=True` within milliseconds of game-end instead of
+stalling the full 300s. The sentinel uses `result=None` (not
+`"loss"`) so `RewardCalculator.compute_step_reward(is_terminal=True,
+result=None)` cleanly skips the terminal-bonus branch and does not
+poison the total reward. This path is DISTINCT from the
+`_FullTrainingBot._resign_and_mark_done` helper (Phase 4.5 #72) which
+covers early termination (bot voluntarily leaves the game); Step 3
+covers the normal case where sc2 ends the game on its own and the
+bot's `on_end` hook does not push a terminal tuple.
+
 **Signal handling workaround:** burnysc2 registers signal handlers that only work in the
 main thread. Since the game runs in a background thread, `_run_game_thread()` monkey-patches
 `signal.signal` to a no-op before launching, then restores it afterward.
@@ -280,19 +296,29 @@ Two observability layers now disambiguate the two meanings:
    increment `runs_completed`. This is the authoritative final state for
    the run.
 
-2. **Per-cycle watchdog (#73).** Because #1 only runs after
-   `orchestrator.run()` returns — and that call can block inside SB3's
-   `.learn()` loop for an arbitrarily long time — the daemon also spawns a
-   short-lived watchdog thread inside `_run_training` for exactly the
-   duration of the orchestrator call. The watchdog captures a baseline of
-   `ErrorLogBuffer._count_since_start` before the orchestrator starts and
-   polls every `DaemonConfig.watchdog_poll_seconds` (default 5s). If the
-   delta exceeds `DaemonConfig.watchdog_error_threshold` (default 5) the
-   watchdog sets an interim `_last_error` through the daemon's lock and
-   logs at ERROR level. The watchdog is joined as soon as
-   `orchestrator.run()` returns so there is no race with the #71
+2. **Per-cycle watchdog (#73, scope widened by Phase 4.7 Step 2 / #83).**
+   Because #1 only runs after the training + post-training path has
+   completed — and that path can block for an arbitrarily long time
+   inside SB3's `.learn()` loop during training OR inside the
+   promotion/rollback blocks afterward — the daemon spawns a
+   short-lived watchdog thread inside `_run_training` covering the
+   **full window** from `orchestrator.run(...)` through the
+   promotion-gate (`evaluate_and_promote`) and rollback-check
+   (`check_for_regression` / `execute_rollback`) blocks, stopping
+   just before the `_last_result` / `_last_error` bookkeeping block.
+   The watchdog captures a baseline of
+   `ErrorLogBuffer._count_since_start` before the orchestrator starts
+   and polls every `DaemonConfig.watchdog_poll_seconds` (default 5s).
+   If the delta exceeds `DaemonConfig.watchdog_error_threshold`
+   (default 5) the watchdog sets an interim `_last_error` through the
+   daemon's lock and logs at ERROR level. The watchdog is joined
+   before the bookkeeping block so there is no race with the #71
    bookkeeping; the bookkeeping is always the final writer of
-   `_last_error` for the run.
+   `_last_error` for the run. The original #73 scope was narrower
+   ("exactly the duration of the orchestrator call"); soak-2026-04-11b
+   caught 18 backend errors accumulating silently during the eval
+   phase with `daemon.last_error` staying `null`, which is exactly
+   what Phase 4.7 Step 2 widened the window to catch.
 
 **Reading the signals:**
 

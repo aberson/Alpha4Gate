@@ -201,7 +201,15 @@ Aggregates `GameRecord` list into `StatsAggregates`:
 SQLite at `data/training.db`. Two tables:
 
 **`games`** — one row per completed game:
-- `game_id TEXT PRIMARY KEY` — UUID
+- `game_id TEXT PRIMARY KEY` — shape `{base}_{uuid4.hex[:12]}`, where `{base}`
+  is the construction-time label supplied by the caller
+  (`rl_{uuid[:8]}` for trainer games, `eval_{checkpoint}_{uuid[:8]}` for
+  evaluator games). `SC2Env.reset()` appends the 12-char uuid suffix on every
+  reset as collision protection (Phase 4.6 Step 1 / `b27c6cc`). Callers that
+  need to query `TrainingDB.get_game_result` by this primary key MUST read
+  `SC2Env.game_id` as a read-only `@property` AFTER `reset()` returns —
+  reading the construction-time base id will miss every row (Phase 4.7 Step 1
+  / `c37492d`; regression guard in `tests/test_evaluator_db_roundtrip.py`).
 - `map_name`, `difficulty`, `result` (win/loss/timeout), `duration_secs`
 - `total_reward` — sum of all step rewards for the game
 - `model_version` — checkpoint name that played this game
