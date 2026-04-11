@@ -530,7 +530,13 @@ class TrainingDaemon:
             # per-environment ERROR log records pile up faster than
             # the threshold. It is joined BEFORE the post-orchestrator
             # bookkeeping below so there is no race between the two
-            # writers of ``_last_error``.
+            # writers of ``_last_error``. Phase 4.7 Step 2 (#83)
+            # widens the protected window to include the eval /
+            # promotion-gate and rollback-check blocks — the
+            # watchdog now stops right before the bookkeeping, not
+            # right after ``orchestrator.run`` returns — so ERROR
+            # records emitted from those blocks are also observable
+            # as ``_last_error``.
             #
             # Issue #73 iter-2 (M2): ``_start_watchdog`` is inside the
             # ``try:`` block (not above it) so that if ``Thread.start``
@@ -564,15 +570,27 @@ class TrainingDaemon:
                 resume=True,
             )
 
-            # Issue #73: the orchestrator has returned, so the
-            # post-orchestrator bookkeeping below is now the sole
-            # authoritative writer of ``_last_error``. Join the
-            # watchdog here (rather than in ``finally``) so there is
-            # no race window where the watchdog could clobber the
-            # bookkeeping's final ``_last_error``. The ``finally``
-            # block still calls ``_stop_watchdog`` as a belt-and-braces
-            # cleanup for the exception path.
-            self._stop_watchdog()
+            # Phase 4.7 Step 2 (#83): the watchdog used to join here,
+            # BEFORE the promotion-gate and rollback-check blocks
+            # below. Soak-2026-04-11b showed that the eval/promotion
+            # phase also emits ERROR-level log records on failure
+            # (18 backend errors accumulated during the post-training
+            # eval while ``daemon.last_error`` stayed ``None`` the
+            # whole time). The watchdog's protected window must
+            # therefore extend across the full promotion + rollback
+            # path so any ``_log.error`` / ``_log.exception`` that
+            # fires inside those blocks is counted by the watchdog
+            # and can trip ``_last_error``. The explicit
+            # ``_stop_watchdog()`` call is moved further down, right
+            # before the ``_last_result`` / ``_last_error``
+            # bookkeeping block — still joining before the
+            # bookkeeping so there is no race between the watchdog
+            # and the post-orchestrator bookkeeping (the SAME race
+            # reason the #73 iter-2 comment above describes, just
+            # with a wider protected window). The ``finally`` block
+            # at the end of ``_run_training`` still calls
+            # ``_stop_watchdog`` as a belt-and-braces cleanup for
+            # the exception path.
 
             # Persist final difficulty from the orchestrator back to config
             final_difficulty = result.get("final_difficulty")
@@ -731,6 +749,17 @@ class TrainingDaemon:
                 self._last_transition_count = db.get_transition_count()
                 db.close()
             self._last_run_time = datetime.now(UTC)
+
+            # Phase 4.7 Step 2 (#83): join the watchdog here, AFTER
+            # the eval/promotion and rollback-check blocks but
+            # BEFORE the ``_last_result`` / ``_last_error``
+            # bookkeeping. See the wider comment above ``orchestrator.run``
+            # for the rationale — the watchdog must cover the full
+            # promotion + rollback path, but it must still stop
+            # before the bookkeeping block claims authoritative
+            # ownership of ``_last_error`` (same race-avoidance
+            # invariant as #73 iter-2).
+            self._stop_watchdog()
 
             with self._lock:
                 self._last_result = result

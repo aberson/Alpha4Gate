@@ -367,9 +367,7 @@ class TestTriggerLogic:
         assert state["would_trigger"] is False
         assert "already in progress" in state["reason"]
 
-    def test_last_transition_count_updates_after_should_train(
-        self, tmp_path: Path
-    ) -> None:
+    def test_last_transition_count_updates_after_should_train(self, tmp_path: Path) -> None:
         """After _run_training, _last_transition_count is updated."""
         settings = _make_settings(tmp_path)
         _seed_transitions(settings.data_dir / "training.db", 50)
@@ -391,10 +389,12 @@ class TestUpdateConfig:
     def test_update_known_fields(self, tmp_path: Path) -> None:
         settings = _make_settings(tmp_path)
         daemon = TrainingDaemon(settings, DaemonConfig())
-        updated = daemon.update_config({
-            "min_transitions": 200,
-            "cycles_per_run": 3,
-        })
+        updated = daemon.update_config(
+            {
+                "min_transitions": 200,
+                "cycles_per_run": 3,
+            }
+        )
         assert updated.min_transitions == 200
         assert updated.cycles_per_run == 3
         # Other fields unchanged
@@ -437,9 +437,7 @@ class TestTriggerEndpoint:
         assert isinstance(data["transitions_since_last"], int)
         assert isinstance(data["reason"], str)
 
-    def test_triggers_with_transitions(
-        self, daemon_client: TestClient, tmp_path: Path
-    ) -> None:
+    def test_triggers_with_transitions(self, daemon_client: TestClient, tmp_path: Path) -> None:
         _seed_transitions(tmp_path / "data" / "training.db", 600)
         resp = daemon_client.get("/api/training/triggers")
         assert resp.status_code == 200
@@ -526,9 +524,7 @@ class TestCurriculumPersistenceAcrossRestarts:
     def test_difficulty_persisted_after_training(self, tmp_path: Path) -> None:
         """After a training run, final difficulty is written to daemon_config.json."""
         settings = _make_settings(tmp_path)
-        cfg = DaemonConfig(
-            check_interval_seconds=1, current_difficulty=2, max_difficulty=10
-        )
+        cfg = DaemonConfig(check_interval_seconds=1, current_difficulty=2, max_difficulty=10)
         daemon = TrainingDaemon(settings, cfg)
 
         mock_orchestrator = MagicMock()
@@ -668,9 +664,7 @@ class TestCurriculumAwarePromotion:
         history_path = settings.data_dir / "promotion_history.json"
         assert history_path.exists()
         entries = json.loads(history_path.read_text(encoding="utf-8"))
-        advancement_entries = [
-            e for e in entries if e.get("type") == "curriculum_advancement"
-        ]
+        advancement_entries = [e for e in entries if e.get("type") == "curriculum_advancement"]
         assert len(advancement_entries) == 1
         assert advancement_entries[0]["old_difficulty"] == 3
         assert advancement_entries[0]["new_difficulty"] == 4
@@ -800,18 +794,20 @@ class TestDifficultyRevertOnRollback:
         # Write promotion history so _get_model_difficulty can find v3's diff
         history_path = settings.data_dir / "promotion_history.json"
         history_path.write_text(
-            json.dumps([
-                {
-                    "timestamp": "2026-01-01T00:00:00+00:00",
-                    "new_checkpoint": "v3",
-                    "old_best": "v2",
-                    "new_win_rate": 0.7,
-                    "old_win_rate": 0.5,
-                    "promoted": True,
-                    "reason": "better",
-                    "difficulty": 3,
-                }
-            ]),
+            json.dumps(
+                [
+                    {
+                        "timestamp": "2026-01-01T00:00:00+00:00",
+                        "new_checkpoint": "v3",
+                        "old_best": "v2",
+                        "new_win_rate": 0.7,
+                        "old_win_rate": 0.5,
+                        "promoted": True,
+                        "reason": "better",
+                        "difficulty": 3,
+                    }
+                ]
+            ),
             encoding="utf-8",
         )
 
@@ -963,9 +959,7 @@ class TestCurriculumEndpoints:
         # Others remain at defaults
         assert data["max_difficulty"] == 10
 
-    def test_put_curriculum_persists(
-        self, daemon_client: TestClient, tmp_path: Path
-    ) -> None:
+    def test_put_curriculum_persists(self, daemon_client: TestClient, tmp_path: Path) -> None:
         """PUT persists to daemon_config.json on disk."""
         daemon_client.put(
             "/api/training/curriculum",
@@ -986,9 +980,7 @@ class TestCrashedCyclesSkipPromotion:
     unchanged model and silently advance the curriculum.
     """
 
-    def test_promotion_skipped_when_only_crashed_cycles(
-        self, tmp_path: Path
-    ) -> None:
+    def test_promotion_skipped_when_only_crashed_cycles(self, tmp_path: Path) -> None:
         settings = _make_settings(tmp_path)
         cfg = DaemonConfig(current_difficulty=3)
         daemon = TrainingDaemon(settings, cfg)
@@ -1030,9 +1022,7 @@ class TestCrashedCyclesSkipPromotion:
         # Curriculum must NOT have advanced
         assert daemon._config.current_difficulty == 3
 
-    def test_promotion_uses_latest_successful_cycle(
-        self, tmp_path: Path
-    ) -> None:
+    def test_promotion_uses_latest_successful_cycle(self, tmp_path: Path) -> None:
         """If a run has [success, crash], promotion runs against the success."""
         settings = _make_settings(tmp_path)
         cfg = DaemonConfig(current_difficulty=2)
@@ -1120,9 +1110,7 @@ class TestAllCrashedTrainingRunIsFailure:
         logging.getLogger().addHandler(handler)
         return buffer, handler
 
-    def test_all_crashed_run_does_not_increment_runs_completed(
-        self, tmp_path: Path
-    ) -> None:
+    def test_all_crashed_run_does_not_increment_runs_completed(self, tmp_path: Path) -> None:
         """Acceptance criterion 1: the three-part daemon-level failure.
 
         - ``_runs_completed`` MUST NOT advance
@@ -1176,12 +1164,8 @@ class TestAllCrashedTrainingRunIsFailure:
         # same message (not merely the per-cycle trainer.py exceptions).
         total, records = buffer.snapshot()
         assert total >= 1
-        daemon_errors = [
-            r for r in records if r["logger"] == "alpha4gate.learning.daemon"
-        ]
-        assert len(daemon_errors) == 1, (
-            f"expected one daemon-level ERROR; got {daemon_errors}"
-        )
+        daemon_errors = [r for r in records if r["logger"] == "alpha4gate.learning.daemon"]
+        assert len(daemon_errors) == 1, f"expected one daemon-level ERROR; got {daemon_errors}"
         assert daemon_errors[0]["level"] == "ERROR"
         assert "Observation spaces do not match" in daemon_errors[0]["message"]
 
@@ -1191,9 +1175,7 @@ class TestAllCrashedTrainingRunIsFailure:
         assert status["last_error"] is not None
         assert "5" in status["last_error"]
 
-    def test_all_crashed_run_does_not_call_promotion_gate(
-        self, tmp_path: Path
-    ) -> None:
+    def test_all_crashed_run_does_not_call_promotion_gate(self, tmp_path: Path) -> None:
         """All-crashed guard still skips the promotion gate (#67 / #71)."""
         settings = _make_settings(tmp_path)
         daemon = TrainingDaemon(settings, DaemonConfig(current_difficulty=2))
@@ -1226,9 +1208,7 @@ class TestAllCrashedTrainingRunIsFailure:
         mock_pm.evaluate_and_promote.assert_not_called()
         assert daemon._runs_completed == 0
 
-    def test_successful_run_clears_last_error_and_increments_counter(
-        self, tmp_path: Path
-    ) -> None:
+    def test_successful_run_clears_last_error_and_increments_counter(self, tmp_path: Path) -> None:
         """Acceptance criterion 5: unchanged behaviour for a good run.
 
         Regression guard: confirm the all-crashed branch did not
@@ -1283,9 +1263,7 @@ class TestAllCrashedTrainingRunIsFailure:
         assert daemon._last_result is not None
         assert daemon._last_result["cycles_completed"] == 1
 
-    def test_empty_cycle_results_with_zero_cycles_treated_as_failure(
-        self, tmp_path: Path
-    ) -> None:
+    def test_empty_cycle_results_with_zero_cycles_treated_as_failure(self, tmp_path: Path) -> None:
         """Acceptance criterion 3: empty cycle_results + cycles_completed=0.
 
         Documented choice: when the orchestrator returns before any
@@ -1320,9 +1298,7 @@ class TestAllCrashedTrainingRunIsFailure:
         assert daemon._last_error is not None
 
         _, records = buffer.snapshot()
-        daemon_errors = [
-            r for r in records if r["logger"] == "alpha4gate.learning.daemon"
-        ]
+        daemon_errors = [r for r in records if r["logger"] == "alpha4gate.learning.daemon"]
         assert len(daemon_errors) == 1
         assert daemon_errors[0]["level"] == "ERROR"
 
@@ -1455,17 +1431,14 @@ class TestWatchdogPerCycleCrashVisibility:
 
         # The watchdog saw _last_error set mid-training.
         assert observed_last_error, (
-            "watchdog did not set _last_error while orchestrator.run() was "
-            "still iterating"
+            "watchdog did not set _last_error while orchestrator.run() was still iterating"
         )
         watchdog_msg = observed_last_error[0]
         assert watchdog_msg is not None
         assert "Watchdog" in watchdog_msg
         assert "threshold" in watchdog_msg
 
-    def test_watchdog_does_not_trigger_below_threshold(
-        self, tmp_path: Path
-    ) -> None:
+    def test_watchdog_does_not_trigger_below_threshold(self, tmp_path: Path) -> None:
         """Emitting FEWER errors than the threshold must not cause the
         watchdog to set ``_last_error`` during a successful run."""
         settings = _make_settings(tmp_path)
@@ -1540,9 +1513,7 @@ class TestWatchdogPerCycleCrashVisibility:
         assert daemon._last_error is None
         assert daemon._runs_completed == 1
 
-    def test_watchdog_post_training_bookkeeping_wins_on_all_crashed(
-        self, tmp_path: Path
-    ) -> None:
+    def test_watchdog_post_training_bookkeeping_wins_on_all_crashed(self, tmp_path: Path) -> None:
         """Post-orchestrator bookkeeping is the authoritative final writer
         of ``_last_error``. When the orchestrator returns with every cycle
         crashed, the daemon's own bookkeeping message replaces whatever
@@ -1678,9 +1649,7 @@ class TestWatchdogPerCycleCrashVisibility:
         ]
         assert live == [], f"watchdog thread(s) leaked: {live}"
 
-    def test_watchdog_clears_stale_last_error_on_new_run(
-        self, tmp_path: Path
-    ) -> None:
+    def test_watchdog_clears_stale_last_error_on_new_run(self, tmp_path: Path) -> None:
         """Issue #73 iter-2 (M1): a stale ``_last_error`` from a prior
         failed run must NOT block the watchdog on a subsequent run.
 
@@ -1870,17 +1839,13 @@ class TestWatchdogPerCycleCrashVisibility:
             logging.getLogger().removeHandler(handler)
             buffer.reset()
 
-        watchdog_records = [
-            r for r in capture.records if "Daemon watchdog:" in r.getMessage()
-        ]
+        watchdog_records = [r for r in capture.records if "Daemon watchdog:" in r.getMessage()]
         assert len(watchdog_records) == 1, (
             "watchdog fired more than once: expected exactly ONE "
             f"'Daemon watchdog:' ERROR record, got {len(watchdog_records)}"
         )
 
-    def test_watchdog_exits_promptly_on_daemon_stop_event(
-        self, tmp_path: Path
-    ) -> None:
+    def test_watchdog_exits_promptly_on_daemon_stop_event(self, tmp_path: Path) -> None:
         """Issue #73 iter-2 (M5): ``_watchdog_loop`` must exit promptly
         when the daemon-wide ``_stop_event`` is set, independently of
         the watchdog-specific stop event.
@@ -1920,8 +1885,7 @@ class TestWatchdogPerCycleCrashVisibility:
                 "watchdog did not exit on daemon-wide _stop_event"
             )
             assert elapsed < 0.5, (
-                f"watchdog took {elapsed:.3f}s to observe _stop_event "
-                "(expected < 0.5s)"
+                f"watchdog took {elapsed:.3f}s to observe _stop_event (expected < 0.5s)"
             )
         finally:
             # Clean up: clear training_active and stop watchdog
@@ -1931,3 +1895,213 @@ class TestWatchdogPerCycleCrashVisibility:
             daemon._stop_watchdog()
             logging.getLogger().removeHandler(handler)
             buffer.reset()
+
+    def test_watchdog_fires_on_eval_phase_errors(self, tmp_path: Path) -> None:
+        """Phase 4.7 Step 2 (#83): the watchdog's protected window now
+        covers the eval / promotion-gate block as well as
+        ``orchestrator.run``. ERROR-level log records emitted from inside
+        ``PromotionManager.evaluate_and_promote`` must trip the watchdog
+        and surface ``_last_error`` as a ``Watchdog:`` message.
+
+        Soak-2026-04-11b showed the soak-era daemon accumulating 18
+        backend errors during the eval phase while ``daemon.last_error``
+        stayed ``None`` — the watchdog had already stopped polling
+        before ``evaluate_and_promote`` ran. This test guards the wider
+        window by letting ``orchestrator.run`` return cleanly and
+        pushing the failures through a patched ``evaluate_and_promote``
+        that emits ERRORs via the real Python logging API (not
+        ``buffer.emit`` — Phase 4.5 #68 iter-2 lesson).
+        """
+        from alpha4gate.learning.evaluator import EvalResult
+        from alpha4gate.learning.promotion import PromotionDecision
+
+        settings = _make_settings(tmp_path)
+        cfg = DaemonConfig(
+            current_difficulty=3,
+            watchdog_poll_seconds=0.05,
+            watchdog_error_threshold=3,
+        )
+        daemon = TrainingDaemon(settings, cfg)
+
+        promotion_log = logging.getLogger("alpha4gate.learning.promotion")
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.run.return_value = {
+            "cycles_completed": 1,
+            "final_difficulty": 3,
+            "total_games": 10,
+            "stopped": False,
+            "stop_reason": "",
+            "cycle_results": [
+                {
+                    "cycle": 1,
+                    "checkpoint": "v9",
+                    "difficulty": 3,
+                    "win_rate": 0.5,
+                }
+            ],
+        }
+
+        observed_last_error: list[str | None] = []
+
+        def fake_evaluate_and_promote(_checkpoint: str, _difficulty: int) -> Any:
+            # Emit enough eval-phase ERROR records to exceed the
+            # watchdog threshold, then busy-wait until either the
+            # watchdog fires or the safety cap expires.
+            for i in range(5):
+                promotion_log.error("Eval game crashed (fake #%d)", i)
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                with daemon._lock:
+                    current = daemon._last_error
+                if current is not None and "Watchdog" in current:
+                    observed_last_error.append(current)
+                    break
+                time.sleep(0.02)
+            # Return a SUCCESSFUL promotion decision so post-orchestrator
+            # bookkeeping does NOT clobber the watchdog-set _last_error.
+            # (The success branch clears _last_error to None only if
+            # all_crashed is False AND the watchdog has not set it —
+            # but our bookkeeping block always clears on the success
+            # branch, so the watchdog must win the race by being
+            # joined BEFORE bookkeeping. That is the Phase 4.7 Step 2
+            # invariant the widened window preserves.)
+            return PromotionDecision(
+                new_checkpoint="v9",
+                old_best="none",
+                new_eval=EvalResult(
+                    checkpoint="v9",
+                    games_played=10,
+                    wins=5,
+                    losses=5,
+                    crashed=0,
+                    win_rate=0.5,
+                    avg_reward=0.0,
+                    avg_duration=300.0,
+                    difficulty=3,
+                    action_distribution=None,
+                ),
+                old_eval=None,
+                promoted=False,
+                reason="not better",
+                difficulty=3,
+                reason_code="rejected_not_better",
+            )
+
+        mock_pm = MagicMock()
+        mock_pm.evaluate_and_promote.side_effect = fake_evaluate_and_promote
+        daemon._promotion_manager = mock_pm
+
+        buffer, handler = self._install_buffer()
+        try:
+            with patch(
+                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                return_value=mock_orchestrator,
+            ):
+                daemon._run_training()
+        finally:
+            logging.getLogger().removeHandler(handler)
+            buffer.reset()
+
+        # The watchdog observed eval-phase errors mid-training and
+        # set _last_error while ``evaluate_and_promote`` was still
+        # running. That is the Phase 4.7 Step 2 invariant this test
+        # guards — the final value of ``_last_error`` is then
+        # overwritten by the post-orchestrator bookkeeping (the
+        # success-branch clear, since our mock ``orchestrator.run``
+        # returns a non-crashed result), exactly mirroring the
+        # ``test_watchdog_surfaces_per_cycle_errors_during_orchestrator_run``
+        # contract one class up. The mid-training surfacing is what
+        # matters — operators hitting the Alerts tab during a live
+        # soak see the failure within bounded time.
+        assert observed_last_error, (
+            "watchdog did not set _last_error during the eval/promotion "
+            "phase; the Phase 4.7 Step 2 widened protected window is "
+            "not covering evaluate_and_promote"
+        )
+        watchdog_msg = observed_last_error[0]
+        assert watchdog_msg is not None
+        assert "Watchdog" in watchdog_msg
+        assert "threshold" in watchdog_msg
+
+    def test_watchdog_silent_on_happy_path_eval(self, tmp_path: Path) -> None:
+        """Phase 4.7 Step 2 (#83): false-positive guard. A normal eval
+        with zero ERROR records must NOT set ``_last_error`` even though
+        the watchdog is now polling across the full eval/promotion and
+        rollback-check window. The happy-path audit posted at
+        https://github.com/aberson/Alpha4Gate/issues/83#issuecomment-4229917132
+        enumerated every ERROR site in the promotion + rollback path
+        and confirmed zero of them fire on the success path; this test
+        asserts that invariant end-to-end.
+        """
+        settings = _make_settings(tmp_path)
+        cfg = DaemonConfig(
+            current_difficulty=3,
+            watchdog_poll_seconds=0.05,
+            watchdog_error_threshold=3,
+        )
+        daemon = TrainingDaemon(settings, cfg)
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.run.return_value = {
+            "cycles_completed": 1,
+            "final_difficulty": 3,
+            "total_games": 10,
+            "stopped": False,
+            "stop_reason": "",
+            "cycle_results": [
+                {
+                    "cycle": 1,
+                    "checkpoint": "v9",
+                    "difficulty": 3,
+                    "win_rate": 0.5,
+                }
+            ],
+        }
+
+        from alpha4gate.learning.evaluator import EvalResult
+        from alpha4gate.learning.promotion import PromotionDecision
+
+        happy_decision = PromotionDecision(
+            new_checkpoint="v9",
+            old_best="none",
+            new_eval=EvalResult(
+                checkpoint="v9",
+                games_played=10,
+                wins=5,
+                losses=5,
+                crashed=0,
+                win_rate=0.5,
+                avg_reward=0.0,
+                avg_duration=300.0,
+                difficulty=3,
+                action_distribution=None,
+            ),
+            old_eval=None,
+            promoted=True,
+            reason="no previous best checkpoint",
+            difficulty=3,
+            reason_code="first_baseline",
+        )
+        mock_pm = MagicMock()
+        mock_pm.evaluate_and_promote.return_value = happy_decision
+        daemon._promotion_manager = mock_pm
+
+        buffer, handler = self._install_buffer()
+        try:
+            with patch(
+                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                return_value=mock_orchestrator,
+            ):
+                daemon._run_training()
+        finally:
+            logging.getLogger().removeHandler(handler)
+            buffer.reset()
+
+        # Happy path: no ERROR records emitted, so the watchdog
+        # never fires and the post-orchestrator bookkeeping clears
+        # _last_error to None on the success branch.
+        assert daemon._last_error is None
+        assert daemon._runs_completed == 1
+        # And no watchdog thread leaked across the widened window.
+        assert daemon._watchdog_thread is None

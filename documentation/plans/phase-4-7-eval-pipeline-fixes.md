@@ -182,6 +182,8 @@ Step 1's gauntlet failed to do.
 
 **Issue:** #83
 
+**Status:** DONE (2026-04-11)
+
 **Problem — confirmed by source read of `daemon.py::_run_training`:**
 
 ```
