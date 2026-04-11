@@ -89,6 +89,8 @@ backend errors. Both are Phase 4.7 scope.
 
 **Commit message:** `fix(phase4.7-step1): expose env.game_id for evaluator lookup`
 
+**Status:** DONE (2026-04-11)
+
 **Problem.**
 `environment.py:172-173` regenerates `self._game_id` on every `reset()` by
 appending a 12-char uuid hex suffix to the id supplied at construction time.

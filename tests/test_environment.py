@@ -1219,6 +1219,87 @@ class TestPhase46ProducerWiring:
         db.close()
 
 
+class TestGameIdProperty:
+    """Phase 4.7 Step 1 (#82): ``SC2Env.game_id`` is the post-reset id.
+
+    The env regenerates ``_game_id`` on every ``reset()`` (Phase 4.6
+    #75 collision protection). Callers that need to query
+    ``TrainingDB.get_game_result`` MUST read ``env.game_id`` AFTER
+    ``reset()`` returns — the base id they passed to ``__init__`` will
+    not match any row the env writes.
+    """
+
+    @staticmethod
+    def _fake_thread_start(thread: threading.Thread) -> None:
+        """Fake ``Thread.start``: push one observation and return.
+
+        ``SC2Env.reset()`` blocks on ``self._obs_queue.get(timeout=300)``
+        waiting for the game thread's first observation. In a unit
+        test we patch ``Thread.start`` to write that observation
+        directly into the queue the thread was created with, so
+        ``reset()`` returns immediately without launching SC2.
+        """
+        new_obs_q = thread._args[0]  # type: ignore[attr-defined]
+        new_obs_q.put(
+            (
+                np.zeros(FEATURE_DIM, dtype=np.float32),
+                {"strategic_state": "OPENING"},
+                False,
+                None,
+            )
+        )
+
+    def _make_env(self) -> SC2Env:
+        """Construct an SC2Env with minimal state for reset() unit tests."""
+        return SC2Env(
+            map_name="Simple64",
+            difficulty=1,
+            reward_calculator=RewardCalculator(),
+            db=None,
+            game_id="rl_unit",
+            model_version="v0",
+        )
+
+    def test_game_id_property_matches_internal_state_after_reset(self) -> None:
+        """``env.game_id`` reads the post-reset ``_game_id`` exactly.
+
+        And proves the suffix was applied: the post-reset id must NOT
+        equal the base id passed to ``__init__``.
+        """
+        env = self._make_env()
+        base_id = "rl_unit"
+        assert env._base_game_id == base_id
+
+        with patch.object(threading.Thread, "start", self._fake_thread_start):
+            env.reset()
+
+        # Property is a faithful view of the internal state.
+        assert env.game_id == env._game_id
+        # And the suffix was applied — the DB id is NOT the base id.
+        assert env.game_id != base_id
+        assert env.game_id.startswith(f"{base_id}_")
+
+    def test_two_resets_produce_two_distinct_game_ids(self) -> None:
+        """Back-to-back ``reset()`` calls MUST generate different ids.
+
+        This guards the Phase 4.6 #75 collision protection: each game
+        in a cycle needs a fresh ``games.game_id`` or the second
+        ``store_game`` hits the UNIQUE constraint.
+        """
+        env = self._make_env()
+
+        with patch.object(threading.Thread, "start", self._fake_thread_start):
+            env.reset()
+            first_id = env.game_id
+            env.reset()
+            second_id = env.game_id
+
+        assert first_id != second_id
+        # Both derive from the same base id.
+        assert first_id.startswith("rl_unit_")
+        assert second_id.startswith("rl_unit_")
+
+
 @pytest.mark.sc2
 class TestTimeoutLeavesGameSc2Live:
     """SC2-live integration test: run a real game past the timeout and

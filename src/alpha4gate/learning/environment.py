@@ -143,6 +143,17 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         """
         return self._game_store_failed_count
 
+    @property
+    def game_id(self) -> str:
+        """The current post-reset game id this env will write to ``games.game_id``.
+
+        Callers that constructed the env with a base id MUST read this
+        property after ``reset()`` before querying
+        ``TrainingDB.get_game_result``, because the env appends a
+        per-reset uuid suffix.
+        """
+        return self._game_id
+
     def reset(
         self,
         *,

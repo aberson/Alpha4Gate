@@ -308,8 +308,21 @@ class ModelEvaluator:
         # eval's action_distribution with partial data from crashed
         # games. See Phase 4.5 blocker #67.
         local_action_probs: list[list[float]] = []
+        # Phase 4.7 Step 1 (#82): ``SC2Env.reset()`` regenerates
+        # ``_game_id`` by appending a per-reset uuid suffix (Phase 4.6
+        # #75 collision protection). The id the env actually writes to
+        # ``games.game_id`` is therefore NOT the base ``game_id`` this
+        # method was called with — we MUST read ``env.game_id`` after
+        # ``reset()`` succeeds and use that for the DB lookup, or
+        # ``_get_game_result`` will miss every single eval row and
+        # flag all eval games as "crashed" (soak-2026-04-11b).
+        # We seed ``actual_id`` with the base id so the exception log
+        # below still has SOMETHING to print if ``reset()`` itself
+        # raises before we can re-read the env's post-reset id.
+        actual_id = game_id
         try:
             obs, _info = env.reset()
+            actual_id = env.game_id
             done = False
             info: dict[str, Any] = {}
             while not done:
@@ -324,7 +337,7 @@ class ModelEvaluator:
 
             duration = info.get("game_time", 0.0)
         except Exception:
-            _log.exception("Eval game %s crashed", game_id)
+            _log.exception("Eval game %s crashed", actual_id)
             crashed = True
         finally:
             env.close()
@@ -336,7 +349,7 @@ class ModelEvaluator:
                 "duration": duration,
             }
 
-        outcome = self._get_game_result(game_id)
+        outcome = self._get_game_result(actual_id)
         if outcome is None:
             # The game completed without raising, but no result row landed
             # in the DB. Treat this as crashed too -- we have no truthful
@@ -344,7 +357,7 @@ class ModelEvaluator:
             # #67 forbids.
             _log.error(
                 "Eval game %s completed but no result row was recorded; treating as crashed",
-                game_id,
+                actual_id,
             )
             return {
                 "outcome": "crashed",

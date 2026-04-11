@@ -35,8 +35,16 @@ def _make_settings(tmp_path: Path) -> Settings:
 
 
 def _mock_env(outcome_info: dict[str, Any] | None = None) -> MagicMock:
-    """Create a mock SC2Env that finishes in one step."""
+    """Create a mock SC2Env that finishes in one step.
+
+    Phase 4.7 Step 1 (#82): the evaluator reads ``env.game_id`` after
+    ``env.reset()`` to get the post-reset DB key. Stamp a string here
+    (not the MagicMock auto-child) so callers that hit the real
+    ``TrainingDB.get_game_result`` don't trip the SQLite binding.
+    Tests that care about a specific id can reassign ``env.game_id``.
+    """
     env = MagicMock()
+    env.game_id = "mock_env_game_id"
     obs = np.zeros(FEATURE_DIM, dtype=np.float32)
     env.reset.return_value = (obs, {})
     info = {"game_time": 200.0}
@@ -541,12 +549,19 @@ class TestRunSingleGameCrashHandling:
         evaluator: ModelEvaluator,
         db: TrainingDB,
     ) -> None:
-        """Sanity check: a normal game with a "win" row still returns "win"."""
-        db.store_game("eval_ok_1", "Simple64", 1, "win", 300.0, 5.0, "v1")
+        """Sanity check: a normal game with a "win" row still returns "win".
+
+        Phase 4.7 Step 1 (#82): the evaluator looks up the DB row by
+        ``env.game_id`` (the post-reset suffixed id), not by the base
+        ``game_id`` passed in. Simulate that by stamping a known id on
+        the mock env and storing the row under THAT id.
+        """
+        db.store_game("eval_ok_1_post", "Simple64", 1, "win", 300.0, 5.0, "v1")
 
         model = MagicMock()
         model.predict.return_value = (np.array(0), None)
         env = _mock_env()
+        env.game_id = "eval_ok_1_post"
 
         with patch.object(evaluator, "_create_env", return_value=env):
             result = evaluator._run_single_game(
