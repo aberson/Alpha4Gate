@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from sc2.data import Race, Result
@@ -13,6 +15,32 @@ from alpha4gate.config import Settings
 
 if TYPE_CHECKING:
     from sc2.bot_ai import BotAI
+
+
+def build_replay_path(
+    replay_dir: Path,
+    map_name: str,
+    *,
+    now: datetime | None = None,
+) -> Path:
+    """Build a unique replay file path for a single game.
+
+    The filename embeds a timestamp suffix so concurrent/sequential games on
+    the same map do not overwrite each other's replays. Format:
+    ``game_<map_name>_<YYYYMMDDTHHMMSS>.SC2Replay``.
+
+    Args:
+        replay_dir: Directory where replays are stored.
+        map_name: SC2 map name (used as part of the filename).
+        now: Optional datetime injection point for deterministic tests.
+            Defaults to ``datetime.now()`` when omitted.
+
+    Returns:
+        Absolute-ish path under ``replay_dir`` for this game's replay.
+    """
+    ts_source = now if now is not None else datetime.now()
+    ts = ts_source.strftime("%Y%m%dT%H%M%S")
+    return replay_dir / f"game_{map_name}_{ts}.SC2Replay"
 
 
 def run_bot(
@@ -56,7 +84,7 @@ def run_bot(
     replay_path: str | None = None
     if save_replay:
         settings.ensure_dirs()
-        replay_path = str(settings.replay_dir / f"game_{map_name}.SC2Replay")
+        replay_path = str(build_replay_path(settings.replay_dir, map_name))
 
     result = run_game(
         map_settings=map_settings,

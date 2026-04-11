@@ -140,7 +140,7 @@ The soak run on 2026-04-11 (`documentation/soak-test-runs/soak-2026-04-11.md`) r
 
 ### Phase 4.6 Step 5: Replay filename uniqueness (no more overwrite collisions)
 
-- **Status:** NOT STARTED
+- **Status:** DONE (2026-04-11, iter 1/3, reviewers=code)
 - **Issue:** #79
 - **Problem:** `connection.py:59` builds the replay filename as `f"game_{map_name}.SC2Replay"` — a constant per-map filename that overwrites every prior game on the same map. (During soak-2026-04-11 the trainer didn't write replays at all because of Finding 2's bypass, so the overwrite hadn't manifested yet — but it WILL once Step 2 lands and the trainer starts writing replays.) This step makes the filename unique BEFORE Step 2 hooks the trainer into save_replay, so Step 2 doesn't immediately destroy 49 of every 50 replays.
 
