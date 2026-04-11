@@ -248,6 +248,55 @@ Each game step:
 | `NEURAL` | `NeuralDecisionEngine` exclusively; model required |
 | `HYBRID` | `NeuralDecisionEngine` with one override: if `enemy_army_near_base`, force `DEFEND` |
 
+### Daemon state vs. training progress (#71 / #73)
+
+The `TrainingDaemon` exposes `state: idle | checking | training` via
+`/api/training/daemon`. Historically, `state: training` meant only "the daemon
+entered `_run_training` and has not yet returned" — it said nothing about
+whether `TrainingOrchestrator.run(...)` was actually making progress or was
+stuck inside SB3's `.learn()` retry loop while every per-environment cycle
+crashed in the background.
+
+Two observability layers now disambiguate the two meanings:
+
+1. **Post-orchestrator bookkeeping (#71).** Once `orchestrator.run()` returns,
+   the daemon inspects `cycle_results` and, if every entry has
+   `status: "crashed"` (or the orchestrator returned `cycles_completed == 0`
+   with empty `cycle_results`), sets `_last_error` to a descriptive string,
+   logs at ERROR level so the entry reaches `ErrorLogBuffer`, and does NOT
+   increment `runs_completed`. This is the authoritative final state for
+   the run.
+
+2. **Per-cycle watchdog (#73).** Because #1 only runs after
+   `orchestrator.run()` returns — and that call can block inside SB3's
+   `.learn()` loop for an arbitrarily long time — the daemon also spawns a
+   short-lived watchdog thread inside `_run_training` for exactly the
+   duration of the orchestrator call. The watchdog captures a baseline of
+   `ErrorLogBuffer._count_since_start` before the orchestrator starts and
+   polls every `DaemonConfig.watchdog_poll_seconds` (default 5s). If the
+   delta exceeds `DaemonConfig.watchdog_error_threshold` (default 5) the
+   watchdog sets an interim `_last_error` through the daemon's lock and
+   logs at ERROR level. The watchdog is joined as soon as
+   `orchestrator.run()` returns so there is no race with the #71
+   bookkeeping; the bookkeeping is always the final writer of
+   `_last_error` for the run.
+
+**Reading the signals:**
+
+| `state` | `last_error` | `runs_completed` | Meaning |
+|---------|--------------|------------------|---------|
+| `training` | `null` | unchanged | Training in progress, no anomalies surfaced yet |
+| `training` | `"Watchdog: N ERROR-level log records..."` | unchanged | Per-cycle errors piling up mid-run; operator should investigate |
+| `idle` | `"All N training cycles crashed; first error: ..."` | unchanged | #71 bookkeeping: orchestrator returned with every cycle crashed |
+| `idle` | `null` | incremented | Clean run |
+
+**Scope of the watchdog.** It is purely observability. It does NOT transition
+state, does NOT kill the trainer subprocess (#74 owns termination semantics),
+and does NOT mutate any field other than `_last_error` and its own
+`_watchdog_thread` handle. A single watchdog fires at most one ERROR log
+record per training run (one-shot) so a broken cycle cannot feed its own
+watchdog.
+
 ### Curriculum system
 
 Automatic difficulty scaling within a training run:

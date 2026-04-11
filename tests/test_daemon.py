@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1324,3 +1325,609 @@ class TestAllCrashedTrainingRunIsFailure:
         ]
         assert len(daemon_errors) == 1
         assert daemon_errors[0]["level"] == "ERROR"
+
+
+class TestWatchdogPerCycleCrashVisibility:
+    """Issue #73 regression guard.
+
+    While ``TrainingOrchestrator.run(...)`` is still iterating (e.g. stuck
+    inside SB3's ``.learn()`` retry loop) the #71 post-orchestrator
+    bookkeeping cannot run, which left ``daemon._last_error`` at ``None``
+    even while per-cycle ERROR log records piled up in
+    ``ErrorLogBuffer``. A short-lived watchdog thread spawned inside
+    ``_run_training`` now surfaces the failure mid-training so the Alerts
+    tab and ``/api/training/daemon`` reflect reality within bounded time.
+    """
+
+    def _install_buffer(self) -> tuple[Any, Any]:
+        """Install a fresh handler on the PROCESS-WIDE singleton buffer.
+
+        The watchdog reads the module-level singleton returned by
+        ``get_error_log_buffer()`` — not a test-local instance — so
+        tests must emit through the same buffer the watchdog polls.
+        ``buffer.reset()`` is safe because the singleton is isolated
+        to this test process and we restore state in ``finally``.
+        """
+        from alpha4gate.error_log import _ErrorBufferHandler, get_error_log_buffer
+
+        buffer = get_error_log_buffer()
+        buffer.reset()
+        handler = _ErrorBufferHandler(buffer)
+        logging.getLogger().addHandler(handler)
+        return buffer, handler
+
+    def test_watchdog_surfaces_per_cycle_errors_during_orchestrator_run(
+        self, tmp_path: Path
+    ) -> None:
+        """Acceptance criterion #1: while orchestrator.run() is still
+        iterating, the daemon must surface per-environment ERROR log
+        records as a daemon-level ``_last_error`` within a bounded time.
+
+        The test uses a fast watchdog poll interval (0.05s) and a long
+        mock orchestrator (0.7s) so the watchdog has multiple opportunities
+        to tick before the post-orchestrator bookkeeping runs.
+        """
+        settings = _make_settings(tmp_path)
+        cfg = DaemonConfig(
+            current_difficulty=3,
+            watchdog_poll_seconds=0.05,
+            watchdog_error_threshold=3,
+        )
+        daemon = TrainingDaemon(settings, cfg)
+
+        per_cycle_log = logging.getLogger("alpha4gate.learning.environment")
+
+        observed_last_error: list[str | None] = []
+
+        def fake_run(**_kwargs: Any) -> dict[str, Any]:
+            # Emit enough per-cycle ERROR records to exceed the
+            # threshold, then sleep long enough for the watchdog to
+            # tick and surface the failure.
+            for i in range(5):
+                per_cycle_log.error("Game thread crashed (fake #%d)", i)
+            # Busy-wait until either the watchdog sets _last_error OR
+            # we've waited 2s (safety cap so the test cannot hang if
+            # the watchdog is broken).
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                with daemon._lock:
+                    current = daemon._last_error
+                if current is not None:
+                    observed_last_error.append(current)
+                    break
+                time.sleep(0.02)
+            # Return a SUCCESSFUL result so post-orchestrator bookkeeping
+            # does NOT overwrite the watchdog-set _last_error (the
+            # all-crashed branch would clobber it; the success branch
+            # clears it to None — which is the behaviour covered by the
+            # other test below).
+            return {
+                "cycles_completed": 1,
+                "final_difficulty": 3,
+                "total_games": 10,
+                "stopped": False,
+                "stop_reason": "",
+                "cycle_results": [
+                    {
+                        "cycle": 1,
+                        "checkpoint": "v9",
+                        "difficulty": 3,
+                        "win_rate": 0.5,
+                    }
+                ],
+            }
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.run.side_effect = fake_run
+
+        # Suppress promotion gate side effects.
+        mock_decision = MagicMock()
+        mock_decision.promoted = False
+        mock_decision.reason = "not better"
+        from alpha4gate.learning.evaluator import EvalResult
+
+        mock_decision.new_eval = EvalResult(
+            checkpoint="v9",
+            games_played=10,
+            wins=5,
+            losses=5,
+            crashed=0,
+            win_rate=0.5,
+            avg_reward=0.0,
+            avg_duration=300.0,
+            difficulty=3,
+            action_distribution=None,
+        )
+        mock_pm = MagicMock()
+        mock_pm.evaluate_and_promote.return_value = mock_decision
+        daemon._promotion_manager = mock_pm
+
+        buffer, handler = self._install_buffer()
+        try:
+            with patch(
+                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                return_value=mock_orchestrator,
+            ):
+                daemon._run_training()
+        finally:
+            logging.getLogger().removeHandler(handler)
+            buffer.reset()
+
+        # The watchdog saw _last_error set mid-training.
+        assert observed_last_error, (
+            "watchdog did not set _last_error while orchestrator.run() was "
+            "still iterating"
+        )
+        watchdog_msg = observed_last_error[0]
+        assert watchdog_msg is not None
+        assert "Watchdog" in watchdog_msg
+        assert "threshold" in watchdog_msg
+
+    def test_watchdog_does_not_trigger_below_threshold(
+        self, tmp_path: Path
+    ) -> None:
+        """Emitting FEWER errors than the threshold must not cause the
+        watchdog to set ``_last_error`` during a successful run."""
+        settings = _make_settings(tmp_path)
+        cfg = DaemonConfig(
+            current_difficulty=2,
+            watchdog_poll_seconds=0.05,
+            watchdog_error_threshold=10,  # high threshold
+        )
+        daemon = TrainingDaemon(settings, cfg)
+
+        per_cycle_log = logging.getLogger("alpha4gate.learning.environment")
+
+        def fake_run(**_kwargs: Any) -> dict[str, Any]:
+            # Only emit 2 errors — well below the threshold of 10.
+            per_cycle_log.error("Game thread crashed (below-threshold #1)")
+            per_cycle_log.error("Game thread crashed (below-threshold #2)")
+            # Let the watchdog tick a few times.
+            time.sleep(0.3)
+            return {
+                "cycles_completed": 1,
+                "final_difficulty": 2,
+                "total_games": 10,
+                "stopped": False,
+                "stop_reason": "",
+                "cycle_results": [
+                    {
+                        "cycle": 1,
+                        "checkpoint": "v9",
+                        "difficulty": 2,
+                        "win_rate": 0.5,
+                    }
+                ],
+            }
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.run.side_effect = fake_run
+
+        mock_decision = MagicMock()
+        mock_decision.promoted = False
+        mock_decision.reason = "not better"
+        from alpha4gate.learning.evaluator import EvalResult
+
+        mock_decision.new_eval = EvalResult(
+            checkpoint="v9",
+            games_played=10,
+            wins=5,
+            losses=5,
+            crashed=0,
+            win_rate=0.5,
+            avg_reward=0.0,
+            avg_duration=300.0,
+            difficulty=2,
+            action_distribution=None,
+        )
+        mock_pm = MagicMock()
+        mock_pm.evaluate_and_promote.return_value = mock_decision
+        daemon._promotion_manager = mock_pm
+
+        buffer, handler = self._install_buffer()
+        try:
+            with patch(
+                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                return_value=mock_orchestrator,
+            ):
+                daemon._run_training()
+        finally:
+            logging.getLogger().removeHandler(handler)
+            buffer.reset()
+
+        # Below-threshold errors leave _last_error at None after
+        # a successful run (post-orchestrator bookkeeping clears it).
+        assert daemon._last_error is None
+        assert daemon._runs_completed == 1
+
+    def test_watchdog_post_training_bookkeeping_wins_on_all_crashed(
+        self, tmp_path: Path
+    ) -> None:
+        """Post-orchestrator bookkeeping is the authoritative final writer
+        of ``_last_error``. When the orchestrator returns with every cycle
+        crashed, the daemon's own bookkeeping message replaces whatever
+        the watchdog set mid-training — there must not be two sources of
+        truth fighting.
+        """
+        settings = _make_settings(tmp_path)
+        cfg = DaemonConfig(
+            current_difficulty=3,
+            watchdog_poll_seconds=0.05,
+            watchdog_error_threshold=1,
+        )
+        daemon = TrainingDaemon(settings, cfg)
+
+        per_cycle_log = logging.getLogger("alpha4gate.learning.environment")
+
+        def fake_run(**_kwargs: Any) -> dict[str, Any]:
+            per_cycle_log.error("Game thread crashed")
+            per_cycle_log.error("Game thread crashed")
+            # Wait long enough for the watchdog to fire (poll=0.05s,
+            # threshold=1, so one tick is enough).
+            time.sleep(0.2)
+            return {
+                "cycles_completed": 2,
+                "final_difficulty": 3,
+                "total_games": 0,
+                "stopped": False,
+                "stop_reason": "",
+                "cycle_results": [
+                    {
+                        "cycle": 1,
+                        "difficulty": 3,
+                        "status": "crashed",
+                        "error": "ValueError: Observation spaces do not match",
+                    },
+                    {
+                        "cycle": 2,
+                        "difficulty": 3,
+                        "status": "crashed",
+                        "error": "ValueError: Observation spaces do not match",
+                    },
+                ],
+            }
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.run.side_effect = fake_run
+
+        buffer, handler = self._install_buffer()
+        try:
+            with patch(
+                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                return_value=mock_orchestrator,
+            ):
+                daemon._run_training()
+        finally:
+            logging.getLogger().removeHandler(handler)
+            buffer.reset()
+
+        # Final _last_error is the #71 bookkeeping message, NOT the
+        # watchdog message. The watchdog's words do not appear.
+        assert daemon._last_error is not None
+        assert "Observation spaces do not match" in daemon._last_error
+        assert "Watchdog" not in daemon._last_error
+        assert daemon._runs_completed == 0
+
+    def test_watchdog_thread_cleans_up_after_run(self, tmp_path: Path) -> None:
+        """The watchdog thread must have exited by the time
+        ``_run_training`` returns; no orphaned threads."""
+        settings = _make_settings(tmp_path)
+        cfg = DaemonConfig(
+            current_difficulty=2,
+            watchdog_poll_seconds=0.05,
+            watchdog_error_threshold=100,
+        )
+        daemon = TrainingDaemon(settings, cfg)
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.run.return_value = {
+            "cycles_completed": 1,
+            "final_difficulty": 2,
+            "total_games": 10,
+            "stopped": False,
+            "stop_reason": "",
+            "cycle_results": [
+                {
+                    "cycle": 1,
+                    "checkpoint": "v9",
+                    "difficulty": 2,
+                    "win_rate": 0.5,
+                }
+            ],
+        }
+
+        mock_decision = MagicMock()
+        mock_decision.promoted = False
+        mock_decision.reason = "not better"
+        from alpha4gate.learning.evaluator import EvalResult
+
+        mock_decision.new_eval = EvalResult(
+            checkpoint="v9",
+            games_played=10,
+            wins=5,
+            losses=5,
+            crashed=0,
+            win_rate=0.5,
+            avg_reward=0.0,
+            avg_duration=300.0,
+            difficulty=2,
+            action_distribution=None,
+        )
+        mock_pm = MagicMock()
+        mock_pm.evaluate_and_promote.return_value = mock_decision
+        daemon._promotion_manager = mock_pm
+
+        buffer, handler = self._install_buffer()
+        try:
+            with patch(
+                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                return_value=mock_orchestrator,
+            ):
+                daemon._run_training()
+        finally:
+            logging.getLogger().removeHandler(handler)
+            buffer.reset()
+
+        # The handle was cleared by _stop_watchdog.
+        assert daemon._watchdog_thread is None
+        # No thread named "training-daemon-watchdog" is alive.
+        live = [
+            t
+            for t in threading.enumerate()
+            if t.name == "training-daemon-watchdog" and t.is_alive()
+        ]
+        assert live == [], f"watchdog thread(s) leaked: {live}"
+
+    def test_watchdog_clears_stale_last_error_on_new_run(
+        self, tmp_path: Path
+    ) -> None:
+        """Issue #73 iter-2 (M1): a stale ``_last_error`` from a prior
+        failed run must NOT block the watchdog on a subsequent run.
+
+        The watchdog's "do not clobber a pre-existing error" guard
+        would otherwise be dead-lettered by the previous pass's
+        bookkeeping message, leaving the dashboard showing the OLD
+        error while the NEW run silently accumulates failures. This
+        is exactly the soak-3 scenario: retry after a previous
+        all-crashed pass.
+        """
+        settings = _make_settings(tmp_path)
+        cfg = DaemonConfig(
+            current_difficulty=3,
+            watchdog_poll_seconds=0.05,
+            watchdog_error_threshold=3,
+        )
+        daemon = TrainingDaemon(settings, cfg)
+
+        # Pre-seed a stale error string as if a prior run had failed.
+        daemon._last_error = "stale error from prior run"
+
+        per_cycle_log = logging.getLogger("alpha4gate.learning.environment")
+
+        observed_last_error: list[str | None] = []
+
+        def fake_run(**_kwargs: Any) -> dict[str, Any]:
+            for i in range(5):
+                per_cycle_log.error("Game thread crashed (fake #%d)", i)
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                with daemon._lock:
+                    current = daemon._last_error
+                if current is not None and "Watchdog" in current:
+                    observed_last_error.append(current)
+                    break
+                time.sleep(0.02)
+            # Return a SUCCESSFUL result so post-orchestrator
+            # bookkeeping does not clobber the observed watchdog msg.
+            return {
+                "cycles_completed": 1,
+                "final_difficulty": 3,
+                "total_games": 10,
+                "stopped": False,
+                "stop_reason": "",
+                "cycle_results": [
+                    {
+                        "cycle": 1,
+                        "checkpoint": "v9",
+                        "difficulty": 3,
+                        "win_rate": 0.5,
+                    }
+                ],
+            }
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.run.side_effect = fake_run
+
+        mock_decision = MagicMock()
+        mock_decision.promoted = False
+        mock_decision.reason = "not better"
+        from alpha4gate.learning.evaluator import EvalResult
+
+        mock_decision.new_eval = EvalResult(
+            checkpoint="v9",
+            games_played=10,
+            wins=5,
+            losses=5,
+            crashed=0,
+            win_rate=0.5,
+            avg_reward=0.0,
+            avg_duration=300.0,
+            difficulty=3,
+            action_distribution=None,
+        )
+        mock_pm = MagicMock()
+        mock_pm.evaluate_and_promote.return_value = mock_decision
+        daemon._promotion_manager = mock_pm
+
+        buffer, handler = self._install_buffer()
+        try:
+            with patch(
+                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                return_value=mock_orchestrator,
+            ):
+                daemon._run_training()
+        finally:
+            logging.getLogger().removeHandler(handler)
+            buffer.reset()
+
+        # The watchdog observed the NEW error message, not the stale one.
+        assert observed_last_error, (
+            "watchdog did not set _last_error on the new run; stale "
+            "value from a prior run blocked the watchdog write"
+        )
+        watchdog_msg = observed_last_error[0]
+        assert watchdog_msg is not None
+        assert "Watchdog" in watchdog_msg
+        assert "stale error from prior run" not in watchdog_msg
+
+    def test_watchdog_is_one_shot_per_run(self, tmp_path: Path) -> None:
+        """Issue #73 iter-2 (M4): once the watchdog has raised the
+        alarm it must stop polling. Otherwise a stream of
+        watchdog-generated ERROR records would feed back into the
+        very buffer the watchdog is watching.
+        """
+        settings = _make_settings(tmp_path)
+        cfg = DaemonConfig(
+            current_difficulty=3,
+            watchdog_poll_seconds=0.02,
+            watchdog_error_threshold=3,
+        )
+        daemon = TrainingDaemon(settings, cfg)
+
+        per_cycle_log = logging.getLogger("alpha4gate.learning.environment")
+
+        def fake_run(**_kwargs: Any) -> dict[str, Any]:
+            # Emit well above threshold, then pause long enough for
+            # multiple poll ticks so a non-one-shot watchdog would
+            # fire several times.
+            for i in range(10):
+                per_cycle_log.error("Game thread crashed (one-shot #%d)", i)
+            time.sleep(0.3)
+            return {
+                "cycles_completed": 1,
+                "final_difficulty": 3,
+                "total_games": 10,
+                "stopped": False,
+                "stop_reason": "",
+                "cycle_results": [
+                    {
+                        "cycle": 1,
+                        "checkpoint": "v9",
+                        "difficulty": 3,
+                        "win_rate": 0.5,
+                    }
+                ],
+            }
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.run.side_effect = fake_run
+
+        mock_decision = MagicMock()
+        mock_decision.promoted = False
+        mock_decision.reason = "not better"
+        from alpha4gate.learning.evaluator import EvalResult
+
+        mock_decision.new_eval = EvalResult(
+            checkpoint="v9",
+            games_played=10,
+            wins=5,
+            losses=5,
+            crashed=0,
+            win_rate=0.5,
+            avg_reward=0.0,
+            avg_duration=300.0,
+            difficulty=3,
+            action_distribution=None,
+        )
+        mock_pm = MagicMock()
+        mock_pm.evaluate_and_promote.return_value = mock_decision
+        daemon._promotion_manager = mock_pm
+
+        # Install a capturing handler on the daemon logger so we can
+        # count how many watchdog-level ERROR records were emitted.
+        daemon_log = logging.getLogger("alpha4gate.learning.daemon")
+
+        class _CaptureHandler(logging.Handler):
+            def __init__(self) -> None:
+                super().__init__(level=logging.ERROR)
+                self.records: list[logging.LogRecord] = []
+
+            def emit(self, record: logging.LogRecord) -> None:
+                self.records.append(record)
+
+        capture = _CaptureHandler()
+        daemon_log.addHandler(capture)
+
+        buffer, handler = self._install_buffer()
+        try:
+            with patch(
+                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                return_value=mock_orchestrator,
+            ):
+                daemon._run_training()
+        finally:
+            daemon_log.removeHandler(capture)
+            logging.getLogger().removeHandler(handler)
+            buffer.reset()
+
+        watchdog_records = [
+            r for r in capture.records if "Daemon watchdog:" in r.getMessage()
+        ]
+        assert len(watchdog_records) == 1, (
+            "watchdog fired more than once: expected exactly ONE "
+            f"'Daemon watchdog:' ERROR record, got {len(watchdog_records)}"
+        )
+
+    def test_watchdog_exits_promptly_on_daemon_stop_event(
+        self, tmp_path: Path
+    ) -> None:
+        """Issue #73 iter-2 (M5): ``_watchdog_loop`` must exit promptly
+        when the daemon-wide ``_stop_event`` is set, independently of
+        the watchdog-specific stop event.
+        """
+        settings = _make_settings(tmp_path)
+        cfg = DaemonConfig(
+            current_difficulty=2,
+            watchdog_poll_seconds=0.1,
+            watchdog_error_threshold=1000,  # effectively never fires
+        )
+        daemon = TrainingDaemon(settings, cfg)
+
+        buffer, handler = self._install_buffer()
+        try:
+            # Pretend training is active so _watchdog_loop does not
+            # early-return on its ``_training_active`` check.
+            daemon._training_active = True
+            daemon._start_watchdog()
+
+            # The watchdog should now be alive and sleeping in
+            # ``_watchdog_stop_event.wait(timeout=0.1)``.
+            assert daemon._watchdog_thread is not None
+            assert daemon._watchdog_thread.is_alive()
+
+            # Signal the DAEMON-WIDE stop event (not the watchdog
+            # stop event — we are exercising the separate exit
+            # branch at the top of the poll loop).
+            start = time.monotonic()
+            daemon._stop_event.set()
+
+            # The watchdog should observe ``_stop_event`` within a
+            # couple of poll ticks and return.
+            daemon._watchdog_thread.join(timeout=0.5)
+            elapsed = time.monotonic() - start
+
+            assert not daemon._watchdog_thread.is_alive(), (
+                "watchdog did not exit on daemon-wide _stop_event"
+            )
+            assert elapsed < 0.5, (
+                f"watchdog took {elapsed:.3f}s to observe _stop_event "
+                "(expected < 0.5s)"
+            )
+        finally:
+            # Clean up: clear training_active and stop watchdog
+            # explicitly so no leaked state bleeds into later tests.
+            daemon._training_active = False
+            daemon._stop_event.clear()
+            daemon._stop_watchdog()
+            logging.getLogger().removeHandler(handler)
+            buffer.reset()

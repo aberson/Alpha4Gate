@@ -26,6 +26,16 @@ class DaemonConfig:
     current_difficulty: int = 1
     max_difficulty: int = 10
     win_rate_threshold: float = 0.8
+    # Issue #73: per-cycle crash visibility watchdog.
+    # While TrainingOrchestrator.run(...) is blocked inside SB3's
+    # ``.learn()`` loop, the post-orchestrator bookkeeping that sets
+    # ``_last_error`` (see #71) cannot run. The watchdog polls the
+    # process-wide ``ErrorLogBuffer`` during active training and
+    # surfaces an interim ``_last_error`` as soon as the number of
+    # ERROR-level records observed since training started exceeds
+    # ``watchdog_error_threshold``.
+    watchdog_poll_seconds: float = 5.0
+    watchdog_error_threshold: int = 5
 
 
 def load_daemon_config(path: Path) -> DaemonConfig:
@@ -84,6 +94,13 @@ class TrainingDaemon:
 
         # Curriculum tracking
         self._last_advancement: str | None = None
+
+        # Issue #73: per-cycle crash visibility watchdog.
+        # Spawned inside ``_run_training`` for the exact duration of a
+        # training pass, so there is no lifecycle beyond what the main
+        # training path already manages.
+        self._watchdog_thread: threading.Thread | None = None
+        self._watchdog_stop_event: threading.Event = threading.Event()
 
     def start(self) -> None:
         """Start the daemon loop in a background thread.
@@ -335,6 +352,133 @@ class TrainingDaemon:
         config_path = self._settings.data_dir / "daemon_config.json"
         save_daemon_config(self._config, config_path)
 
+    # ------------------------------------------------------------------
+    # Issue #73: per-cycle crash visibility watchdog
+    # ------------------------------------------------------------------
+
+    def _start_watchdog(self) -> None:
+        """Start the per-cycle crash visibility watchdog thread.
+
+        Captures a baseline of the process-wide ``ErrorLogBuffer``
+        count at training start, then polls that count on a short
+        cadence. If the delta exceeds
+        ``DaemonConfig.watchdog_error_threshold`` the watchdog writes
+        an interim ``_last_error`` through ``self._lock`` so
+        ``/api/training/daemon`` and the Alerts tab surface the
+        failure mid-training — before the orchestrator returns and
+        the #71 post-training bookkeeping runs.
+
+        Scope: observability only. The watchdog never transitions
+        state, never kills the trainer, and never touches fields it
+        does not own (``_state``, ``_runs_completed``, etc.).
+        """
+        from alpha4gate.error_log import get_error_log_buffer
+
+        # If a previous watchdog thread is still alive (shouldn't
+        # happen, but defensive) stop it first so we never stack
+        # watchdogs for a single training run.
+        if self._watchdog_thread is not None and self._watchdog_thread.is_alive():
+            self._stop_watchdog()
+
+        buffer = get_error_log_buffer()
+        baseline_count, _ = buffer.snapshot()
+
+        self._watchdog_stop_event.clear()
+        self._watchdog_thread = threading.Thread(
+            target=self._watchdog_loop,
+            args=(baseline_count,),
+            daemon=True,
+            name="training-daemon-watchdog",
+        )
+        self._watchdog_thread.start()
+
+    def _stop_watchdog(self) -> None:
+        """Signal the watchdog to exit and join it.
+
+        Safe to call multiple times and from the ``finally`` block of
+        ``_run_training``. Uses a bounded join so a wedged watchdog
+        thread cannot hang daemon shutdown.
+
+        Issue #73 iter-2 (M3): if the join times out (watchdog stuck
+        acquiring ``self._lock`` or inside ``buffer.snapshot()``), the
+        thread reference is INTENTIONALLY kept (not cleared to
+        ``None``) so a subsequent ``_stop_watchdog`` call can observe
+        and retry — and so the zombie thread cannot masquerade as "no
+        watchdog is running" to a later ``_start_watchdog`` call. This
+        matters when ``watchdog_poll_seconds`` is configured above the
+        5s join timeout.
+        """
+        self._watchdog_stop_event.set()
+        if self._watchdog_thread is not None:
+            self._watchdog_thread.join(timeout=5.0)
+            if self._watchdog_thread.is_alive():
+                _log.warning(
+                    "Daemon watchdog thread did not exit within 5s; "
+                    "leaving reference in place for retry"
+                )
+            else:
+                self._watchdog_thread = None
+
+    def _watchdog_loop(self, baseline_count: int) -> None:
+        """Poll ``ErrorLogBuffer`` until training ends or stop is signalled.
+
+        Exit conditions (any of):
+        - ``self._watchdog_stop_event`` is set (normal path — called
+          from ``_run_training`` after ``orchestrator.run`` returns).
+        - ``self._stop_event`` is set (whole-daemon shutdown via
+          ``TrainingDaemon.stop``).
+        - ``self._training_active`` flipped to False (belt-and-braces
+          for the exception path).
+        """
+        from alpha4gate.error_log import get_error_log_buffer
+
+        buffer = get_error_log_buffer()
+        threshold = self._config.watchdog_error_threshold
+        poll_seconds = self._config.watchdog_poll_seconds
+
+        while not self._watchdog_stop_event.is_set():
+            if self._stop_event.is_set():
+                return
+            if not self._training_active:
+                return
+
+            total, _records = buffer.snapshot()
+            delta = total - baseline_count
+            if delta >= threshold:
+                error_msg = (
+                    f"Watchdog: {delta} ERROR-level log records observed "
+                    f"since training started (threshold={threshold}); "
+                    "training may be stuck in a per-cycle crash loop. "
+                    "Daemon state will be finalised when the orchestrator "
+                    "returns."
+                )
+                with self._lock:
+                    # Do not clobber a pre-existing error (e.g. if the
+                    # caller pre-seeded one for some reason). The
+                    # post-orchestrator bookkeeping owns the final
+                    # authoritative value; the watchdog's job is only
+                    # to make the failure visible during training.
+                    if self._last_error is None:
+                        self._last_error = error_msg
+                _log.error(
+                    "Daemon watchdog: %d errors since training started "
+                    "(threshold=%d)",
+                    delta,
+                    threshold,
+                )
+                # One-shot: once we've raised the alarm, stop polling.
+                # A stream of watchdog-generated ERROR log records
+                # would otherwise feed back into the very buffer we
+                # are watching.
+                return
+
+            # Sleep on the watchdog stop event so ``_stop_watchdog``
+            # wakes us promptly. Also respond to whole-daemon stop.
+            if self._watchdog_stop_event.wait(timeout=poll_seconds):
+                return
+            if self._stop_event.is_set():
+                return
+
     def _run_training(self) -> None:
         """Create a TrainingOrchestrator and run one training pass."""
         from alpha4gate.learning.database import TrainingDB
@@ -349,8 +493,36 @@ class TrainingDaemon:
         self._training_active = True
         with self._lock:
             self._state = "training"
+            # Issue #73 iter-2 (M1): clear any residual ``_last_error``
+            # from a prior failed run. The watchdog's "do not clobber
+            # a pre-existing error" guard in ``_watchdog_loop`` would
+            # otherwise be dead-lettered by stale state — the previous
+            # pass's bookkeeping message would block the new pass's
+            # watchdog from ever writing. The previous run's error has
+            # already been surfaced to the operator by the time the
+            # daemon decides to run again (#73 soak-3 scenario).
+            self._last_error = None
 
         try:
+            # Issue #73: start the crash-visibility watchdog before
+            # the (potentially long-blocking) orchestrator.run() call.
+            # The watchdog runs concurrently in a daemon thread and
+            # surfaces a mid-training ``_last_error`` if
+            # per-environment ERROR log records pile up faster than
+            # the threshold. It is joined BEFORE the post-orchestrator
+            # bookkeeping below so there is no race between the two
+            # writers of ``_last_error``.
+            #
+            # Issue #73 iter-2 (M2): ``_start_watchdog`` is inside the
+            # ``try:`` block (not above it) so that if ``Thread.start``
+            # itself raises — RuntimeError, OS-level OOM, anything —
+            # the exception lands in the ``finally`` below, which
+            # clears ``_training_active`` and calls ``_stop_watchdog``.
+            # Starting above the ``try:`` would leave the daemon
+            # wedged in ``state="training", _training_active=True``
+            # with no actual training running.
+            self._start_watchdog()
+
             reward_rules = self._settings.data_dir / "reward_rules.json"
             hyperparams = self._settings.data_dir / "hyperparams.json"
             orchestrator = TrainingOrchestrator(
@@ -371,6 +543,16 @@ class TrainingDaemon:
                 games_per_cycle=self._config.games_per_cycle,
                 resume=True,
             )
+
+            # Issue #73: the orchestrator has returned, so the
+            # post-orchestrator bookkeeping below is now the sole
+            # authoritative writer of ``_last_error``. Join the
+            # watchdog here (rather than in ``finally``) so there is
+            # no race window where the watchdog could clobber the
+            # bookkeeping's final ``_last_error``. The ``finally``
+            # block still calls ``_stop_watchdog`` as a belt-and-braces
+            # cleanup for the exception path.
+            self._stop_watchdog()
 
             # Persist final difficulty from the orchestrator back to config
             final_difficulty = result.get("final_difficulty")
@@ -547,6 +729,9 @@ class TrainingDaemon:
                 self._last_run = datetime.now(UTC)
             _log.exception("Daemon: training failed")
         finally:
+            # Stop the watchdog BEFORE clearing ``_training_active`` so
+            # the watchdog does not observe an off-state mid-poll.
+            self._stop_watchdog()
             self._training_active = False
 
     def _log_curriculum_advancement(
