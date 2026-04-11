@@ -89,6 +89,45 @@ otherwise the defaults compiled into the code apply.
 
 Never run the soak test directly on a dirty `data/` without snapshotting it first.
 
+#### Option B bootstrap path — required seed game
+
+A fresh-empty `data/` has zero transitions, so the daemon's transition-count
+trigger (`min_transitions = 500`) will never fire on its own. The time trigger
+will also be blocked by the safety gate at [`daemon.py::_evaluate_triggers`](../src/alpha4gate/learning/daemon.py)
+("no transitions in database"). **Option B is a deadlock unless you seed
+`training.db` manually before starting the backend.**
+
+The correct seed command is:
+
+```bash
+uv run python -m alpha4gate.runner --batch 1 --difficulty 1
+```
+
+This runs a single rule-based game via `_run_batch`, which opens `TrainingDB`
+and passes it into the bot, so every transition from the game lands in
+`data/training.db`. One `--batch 1` game produces ~200-400 transitions —
+comfortably above the daemon's default trigger threshold of 500 when combined
+with a second batch, or above the time trigger's non-zero gate alone.
+
+**Do NOT try to seed with `--map Simple64`.** That path goes through
+`_run_single_game`, which does **not** wire `training_db` into the bot, so
+transitions are silently dropped. The daemon will still see an empty database
+afterwards and stay wedged on "no transitions." This was soak-2 finding §2.1.
+
+After the seed, confirm with:
+
+```bash
+uv run python -c "
+from alpha4gate.learning.database import TrainingDB
+from pathlib import Path
+db = TrainingDB(Path('data/training.db'))
+print('transitions:', db.get_transition_count())
+db.close()
+"
+```
+
+You should see a count in the low hundreds. Only then start the backend.
+
 ### 2.2 Daemon config values
 
 The daemon reads its config from `data/daemon_config.json` if that file exists;
@@ -411,6 +450,7 @@ All "run log" references below mean the file you created in 2.5
 | Daemon stuck in a state | Loop tab `state` stays on `checking` or `training` for many times `check_interval_seconds` | Screenshot Loop tab; add a Timeline line in the run log with wall-clock; copy the last ~200 lines of backend stdout into the run log |
 | Training run never starts | Triggers never fire despite transitions piling up in `training.db` | Hit `GET /api/training/daemon` and paste the full JSON into the run log Timeline |
 | Training run fails | Backend log shows `Daemon: training failed` with a stack trace | Paste the full traceback into the run log Timeline |
+| Daemon watchdog fires mid-training | `/api/training/daemon.last_error` contains `"Watchdog: N ERROR-level log records observed since training started"` — signals per-cycle crashes piling up while `orchestrator.run()` is still blocked. See [#73](https://github.com/aberson/Alpha4Gate/issues/73) for the mechanism. | Paste `daemon.last_error` + the last ~100 lines of backend stdout into the run log Timeline. Cross-reference `error_count_since_start` growth. |
 | Dashboard goes stale | Counters stop updating even though backend is clearly still alive | Note the tab in the run log Timeline, do a **full browser reload** (F5 or Ctrl+R — not a tab close/reopen, not a React HMR refresh), then record whether the reload fixed it |
 | Frontend disconnects | WebSocket errors in the browser DevTools console | Export the console log at end of run (see Section 5) |
 | Browser console errors | Red entries in DevTools console | Screenshot the console; add a run log Timeline line naming which tab triggered them |
@@ -430,6 +470,7 @@ All "run log" references below mean the file you created in 2.5
 **Intervene (stop the run)** if:
 
 - The same state has been stuck for more than 30 minutes with no log activity.
+- `daemon.last_error` starts with `"Watchdog: ... ERROR-level log records observed"` — the [#73](https://github.com/aberson/Alpha4Gate/issues/73) watchdog has surfaced per-cycle crashes piling up while `orchestrator.run()` is still blocked. The dashboard Loop tab should show this within ~25 seconds of the 5th per-cycle ERROR. You do not need to wait the full 30-minute stuck window when this fires.
 - Disk free space drops below the threshold in Section 2.3.
 - SC2 client is unrecoverable (crash dialog, frozen).
 - A finding is clearly reproducible and continuing won't add information.
@@ -472,36 +513,55 @@ Timeline entry so triage can walk screenshot <-> observation both ways.
 
 ### 5.1 Stop the run cleanly
 
-Two options, in order of preference:
+> **Known gap ([#74](https://github.com/aberson/Alpha4Gate/issues/74)):**
+> the `POST /api/training/stop` path (Option A below) currently only joins
+> the daemon check thread — it does **not** kill an in-flight trainer
+> subprocess or interrupt a blocking `orchestrator.run()` mid-cycle. If the
+> daemon is in `state: training` when you stop, Option A returns quickly
+> but any live SC2 binaries keep running and the orchestrator thread keeps
+> iterating until it returns naturally. For a mid-training stop you must
+> use the Option A → Option C → manual SC2 cleanup sequence below. This
+> will be fixed when #74 lands.
 
-**Option A (preferred) — Daemon stop button in the dashboard.**
+Three options, in order of preference:
+
+**Option A (preferred, pre-training or post-training) — Daemon stop button in the dashboard.**
 On the Loop tab, use the `TriggerControls` stop button. This calls the daemon's
 `stop()` method, which sets a stop event and joins the thread with a 10-second
 timeout. Once it returns, the daemon state should settle to `idle` and
-`running: false`.
+`running: false`. **When the daemon is in `state: training`, this alone is
+insufficient — see Option C.**
 
 **Option B — `Ctrl+C` on the backend process.**
 If the dashboard is unresponsive, send `Ctrl+C` to the backend terminal. Uvicorn
 will shut down; because `TrainingDaemon` is a Python daemon thread, it will be
 killed when the process exits — this is less clean than Option A but is the
-correct fallback if the UI is gone.
+correct fallback if the UI is gone. **Same caveat as Option A: if a training
+run is in-flight, `Ctrl+C` will not reliably reach the trainer subprocess on
+Windows.** Fall through to Option C.
 
-**Option C — Force-kill the backend process tree (last resort).**
-If both Option A and Option B fail (backend hung, dashboard unresponsive, terminal
-unresponsive), find the backend PID with `netstat -ano | grep ":8765" | grep LISTENING`
-and kill the entire process tree. **In Git Bash on Windows, you must wrap `taskkill`
-in `cmd.exe //c "..."` because Git Bash's MSYS path translation will mangle `/T`
-into `T:/` if you call `taskkill` directly:**
+**Option C — Force-kill the backend process tree (use mid-training, not just last resort).**
+For a mid-training stop, the known-working sequence (from soak-2 attempt 2)
+is:
 
-```bash
-cmd.exe //c "taskkill /T /F /PID <pid>"
-```
+1. Issue `POST /api/training/stop` or click the dashboard stop button (Option A).
+2. Find the backend PID: `netstat -ano | grep ":8765" | grep LISTENING`.
+3. Force-kill the backend process tree:
+   ```bash
+   cmd.exe //c "taskkill /T /F /PID <backend_pid>"
+   ```
+4. Enumerate and kill any surviving SC2 processes:
+   ```powershell
+   powershell "Get-Process SC2_x64 -ErrorAction SilentlyContinue | Stop-Process -Force"
+   ```
 
-The `//c` is the Git Bash escape for `/c` to cmd.exe. The `/T` flag kills the
-entire process tree (backend python + any SC2 child processes the evaluator
-spawned). The `/F` forces termination. This will also kill any SC2 instances
-the daemon's evaluator launched, but **not** an SC2 instance you launched
-manually for the soak — those are separate process trees.
+**In Git Bash on Windows, you must wrap `taskkill` in `cmd.exe //c "..."`**
+because Git Bash's MSYS path translation will mangle `/T` into `T:/` if you
+call `taskkill` directly. The `//c` is the Git Bash escape for `/c` to
+cmd.exe. The `/T` flag kills the entire process tree (backend python + any
+SC2 child processes); `/F` forces termination. This will also kill any SC2
+instances the daemon's evaluator launched, but **not** an SC2 instance you
+launched manually for the soak — those are separate process trees.
 
 After stopping via any option:
 
