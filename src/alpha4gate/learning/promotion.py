@@ -31,7 +31,19 @@ class PromotionConfig:
 
 @dataclass
 class PromotionDecision:
-    """Result of a promotion evaluation."""
+    """Result of a promotion evaluation.
+
+    ``reason`` is a human-readable string (historical). ``reason_code`` is a
+    stable machine-readable classifier so the dashboard can label entries
+    differently without parsing free-form text. Known codes:
+
+    - ``first_baseline``           first-ever promotion (no prior best)
+    - ``win_rate_gate``            accepted by the win-rate delta check
+    - ``rejected_not_better``      new checkpoint not better enough
+    - ``rejected_insufficient_games`` eval had too few games
+    - ``rejected_crashed``         eval had too many crashed games
+    - ``manual``                   manual promotion via API
+    """
 
     new_checkpoint: str
     old_best: str
@@ -42,6 +54,7 @@ class PromotionDecision:
     difficulty: int = 0
     action_distribution_shift: float | None = None
     timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    reason_code: str = ""
 
 
 class PromotionManager:
@@ -101,6 +114,7 @@ class PromotionManager:
                     promoted=False,
                     reason=reason,
                     difficulty=difficulty,
+                    reason_code="rejected_crashed",
                 )
                 self._history.append(decision)
                 return decision
@@ -113,6 +127,7 @@ class PromotionManager:
                 promoted=True,
                 reason="no previous best checkpoint",
                 difficulty=difficulty,
+                reason_code="first_baseline",
             )
             self._history.append(decision)
             return decision
@@ -157,6 +172,7 @@ class PromotionManager:
                 reason=reason,
                 difficulty=difficulty,
                 action_distribution_shift=shift,
+                reason_code="rejected_crashed",
             )
             self._history.append(decision)
             return decision
@@ -173,11 +189,13 @@ class PromotionManager:
                 f"{old_eval.win_rate:.2%} (delta={delta:+.2%}, "
                 f"threshold={self._config.win_rate_threshold:.2%})"
             )
+            reason_code = "win_rate_gate"
             promote_checkpoint(checkpoint_dir, new_checkpoint)
             _log.info("Promoted %s -> %s: %s", old_best, new_checkpoint, reason)
         elif not enough_games:
             promoted = False
             reason = f"insufficient eval games: {total_games} < {self._config.min_eval_games}"
+            reason_code = "rejected_insufficient_games"
             _log.info("Not promoted: %s", reason)
         else:
             promoted = False
@@ -186,6 +204,7 @@ class PromotionManager:
                 f"{old_eval.win_rate:.2%} (delta={delta:+.2%}, "
                 f"threshold={self._config.win_rate_threshold:.2%})"
             )
+            reason_code = "rejected_not_better"
             _log.info("Not promoted: %s", reason)
 
         # Compute action distribution shift if both evals have distributions
@@ -203,6 +222,7 @@ class PromotionManager:
             reason=reason,
             difficulty=difficulty,
             action_distribution_shift=shift,
+            reason_code=reason_code,
         )
         self._history.append(decision)
         return decision
@@ -242,6 +262,7 @@ class PromotionManager:
             old_eval=None,
             promoted=True,
             reason="manual promotion",
+            reason_code="manual",
         )
         self._history.append(decision)
         return decision
@@ -287,12 +308,44 @@ class PromotionLogger:
         self._wiki_path = wiki_path or _DEFAULT_WIKI_PATH
 
     def _read_history(self) -> list[dict[str, Any]]:
-        """Read existing history from JSON file, or return empty list."""
-        if self._history_path.exists():
-            raw = self._history_path.read_text(encoding="utf-8")
+        """Read existing history from JSON file, or return empty list.
+
+        Self-heals if the file is corrupt (invalid JSON from a partial write,
+        concurrent-writer race, or manual edit gone wrong). Without this, a
+        single corrupt byte would silently swallow every subsequent
+        ``log_decision`` call -- the daemon wraps this in ``try/except`` and
+        every new entry would be lost without any signal on the Alerts tab.
+
+        On corruption we rotate the bad file out of the way (preserving it
+        for forensics) and return an empty list so the next write starts
+        fresh.
+        """
+        if not self._history_path.exists():
+            return []
+        raw = self._history_path.read_text(encoding="utf-8")
+        try:
             data: list[dict[str, Any]] = json.loads(raw)
             return data
-        return []
+        except json.JSONDecodeError as exc:
+            suffix = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+            corrupt_path = self._history_path.with_name(
+                f"{self._history_path.stem}.corrupt.{suffix}.json"
+            )
+            try:
+                self._history_path.rename(corrupt_path)
+            except OSError:
+                _log.exception(
+                    "Failed to rotate corrupt promotion history file %s",
+                    self._history_path,
+                )
+            _log.warning(
+                "promotion_history.json at %s was corrupt (%s); "
+                "rotated to %s and starting fresh",
+                self._history_path,
+                exc,
+                corrupt_path,
+            )
+            return []
 
     def _write_history(self, entries: list[dict[str, Any]]) -> None:
         """Write history list to JSON file (pretty-printed)."""
@@ -351,6 +404,7 @@ class PromotionLogger:
             "eval_games_played": eval_games,
             "promoted": decision.promoted,
             "reason": decision.reason,
+            "reason_code": decision.reason_code,
             "difficulty": decision.difficulty,
             "action_distribution_shift": decision.action_distribution_shift,
         }

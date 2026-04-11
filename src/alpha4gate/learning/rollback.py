@@ -169,7 +169,13 @@ class RollbackMonitor:
         return None
 
     def _log_rollback(self, decision: RollbackDecision) -> None:
-        """Append a rollback entry to promotion_history.json."""
+        """Append a rollback entry to promotion_history.json.
+
+        Includes ``reason_code="rollback"`` so all writers to
+        promotion_history.json share a consistent schema. The dashboard can
+        then classify rollback entries alongside promotion entries without
+        parsing the free-form ``reason`` string (Phase 4.6 Step 4 iter 2).
+        """
         entry: dict[str, Any] = {
             "timestamp": decision.timestamp,
             "new_checkpoint": decision.revert_to,
@@ -180,6 +186,7 @@ class RollbackMonitor:
             "eval_games_played": decision.games_played,
             "promoted": False,
             "reason": f"rollback: {decision.reason}",
+            "reason_code": "rollback",
             "difficulty": 0,
             "action_distribution_shift": None,
         }

@@ -262,6 +262,36 @@ class TestExecuteRollback:
         assert entry["new_checkpoint"] == "v4"
         assert entry["old_best"] == "v5"
 
+    def test_rollback_entry_has_reason_code(
+        self, db: TrainingDB, cp_dir: Path, history_path: Path
+    ) -> None:
+        """Rollback entries must stamp ``reason_code='rollback'``.
+
+        Schema consistency with PromotionLogger entries -- the dashboard
+        classifies rollback entries without parsing the free-form ``reason``
+        string (Phase 4.6 Step 4 iter 2).
+        """
+        _setup_manifest_with_previous(cp_dir, "v5", "v4")
+
+        monitor = RollbackMonitor(
+            db=db,
+            config=RollbackConfig(),
+            checkpoint_dir=cp_dir,
+            history_path=history_path,
+        )
+        decision = RollbackDecision(
+            current_model="v5",
+            revert_to="v4",
+            current_win_rate=0.20,
+            promotion_win_rate=0.80,
+            games_played=15,
+            reason="regression detected",
+        )
+        monitor.execute_rollback(decision)
+
+        entries = json.loads(history_path.read_text(encoding="utf-8"))
+        assert entries[0]["reason_code"] == "rollback"
+
     def test_rollback_appends_to_existing_history(
         self, db: TrainingDB, cp_dir: Path, history_path: Path
     ) -> None:

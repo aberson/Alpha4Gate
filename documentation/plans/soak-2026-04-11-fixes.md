@@ -115,8 +115,9 @@ The soak run on 2026-04-11 (`documentation/soak-test-runs/soak-2026-04-11.md`) r
 
 ### Phase 4.6 Step 4: Persist promotion records when first-checkpoint auto-promote fires
 
-- **Status:** NOT STARTED
+- **Status:** DONE (2026-04-11, iter 2/3, reviewers=code)
 - **Issue:** #78
+- **Architectural revelation:** The gap was UNIVERSAL, not first-baseline-specific. Every promotion decision (first-baseline, win-rate-gate, rejected) was invisible to the dashboard because `TrainingDaemon` never called `PromotionLogger.log_decision()` after `pm.evaluate_and_promote()`. Also, the dashboard polls `/api/training/promotions/history` (not `/promotions` as the plan assumed). Fix: added `reason_code` field with 6 stable codes, wired the logger into the daemon, added corrupt-JSON self-heal, aligned rollback schema. Iter 2 addressed test quality's silent-exception-fallthrough + concurrent-writers gap.
 - **Problem:** When the promotion gate auto-promotes the first checkpoint as a baseline (`No current best checkpoint -- promoting v5` log line at 23:13:40 in soak-2026-04-11), the log line fires but `/api/training/promotions` continues to return `[]`. The Improvements tab cannot show the first-ever promotion. Either the persistence call is missing, or the API reads from a different source than where the auto-promote logs.
 
   **Investigation phase first:** read `src/alpha4gate/learning/promotion.py` to find where the `No current best -- promoting` log line lives, trace what (if anything) it persists to, and compare against what `/api/training/promotions` reads from. Document the gap in the issue body before writing code.

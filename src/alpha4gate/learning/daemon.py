@@ -87,6 +87,7 @@ class TrainingDaemon:
 
         # Promotion manager (created lazily in _run_training)
         self._promotion_manager: Any = None
+        self._promotion_logger: Any = None
 
         # Rollback monitor (created lazily)
         self._rollback_monitor: Any = None
@@ -347,6 +348,24 @@ class TrainingDaemon:
             self._promotion_manager = PromotionManager(evaluator, PromotionConfig())
         return self._promotion_manager
 
+    def _get_promotion_logger(self) -> Any:
+        """Get or create the PromotionLogger for persisting decisions.
+
+        Writes to ``<data_dir>/promotion_history.json`` -- the same file the
+        API's ``/api/training/promotions/history`` endpoint reads from.
+        The wiki path is intentionally pointed at a non-existent file inside
+        ``data_dir`` so ``_append_wiki_row`` short-circuits: the wiki doc is
+        maintained by hand, not by the running daemon.
+        """
+        if self._promotion_logger is None:
+            from alpha4gate.learning.promotion import PromotionLogger
+
+            self._promotion_logger = PromotionLogger(
+                history_path=self._settings.data_dir / "promotion_history.json",
+                wiki_path=self._settings.data_dir / "_daemon_no_wiki.md",
+            )
+        return self._promotion_logger
+
     def _persist_config(self) -> None:
         """Write current daemon config to disk."""
         config_path = self._settings.data_dir / "daemon_config.json"
@@ -605,6 +624,22 @@ class TrainingDaemon:
                         "Promotion decision: %s (promoted=%s, reason=%s)",
                         latest_checkpoint, decision.promoted, decision.reason,
                     )
+
+                    # Persist EVERY decision (promoted OR rejected) to
+                    # promotion_history.json so it shows up in
+                    # ``/api/training/promotions/history`` -- the endpoint the
+                    # dashboard Improvements tab polls. Previously only
+                    # curriculum advancements made it to disk, so the first
+                    # auto-promote ("no previous best") was logged but
+                    # invisible to the UI (Phase 4.6 Step 4 / soak-2026-04-11).
+                    try:
+                        logger = self._get_promotion_logger()
+                        logger.log_decision(decision)
+                    except Exception:
+                        _log.exception(
+                            "Failed to persist promotion decision for %s",
+                            latest_checkpoint,
+                        )
 
                     # Curriculum-aware promotion: auto-advance difficulty
                     if decision.promoted:
