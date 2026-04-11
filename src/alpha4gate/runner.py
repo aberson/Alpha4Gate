@@ -158,6 +158,7 @@ def _run_training(settings: Settings, args: argparse.Namespace) -> None:
             hyperparams_path=hyperparams if hyperparams.exists() else None,
             map_name=args.map,
             initial_difficulty=args.difficulty or 1,
+            replay_dir=settings.replay_dir,
         )
         result = orchestrator.run(
             n_cycles=args.cycles,

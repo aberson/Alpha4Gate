@@ -140,6 +140,30 @@ def save_stats(games: list[GameRecord], path: Path) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
+def append_stats_game(stats_path: Path, record: GameRecord) -> None:
+    """Append a single game record to ``stats.json`` and recompute aggregates.
+
+    This is the per-game seam used by the trainer (``SC2Env._sync_game``) so
+    that dashboard surfaces reading ``data/stats.json`` — Stats tab and any
+    other legacy aggregators — see trainer games as they happen, not only
+    after a ``--batch`` run.
+
+    The batch path still uses :func:`save_stats` to write the entire list
+    atomically at the end of a batch. This helper is deliberately additive:
+    it loads the existing file (or initializes an empty record), appends the
+    new record, recomputes aggregates, and writes back via
+    :func:`save_stats`. Behaviour for the batch code path is unchanged.
+
+    Args:
+        stats_path: Path to ``data/stats.json``. Parent directories are
+            created on demand.
+        record: The completed :class:`GameRecord` to append.
+    """
+    games, _ = load_stats(stats_path)
+    games.append(record)
+    save_stats(games, stats_path)
+
+
 def record_game(
     games: list[GameRecord],
     *,

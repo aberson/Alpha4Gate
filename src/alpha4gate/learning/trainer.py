@@ -76,10 +76,22 @@ class TrainingOrchestrator:
         max_difficulty: int = 10,
         win_rate_threshold: float = 0.8,
         disk_limit_gb: float = DEFAULT_DISK_LIMIT_GB,
+        replay_dir: str | Path | None = None,
     ) -> None:
         self._checkpoint_dir = Path(checkpoint_dir)
         self._db_path = Path(db_path)
         self._data_dir = self._db_path.parent
+        # Phase 4.6 Step 2: the replay directory is passed in explicitly
+        # so the dashboard Replays tab sees trainer games. Defaults to a
+        # sibling ``replays/`` next to the data dir (matches the default
+        # in ``config.Settings`` where ``DATA_DIR`` and ``REPLAY_DIR``
+        # both live in the project root). Call sites that load
+        # ``Settings`` should pass ``settings.replay_dir`` explicitly
+        # so the configured path wins over the default.
+        self._replay_dir = (
+            Path(replay_dir) if replay_dir is not None
+            else self._data_dir.parent / "replays"
+        )
         self._reward_rules_path = reward_rules_path
         self._hyperparams_path = hyperparams_path
         self._map_name = map_name
@@ -365,7 +377,27 @@ class TrainingOrchestrator:
         _log.info("Diagnostics: %s", cycle_diag)
 
     def _make_env(self, db: Any) -> Any:
-        """Create an SC2Env for training with the current difficulty."""
+        """Create an SC2Env for training with the current difficulty.
+
+        Phase 4.6 Step 2 wiring: the env is given the replay dir and
+        ``stats.json`` path so every trainer game lands on the same
+        legacy dashboard surfaces (Stats tab, Replays tab, Reward
+        Trends) that the manual ``--batch`` path produces. Before this
+        wiring, the dashboard was blind to trainer activity because
+        those producers only lived in ``connection.run_bot`` and
+        ``batch_runner.save_stats`` — neither of which the trainer
+        called. See Phase 4.6 fix plan and ``documentation/soak-*``
+        for the full soak findings.
+
+        NOTE: ``reward_calc.open_game_log`` is no longer called here.
+        ``SC2Env.reset()`` now rotates the log file on every game so
+        each trainer game produces its own ``game_<id>.jsonl`` (and
+        the Reward Trends aggregator can count one file per game).
+        Previously this helper called ``open_game_log`` once with the
+        base game_id and every game in the cycle appended to that
+        single file, producing the "Scanned 8 games" discrepancy in
+        soak-2026-04-11.
+        """
         from alpha4gate.learning.environment import SC2Env
         from alpha4gate.learning.rewards import RewardCalculator
 
@@ -375,7 +407,8 @@ class TrainingOrchestrator:
             log_dir=log_dir,
         )
         game_id = f"rl_{uuid.uuid4().hex[:8]}"
-        reward_calc.open_game_log(game_id)
+        replay_dir = self._replay_dir
+        stats_path = self._data_dir / "stats.json"
         return SC2Env(
             map_name=self._map_name,
             difficulty=self._difficulty,
@@ -383,6 +416,9 @@ class TrainingOrchestrator:
             db=db,
             game_id=game_id,
             model_version=f"v{self._cycle}",
+            replay_dir=replay_dir,
+            stats_path=stats_path,
+            build_order_label="4gate",
         )
 
     def _init_or_resume_model(self, resume: bool) -> Any:

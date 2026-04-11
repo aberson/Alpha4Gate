@@ -8,6 +8,8 @@ import sqlite3
 import threading
 import uuid
 from dataclasses import asdict
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import gymnasium
@@ -70,12 +72,35 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         game_id: str | None = None,
         model_version: str = "unknown",
         realtime: bool = False,
+        replay_dir: Path | None = None,
+        stats_path: Path | None = None,
+        build_order_label: str = "4gate",
     ) -> None:
         super().__init__()
         self._map_name = map_name
         self._difficulty = difficulty
         self._reward_calc = reward_calculator or RewardCalculator()
         self._db = db
+        # Phase 4.6 Step 2: wire legacy dashboard producers into the
+        # trainer. Both paths are optional so existing call sites and
+        # unit tests that instantiate ``SC2Env`` without a replay dir
+        # or stats path keep working unchanged.
+        #
+        # ``replay_dir`` is where burnysc2 should write the per-game
+        # ``.SC2Replay`` file (see ``connection.build_replay_path``).
+        # ``stats_path`` is the ``data/stats.json`` file that the
+        # legacy Stats tab reads — the trainer appends one game at a
+        # time via ``batch_runner.append_stats_game``.
+        # ``build_order_label`` feeds into the stats.json ``GameRecord``
+        # so aggregations by build order stay consistent with the
+        # batch path.
+        self._replay_dir = Path(replay_dir) if replay_dir is not None else None
+        self._stats_path = Path(stats_path) if stats_path is not None else None
+        self._build_order_label = build_order_label
+        # Path to the replay file for the CURRENT game (rebuilt in
+        # every ``reset()`` via ``build_replay_path``). ``None`` means
+        # ``replay_dir`` was not set so no replay will be written.
+        self._current_replay_path: str | None = None
         # ``_base_game_id`` is the human-readable label supplied by the
         # trainer (e.g. ``"rl_ab12cd34"``). The per-game ``_game_id`` that
         # actually lands in ``training.db`` is derived from it in every
@@ -146,6 +171,41 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         )
         self._base_game_id = base
         self._game_id = f"{base}_{uuid.uuid4().hex[:12]}"
+
+        # Phase 4.6 Step 2: rotate the reward log on every reset so each
+        # trainer game produces its own ``game_<id>.jsonl`` file. Before
+        # this fix, ``TrainingOrchestrator._make_env`` called
+        # ``reward_calc.open_game_log`` exactly once per cycle and every
+        # game in the cycle appended to the same file — the reward
+        # aggregator counts one file per game, so a cycle of N games
+        # looked like a single game on the Reward Trends chart. This is
+        # the root cause of the "Scanned 8 games" vs ~50 trainer-games
+        # discrepancy seen in soak-2026-04-11.
+        #
+        # Use ``getattr`` so unit tests that instantiate ``SC2Env`` via
+        # ``__new__`` without running ``__init__`` (there are several in
+        # ``tests/test_environment.py``) can still call ``reset()``
+        # without having to wire up a real ``RewardCalculator``.
+        _rc = getattr(self, "_reward_calc", None)
+        if _rc is not None:
+            _rc.open_game_log(self._game_id)
+
+        # Phase 4.6 Step 2: allocate a unique replay path for this game
+        # so the Replays tab has one entry per trainer game. The path
+        # is threaded into ``run_game`` via ``save_replay_as`` in
+        # ``_sync_game``. ``build_replay_path`` embeds a timestamp so
+        # concurrent/sequential games on the same map do not collide
+        # (see Step 5: ``connection.build_replay_path``).
+        _replay_dir = getattr(self, "_replay_dir", None)
+        if _replay_dir is not None:
+            from alpha4gate.connection import build_replay_path
+
+            _replay_dir.mkdir(parents=True, exist_ok=True)
+            self._current_replay_path = str(
+                build_replay_path(_replay_dir, self._map_name)
+            )
+        else:
+            self._current_replay_path = None
 
         self._step_index = 0
         self._total_reward = 0.0
@@ -335,15 +395,54 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         }
         diff = difficulty_map.get(self._difficulty, Difficulty.Easy)
 
+        # Phase 4.6 Step 2: thread the replay path into burnysc2 so the
+        # Replays tab sees trainer games. Before this fix, the trainer
+        # path called ``run_game`` with no ``save_replay_as`` kwarg
+        # (unlike ``connection.run_bot`` which defaults to ``save_replay=
+        # True``) so no replay file was ever written. The path is
+        # allocated in ``reset()`` via ``connection.build_replay_path``
+        # and left as ``None`` when ``replay_dir`` is not configured so
+        # existing unit-level uses of SC2Env stay unaffected. ``getattr``
+        # guards against unit-level repros that instantiate SC2Env via
+        # ``__new__`` and call ``_sync_game`` directly (without reset()).
+        _replay_path = getattr(self, "_current_replay_path", None)
         result = run_game(
             sc2.maps.get(self._map_name),
             [Bot(Race.Protoss, bot), Computer(Race.Random, diff)],
             realtime=self._realtime,
+            save_replay_as=_replay_path,
         )
 
         # Store game result in DB
         result_str = "win" if str(result) == "Result.Victory" else "loss"
         game_time = bot.time if hasattr(bot, "time") else 0.0
+
+        # Phase 4.6 Step 2: flush and close the per-game reward log so
+        # ``reward_aggregator.aggregate_reward_trends`` sees a complete
+        # ``game_<id>.jsonl`` on disk before the next reset rotates it.
+        # ``close_game_log`` is idempotent: calling it on an already-
+        # closed file is a no-op, so the pairing with ``open_game_log``
+        # in ``reset()`` stays one-to-one even if the game errored before
+        # reaching this line — the ``_run_game_thread`` finally block
+        # would still let the next ``reset()`` open a fresh file.
+        _rc = getattr(self, "_reward_calc", None)
+        if _rc is not None:
+            try:
+                _rc.close_game_log()
+            except Exception:  # pragma: no cover - defensive
+                _log.debug(
+                    "close_game_log raised during teardown", exc_info=True
+                )
+
+        # Phase 4.6 Step 2: guard flag so the stats.json append only
+        # happens on the DB-write-success path. Without this, any
+        # exception in ``store_game`` would still be followed by
+        # ``append_stats_game`` and the two surfaces would drift
+        # (training.db excludes the failed game but stats.json
+        # includes it). Using an explicit flag rather than checking
+        # ``_game_store_failed_count`` delta makes the intent
+        # obvious to future readers of ``_sync_game``.
+        _db_write_ok = False
 
         if self._db is not None:
             # Bug B (Option 2 — mark-and-continue) from soak-2026-04-11:
@@ -370,6 +469,7 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
                     total_reward=self._total_reward,
                     model_version=self._model_version,
                 )
+                _db_write_ok = True
             # We deliberately do NOT catch ``sqlite3.DatabaseError`` here.
             # ``DatabaseError`` is a broad parent that also catches
             # ``sqlite3.ProgrammingError`` ("Cannot operate on a closed
@@ -397,6 +497,49 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
                     "(disk full / database locked / disk I/O error)",
                     self._game_id,
                     self._game_store_failed_count,
+                )
+        else:
+            # ``_db`` is None — tests / unit fixtures. There is no row
+            # to record anywhere, so there is nothing for the dashboard
+            # Stats tab to show either. Leave ``_db_write_ok=False``
+            # so the stats append below is skipped too.
+            pass
+
+        # Phase 4.6 Step 2: append this game to the legacy ``stats.json``
+        # file that the Stats tab reads. We only run this when the DB
+        # write succeeded so ``training.db`` and ``stats.json`` stay in
+        # sync — a failed DB write already bumps
+        # ``_game_store_failed_count`` and will be excluded from the
+        # cycle win-rate denominator, so appending it here would drift
+        # the two surfaces. The append is best-effort: a write failure
+        # is logged at ERROR (the #73 watchdog will see it) but does
+        # NOT re-raise or bump the failure counter, because stats.json
+        # is a secondary dashboard surface and the DB row is the
+        # canonical record of the game. If future work wants harder
+        # semantics, swap the ``_log.exception`` for a ``raise``.
+        _stats_path = getattr(self, "_stats_path", None)
+        if _db_write_ok and _stats_path is not None:
+            try:
+                from alpha4gate.batch_runner import GameRecord, append_stats_game
+
+                record = GameRecord(
+                    timestamp=datetime.now(UTC).isoformat(),
+                    map_name=self._map_name,
+                    opponent=f"built-in-{self._difficulty}",
+                    result=result_str,
+                    duration_seconds=game_time,
+                    build_order_used=getattr(
+                        self, "_build_order_label", "4gate"
+                    ),
+                    score=0,
+                )
+                append_stats_game(_stats_path, record)
+            except Exception:
+                _log.exception(
+                    "append_stats_game failed for game_id=%s — "
+                    "stats.json may be stale but training.db is "
+                    "authoritative",
+                    self._game_id,
                 )
 
     def _snapshot_to_raw(self, snap: GameSnapshot) -> NDArray[np.float32]:

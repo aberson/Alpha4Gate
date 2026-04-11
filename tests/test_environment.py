@@ -744,6 +744,481 @@ class TestSyncGameStoreFailureObservable:
         )
 
 
+class TestPhase46ProducerWiring:
+    """Phase 4.6 Step 2: SC2Env must wire legacy producers per game.
+
+    The soak-2026-04-11 run found 5 dashboard surfaces blind to trainer
+    games: Stats tab, Replays tab, Reward Trends, Model Comparison, and
+    the decision log. This class covers the three surfaces whose
+    producers live on the batch / connection path and were skipped by
+    the trainer (``_sync_game`` calls ``sc2.main.run_game`` directly,
+    bypassing ``connection.run_bot``). The Model Comparison surface is
+    already wired via ``training.db.store_game`` and its per-cycle
+    rollup behaviour is covered by ``test_database.py``.
+
+    Root-cause references:
+    - Stats:   ``batch_runner.save_stats`` only called from ``_run_batch``
+    - Replay:  ``connection.run_bot`` sets ``save_replay_as``; trainer does not
+    - Reward:  ``TrainingOrchestrator._make_env`` called ``open_game_log`` once
+               per cycle so all games shared the same jsonl file
+    """
+
+    def _bare_env_with_producers(
+        self,
+        *,
+        tmp_path: Any,
+        reward_calc: Any = None,
+        db: Any = None,
+        replay_dir: Any = None,
+        stats_path: Any = None,
+        base: str = "rl_abc",
+    ) -> SC2Env:
+        from pathlib import Path
+
+        env = SC2Env.__new__(SC2Env)
+        env._map_name = "Simple64"
+        env._difficulty = 1
+        env._reward_calc = reward_calc if reward_calc is not None else RewardCalculator()
+        env._db = db
+        env._base_game_id = base
+        env._game_id = base
+        env._model_version = "v1"
+        env._realtime = False
+        env._obs_queue = queue.Queue()
+        env._action_queue = queue.Queue()
+        env._game_thread = None
+        env._step_index = 0
+        env._last_snapshot = None
+        env._total_reward = 0.0
+        env._game_start_time = 0.0
+        env._game_store_failed_count = 0
+        env._replay_dir = Path(replay_dir) if replay_dir is not None else None
+        env._stats_path = Path(stats_path) if stats_path is not None else None
+        env._build_order_label = "4gate"
+        env._current_replay_path = None
+        return env
+
+    # ------------------------------------------------------------------
+    # Reward log rotation
+    # ------------------------------------------------------------------
+
+    def test_reset_rotates_reward_log_per_game(self, tmp_path: Any) -> None:
+        """Every ``reset()`` must open a fresh per-game jsonl file.
+
+        Before the fix, ``TrainingOrchestrator._make_env`` called
+        ``reward_calc.open_game_log`` once per cycle and every game
+        appended to the same file — reward_aggregator counts one file
+        per game, so a cycle of 10 games looked like 1 game on the
+        Reward Trends chart. The fix moves ``open_game_log`` into
+        ``SC2Env.reset()`` so each reset rotates the file to the
+        current per-game id.
+        """
+        log_dir = tmp_path / "reward_logs"
+        calc = RewardCalculator(log_dir=log_dir)
+        env = self._bare_env_with_producers(
+            tmp_path=tmp_path, reward_calc=calc, base="rl_rotate"
+        )
+
+        def fake_start(thread: threading.Thread) -> None:
+            new_obs_q = thread._args[0]  # type: ignore[attr-defined]
+            new_obs_q.put(
+                (np.zeros(FEATURE_DIM, dtype=np.float32), {}, False, None)
+            )
+
+        with patch.object(threading.Thread, "start", fake_start):
+            env.reset()
+            first_id = env._game_id
+            env.reset()
+            second_id = env._game_id
+
+        # Close the current (second) file so the OS flushes it.
+        calc.close_game_log()
+
+        assert first_id != second_id
+        first_file = log_dir / f"game_{first_id}.jsonl"
+        second_file = log_dir / f"game_{second_id}.jsonl"
+        assert first_file.exists(), (
+            "reset() must open a per-game log file on the first call "
+            "so each trainer game produces its own jsonl"
+        )
+        assert second_file.exists(), (
+            "reset() must rotate the log file on the second call so "
+            "Reward Trends counts one file per game, not one per cycle"
+        )
+
+    def test_reset_without_reward_calc_does_not_raise(
+        self, tmp_path: Any
+    ) -> None:
+        """Defensive: ``reset()`` must stay usable for unit repros that
+        bypass ``__init__`` and do not set ``_reward_calc``. The
+        ``getattr`` guard in ``reset()`` returns ``None`` and the
+        rotation becomes a no-op."""
+        env = SC2Env.__new__(SC2Env)
+        env._base_game_id = "rl_bare"
+        env._game_id = "rl_bare"
+        env._obs_queue = queue.Queue()
+        env._action_queue = queue.Queue()
+        env._game_thread = None
+        env._step_index = 0
+        env._last_snapshot = None
+        env._total_reward = 0.0
+        env._game_start_time = 0.0
+
+        def fake_start(thread: threading.Thread) -> None:
+            new_obs_q = thread._args[0]  # type: ignore[attr-defined]
+            new_obs_q.put(
+                (np.zeros(FEATURE_DIM, dtype=np.float32), {}, False, None)
+            )
+
+        with patch.object(threading.Thread, "start", fake_start):
+            env.reset()  # must not raise
+
+    # ------------------------------------------------------------------
+    # Replay path threading
+    # ------------------------------------------------------------------
+
+    def test_reset_builds_unique_replay_path_when_replay_dir_set(
+        self, tmp_path: Any
+    ) -> None:
+        """``reset()`` must allocate a fresh ``_current_replay_path`` via
+        ``connection.build_replay_path`` so each trainer game gets a
+        unique filename (Step 5 uniqueness semantics)."""
+        replay_dir = tmp_path / "replays"
+        env = self._bare_env_with_producers(
+            tmp_path=tmp_path, replay_dir=replay_dir
+        )
+
+        def fake_start(thread: threading.Thread) -> None:
+            new_obs_q = thread._args[0]  # type: ignore[attr-defined]
+            new_obs_q.put(
+                (np.zeros(FEATURE_DIM, dtype=np.float32), {}, False, None)
+            )
+
+        with patch.object(threading.Thread, "start", fake_start):
+            env.reset()
+            first_path = env._current_replay_path
+
+        assert first_path is not None
+        assert first_path.endswith(".SC2Replay")
+        assert "Simple64" in first_path
+        assert replay_dir.exists()
+
+    def test_reset_leaves_replay_path_none_when_replay_dir_unset(
+        self, tmp_path: Any
+    ) -> None:
+        """If ``replay_dir`` is None (unit test / legacy path), the
+        per-game replay path stays None and ``_sync_game`` will pass
+        ``save_replay_as=None`` to ``run_game`` — no replay written,
+        no crash."""
+        env = self._bare_env_with_producers(tmp_path=tmp_path, replay_dir=None)
+
+        def fake_start(thread: threading.Thread) -> None:
+            new_obs_q = thread._args[0]  # type: ignore[attr-defined]
+            new_obs_q.put(
+                (np.zeros(FEATURE_DIM, dtype=np.float32), {}, False, None)
+            )
+
+        with patch.object(threading.Thread, "start", fake_start):
+            env.reset()
+            assert env._current_replay_path is None
+
+    def test_sync_game_passes_replay_path_to_run_game(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``_sync_game`` must forward ``save_replay_as`` to ``run_game``
+        so burnysc2 writes the replay file. Regression guard for the
+        exact soak finding: Replays tab was frozen because the trainer
+        never passed this kwarg (unlike ``connection.run_bot`` which
+        defaults to True)."""
+        import sc2.main
+        import sc2.maps
+        import sc2.player
+
+        captured: dict[str, Any] = {}
+
+        def fake_run_game(*_a: Any, **kw: Any) -> Any:
+            captured.update(kw)
+            return "Result.Defeat"
+
+        monkeypatch.setattr(sc2.main, "run_game", fake_run_game)
+        monkeypatch.setattr(sc2.player, "Bot", lambda *a, **kw: MagicMock())
+        monkeypatch.setattr(sc2.player, "Computer", lambda *a, **kw: MagicMock())
+        monkeypatch.setattr(sc2.maps, "get", lambda *a, **kw: MagicMock())
+
+        import alpha4gate.learning.environment as env_mod
+
+        fake_bot = MagicMock()
+        fake_bot.time = 100.0
+        monkeypatch.setattr(
+            env_mod, "_make_training_bot", lambda *a, **kw: fake_bot
+        )
+
+        env = self._bare_env_with_producers(tmp_path=tmp_path)
+        env._current_replay_path = str(tmp_path / "replay.SC2Replay")
+        env._sync_game(queue.Queue(), queue.Queue())
+
+        assert "save_replay_as" in captured, (
+            "_sync_game must thread save_replay_as into run_game so "
+            "the Replays tab sees trainer games"
+        )
+        assert captured["save_replay_as"] == str(tmp_path / "replay.SC2Replay")
+
+    # ------------------------------------------------------------------
+    # stats.json append wiring
+    # ------------------------------------------------------------------
+
+    def _patch_run_game_happy(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sc2.main
+        import sc2.maps
+        import sc2.player
+
+        monkeypatch.setattr(
+            sc2.main, "run_game", lambda *a, **kw: "Result.Victory"
+        )
+        monkeypatch.setattr(sc2.player, "Bot", lambda *a, **kw: MagicMock())
+        monkeypatch.setattr(sc2.player, "Computer", lambda *a, **kw: MagicMock())
+        monkeypatch.setattr(sc2.maps, "get", lambda *a, **kw: MagicMock())
+
+        import alpha4gate.learning.environment as env_mod
+
+        fake_bot = MagicMock()
+        fake_bot.time = 123.4
+        monkeypatch.setattr(
+            env_mod, "_make_training_bot", lambda *a, **kw: fake_bot
+        )
+
+    def test_sync_game_appends_stats_on_db_success(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Happy path: ``store_game`` succeeds, ``stats.json`` gets a row."""
+        import json as _json
+
+        self._patch_run_game_happy(monkeypatch)
+
+        stats_path = tmp_path / "stats.json"
+        mock_db = MagicMock()  # store_game returns cleanly
+        env = self._bare_env_with_producers(
+            tmp_path=tmp_path, db=mock_db, stats_path=stats_path
+        )
+
+        env._sync_game(queue.Queue(), queue.Queue())
+
+        assert stats_path.exists()
+        data = _json.loads(stats_path.read_text(encoding="utf-8"))
+        assert len(data["games"]) == 1
+        assert data["games"][0]["result"] == "win"
+        assert data["games"][0]["map"] == "Simple64"
+        assert data["games"][0]["opponent"] == "built-in-1"
+
+    def test_sync_game_skips_stats_append_on_db_failure(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defensive: if ``store_game`` raises ``IntegrityError``, the
+        stats.json append MUST be skipped so training.db and stats.json
+        do not drift. The failure is already counted via
+        ``_game_store_failed_count`` and the Bug-B handling path.
+        """
+        self._patch_run_game_happy(monkeypatch)
+
+        stats_path = tmp_path / "stats.json"
+        mock_db = MagicMock()
+        mock_db.store_game.side_effect = sqlite3.IntegrityError(
+            "UNIQUE constraint failed: games.game_id"
+        )
+        env = self._bare_env_with_producers(
+            tmp_path=tmp_path, db=mock_db, stats_path=stats_path
+        )
+
+        env._sync_game(queue.Queue(), queue.Queue())
+
+        assert env._game_store_failed_count == 1
+        assert not stats_path.exists(), (
+            "stats.json must not be written when store_game failed; "
+            "drifting these two surfaces was the anti-pattern we chose "
+            "to avoid when picking mark-and-continue semantics"
+        )
+
+    def test_sync_game_skips_stats_append_without_db(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When no DB is configured (unit tests), ``_db_write_ok`` stays
+        False and stats.json is not touched either."""
+        self._patch_run_game_happy(monkeypatch)
+
+        stats_path = tmp_path / "stats.json"
+        env = self._bare_env_with_producers(
+            tmp_path=tmp_path, db=None, stats_path=stats_path
+        )
+
+        env._sync_game(queue.Queue(), queue.Queue())
+        assert not stats_path.exists()
+
+    def test_sync_game_stats_append_is_best_effort_on_write_failure(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If ``append_stats_game`` itself raises (disk full, permission
+        error, etc.) the failure is logged but NOT re-raised and does
+        NOT bump ``_game_store_failed_count``. ``training.db`` is the
+        authoritative surface; ``stats.json`` is secondary.
+        """
+        self._patch_run_game_happy(monkeypatch)
+
+        mock_db = MagicMock()  # store_game succeeds
+
+        import alpha4gate.batch_runner as batch_runner_mod
+
+        def _boom(*_a: Any, **_kw: Any) -> None:
+            raise OSError("disk full")
+
+        monkeypatch.setattr(batch_runner_mod, "append_stats_game", _boom)
+
+        stats_path = tmp_path / "stats.json"
+        env = self._bare_env_with_producers(
+            tmp_path=tmp_path, db=mock_db, stats_path=stats_path
+        )
+
+        env._sync_game(queue.Queue(), queue.Queue())
+
+        # DB write succeeded so the cycle failure counter is untouched.
+        assert env._game_store_failed_count == 0
+
+    # ------------------------------------------------------------------
+    # Cycle-level integration-style test (mocked SC2 only)
+    # ------------------------------------------------------------------
+
+    def test_two_game_cycle_produces_two_of_each_artifact(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Drive two trainer games through ``_sync_game`` end-to-end
+        (mocked SC2) and assert each of the four producer surfaces
+        reflects BOTH games:
+
+        1. ``training.db`` — 2 rows (store_game called twice)
+        2. ``stats.json`` — 2 entries
+        3. ``reward_logs/`` — 2 distinct files (one per game_id)
+        4. The replay paths allocated by ``reset()`` are distinct.
+
+        This is the cycle-level smoke test the plan asks for. It
+        does not drive ``model.learn()`` (SB3 requires a real env)
+        but it does exercise the exact producer seams that matter
+        for dashboard visibility.
+        """
+        import json as _json
+        import time as _time
+        from pathlib import Path
+
+        # Mock SC2 side.
+        import sc2.main
+        import sc2.maps
+        import sc2.player
+
+        from alpha4gate.learning.database import TrainingDB
+
+        monkeypatch.setattr(
+            sc2.main, "run_game", lambda *a, **kw: "Result.Victory"
+        )
+        monkeypatch.setattr(sc2.player, "Bot", lambda *a, **kw: MagicMock())
+        monkeypatch.setattr(sc2.player, "Computer", lambda *a, **kw: MagicMock())
+        monkeypatch.setattr(sc2.maps, "get", lambda *a, **kw: MagicMock())
+
+        import alpha4gate.learning.environment as env_mod
+
+        fake_bot = MagicMock()
+        fake_bot.time = 250.0
+        monkeypatch.setattr(
+            env_mod, "_make_training_bot", lambda *a, **kw: fake_bot
+        )
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        replay_dir = tmp_path / "replays"
+        stats_path = data_dir / "stats.json"
+        reward_log_dir = data_dir / "reward_logs"
+
+        db = TrainingDB(data_dir / "training.db")
+        calc = RewardCalculator(log_dir=reward_log_dir)
+
+        env = SC2Env(
+            map_name="Simple64",
+            difficulty=1,
+            reward_calculator=calc,
+            db=db,
+            game_id="rl_cycle",
+            model_version="v1",
+            replay_dir=replay_dir,
+            stats_path=stats_path,
+        )
+
+        seen_replay_paths: list[str] = []
+        seen_game_ids: list[str] = []
+
+        # Two sequential games. For each: reset() -> sync_game() directly
+        # (we skip the thread/queue machinery and step() path because the
+        # producer wiring is independent of the obs-queue pump).
+        def fake_start(thread: threading.Thread) -> None:
+            new_obs_q = thread._args[0]  # type: ignore[attr-defined]
+            new_obs_q.put(
+                (
+                    np.zeros(FEATURE_DIM, dtype=np.float32),
+                    {"strategic_state": "OPENING"},
+                    False,
+                    None,
+                )
+            )
+
+        for _ in range(2):
+            with patch.object(threading.Thread, "start", fake_start):
+                env.reset()
+            seen_game_ids.append(env._game_id)
+            assert env._current_replay_path is not None
+            seen_replay_paths.append(env._current_replay_path)
+            env._sync_game(queue.Queue(), queue.Queue())
+            # Force a timestamp tick so build_replay_path() produces a
+            # different filename for the second game — the build helper
+            # stamps seconds so two resets inside the same second would
+            # collide on filename. We accept a small sleep here because
+            # the test drives two resets sequentially; Step 5's Path
+            # uniqueness guarantee is per-second, not per-microsecond.
+            _time.sleep(1.1)
+
+        # 1. Two DB rows
+        assert db.get_game_count() == 2
+
+        # 2. Two stats entries
+        data = _json.loads(stats_path.read_text(encoding="utf-8"))
+        assert len(data["games"]) == 2
+        assert data["aggregates"]["total_wins"] == 2
+        assert data["aggregates"]["total_losses"] == 0
+
+        # 3. Two distinct reward log files
+        # Close the last file so the OS has flushed it to disk.
+        calc.close_game_log()
+        log_files = sorted(Path(reward_log_dir).glob("*.jsonl"))
+        # The trainer's RewardCalculator only WRITES a line when
+        # compute_step_reward fires, and our mocked _sync_game bypasses
+        # that path, so the files may be empty — but they must EXIST
+        # (one per reset()), which is exactly what the reward_aggregator
+        # counts. So instead of reading line content, we assert file
+        # presence per game_id.
+        assert len(log_files) == 2, (
+            f"expected one reward log per game, got "
+            f"{[p.name for p in log_files]}"
+        )
+        log_names = {p.name for p in log_files}
+        for gid in seen_game_ids:
+            assert f"game_{gid}.jsonl" in log_names
+
+        # 4. Two distinct replay paths. The per-second timestamp embedded
+        #    by build_replay_path is the source of uniqueness for this
+        #    test; Step 5 added stronger guarantees under faster loops
+        #    but per-second is enough at our cadence.
+        assert len(set(seen_replay_paths)) == 2
+
+        db.close()
+
+
 @pytest.mark.sc2
 class TestTimeoutLeavesGameSc2Live:
     """SC2-live integration test: run a real game past the timeout and

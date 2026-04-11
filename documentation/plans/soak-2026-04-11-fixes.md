@@ -47,8 +47,9 @@ The soak run on 2026-04-11 (`documentation/soak-test-runs/soak-2026-04-11.md`) r
 
 ### Phase 4.6 Step 2: Wire trainer environment to legacy per-game producers (Stats, Replays, Model Comparison, Reward Trends)
 
-- **Status:** NOT STARTED
+- **Status:** DONE (2026-04-11, iter 1/3, reviewers=code)
 - **Issue:** #76
+- **Architectural revelation:** Model Comparison was NOT broken — it's a per-cycle rollup (the "4 rows" operator saw = 4 cycles, not 4 games, grouping ~50 games into per-cycle summaries via `SELECT ... GROUP BY model_version`). Reward Trends "Scanned 8 games" had a one-line root cause: `reward_calc.open_game_log()` was called once per cycle in `trainer._make_env` instead of per-game in `SC2Env.reset()`, so all games in one cycle appended to the same `.jsonl` file. Moved the call into `reset()`; fix is surgical.
 - **Problem:** The trainer's `learning/environment.py` runs SC2 through its own connection path and bypasses `connection.run_bot`. As a result, every per-game producer that lives in `connection.py` / `runner.py` / `batch_runner.py` is never called for trainer games. After ~50 trainer games during soak-2026-04-11, the dashboard surfaces showed: Stats=1 game, Model Comparison=4, Reward Trends=8, Replays=1 (mtime = seed game time, not overwritten — simply not written). The Live tab and Loop tab work fine because they read from a bot-layer broadcast queue that the trainer participates in.
 
   **Architectural decision (locked in by this plan):** call the legacy producers from `learning/environment.py` after each game completes. Do NOT hoist the producers up to the bot layer — that's a bigger refactor and the additive call is much smaller.

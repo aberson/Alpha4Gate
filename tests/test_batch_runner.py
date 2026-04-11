@@ -8,6 +8,7 @@ from pathlib import Path
 from alpha4gate.batch_runner import (
     GameRecord,
     StatsAggregates,
+    append_stats_game,
     compute_aggregates,
     load_stats,
     record_game,
@@ -136,6 +137,75 @@ class TestPersistence:
         assert "games" in data
         assert "aggregates" in data
         assert data["aggregates"]["total_wins"] == 2
+
+
+class TestAppendStatsGame:
+    """Phase 4.6 Step 2: per-game stats append for the trainer path.
+
+    The trainer cannot use :func:`save_stats` directly because that helper
+    rewrites the whole file from a full ``list[GameRecord]``. Per-game
+    overwrites from SC2Env would be O(N^2) for N games in a cycle. The
+    :func:`append_stats_game` seam loads, appends, recomputes aggregates,
+    and writes — it is the additive callable seam that SC2Env uses after
+    each trainer game completes.
+    """
+
+    def _sample_record(self, result: str = "win") -> GameRecord:
+        return GameRecord(
+            timestamp="2026-04-11T12:00:00Z",
+            map_name="Simple64",
+            opponent="built-in-1",
+            result=result,
+            duration_seconds=300.0,
+            build_order_used="4gate",
+            score=0,
+        )
+
+    def test_append_creates_file_when_missing(self, tmp_path: Path) -> None:
+        path = tmp_path / "stats.json"
+        assert not path.exists()
+
+        append_stats_game(path, self._sample_record("win"))
+
+        assert path.exists()
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert len(data["games"]) == 1
+        assert data["games"][0]["result"] == "win"
+        assert data["aggregates"]["total_wins"] == 1
+        assert data["aggregates"]["total_losses"] == 0
+
+    def test_append_extends_existing_file(self, tmp_path: Path) -> None:
+        path = tmp_path / "stats.json"
+        save_stats(_sample_games(), path)  # 3 prior games (2W, 1L)
+
+        append_stats_game(path, self._sample_record("loss"))
+
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert len(data["games"]) == 4
+        assert data["aggregates"]["total_wins"] == 2
+        assert data["aggregates"]["total_losses"] == 2
+
+    def test_append_recomputes_by_opponent(self, tmp_path: Path) -> None:
+        """Aggregates must include the newly appended game's opponent.
+
+        Regression guard: if ``append_stats_game`` forgot to recompute
+        aggregates, ``by_opponent`` would still reflect the pre-append
+        list and the dashboard would undercount trainer games.
+        """
+        path = tmp_path / "stats.json"
+        append_stats_game(path, self._sample_record("win"))
+        append_stats_game(path, self._sample_record("loss"))
+
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert data["aggregates"]["by_opponent"] == {
+            "built-in-1": {"wins": 1, "losses": 1}
+        }
+
+    def test_append_creates_parent_dir(self, tmp_path: Path) -> None:
+        """``data/stats.json`` may live in a dir that does not exist yet."""
+        path = tmp_path / "nested" / "stats.json"
+        append_stats_game(path, self._sample_record("win"))
+        assert path.exists()
 
 
 class TestRecordGame:
