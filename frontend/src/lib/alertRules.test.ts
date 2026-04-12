@@ -111,6 +111,14 @@ describe("ruleWinRateDropped", () => {
   it("uses WIN_RATE_DROP_THRESHOLD = 0.15", () => {
     expect(WIN_RATE_DROP_THRESHOLD).toBe(0.15);
   });
+
+  it("is suppressed when an advised run is active", () => {
+    const state = mkState({
+      history: { win_rates: { last_10: 0.4, last_50: 0.6, last_100: 0.55, overall: 0.5 } },
+      advisedRunActive: true,
+    });
+    expect(ruleWinRateDropped(state)).toBeNull();
+  });
 });
 
 describe("ruleTrainingFailed", () => {

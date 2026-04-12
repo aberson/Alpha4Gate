@@ -379,13 +379,26 @@ For significant milestones, run `/repo-update` to update README and docs.
 
 ## Phase 7: Cleanup & Loop
 
-### 7.1 Prepare for next iteration
+### 7.1 Kill orphaned background processes
+
+Between iterations, kill any leftover Monitor / tail / grep / sleep processes from game observation. These accumulate if not cleaned up.
+
+```bash
+# Kill any orphaned tail/grep/sleep spawned by earlier Monitor or log-watching phases.
+# Use TaskStop on any background tasks that are still running.
+# As a fallback, find and kill stale shell monitor processes:
+powershell.exe -Command "Get-Process -Name tail,grep,sleep -ErrorAction SilentlyContinue | Stop-Process -Force"
+```
+
+Use `TaskStop` on any background Bash tasks from Phase 1 observation that are still running. Do NOT kill SC2_x64.exe or the backend (python/uv) processes — only monitoring helpers.
+
+### 7.2 Prepare for next iteration
 
 - Archive the current game logs (move to a dated subfolder or leave in place)
 - Clear `data/decision_audit.json` for fresh advisor entries in next live observation
 - Update iteration context with this iteration's results
 
-### 7.2 Wall-clock check
+### 7.3 Wall-clock check
 
 ```bash
 ELAPSED=$(($(date +%s) - LOOP_START))
@@ -395,7 +408,7 @@ BUDGET_SECONDS=$((HOURS * 3600))
 **If `ELAPSED < BUDGET_SECONDS`:** go to Phase 1 for the next iteration.
 **If `ELAPSED >= BUDGET_SECONDS`:** proceed to Phase 8 (Morning Report).
 
-### 7.3 Consecutive failure check
+### 7.4 Consecutive failure check
 
 If 3 consecutive iterations failed (validation did not pass), stop the loop and proceed to Phase 8. Log that the loop stopped due to repeated failures.
 
@@ -457,6 +470,21 @@ Create an umbrella issue labeled `advised-improvement-run` with the summary for 
 git tag "advised/run/$RUN_TS/final"
 git push origin "advised/run/$RUN_TS/final"
 ```
+
+### Final cleanup
+
+Shut down all processes spawned during the run. Order matters:
+
+1. Stop the backend via the shutdown endpoint (stops daemon + exits server + kills uv wrapper):
+   ```bash
+   curl -s -X POST http://localhost:8765/api/shutdown || true
+   ```
+2. Kill any orphaned monitor processes (tail/grep/sleep) from game observation:
+   ```bash
+   powershell.exe -Command "Get-Process -Name tail,grep,sleep -ErrorAction SilentlyContinue | Stop-Process -Force"
+   ```
+3. Use `TaskStop` on any remaining background Bash tasks.
+4. Do NOT kill SC2_x64.exe.
 
 ---
 

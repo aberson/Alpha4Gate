@@ -19,6 +19,8 @@ import {
   useDaemonStatus,
   type DaemonStatus,
 } from "./useDaemonStatus";
+import { useApi } from "./useApi";
+import type { AdvisedRunState } from "./useAdvisedRun";
 
 export const ALERTS_POLL_INTERVAL_MS = 5000;
 
@@ -60,6 +62,8 @@ async function fetchJson<T>(url: string): Promise<T> {
  */
 export function useAlerts(pollIntervalMs: number = ALERTS_POLL_INTERVAL_MS): UseAlertsResult {
   const { status: daemon, triggers } = useDaemonStatus();
+  const { data: advisedState } = useApi<AdvisedRunState>("/api/advised/state", { pollMs: pollIntervalMs });
+  const advisedRunActive = advisedState?.status === "running" || advisedState?.status === "paused";
 
   const [history, setHistory] = useState<TrainingHistoryResponse | null>(null);
   const [statusSnapshot, setStatusSnapshot] = useState<TrainingStatusResponse | null>(null);
@@ -114,9 +118,10 @@ export function useAlerts(pollIntervalMs: number = ALERTS_POLL_INTERVAL_MS): Use
       status: statusSnapshot,
       promotions,
       now: new Date().toISOString(),
+      advisedRunActive,
     };
     return evaluateAlertRules(state);
-  }, [daemon, triggers, history, statusSnapshot, promotions]);
+  }, [daemon, triggers, history, statusSnapshot, promotions, advisedRunActive]);
 
   // Update the previous-daemon ref AFTER evaluation so rule (c) compares
   // against the prior snapshot, not the current one. We only overwrite when

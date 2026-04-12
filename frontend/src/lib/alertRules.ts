@@ -108,6 +108,8 @@ export interface AlertState {
   promotions: PromotionHistoryLike[] | null;
   /** Supplied by the caller so alert timestamps are deterministic in tests. */
   now: string;
+  /** When true, an /improve-bot-advised run is active — suppresses win-rate alerts. */
+  advisedRunActive?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -126,6 +128,9 @@ const BYTES_PER_GB = 1024 * 1024 * 1024;
 
 /** Rule (a): recent (last_10) win rate dropped well below the baseline (last_50). */
 export function ruleWinRateDropped(state: AlertState): Alert | null {
+  // During an advised run, rapid game batches cause noisy win-rate swings.
+  // The advised run has its own Phase 5 validation — suppress this alert.
+  if (state.advisedRunActive) return null;
   const winRates = state.history?.win_rates;
   if (!winRates) return null;
   const last10 = winRates.last_10;

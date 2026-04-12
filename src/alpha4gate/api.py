@@ -886,6 +886,9 @@ async def update_advised_control(request: dict[str, Any]) -> dict[str, Any]:
 
     Merges the incoming fields with the existing control file so that
     the UI can send partial updates (e.g. just ``games_per_cycle``).
+
+    When ``stop_run`` is true the training daemon is stopped immediately
+    so games don't keep spawning while the skill waits for Phase 7.
     """
     path = _data_dir / _ADVISED_CONTROL_FILE
     existing = _read_json_file(path) or {}
@@ -893,7 +896,45 @@ async def update_advised_control(request: dict[str, Any]) -> dict[str, Any]:
     existing["updated_at"] = datetime.now(UTC).isoformat()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+
+    # Immediately stop the daemon so no new games are spawned.
+    if request.get("stop_run") and _daemon is not None and _daemon.is_running():
+        _daemon.stop()
+        _log.info("Daemon stopped via advised control stop_run signal")
+
     return existing
+
+
+@app.post("/api/shutdown")
+async def shutdown_server() -> dict[str, str]:
+    """Gracefully shut down the daemon and the server process.
+
+    Stops the training daemon first, then schedules server exit after
+    the response is sent.  The uv wrapper process exits automatically
+    when its child (uvicorn) terminates.
+    """
+    if _daemon is not None and _daemon.is_running():
+        _daemon.stop()
+        _log.info("Daemon stopped via /api/shutdown")
+
+    # Schedule the process exit after the response is returned.
+    loop = asyncio.get_running_loop()
+    loop.call_later(0.5, _exit_server)
+    return {"status": "shutting_down"}
+
+
+def _exit_server() -> None:
+    """Raise SystemExit so uvicorn shuts down cleanly."""
+    import signal as _signal
+    import sys
+
+    _log.info("Server shutting down via /api/shutdown")
+    # On Windows, SIGBREAK is the closest to a graceful shutdown signal
+    # that uvicorn handles.  Fall back to sys.exit if unavailable.
+    if sys.platform == "win32":
+        _signal.raise_signal(_signal.SIGBREAK)
+    else:
+        _signal.raise_signal(_signal.SIGINT)
 
 
 @app.get("/api/reward-rules")

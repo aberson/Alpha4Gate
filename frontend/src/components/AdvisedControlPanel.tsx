@@ -218,7 +218,14 @@ export function AdvisedControlPanel() {
   const handleStopConfirm = useCallback(async () => {
     setStopOpen(false);
     await sendControl({ stop_run: true });
-    showMessage("Stop signal sent (takes effect at next phase boundary)");
+    // Also shut down the server process so the daemon, game runners,
+    // and uv wrapper all exit cleanly.
+    try {
+      await fetch("/api/shutdown", { method: "POST" });
+    } catch {
+      // Server may already be gone — that's fine.
+    }
+    showMessage("Stop signal sent — daemon stopped, server shutting down");
   }, [sendControl, showMessage]);
 
   const handleResetConfirm = useCallback(async () => {
