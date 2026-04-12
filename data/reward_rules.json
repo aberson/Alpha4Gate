@@ -205,7 +205,7 @@
         "op": ">=",
         "value": 240
       },
-      "reward": 0.015,
+      "reward": 0.04,
       "active": true
     },
     {
@@ -221,7 +221,39 @@
         "op": ">=",
         "value": 360
       },
-      "reward": 0.025,
+      "reward": 0.06,
+      "active": true
+    },
+    {
+      "id": "passive-army-idle",
+      "description": "Penalize large idle army not in attack state after 5 minutes",
+      "condition": {
+        "field": "current_state",
+        "op": "!=",
+        "value": "attack"
+      },
+      "requires": {
+        "field": "army_supply",
+        "op": ">=",
+        "value": 40
+      },
+      "reward": -0.015,
+      "active": true
+    },
+    {
+      "id": "aggressive-finish",
+      "description": "Reward attacking with a strong army (60+ supply)",
+      "condition": {
+        "field": "current_state",
+        "op": "==",
+        "value": "attack"
+      },
+      "requires": {
+        "field": "army_supply",
+        "op": ">=",
+        "value": 60
+      },
+      "reward": 0.03,
       "active": true
     },
     {
@@ -277,7 +309,7 @@
         "op": ">=",
         "value": 300
       },
-      "reward": -0.008,
+      "reward": -0.02,
       "active": true
     },
     {
