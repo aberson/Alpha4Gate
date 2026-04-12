@@ -18,7 +18,7 @@ export function DecisionQueue() {
     isStale,
     isLoading,
     lastSuccess,
-  } = useApi<DecisionLogResponse>("/api/decision-log");
+  } = useApi<DecisionLogResponse>("/api/decision-log", { pollMs: 5000 });
 
   const [entries, setEntries] = useState<DecisionEntry[]>([]);
 

@@ -34,6 +34,15 @@ _log = logging.getLogger(__name__)
 # How many game steps per env step (match bot.py observation frequency)
 STEPS_PER_ACTION: int = 22
 
+# Phase 4.8 warmup: force OPENING state for the first N seconds of game
+# time before letting PPO choose freely. This prevents PPO's random initial
+# policy from choosing ATTACK at step 0 (which sends probes to die and
+# produces an instant loss with no learning signal). During warmup the
+# rule-based bot builds economy and army; PPO observes but doesn't control.
+# The warmup threshold should be relaxed as PPO matures — set to 0 to
+# disable entirely once the policy has learned basic macro.
+WARMUP_GAME_SECONDS: float = 300.0  # 5 minutes
+
 # Max game time in seconds before forcing a timeout (prevents 20+ min passive games)
 MAX_GAME_TIME_SECONDS: float = 900.0  # 15 minutes
 
@@ -810,6 +819,14 @@ def _make_training_bot(
                     await self._resign_and_mark_done()
                     return
                 if 0 <= action < len(_ACTION_TO_STATE):
+                    # Phase 4.8 warmup: during the first WARMUP_GAME_SECONDS
+                    # of game time, override PPO's action with OPENING so
+                    # the rule-based bot builds economy/army safely. PPO
+                    # still sees observations and receives rewards (it
+                    # learns from the warmup trajectory) but can't make
+                    # suicidal choices like ATTACK at step 0 with no units.
+                    if snapshot.game_time_seconds < WARMUP_GAME_SECONDS:
+                        action = 0  # OPENING
                     self._gym_state = _ACTION_TO_STATE[action]
                     # Inject gym state via the neural engine proxy so
                     # Alpha4GateBot.on_step() uses it for macro/micro
