@@ -76,12 +76,48 @@
       "id": "mineral-floating",
       "description": "Penalize banking over 1000 minerals",
       "condition": {
-        "field": "is_mineral_floating",
-        "op": "==",
-        "value": true
+        "field": "minerals",
+        "op": ">",
+        "value": 1000
       },
       "requires": null,
-      "reward": -0.002,
+      "reward": -0.008,
+      "active": true
+    },
+    {
+      "id": "mineral-floating-severe",
+      "description": "Stronger penalty for banking over 2000 minerals",
+      "condition": {
+        "field": "minerals",
+        "op": ">",
+        "value": 2000
+      },
+      "requires": null,
+      "reward": -0.015,
+      "active": true
+    },
+    {
+      "id": "mineral-floating-extreme",
+      "description": "Heavy penalty for banking over 3000 minerals",
+      "condition": {
+        "field": "minerals",
+        "op": ">",
+        "value": 3000
+      },
+      "requires": null,
+      "reward": -0.025,
+      "active": true
+    },
+    {
+      "id": "gas-floating",
+      "description": "Penalize banking over 500 gas",
+      "condition": {
+        "field": "vespene",
+        "op": ">",
+        "value": 500
+      },
+      "requires": null,
+      "reward": -0.005,
       "active": true
     },
     {
