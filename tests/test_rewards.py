@@ -111,7 +111,7 @@ class TestRuleEvaluation:
             army_supply=10,
         )
         reward = calc.compute_step_reward(s)
-        assert reward > BASE_STEP_REWARD + 0.2  # includes +0.3 from defend-rush
+        assert reward > BASE_STEP_REWARD + 0.02  # includes defend-rush (scaled 10x down in Fix C)
 
 
 class TestEconomyRewards:

@@ -10,11 +10,17 @@ from typing import Any
 
 _log = logging.getLogger(__name__)
 
-# Base rewards applied at game end
-BASE_WIN_REWARD: float = 10.0
-BASE_LOSS_REWARD: float = -10.0
+# Base rewards applied at game end.
+#
+# Phase 4.8 Fix C (#89): terminal rewards scaled 10x up. The prior values
+# (+10/-10) were dwarfed by cumulative shaping rewards (~+58 per 192-step
+# game), causing PPO to learn passive play (maximize shaping bonuses by
+# surviving longer) instead of winning. With +100/-100, a loss yields net
+# negative total_reward even with maximum shaping accumulation.
+BASE_WIN_REWARD: float = 100.0
+BASE_LOSS_REWARD: float = -100.0
 BASE_STEP_REWARD: float = 0.001  # survival bonus per step
-BASE_TIMEOUT_REWARD: float = -3.0  # milder than loss: bot survived but didn't close
+BASE_TIMEOUT_REWARD: float = -30.0  # milder than loss: bot survived but didn't close
 
 # Supported comparison operators
 _OPS: dict[str, Any] = {
