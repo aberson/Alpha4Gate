@@ -201,6 +201,62 @@
       "active": true
     },
     {
+      "id": "forge-built",
+      "description": "Reward building a Forge before 5 minutes",
+      "condition": {
+        "field": "forge_count",
+        "op": ">=",
+        "value": 1
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": "<",
+        "value": 300
+      },
+      "reward": 0.005,
+      "active": true
+    },
+    {
+      "id": "upgrade-started",
+      "description": "Reward having at least 1 upgrade",
+      "condition": {
+        "field": "upgrade_count",
+        "op": ">=",
+        "value": 1
+      },
+      "requires": null,
+      "reward": 0.004,
+      "active": true
+    },
+    {
+      "id": "upgrade-progression",
+      "description": "Reward having 3+ upgrades (strong tech progression)",
+      "condition": {
+        "field": "upgrade_count",
+        "op": ">=",
+        "value": 3
+      },
+      "requires": null,
+      "reward": 0.006,
+      "active": true
+    },
+    {
+      "id": "no-upgrades-late",
+      "description": "Penalize having zero upgrades after 6 minutes",
+      "condition": {
+        "field": "upgrade_count",
+        "op": "==",
+        "value": 0
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 360
+      },
+      "reward": -0.005,
+      "active": true
+    },
+    {
       "id": "gateway-efficiency",
       "description": "Reward having enough production gateways",
       "condition": {
