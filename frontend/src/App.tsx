@@ -47,10 +47,8 @@ function App() {
     <div className="app">
       <AlertToast newAlerts={newAlertsThisPoll} onView={() => setTab("alerts")} />
       <header>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
-          <h1 style={{ margin: 0 }}>Alpha4Gate Dashboard</h1>
-          <ConnectionStatus />
-        </div>
+        <h1>Alpha4Gate Dashboard</h1>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", flexWrap: "wrap" }}>
         <nav>
           <button onClick={() => setTab("live")} className={tab === "live" ? "active" : ""}>
             Live
@@ -100,6 +98,8 @@ function App() {
             ) : null}
           </button>
         </nav>
+        <ConnectionStatus />
+        </div>
       </header>
       <main>
         {tab === "live" && <LiveView />}

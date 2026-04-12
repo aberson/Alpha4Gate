@@ -452,20 +452,37 @@ export function TriggerControls() {
       <section className="control-panel" aria-labelledby="panel-config">
         <h3 id="panel-config">Daemon config</h3>
         <form onSubmit={handleConfigSave} className="config-form">
-          <div className="config-grid">
+          <div
+            className="config-grid"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: "12px 24px",
+              maxWidth: "700px",
+            }}
+          >
             {CONFIG_FIELDS.map((spec) => {
               const raw = configDraft[spec.key];
               const value =
                 typeof raw === "number" && Number.isFinite(raw) ? String(raw) : "";
               return (
-                <label key={spec.key} className="config-field">
-                  <span>{spec.label}</span>
+                <label
+                  key={spec.key}
+                  className="config-field"
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "4px",
+                  }}
+                >
+                  <span style={{ fontSize: "0.85em", color: "#aaa" }}>{spec.label}</span>
                   <input
                     type="number"
                     step={spec.step}
                     value={value}
                     onChange={handleConfigChange(spec.key)}
                     name={spec.key}
+                    style={{ padding: "6px 8px" }}
                   />
                 </label>
               );
@@ -490,29 +507,41 @@ export function TriggerControls() {
       {/* C. Manual evaluation */}
       <section className="control-panel" aria-labelledby="panel-evaluate">
         <h3 id="panel-evaluate">Manual evaluation</h3>
-        <div className="control-row">
-          <label className="config-field">
-            <span>Checkpoint{bestLabel}</span>
-            <select
-              value={selectedCheckpoint}
-              onChange={(e) => setSelectedCheckpoint(e.target.value)}
-              aria-label="Checkpoint"
-            >
-              {checkpoints.length === 0 ? (
-                <option value="">(none)</option>
-              ) : null}
-              {checkpoints.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr auto",
+            gap: "12px 24px",
+            maxWidth: "700px",
+            alignItems: "end",
+          }}
+        >
+          <label className="config-field" style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+            <span style={{ fontSize: "0.85em", color: "#aaa" }}>Checkpoint{bestLabel}</span>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+              <select
+                value={selectedCheckpoint}
+                onChange={(e) => setSelectedCheckpoint(e.target.value)}
+                aria-label="Checkpoint"
+                style={{ padding: "6px 8px", flex: 1 }}
+              >
+                {checkpoints.length === 0 ? (
+                  <option value="">(none)</option>
+                ) : null}
+                {checkpoints.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+              <button type="button" onClick={() => void fetchCheckpoints()}>
+                Refresh
+              </button>
+            </div>
           </label>
-          <button type="button" onClick={() => void fetchCheckpoints()}>
-            Refresh
-          </button>
-          <label className="config-field">
-            <span>Games</span>
+          <div />
+          <label className="config-field" style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+            <span style={{ fontSize: "0.85em", color: "#aaa" }}>Games</span>
             <input
               type="number"
               min="1"
@@ -520,10 +549,11 @@ export function TriggerControls() {
               value={evalGames}
               onChange={(e) => setEvalGames(Number(e.target.value))}
               aria-label="Games"
+              style={{ padding: "6px 8px" }}
             />
           </label>
-          <label className="config-field">
-            <span>Difficulty</span>
+          <label className="config-field" style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+            <span style={{ fontSize: "0.85em", color: "#aaa" }}>Difficulty</span>
             <input
               type="number"
               min="1"
@@ -531,8 +561,11 @@ export function TriggerControls() {
               value={evalDifficulty}
               onChange={(e) => setEvalDifficulty(Number(e.target.value))}
               aria-label="Difficulty"
+              style={{ padding: "6px 8px" }}
             />
           </label>
+        </div>
+        <div style={{ marginTop: "8px" }}>
           <button type="button" onClick={handleEvaluate}>
             Evaluate
           </button>
