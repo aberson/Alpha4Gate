@@ -408,6 +408,77 @@ class TestDebugRaiseErrorEndpoint:
             assert resp.status_code == 200, f"value={value!r}"
 
 
+class TestAdvisedEndpoints:
+    """Tests for the advised run control panel API (GET/PUT /api/advised/*)."""
+
+    def test_get_state_idle_when_no_file(self, client: TestClient) -> None:
+        resp = client.get("/api/advised/state")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "idle"
+
+    def test_get_state_returns_file_content(self, client: TestClient, tmp_path: Path) -> None:
+        state = {
+            "run_id": "20260412-1832",
+            "status": "running",
+            "phase": 2,
+            "phase_name": "Strategic Analysis",
+            "iteration": 1,
+            "games_per_cycle": 10,
+            "elapsed_seconds": 600,
+        }
+        (tmp_path / "data" / "advised_run_state.json").write_text(json.dumps(state))
+        resp = client.get("/api/advised/state")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "running"
+        assert data["phase"] == 2
+        assert data["run_id"] == "20260412-1832"
+
+    def test_get_control_defaults_when_no_file(self, client: TestClient) -> None:
+        resp = client.get("/api/advised/control")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["stop_run"] is False
+        assert data["reset_loop"] is False
+        assert data["user_hint"] is None
+
+    def test_put_control_creates_file(self, client: TestClient, tmp_path: Path) -> None:
+        resp = client.put("/api/advised/control", json={"games_per_cycle": 3})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["games_per_cycle"] == 3
+        assert data["updated_at"] is not None
+
+        # Verify file was created
+        path = tmp_path / "data" / "advised_run_control.json"
+        assert path.exists()
+        content = json.loads(path.read_text(encoding="utf-8"))
+        assert content["games_per_cycle"] == 3
+
+    def test_put_control_merges_with_existing(self, client: TestClient, tmp_path: Path) -> None:
+        # Set initial control
+        client.put("/api/advised/control", json={"games_per_cycle": 5, "difficulty": 2})
+        # Merge with new field
+        resp = client.put("/api/advised/control", json={"user_hint": "attack walk"})
+        data = resp.json()
+        assert data["games_per_cycle"] == 5  # preserved
+        assert data["difficulty"] == 2  # preserved
+        assert data["user_hint"] == "attack walk"  # added
+
+    def test_put_control_overwrites_existing_field(self, client: TestClient) -> None:
+        client.put("/api/advised/control", json={"games_per_cycle": 5})
+        resp = client.put("/api/advised/control", json={"games_per_cycle": 3})
+        assert resp.json()["games_per_cycle"] == 3
+
+    def test_get_state_returns_idle_on_corrupt_file(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        (tmp_path / "data" / "advised_run_state.json").write_text("not json!")
+        resp = client.get("/api/advised/state")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "idle"
+
+
 class TestRewardRulesEndpoints:
     def test_get_empty_rules(self, client: TestClient) -> None:
         resp = client.get("/api/reward-rules")

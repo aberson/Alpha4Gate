@@ -13,9 +13,11 @@ import { LoopStatus } from "./components/LoopStatus";
 import { TriggerControls } from "./components/TriggerControls";
 import { RecentImprovements } from "./components/RecentImprovements";
 import { RewardTrends } from "./components/RewardTrends";
+import { AdvisedControlPanel } from "./components/AdvisedControlPanel";
 import { AlertsPanel } from "./components/AlertsPanel";
 import { AlertToast } from "./components/AlertToast";
 import { ConnectionStatus } from "./components/ConnectionStatus";
+import { useAdvisedRun } from "./hooks/useAdvisedRun";
 import { useAlerts } from "./hooks/useAlerts";
 import "./App.css";
 
@@ -27,11 +29,14 @@ type Tab =
   | "decisions"
   | "training"
   | "loop"
+  | "advisor"
   | "improvements"
   | "alerts";
 
 function App() {
   const [tab, setTab] = useState<Tab>("live");
+  const { state: advisedState } = useAdvisedRun();
+  const advisedActive = advisedState.data?.status === "running" || advisedState.data?.status === "paused";
   const {
     alerts,
     ackedIds,
@@ -81,6 +86,26 @@ function App() {
             Loop
           </button>
           <button
+            onClick={() => setTab("advisor")}
+            className={tab === "advisor" ? "active" : ""}
+          >
+            Advisor
+            {advisedActive ? (
+              <span
+                aria-label="Advised run active"
+                style={{
+                  display: "inline-block",
+                  width: "8px",
+                  height: "8px",
+                  borderRadius: "50%",
+                  backgroundColor: "#2ecc71",
+                  marginLeft: "6px",
+                  verticalAlign: "middle",
+                }}
+              />
+            ) : null}
+          </button>
+          <button
             onClick={() => setTab("improvements")}
             className={tab === "improvements" ? "active" : ""}
           >
@@ -122,6 +147,7 @@ function App() {
             <TriggerControls />
           </div>
         )}
+        {tab === "advisor" && <AdvisedControlPanel />}
         {tab === "improvements" && (
           <>
             <RecentImprovements />

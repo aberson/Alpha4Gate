@@ -17,6 +17,7 @@
  */
 
 import { useApi } from "../hooks/useApi";
+import type { AdvisedRunState } from "../hooks/useAdvisedRun";
 
 interface TrainingStatusPing {
   // We don't actually care about the body — just that the call
@@ -44,6 +45,11 @@ export function ConnectionStatus() {
     "/api/training/status",
     { pollMs: POLL_MS }
   );
+  const { data: advisedData } = useApi<AdvisedRunState>(
+    "/api/advised/state",
+    { pollMs: POLL_MS }
+  );
+  const advisedActive = advisedData?.status === "running" || advisedData?.status === "paused";
 
   let color: string;
   let label: string;
@@ -97,6 +103,34 @@ export function ConnectionStatus() {
         }}
       />
       <span>{label}</span>
+      {advisedActive ? (
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "4px",
+            marginLeft: "8px",
+            padding: "2px 8px",
+            borderRadius: "4px",
+            backgroundColor: "rgba(46, 204, 113, 0.15)",
+            color: "#2ecc71",
+            fontSize: "0.85em",
+            fontWeight: 600,
+          }}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              display: "inline-block",
+              width: "6px",
+              height: "6px",
+              borderRadius: "50%",
+              backgroundColor: "#2ecc71",
+            }}
+          />
+          Advisor
+        </span>
+      ) : null}
     </div>
   );
 }

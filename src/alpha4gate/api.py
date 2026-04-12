@@ -832,6 +832,70 @@ async def set_curriculum(
     )
 
 
+# --- Advised Run Control Panel Endpoints ---
+
+
+_ADVISED_STATE_FILE = "advised_run_state.json"
+_ADVISED_CONTROL_FILE = "advised_run_control.json"
+
+
+def _read_json_file(path: Path) -> dict[str, Any] | None:
+    """Read a JSON file if it exists, return None otherwise."""
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
+        except (json.JSONDecodeError, OSError):
+            return None
+    return None
+
+
+@app.get("/api/advised/state")
+async def get_advised_state() -> dict[str, Any]:
+    """Read the advised run state file.
+
+    Returns the current state of an improve-bot-advised run, or
+    ``{"status": "idle"}`` when no run is active / no state file exists.
+    """
+    data = _read_json_file(_data_dir / _ADVISED_STATE_FILE)
+    if data is None:
+        return {"status": "idle"}
+    return data
+
+
+@app.get("/api/advised/control")
+async def get_advised_control() -> dict[str, Any]:
+    """Read current control signals for the advised run."""
+    data = _read_json_file(_data_dir / _ADVISED_CONTROL_FILE)
+    if data is None:
+        return {
+            "games_per_cycle": None,
+            "user_hint": None,
+            "stop_run": False,
+            "reset_loop": False,
+            "difficulty": None,
+            "fail_threshold": None,
+            "reward_rule_add": None,
+            "updated_at": None,
+        }
+    return data
+
+
+@app.put("/api/advised/control")
+async def update_advised_control(request: dict[str, Any]) -> dict[str, Any]:
+    """Write control signals for the advised run.
+
+    Merges the incoming fields with the existing control file so that
+    the UI can send partial updates (e.g. just ``games_per_cycle``).
+    """
+    path = _data_dir / _ADVISED_CONTROL_FILE
+    existing = _read_json_file(path) or {}
+    existing.update(request)
+    existing["updated_at"] = datetime.now(UTC).isoformat()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+    return existing
+
+
 @app.get("/api/reward-rules")
 async def get_reward_rules() -> dict[str, Any]:
     """Get current reward shaping rules."""

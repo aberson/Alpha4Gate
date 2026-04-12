@@ -516,6 +516,87 @@ When reviewing an overnight run:
 
 ---
 
+## Dashboard Control Panel Bridge
+
+The dashboard has an **Advisor** tab that monitors and controls this loop via two JSON files in `data/`. You MUST read and write these files at the specified phase boundaries.
+
+### State file: `data/advised_run_state.json`
+
+**Write this file after every phase boundary** to keep the dashboard in sync. Overwrite the entire file each time.
+
+```json
+{
+  "run_id": "$RUN_TS",
+  "status": "running",
+  "phase": 2,
+  "phase_name": "Strategic Analysis",
+  "iteration": 3,
+  "max_iterations": null,
+  "games_per_cycle": 10,
+  "difficulty": 1,
+  "mode": "training",
+  "hours_budget": 4,
+  "elapsed_seconds": 3420,
+  "baseline_win_rate": 0.7,
+  "current_win_rate": 0.8,
+  "iterations": [
+    {"num": 1, "title": "Reward scouting", "result": "pass", "delta": "+10%"},
+    {"num": 2, "title": "Fix supply block", "result": "fail", "delta": "-5%"}
+  ],
+  "current_improvement": "Chrono boost allocation",
+  "fail_streak": 0,
+  "updated_at": "2026-04-12T19:15:00Z"
+}
+```
+
+**When to write:**
+- Phase 0.4 (after systems start): `status: "running"`, `phase: 0`, `phase_name: "Bootstrap"`
+- Phase 1.1 start: `phase: 1`, `phase_name: "Observing Games"`
+- Phase 2.1 start: `phase: 2`, `phase_name: "Strategic Analysis"`
+- Phase 3 start: `phase: 3`, `phase_name: "Selecting Improvement"`
+- Phase 4 start: `phase: 4`, `phase_name: "Executing"`, set `current_improvement`
+- Phase 5 start: `phase: 5`, `phase_name: "Validating"`
+- Phase 6 start: `phase: 6`, `phase_name: "Reporting"`
+- Phase 7 start: `phase: 7`, `phase_name: "Loop Decision"`
+- Phase 8 end: `status: "completed"`, `phase: 8`, `phase_name: "Morning Report"`
+- On any stop: `status: "stopped"`
+
+Always update `elapsed_seconds`, `current_win_rate`, `iterations` array, and `updated_at` with each write.
+
+### Control file: `data/advised_run_control.json`
+
+**Read this file at three phase boundaries:**
+1. **Before Phase 1** (before starting games) — apply `games_per_cycle`, `difficulty`, `fail_threshold`, `reward_rule_add`
+2. **Before Phase 2** (before strategic analysis) — read `user_hint` for injection into the advisor prompt
+3. **Phase 7** (loop decision) — check `stop_run`, `reset_loop`
+
+```json
+{
+  "games_per_cycle": 3,
+  "user_hint": "Try attack-walking at 4:00",
+  "stop_run": false,
+  "reset_loop": false,
+  "difficulty": null,
+  "fail_threshold": null,
+  "reward_rule_add": null,
+  "updated_at": "2026-04-12T19:10:00Z"
+}
+```
+
+**How to apply each control signal:**
+
+- **`games_per_cycle`** (non-null integer): Override `$GAMES_PER_CYCLE` for this and future iterations. Log: "Dashboard override: games_per_cycle set to N".
+- **`difficulty`** (non-null integer): Override `$DIFFICULTY` for this and future iterations. Log the change.
+- **`fail_threshold`** (non-null integer): Override `--fail-threshold` for this and future iterations.
+- **`user_hint`** (non-null string): In Phase 2, prepend to the analysis prompt as: `"\n\n## Human Operator Guidance\n\nThe human operator has provided the following strategic hint. Consider this alongside the game data:\n\n> {user_hint}\n\n"`. After reading, clear the hint by writing `{"user_hint": null}` back to the control file (so it's not re-applied next iteration).
+- **`stop_run`** (true): In Phase 7, skip the loop and proceed directly to Phase 8 (Morning Report). Log: "Dashboard requested stop".
+- **`reset_loop`** (true): Revert to the baseline git tag (`advised/run/$RUN_TS/baseline`), restore config backups, clear iteration context, reset `fail_streak` to 0, reset `iteration` to 0, and restart from Phase 1. Clear the flag by writing `{"reset_loop": false}` back. Log: "Dashboard requested loop reset".
+- **`reward_rule_add`** (non-null object with `id`, `description`, `reward`, `active`): Append the rule to `data/reward_rules.json` before starting games. Clear the signal by writing `{"reward_rule_add": null}` back. Log: "Dashboard added reward rule: {id}".
+
+**If the control file does not exist or is unreadable, proceed with current settings — never block on missing control signals.**
+
+---
+
 ## Safety Rails
 
 All safety rails from `/improve-bot` apply here. Additionally:
