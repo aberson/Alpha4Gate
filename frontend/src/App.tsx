@@ -15,6 +15,7 @@ import { RecentImprovements } from "./components/RecentImprovements";
 import { RewardTrends } from "./components/RewardTrends";
 import { AlertsPanel } from "./components/AlertsPanel";
 import { AlertToast } from "./components/AlertToast";
+import { ConnectionStatus } from "./components/ConnectionStatus";
 import { useAlerts } from "./hooks/useAlerts";
 import "./App.css";
 
@@ -46,7 +47,10 @@ function App() {
     <div className="app">
       <AlertToast newAlerts={newAlertsThisPoll} onView={() => setTab("alerts")} />
       <header>
-        <h1>Alpha4Gate Dashboard</h1>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
+          <h1 style={{ margin: 0 }}>Alpha4Gate Dashboard</h1>
+          <ConnectionStatus />
+        </div>
         <nav>
           <button onClick={() => setTab("live")} className={tab === "live" ? "active" : ""}>
             Live

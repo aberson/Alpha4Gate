@@ -1,22 +1,22 @@
-import { useState, useEffect } from "react";
 import type { Stats as StatsType } from "../types/game";
+import { useApi } from "../hooks/useApi";
+import { StaleDataBanner } from "./StaleDataBanner";
 
 export function Stats() {
-  const [stats, setStats] = useState<StatsType | null>(null);
+  const { data: stats, isStale, isLoading, lastSuccess } = useApi<StatsType>(
+    "/api/stats",
+    { pollMs: 5000 }
+  );
 
-  useEffect(() => {
-    fetch("/api/stats")
-      .then((r) => r.json())
-      .then(setStats)
-      .catch(() => {});
-  }, []);
-
-  if (!stats) return <p>Loading stats...</p>;
+  if (stats === null) {
+    return <p>{isLoading ? "Loading stats..." : "No cached stats available."}</p>;
+  }
 
   const { aggregates } = stats;
 
   return (
     <div className="stats">
+      {isStale ? <StaleDataBanner lastSuccess={lastSuccess} label="Stats" /> : null}
       <h2>Statistics</h2>
       <p>
         Wins: {aggregates.total_wins} / Losses: {aggregates.total_losses}

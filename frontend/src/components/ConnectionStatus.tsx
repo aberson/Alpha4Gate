@@ -1,0 +1,102 @@
+/**
+ * Small connection-status indicator rendered in the dashboard header
+ * next to the nav. Shows a dot + label reflecting backend reachability.
+ *
+ * Part of Phase 1a of the offline-first dashboard work. Polls a cheap
+ * health endpoint (`/api/training/status`) via `useApi` and maps the
+ * hook's state to one of three visible states:
+ *
+ *  - `live` (green): last fetch succeeded recently.
+ *  - `stale` (amber): we have cached data but the last fetch failed or
+ *    we're still waiting on the first fetch after a cache read.
+ *  - `disconnected` (red): no cached data and no successful fetch yet.
+ *
+ * The indicator is purely informational — no interactions. Operators
+ * use it as a quick "is the backend up?" glance before diving into a
+ * specific tab.
+ */
+
+import { useApi } from "../hooks/useApi";
+
+interface TrainingStatusPing {
+  // We don't actually care about the body — just that the call
+  // succeeded. Typed as a permissive record so we can share the
+  // endpoint with other components without a forced cast.
+  [key: string]: unknown;
+}
+
+const POLL_MS = 5000;
+
+function formatRelativeTime(then: Date, now: Date = new Date()): string {
+  const deltaSec = Math.round((now.getTime() - then.getTime()) / 1000);
+  if (deltaSec < 5) return "just now";
+  if (deltaSec < 60) return `${deltaSec}s ago`;
+  if (deltaSec < 3600) {
+    const minutes = Math.floor(deltaSec / 60);
+    return `${minutes}m ago`;
+  }
+  const hours = Math.floor(deltaSec / 3600);
+  return `${hours}h ago`;
+}
+
+export function ConnectionStatus() {
+  const { data, isStale, isLoading, lastSuccess } = useApi<TrainingStatusPing>(
+    "/api/training/status",
+    { pollMs: POLL_MS }
+  );
+
+  let color: string;
+  let label: string;
+  let title: string;
+
+  if (isLoading && data === null) {
+    color = "#888";
+    label = "Connecting...";
+    title = "Contacting backend for the first time.";
+  } else if (!isStale) {
+    color = "#2ecc71";
+    label = "Live";
+    title = lastSuccess
+      ? `Backend responding. Last update: ${formatRelativeTime(lastSuccess)}.`
+      : "Backend responding.";
+  } else if (data !== null) {
+    color = "#fbbc04";
+    label = `Stale${lastSuccess ? ` (${formatRelativeTime(lastSuccess)})` : ""}`;
+    title = lastSuccess
+      ? `Backend unreachable. Showing cached data from ${lastSuccess.toLocaleString()}.`
+      : "Backend unreachable. Showing cached data.";
+  } else {
+    color = "#e74c3c";
+    label = "Disconnected";
+    title = "Backend unreachable and no cached data available.";
+  }
+
+  return (
+    <div
+      className="connection-status"
+      role="status"
+      aria-live="polite"
+      title={title}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "6px",
+        marginLeft: "12px",
+        fontSize: "0.85em",
+        color,
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          display: "inline-block",
+          width: "8px",
+          height: "8px",
+          borderRadius: "50%",
+          backgroundColor: color,
+        }}
+      />
+      <span>{label}</span>
+    </div>
+  );
+}

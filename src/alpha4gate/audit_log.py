@@ -112,6 +112,93 @@ def _write_entries(path: Path, entries: list[dict[str, Any]]) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _apply_ui_aliases(decision: dict[str, Any]) -> dict[str, Any]:
+    """Add UI-expected field aliases to a decision dict (Phase 4.8 Fix A).
+
+    The Decision Log table in ``frontend/src/components/DecisionQueue.tsx``
+    was designed against an earlier schema built for DecisionEngine state
+    transitions: ``{game_step, from_state, to_state, reason, claude_advice}``.
+    Phase 4.6 #77 wired the Claude advisor to call ``record_decision`` but
+    the advisor's dict has a completely different shape: ``{timestamp,
+    source, model, game_time, request_summary, response_commands,
+    suggestion, urgency, reasoning}``. Zero field-name overlap means the UI
+    rendered each advisor broadcast as a row with all columns blank (see
+    aberson/Alpha4Gate#90 root cause analysis on 2026-04-11).
+
+    This helper adds the UI-expected keys as aliases, mapped from the
+    advisor fields. Original keys are preserved so any future consumer that
+    wants the rich advisor payload (full reasoning, all response commands,
+    urgency, etc.) still has it. Existing aliases are NOT overwritten --
+    when a real state-transition producer eventually writes proper
+    ``game_step``/``from_state`` values, they pass through unchanged.
+
+    Mapping, where each right-hand-side key is the aliased source:
+
+    - ``game_step``    <- int(game_time) truncated to integer seconds
+    - ``from_state``   <- source (e.g. ``"claude_advisor"``)
+    - ``to_state``     <- first ``response_commands[0].action`` if present,
+                         else ``urgency``, else ``"advise"``
+    - ``reason``       <- ``reasoning`` > ``request_summary`` > ``""``
+    - ``claude_advice`` <- ``suggestion`` > ``""``
+
+    Returns the same dict (mutated in place) for caller convenience.
+    """
+    # game_step: truncate game_time seconds to an integer tick count.
+    if "game_step" not in decision:
+        game_time = decision.get("game_time")
+        if isinstance(game_time, int | float):
+            decision["game_step"] = int(game_time)
+
+    # from_state: use the producer source as the "from" label.
+    if "from_state" not in decision:
+        source = decision.get("source")
+        if isinstance(source, str) and source:
+            decision["from_state"] = source
+
+    # to_state: prefer the first command's action, then urgency, then
+    # a constant "advise" fallback so the column is never empty when the
+    # producer is the advisor.
+    if "to_state" not in decision:
+        commands = decision.get("response_commands")
+        first_action: str | None = None
+        if isinstance(commands, list) and commands:
+            first = commands[0]
+            if isinstance(first, dict):
+                action = first.get("action")
+                if isinstance(action, str) and action:
+                    first_action = action
+        if first_action is not None:
+            decision["to_state"] = first_action
+        else:
+            urgency = decision.get("urgency")
+            if isinstance(urgency, str) and urgency:
+                decision["to_state"] = urgency
+            else:
+                decision["to_state"] = "advise"
+
+    # reason: prefer the structured reasoning, fall back to request_summary.
+    if "reason" not in decision:
+        reasoning = decision.get("reasoning")
+        if isinstance(reasoning, str) and reasoning:
+            decision["reason"] = reasoning
+        else:
+            request_summary = decision.get("request_summary")
+            if isinstance(request_summary, str) and request_summary:
+                decision["reason"] = request_summary
+            else:
+                decision["reason"] = ""
+
+    # claude_advice: the short human-readable suggestion string.
+    if "claude_advice" not in decision:
+        suggestion = decision.get("suggestion")
+        if isinstance(suggestion, str) and suggestion:
+            decision["claude_advice"] = suggestion
+        else:
+            decision["claude_advice"] = ""
+
+    return decision
+
+
 def record_decision(
     data_dir: Path,
     ws_manager: ConnectionManager | None,
@@ -141,6 +228,12 @@ def record_decision(
           context), the broadcast is skipped silently -- the file write is
           still durable and the next API poll will surface the entry.
     """
+    # Phase 4.8 Fix A: add UI-expected aliases (game_step/from_state/
+    # to_state/reason/claude_advice) so DecisionQueue.tsx can render the
+    # Claude advisor entries without a UI schema change. Original fields
+    # are preserved; see ``_apply_ui_aliases`` for the full mapping.
+    _apply_ui_aliases(decision)
+
     path = data_dir / DECISION_AUDIT_FILENAME
     entries = _read_entries(path)
     entries.append(decision)

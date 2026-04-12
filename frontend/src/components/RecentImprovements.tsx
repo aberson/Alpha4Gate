@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useApi } from "../hooks/useApi";
+import { StaleDataBanner } from "./StaleDataBanner";
 
 /**
  * Response shape from GET /api/training/promotions/history.
@@ -166,39 +168,17 @@ export function RecentImprovements({
   limit = DEFAULT_LIMIT,
   pollIntervalMs = POLL_INTERVAL_MS,
 }: RecentImprovementsProps) {
-  const [history, setHistory] = useState<PromotionHistoryEntry[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    data: response,
+    isStale,
+    isLoading,
+    lastSuccess,
+  } = useApi<PromotionHistoryResponse>("/api/training/promotions/history", {
+    pollMs: pollIntervalMs,
+  });
+  const history: PromotionHistoryEntry[] | null =
+    response === null ? null : Array.isArray(response.history) ? response.history : [];
   const [filter, setFilter] = useState<ImprovementFilter>("all");
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function load(): Promise<void> {
-      try {
-        const response = await fetch("/api/training/promotions/history");
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-        const data = (await response.json()) as PromotionHistoryResponse;
-        if (cancelled) return;
-        const items = Array.isArray(data?.history) ? data.history : [];
-        setHistory(items);
-        setError(null);
-      } catch (ex) {
-        if (cancelled) return;
-        setError(ex instanceof Error ? ex.message : "failed to load history");
-      }
-    }
-
-    void load();
-    const handle = setInterval(() => {
-      void load();
-    }, pollIntervalMs);
-    return () => {
-      cancelled = true;
-      clearInterval(handle);
-    };
-  }, [pollIntervalMs]);
 
   const sortedLatest = useMemo<PromotionHistoryEntry[]>(() => {
     if (!history) return [];
@@ -217,20 +197,21 @@ export function RecentImprovements({
     return sortedLatest.filter((entry) => matchesFilter(classifyEntry(entry), filter));
   }, [sortedLatest, filter]);
 
-  if (error && history === null) {
+  if (history === null) {
     return (
-      <div className="recent-improvements error" style={{ color: "#e74c3c" }}>
-        Error: {error}
+      <div className="recent-improvements">
+        {isLoading
+          ? "Loading..."
+          : "No cached improvements data yet — open this tab once while the backend is up."}
       </div>
     );
   }
 
-  if (history === null) {
-    return <div className="recent-improvements">Loading...</div>;
-  }
-
   return (
     <div className="recent-improvements training-dashboard">
+      {isStale ? (
+        <StaleDataBanner lastSuccess={lastSuccess} label="Recent Improvements" />
+      ) : null}
       <h2>Recent Improvements</h2>
 
       <div className="improvement-filters" role="group" aria-label="Filter improvements">
@@ -259,16 +240,6 @@ export function RecentImprovements({
           Rollbacks
         </button>
       </div>
-
-      {error ? (
-        <div
-          className="control-error"
-          role="alert"
-          style={{ color: "#e74c3c", marginBottom: "8px" }}
-        >
-          {error}
-        </div>
-      ) : null}
 
       {sortedLatest.length === 0 ? (
         <div className="improvement-empty" style={{ color: "#888", padding: "12px 0" }}>

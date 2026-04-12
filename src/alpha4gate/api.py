@@ -318,11 +318,28 @@ async def get_replay(replay_id: str) -> dict[str, Any]:
 
 @app.get("/api/decision-log")
 async def get_decision_log() -> dict[str, Any]:
-    """Get the decision audit log."""
+    """Get the decision audit log.
+
+    Applies UI aliases (``_apply_ui_aliases``) on the way out so that
+    legacy entries on disk -- written before Phase 4.8 Fix A added the
+    shim in ``record_decision`` -- still render correctly in
+    ``DecisionQueue.tsx``. The helper is idempotent: entries that already
+    have ``game_step`` / ``from_state`` / etc. pass through unchanged.
+    """
+    from alpha4gate.audit_log import _apply_ui_aliases
+
     path = _data_dir / "decision_audit.json"
     if path.exists():
         data = json.loads(path.read_text(encoding="utf-8"))
-        return {"entries": data.get("entries", [])}
+        raw_entries = data.get("entries", [])
+        if isinstance(raw_entries, list):
+            entries = [
+                _apply_ui_aliases(dict(entry)) if isinstance(entry, dict) else entry
+                for entry in raw_entries
+            ]
+        else:
+            entries = []
+        return {"entries": entries}
     return {"entries": []}
 
 

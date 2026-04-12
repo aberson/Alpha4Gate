@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useApi } from "../hooks/useApi";
+import { StaleDataBanner } from "./StaleDataBanner";
 
 interface TrainingStatus {
   training_active: boolean;
@@ -22,37 +23,48 @@ interface TrainingHistory {
 }
 
 export function TrainingDashboard() {
-  const [status, setStatus] = useState<TrainingStatus | null>(null);
-  const [history, setHistory] = useState<TrainingHistory | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    data: status,
+    isStale: statusStale,
+    isLoading: statusLoading,
+    lastSuccess: statusLastSuccess,
+  } = useApi<TrainingStatus>("/api/training/status", { pollMs: 5000 });
+  const {
+    data: history,
+    isStale: historyStale,
+    isLoading: historyLoading,
+    lastSuccess: historyLastSuccess,
+  } = useApi<TrainingHistory>("/api/training/history", { pollMs: 5000 });
 
-  const fetchData = async () => {
-    try {
-      const [statusRes, historyRes] = await Promise.all([
-        fetch("/api/training/status"),
-        fetch("/api/training/history"),
-      ]);
-      setStatus(await statusRes.json());
-      setHistory(await historyRes.json());
-      setError(null);
-    } catch (e) {
-      setError("Failed to fetch training data");
-    }
-  };
+  if (!status || !history) {
+    const anyLoading = statusLoading || historyLoading;
+    return (
+      <div>
+        {anyLoading
+          ? "Loading..."
+          : "No cached training data available — open this tab once while the backend is up."}
+      </div>
+    );
+  }
 
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
-  }, []);
-
-  if (error) return <div className="error">{error}</div>;
-  if (!status || !history) return <div>Loading...</div>;
+  // Stale if either underlying feed is stale. Prefer the older of the
+  // two lastSuccess values so the banner is honest about the oldest
+  // piece of data on screen.
+  const isStale = statusStale || historyStale;
+  const lastSuccess =
+    statusLastSuccess && historyLastSuccess
+      ? statusLastSuccess < historyLastSuccess
+        ? statusLastSuccess
+        : historyLastSuccess
+      : statusLastSuccess ?? historyLastSuccess;
 
   const dbSizeMB = (status.db_size_bytes / (1024 * 1024)).toFixed(1);
 
   return (
     <div className="training-dashboard">
+      {isStale ? (
+        <StaleDataBanner lastSuccess={lastSuccess} label="Training Status" />
+      ) : null}
       <h2>Training Status</h2>
 
       <div className="status-grid">

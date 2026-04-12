@@ -272,14 +272,24 @@ describe("RecentImprovements component", () => {
     }
   });
 
-  it("renders error state when fetch fails on first load", async () => {
+  it("renders empty-cache fallback when fetch fails on first load and no cached data exists", async () => {
+    // Phase 4.8 Phase 1a changed the error rendering behavior: instead of
+    // showing "Error: <message>" to the user, the component renders from
+    // IndexedDB cache if available, and falls back to an actionable
+    // "No cached improvements data yet" message when there is neither
+    // cache nor a successful fetch. The error string is still tracked
+    // internally (for debugging) but is never rendered — stale cached
+    // data is shown with a StaleDataBanner instead.
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
       throw new Error("network down");
     });
     render(<RecentImprovements />);
     await waitFor(() => {
-      expect(screen.getByText(/error:/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/no cached improvements data yet/i),
+      ).toBeInTheDocument();
     });
-    expect(screen.getByText(/network down/i)).toBeInTheDocument();
+    // Error message must NOT be rendered to the user.
+    expect(screen.queryByText(/network down/i)).not.toBeInTheDocument();
   });
 });
