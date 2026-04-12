@@ -570,7 +570,7 @@ class TrainingDaemon:
                 max_difficulty=self._config.max_difficulty,
                 win_rate_threshold=self._config.win_rate_threshold,
                 replay_dir=self._settings.replay_dir,
-                claude_advisor=training_advisor,
+                claude_advisor=None,  # disabled pending threading fix
             )
             result = orchestrator.run(
                 n_cycles=self._config.cycles_per_run,
