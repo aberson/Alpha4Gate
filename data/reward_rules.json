@@ -269,6 +269,54 @@
       "active": true
     },
     {
+      "id": "gateway-scaling-6",
+      "description": "Reward 6+ gateways for multi-base economy",
+      "condition": {
+        "field": "gateway_count",
+        "op": ">=",
+        "value": 6
+      },
+      "requires": {
+        "field": "base_count",
+        "op": ">=",
+        "value": 2
+      },
+      "reward": 0.005,
+      "active": true
+    },
+    {
+      "id": "gateway-scaling-8",
+      "description": "Reward 8+ gateways for 3-base economy",
+      "condition": {
+        "field": "gateway_count",
+        "op": ">=",
+        "value": 8
+      },
+      "requires": {
+        "field": "base_count",
+        "op": ">=",
+        "value": 3
+      },
+      "reward": 0.006,
+      "active": true
+    },
+    {
+      "id": "too-few-gateways",
+      "description": "Penalize having fewer gateways than bases after 4 minutes",
+      "condition": {
+        "field": "gateway_count",
+        "op": "<",
+        "value": 4
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 240
+      },
+      "reward": -0.005,
+      "active": true
+    },
+    {
       "id": "early-scout-tight",
       "description": "Reward scouting before 2:00 (tighter window)",
       "condition": {
