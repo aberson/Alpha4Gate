@@ -156,10 +156,36 @@ All subsequent soak launches use `2>&1 | tee -a "$LOGFILE"`.
 
 ## Phase 3: Launch
 
+### Wall-clock budget leak check (mandatory, all flavors)
+
+Before doing anything else in Phase 3, check how long the **interactive** portion of the run has been going. Record `SKILL_START` as the timestamp when Phase 0 first ran (clock-wall time when the user invoked `/improve-bot`). At Phase 3 entry, compute:
+
+```
+INTERACTIVE_ELAPSED = now - SKILL_START
+```
+
+If `INTERACTIVE_ELAPSED > 30 min`, the Phase 1 + Phase 2 portion has eaten significant wall clock while the daemon was likely running autonomously (backend launched in §3.2). **This is the "wall-clock leak" failure mode from the 2026-04-11 improve-bot run** (run log `documentation/soak-test-runs/improve-2026-04-11.md`, skill-feedback memory `feedback_improve-bot_wall_clock_leak.md`).
+
+When this fires, STOP and ask the user one explicit question with three options:
+
+1. **(a) Reset** — kill the daemon (POST `/api/training/stop`), archive any unsupervised work as a "bonus observation" in the run log, reset the wall-clock budget, and enter Phase 4 fresh.
+2. **(b) Absorb** — keep the unsupervised work, reduce the remaining wall-clock budget by `INTERACTIVE_ELAPSED`, and enter Phase 4 with what's left. Only choose this if the daemon's work so far is useful to the current run's goal.
+3. **(c) Stop** — the unsupervised work has already produced its primary finding and Phase 4 iteration isn't worth starting. Go directly to Phase 5, report on what the daemon did, and close the run.
+
+Do not silently let the interactive overrun pass through to Phase 4. The 2026-04-11 run (#88) lost its entire 2h Phase 4 budget this way — daemon ran for 4h 44m unsupervised, zero Phase 4 attempts executed.
+
+### Set `PHASE4_T0` (the real wall-clock anchor)
+
+```bash
+PHASE4_T0=$(date +%s)
+RUN_TS=$(date -d @$PHASE4_T0 +%Y%m%d-%H%M)
+```
+
+**All wall-clock stop-condition checks during Phase 4 measure elapsed time from `PHASE4_T0`, NOT from the baseline tag timestamp and NOT from `SKILL_START`.** This is the fix for the leak. The interactive Phase 1/2 portion does not count against the budget. The daemon's unsupervised work during Phase 1/2 is either archived (option a), absorbed (option b), or reported (option c) — it never invisibly consumes the budget.
+
 ### Baseline tag (training / dev / hybrid; skipped for demo)
 
 ```bash
-RUN_TS=$(date +%Y%m%d-%H%M)
 git tag "improve-bot/run/$RUN_TS/baseline"
 git push origin "improve-bot/run/$RUN_TS/baseline"
 ```
@@ -169,6 +195,8 @@ For **demo** flavor, do NOT create or push any tag — demo is a no-git-writes c
 Write a run-start header to `$LOGFILE`:
 - Suggestion text
 - Flavor, measures, stop conditions, data state, `--demo` / `--self-improve-code` flags on/off
+- **`SKILL_START`** (when `/improve-bot` was invoked) and **`PHASE4_T0`** (when Phase 4 iteration begins) — both timestamps, so the morning report can show the interactive portion explicitly
+- `INTERACTIVE_ELAPSED` at Phase 3 entry, and which option (a/b/c) was chosen if it triggered the leak check
 - Baseline tag + SHA (or "n/a (demo)" for demo)
 - Baseline metric values (read from dashboard state at start; for demo, these are observation baselines only)
 
@@ -203,7 +231,9 @@ Write a run-start header to `$LOGFILE`:
 
 ## Phase 4: Self-improve-code loop (hybrid + `--self-improve-code` only)
 
-Inner loop. Alternates a short training window with a reactive dev attempt. Repeats until wall-clock budget exhausted OR 3 consecutive failed attempts OR a watchdog trip during a validation soak.
+Inner loop. Alternates a short training window with a reactive dev attempt. Repeats until **wall-clock budget (measured from `PHASE4_T0`, NOT from `SKILL_START` or the baseline tag)** is exhausted OR 3 consecutive failed attempts OR a watchdog trip during a validation soak.
+
+At every iteration boundary, recompute `now - PHASE4_T0` and compare against the configured budget. If it exceeds the budget, stop the loop cleanly and go to Phase 5 regardless of how much work is in flight.
 
 ### One attempt
 
