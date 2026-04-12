@@ -1,16 +1,16 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import type { ReplaySummary, ReplayDetail } from "../types/game";
+import { useApi } from "../hooks/useApi";
+import { StaleDataBanner } from "./StaleDataBanner";
+
+interface ReplaysResponse {
+  replays: ReplaySummary[];
+}
 
 export function ReplayBrowser() {
-  const [replays, setReplays] = useState<ReplaySummary[]>([]);
+  const { data: replaysData, isStale, lastSuccess } = useApi<ReplaysResponse>("/api/replays");
+  const replays = replaysData?.replays ?? [];
   const [selected, setSelected] = useState<ReplayDetail | null>(null);
-
-  useEffect(() => {
-    fetch("/api/replays")
-      .then((r) => r.json())
-      .then((data) => setReplays(data.replays || []))
-      .catch(() => {});
-  }, []);
 
   const viewReplay = async (id: string) => {
     const resp = await fetch(`/api/replays/${id}`);
@@ -20,6 +20,7 @@ export function ReplayBrowser() {
 
   return (
     <div className="replay-browser">
+      {isStale && replays.length > 0 ? <StaleDataBanner lastSuccess={lastSuccess} label="Replays" /> : null}
       <h2>Replays</h2>
       {replays.length === 0 ? (
         <p>No replays available.</p>

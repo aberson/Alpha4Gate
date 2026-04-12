@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useApi } from "../hooks/useApi";
+import { StaleDataBanner } from "./StaleDataBanner";
 
 interface Checkpoint {
   name: string;
@@ -20,23 +21,21 @@ interface CheckpointData {
 }
 
 export function CheckpointList() {
-  const [data, setData] = useState<CheckpointData | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data, isStale, isLoading, lastSuccess } = useApi<CheckpointData>(
+    "/api/training/checkpoints",
+  );
 
-  useEffect(() => {
-    fetch("/api/training/checkpoints")
-      .then((r) => r.json())
-      .then(setData)
-      .catch(() => setError("Failed to load checkpoints"));
-  }, []);
+  if (!data) {
+    return <div>{isLoading ? "Loading..." : "No cached checkpoint data yet."}</div>;
+  }
 
-  if (error) return <div className="error">{error}</div>;
-  if (!data) return <div>Loading...</div>;
-  if (data.checkpoints.length === 0)
+  if (data.checkpoints.length === 0) {
     return <div className="empty">No checkpoints yet</div>;
+  }
 
   return (
     <div className="checkpoint-list">
+      {isStale ? <StaleDataBanner lastSuccess={lastSuccess} label="Checkpoints" /> : null}
       <h2>Checkpoints</h2>
       <table>
         <thead>

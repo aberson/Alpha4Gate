@@ -302,15 +302,15 @@ describe("RewardTrends component", () => {
     expect(calls.some((u) => u.includes("games=500"))).toBe(true);
   });
 
-  it("renders error state when fetch fails on first load", async () => {
+  it("renders empty-cache fallback when fetch fails on first load and no cached data exists", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
       throw new Error("network down");
     });
     render(<RewardTrends pollIntervalMs={10_000} />);
     await waitFor(() => {
-      expect(screen.getByText(/error:/i)).toBeInTheDocument();
+      expect(screen.getByText(/no cached reward trends yet/i)).toBeInTheDocument();
     });
-    expect(screen.getByText(/network down/i)).toBeInTheDocument();
+    expect(screen.queryByText(/network down/i)).not.toBeInTheDocument();
   });
 
   it("shows scanned game count for populated response", async () => {

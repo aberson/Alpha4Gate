@@ -1,4 +1,6 @@
-import { useState, useEffect, type ReactNode } from "react";
+import { type ReactNode } from "react";
+import { useApi } from "../hooks/useApi";
+import { StaleDataBanner } from "./StaleDataBanner";
 
 interface ModelStats {
   model_version: string;
@@ -15,32 +17,22 @@ interface ModelsResponse {
 }
 
 export function ImprovementTimeline() {
-  const [data, setData] = useState<ModelsResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data, isStale, isLoading, lastSuccess } = useApi<ModelsResponse>(
+    "/api/training/models",
+    { pollMs: 5000 },
+  );
 
-  const fetchData = async () => {
-    try {
-      const res = await fetch("/api/training/models");
-      setData(await res.json());
-      setError(null);
-    } catch {
-      setError("Failed to fetch model data");
-    }
-  };
+  if (!data) {
+    return <div>{isLoading ? "Loading..." : "No cached model data yet."}</div>;
+  }
 
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
-  }, []);
-
-  if (error) return <div className="error">{error}</div>;
-  if (!data) return <div>Loading...</div>;
-  if (data.models.length === 0)
+  if (data.models.length === 0) {
     return <div className="empty">No model history yet</div>;
+  }
 
   return (
     <div className="improvement-timeline">
+      {isStale ? <StaleDataBanner lastSuccess={lastSuccess} label="Improvement Timeline" /> : null}
       <h2>Improvement Timeline</h2>
       <table>
         <thead>

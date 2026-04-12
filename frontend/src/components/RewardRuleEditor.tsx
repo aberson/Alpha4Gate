@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { useApi } from "../hooks/useApi";
+import { StaleDataBanner } from "./StaleDataBanner";
 
 interface Condition {
   field: string;
@@ -21,16 +23,17 @@ interface RulesData {
 }
 
 export function RewardRuleEditor() {
+  const { data: rulesData, isStale, lastSuccess } = useApi<RulesData>("/api/reward-rules");
   const [rules, setRules] = useState<RewardRule[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  // Seed local editable state from useApi data
   useEffect(() => {
-    fetch("/api/reward-rules")
-      .then((r) => r.json())
-      .then((data: RulesData) => setRules(data.rules || []))
-      .catch(() => setError("Failed to load reward rules"));
-  }, []);
+    if (rulesData?.rules) {
+      setRules(rulesData.rules);
+    }
+  }, [rulesData]);
 
   const toggleActive = (id: string) => {
     setRules((prev) =>
@@ -63,10 +66,11 @@ export function RewardRuleEditor() {
     setSaving(false);
   };
 
-  if (error) return <div className="error">{error}</div>;
+  if (error && rules.length === 0) return <div className="error">{error}</div>;
 
   return (
     <div className="reward-rule-editor">
+      {isStale && rules.length > 0 ? <StaleDataBanner lastSuccess={lastSuccess} label="Reward Rules" /> : null}
       <h2>Reward Rules</h2>
       {rules.length === 0 ? (
         <div className="empty">No reward rules configured</div>

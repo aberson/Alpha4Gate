@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useApi } from "../hooks/useApi";
+import { StaleDataBanner } from "./StaleDataBanner";
 
 interface ModelStats {
   model_version: string;
@@ -10,38 +11,35 @@ interface ModelStats {
   last_game: string;
 }
 
+interface ModelsResponse {
+  models: ModelStats[];
+}
+
+interface CheckpointsResponse {
+  best: string | null;
+  [key: string]: unknown;
+}
+
 export function ModelComparison() {
-  const [models, setModels] = useState<ModelStats[]>([]);
-  const [best, setBest] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data: modelsData, isStale: modelsStale, lastSuccess: modelsLast } =
+    useApi<ModelsResponse>("/api/training/models", { pollMs: 5000 });
+  const { data: cpData, isStale: cpStale, lastSuccess: cpLast } =
+    useApi<CheckpointsResponse>("/api/training/checkpoints", { pollMs: 5000 });
 
-  const fetchData = async () => {
-    try {
-      const [modelsRes, cpRes] = await Promise.all([
-        fetch("/api/training/models"),
-        fetch("/api/training/checkpoints"),
-      ]);
-      const modelsData = await modelsRes.json();
-      const cpData = await cpRes.json();
-      setModels(modelsData.models || []);
-      setBest(cpData.best || null);
-      setError(null);
-    } catch {
-      setError("Failed to fetch model data");
-    }
-  };
+  const models = modelsData?.models ?? [];
+  const best = cpData?.best ?? null;
 
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
-  }, []);
-
-  if (error) return <div className="error">{error}</div>;
   if (models.length === 0) return null;
+
+  const isStale = modelsStale || cpStale;
+  const lastSuccess =
+    modelsLast && cpLast
+      ? modelsLast < cpLast ? modelsLast : cpLast
+      : modelsLast ?? cpLast;
 
   return (
     <div className="model-comparison">
+      {isStale ? <StaleDataBanner lastSuccess={lastSuccess} label="Model Comparison" /> : null}
       <h2>Model Comparison</h2>
       <table>
         <thead>

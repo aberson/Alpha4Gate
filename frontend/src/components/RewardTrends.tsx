@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useApi } from "../hooks/useApi";
+import { StaleDataBanner } from "./StaleDataBanner";
 import {
   CartesianGrid,
   Legend,
@@ -136,49 +138,28 @@ export function RewardTrends({
   pollIntervalMs = POLL_INTERVAL_MS,
   defaultGames = DEFAULT_GAMES,
 }: RewardTrendsProps) {
-  const [data, setData] = useState<RewardTrendsResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [games, setGames] = useState<number>(defaultGames);
   const [sortColumn, setSortColumn] = useState<SortColumn>("total_contribution");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [hiddenRules, setHiddenRules] = useState<Set<string>>(() => new Set());
 
-  useEffect(() => {
-    let cancelled = false;
+  const {
+    data: rawData,
+    isStale,
+    isLoading,
+    lastSuccess,
+  } = useApi<RewardTrendsResponse>(
+    `/api/training/reward-trends?games=${games}`,
+    { pollMs: pollIntervalMs },
+  );
 
-    async function load(): Promise<void> {
-      try {
-        const response = await fetch(
-          `/api/training/reward-trends?games=${games}`,
-        );
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-        const body = (await response.json()) as RewardTrendsResponse;
-        if (cancelled) return;
-        const safeRules = Array.isArray(body?.rules) ? body.rules : [];
-        setData({
-          rules: safeRules,
-          n_games: typeof body?.n_games === "number" ? body.n_games : 0,
-          generated_at:
-            typeof body?.generated_at === "string" ? body.generated_at : "",
-        });
-        setError(null);
-      } catch (ex) {
-        if (cancelled) return;
-        setError(ex instanceof Error ? ex.message : "failed to load reward trends");
+  const data: RewardTrendsResponse | null = rawData
+    ? {
+        rules: Array.isArray(rawData.rules) ? rawData.rules : [],
+        n_games: typeof rawData.n_games === "number" ? rawData.n_games : 0,
+        generated_at: typeof rawData.generated_at === "string" ? rawData.generated_at : "",
       }
-    }
-
-    void load();
-    const handle = setInterval(() => {
-      void load();
-    }, pollIntervalMs);
-    return () => {
-      cancelled = true;
-      clearInterval(handle);
-    };
-  }, [games, pollIntervalMs]);
+    : null;
 
   const sortedRules = useMemo<RewardTrendRule[]>(() => {
     if (!data) return [];
@@ -218,22 +199,19 @@ export function RewardTrends({
     return sortDirection === "asc" ? " \u25B2" : " \u25BC";
   }
 
-  if (error && data === null) {
+  if (data === null) {
     return (
-      <div className="reward-trends error" style={{ color: "#e74c3c" }}>
-        Error: {error}
+      <div className="reward-trends">
+        {isLoading ? "Loading..." : "No cached reward trends yet."}
       </div>
     );
-  }
-
-  if (data === null) {
-    return <div className="reward-trends">Loading...</div>;
   }
 
   const isEmpty = data.rules.length === 0 || data.n_games === 0;
 
   return (
     <div className="reward-trends training-dashboard">
+      {isStale ? <StaleDataBanner lastSuccess={lastSuccess} label="Reward Trends" /> : null}
       <h2>Reward Trends</h2>
 
       <div
@@ -261,16 +239,6 @@ export function RewardTrends({
           Scanned {data.n_games} game{data.n_games === 1 ? "" : "s"}
         </span>
       </div>
-
-      {error ? (
-        <div
-          className="control-error"
-          role="alert"
-          style={{ color: "#e74c3c", marginBottom: "8px" }}
-        >
-          {error}
-        </div>
-      ) : null}
 
       {isEmpty ? (
         <div
