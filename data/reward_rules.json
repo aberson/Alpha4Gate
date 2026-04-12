@@ -46,14 +46,14 @@
     },
     {
       "id": "worker-saturation",
-      "description": "Reward reaching 22+ workers per base (44 at 2 bases)",
+      "description": "Reward reaching 22+ workers per base",
       "condition": {
         "field": "worker_count",
         "op": ">=",
         "value": 22
       },
       "requires": null,
-      "reward": 0.005,
+      "reward": 0.002,
       "active": true
     },
     {
@@ -109,7 +109,7 @@
         "value": 15
       },
       "requires": null,
-      "reward": 0.005,
+      "reward": 0.002,
       "active": true
     },
     {
@@ -121,7 +121,7 @@
         "value": true
       },
       "requires": null,
-      "reward": 0.01,
+      "reward": 0.005,
       "active": true
     },
     {
@@ -190,6 +190,110 @@
       },
       "requires": null,
       "reward": 0.005,
+      "active": true
+    },
+    {
+      "id": "attack-state-mid",
+      "description": "Reward choosing ATTACK state after 4 minutes",
+      "condition": {
+        "field": "current_state",
+        "op": "==",
+        "value": "attack"
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 240
+      },
+      "reward": 0.015,
+      "active": true
+    },
+    {
+      "id": "attack-state-late",
+      "description": "Reward choosing ATTACK state after 6 minutes (stronger)",
+      "condition": {
+        "field": "current_state",
+        "op": "==",
+        "value": "attack"
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 360
+      },
+      "reward": 0.025,
+      "active": true
+    },
+    {
+      "id": "army-worker-balance",
+      "description": "Reward army supply >= worker count after 3 minutes",
+      "condition": {
+        "field": "army_supply",
+        "op": ">=",
+        "value_field": "worker_count"
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 180
+      },
+      "reward": 0.008,
+      "active": true
+    },
+    {
+      "id": "army-scaling-25",
+      "description": "Reward building army to 25+ supply",
+      "condition": {
+        "field": "army_supply",
+        "op": ">=",
+        "value": 25
+      },
+      "requires": null,
+      "reward": 0.004,
+      "active": true
+    },
+    {
+      "id": "army-scaling-40",
+      "description": "Reward building army to 40+ supply",
+      "condition": {
+        "field": "army_supply",
+        "op": ">=",
+        "value": 40
+      },
+      "requires": null,
+      "reward": 0.006,
+      "active": true
+    },
+    {
+      "id": "expand-stall-penalty",
+      "description": "Penalize staying in EXPAND state after 5 minutes",
+      "condition": {
+        "field": "current_state",
+        "op": "==",
+        "value": "expand"
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 300
+      },
+      "reward": -0.008,
+      "active": true
+    },
+    {
+      "id": "passive-late-penalty",
+      "description": "Penalize having < 10 army supply after 5 minutes",
+      "condition": {
+        "field": "army_supply",
+        "op": "<",
+        "value": 10
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 300
+      },
+      "reward": -0.006,
       "active": true
     }
   ]
