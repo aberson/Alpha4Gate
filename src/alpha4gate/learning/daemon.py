@@ -550,13 +550,18 @@ class TrainingDaemon:
 
             reward_rules = self._settings.data_dir / "reward_rules.json"
             hyperparams = self._settings.data_dir / "hyperparams.json"
-            # Phase 4.8 Approach B: Claude advisor for training is
-            # DISABLED pending a threading fix — the advisor's async
-            # subprocess calls cause CancelledError in game threads
-            # after the first game. See soak-reward-fix-v2 log for
-            # evidence. Advisor features in the observation space are
-            # all zeros when advisor is None (backward compatible).
-            # TODO: fix advisor threading for multi-game training.
+            # Phase 4.8 Approach B: TrainingAdvisorBridge runs Claude
+            # CLI in its own daemon thread with its own event loop,
+            # avoiding the CancelledError that the old ClaudeAdvisor
+            # caused when shared across game threads.
+            from alpha4gate.learning.advisor_bridge import (
+                TrainingAdvisorBridge,
+            )
+
+            bridge = TrainingAdvisorBridge(
+                model="sonnet",
+                rate_limit_seconds=60.0,
+            )
             orchestrator = TrainingOrchestrator(
                 checkpoint_dir=self._settings.data_dir / "checkpoints",
                 db_path=self._settings.data_dir / "training.db",
@@ -570,7 +575,7 @@ class TrainingDaemon:
                 max_difficulty=self._config.max_difficulty,
                 win_rate_threshold=self._config.win_rate_threshold,
                 replay_dir=self._settings.replay_dir,
-                claude_advisor=None,  # disabled pending threading fix
+                advisor_bridge=bridge,
             )
             result = orchestrator.run(
                 n_cycles=self._config.cycles_per_run,
@@ -802,6 +807,11 @@ class TrainingDaemon:
                 self._last_run = datetime.now(UTC)
             _log.exception("Daemon: training failed")
         finally:
+            # Shut down the advisor bridge thread cleanly.
+            try:
+                bridge.shutdown()
+            except Exception:
+                _log.debug("Advisor bridge shutdown raised", exc_info=True)
             # Stop the watchdog BEFORE clearing ``_training_active`` so
             # the watchdog does not observe an off-state mid-poll.
             self._stop_watchdog()

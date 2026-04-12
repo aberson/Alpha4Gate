@@ -26,7 +26,7 @@ from alpha4gate.decision_engine import (
     StrategicState,
 )
 from alpha4gate.learning.database import TrainingDB
-from alpha4gate.learning.features import BASE_GAME_FEATURE_DIM, FEATURE_DIM, encode
+from alpha4gate.learning.features import FEATURE_DIM, encode
 from alpha4gate.learning.rewards import RewardCalculator
 
 _log = logging.getLogger(__name__)
@@ -41,10 +41,10 @@ STEPS_PER_ACTION: int = 22
 # rule-based bot builds economy and army; PPO observes but doesn't control.
 # The warmup threshold should be relaxed as PPO matures — set to 0 to
 # disable entirely once the policy has learned basic macro.
-WARMUP_GAME_SECONDS: float = 300.0  # 5 minutes
+WARMUP_GAME_SECONDS: float = 0.0  # disabled — PPO learns faster without forced OPENING
 
-# Max game time in seconds before forcing a timeout (prevents 20+ min passive games)
-MAX_GAME_TIME_SECONDS: float = 900.0  # 15 minutes
+# Max game time in seconds before forcing a timeout (prevents passive stalls)
+MAX_GAME_TIME_SECONDS: float = 480.0  # 8 minutes — shorter episodes = more training iterations
 
 # Single source of truth for the bridge observation tuple shape:
 # (obs_vector, info_dict, done_flag, result_string).
@@ -84,17 +84,20 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         replay_dir: Path | None = None,
         stats_path: Path | None = None,
         build_order_label: str = "4gate",
-        claude_advisor: Any | None = None,
+        advisor_bridge: Any | None = None,
     ) -> None:
         super().__init__()
         self._map_name = map_name
         self._difficulty = difficulty
         self._reward_calc = reward_calculator or RewardCalculator()
-        # Phase 4.8 Approach B: when provided, the Claude advisor fires
-        # during training games and its recommendations are encoded into
-        # the observation vector so PPO can learn from Claude's strategic
-        # guidance. When None, advisor features are all zeros.
-        self._claude_advisor = claude_advisor
+        # Phase 4.8 Approach B: when provided, the TrainingAdvisorBridge
+        # fires during training games and its recommendations are encoded
+        # into the observation vector so PPO can learn from Claude's
+        # strategic guidance.  When None, advisor features are all zeros.
+        # The bridge runs in its own thread with its own event loop,
+        # avoiding the CancelledError that the old ClaudeAdvisor caused
+        # when shared across game threads.
+        self._advisor_bridge = advisor_bridge
         self._db = db
         # Phase 4.6 Step 2: wire legacy dashboard producers into the
         # trainer. Both paths are optional so existing call sites and
@@ -453,7 +456,7 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
             obs_queue=obs_queue,
             action_queue=action_queue,
             reward_calc=self._reward_calc,
-            claude_advisor=getattr(self, "_claude_advisor", None),
+            advisor_bridge=getattr(self, "_advisor_bridge", None),
         )
 
         difficulty_map: dict[int, Difficulty] = {
@@ -660,7 +663,7 @@ def _make_training_bot(
     obs_queue: queue.Queue[_ObsTuple],
     action_queue: queue.Queue[int | None],
     reward_calc: RewardCalculator,
-    claude_advisor: Any | None = None,
+    advisor_bridge: Any | None = None,
 ) -> Any:
     """Create a full training bot that inherits Alpha4GateBot.
 
@@ -668,12 +671,12 @@ def _make_training_bot(
     gym action queue override the strategic state each decision step.
 
     Args:
-        claude_advisor: Optional ClaudeAdvisor instance. When provided,
-            the advisor fires during training games (rate-limited at ~30s
-            game time intervals) and its recommendations are encoded into
-            the observation vector so PPO can learn to follow Claude's
-            strategic guidance (Approach B from #89). When ``None``,
-            advisor features in the observation are all zeros.
+        advisor_bridge: Optional ``TrainingAdvisorBridge`` instance. When
+            provided, the bridge fires Claude CLI calls in its own thread
+            (rate-limited at ~60s game-time intervals) and its
+            recommendations are encoded into the observation vector so PPO
+            can learn to follow Claude's strategic guidance (Approach B
+            from #89). When ``None``, advisor features are all zeros.
     """
     from alpha4gate.bot import Alpha4GateBot
     from alpha4gate.build_orders import default_4gate
@@ -686,7 +689,7 @@ def _make_training_bot(
                 build_order=default_4gate(),
                 logger=None,
                 enable_console=False,
-                claude_advisor=claude_advisor,
+                claude_advisor=None,  # live advisor disabled; bridge handles it
             )
             self._obs_queue_train = obs_queue
             self._action_queue_train = action_queue
@@ -735,22 +738,38 @@ def _make_training_bot(
 
             if iteration % STEPS_PER_ACTION == 0:
                 snapshot = self._build_snapshot()
-                # Extract advisor features from the bot's last advisor
-                # response (if the advisor is enabled and has fired at
-                # least once). These become part of the observation so
-                # PPO can learn from Claude's recommendations.
+
+                # -- Advisor bridge: poll + submit -----------------
+                # Poll for a completed response from the bridge thread.
+                # Then submit a new request (rate-limited by the bridge).
                 _adv_commands: list[dict[str, str]] | None = None
                 _adv_urgency: str | None = None
-                if (
-                    self._claude_advisor is not None
-                    and self._claude_advisor.last_response is not None
-                ):
-                    resp = self._claude_advisor.last_response
-                    _adv_commands = [
-                        {"action": cmd.action}
-                        for cmd in resp.commands
-                    ]
-                    _adv_urgency = resp.urgency
+                if advisor_bridge is not None:
+                    advisor_bridge.poll_response()
+                    if advisor_bridge.last_response is not None:
+                        resp = advisor_bridge.last_response
+                        _adv_commands = [
+                            {"action": cmd.action}
+                            for cmd in resp.commands
+                        ]
+                        _adv_urgency = resp.urgency
+                    # Build a training prompt with situational principles
+                    from alpha4gate.learning.advisor_bridge import (
+                        build_training_prompt,
+                    )
+                    state_for_prompt = asdict(snapshot)
+                    state_for_prompt["current_state"] = (
+                        self._gym_state.value
+                        if self._gym_state
+                        else self.decision_engine.state.value
+                    )
+                    prompt = build_training_prompt(
+                        state_for_prompt, advisor_bridge.principles
+                    )
+                    advisor_bridge.submit_request(
+                        prompt, snapshot.game_time_seconds
+                    )
+
                 obs = encode(
                     snapshot,
                     advisor_commands=_adv_commands,

@@ -21,7 +21,6 @@ import pytest
 from alpha4gate.decision_engine import GameSnapshot, StrategicState
 from alpha4gate.learning.environment import (
     _ACTION_TO_STATE,
-    BASE_GAME_FEATURE_DIM,
     FEATURE_DIM,
     MAX_GAME_TIME_SECONDS,
     STEPS_PER_ACTION,
@@ -29,7 +28,7 @@ from alpha4gate.learning.environment import (
     _GymStateProxy,
     _make_training_bot,
 )
-from alpha4gate.learning.features import encode
+from alpha4gate.learning.features import BASE_GAME_FEATURE_DIM, encode
 from alpha4gate.learning.rewards import RewardCalculator
 
 

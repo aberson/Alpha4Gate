@@ -10,7 +10,6 @@ import pytest
 from alpha4gate.learning.rewards import (
     BASE_LOSS_REWARD,
     BASE_STEP_REWARD,
-    BASE_TIMEOUT_REWARD,
     BASE_WIN_REWARD,
     RewardCalculator,
 )
@@ -60,12 +59,23 @@ class TestBaseReward:
         assert reward <= BASE_LOSS_REWARD + BASE_STEP_REWARD + 1.0  # allow some rule bonuses
 
     def test_timeout_reward(self, calc: RewardCalculator) -> None:
-        """Timeout is milder than loss but still negative."""
+        """Timeout is milder than loss but still negative, with gradient."""
         reward = calc.compute_step_reward(_state(), is_terminal=True, result="timeout")
         loss_reward = calc.compute_step_reward(_state(), is_terminal=True, result="loss")
         assert reward < 0  # still negative
         assert reward > loss_reward  # but milder than loss
-        assert abs(reward - (BASE_STEP_REWARD + BASE_TIMEOUT_REWARD)) < 0.001
+
+    def test_timeout_gradient_big_army(self, calc: RewardCalculator) -> None:
+        """Bot with big idle army gets harsher timeout penalty."""
+        idle = calc.compute_step_reward(
+            _state(army_supply=30, enemy_army_supply_visible=2),
+            is_terminal=True, result="timeout",
+        )
+        weak = calc.compute_step_reward(
+            _state(army_supply=2, enemy_army_supply_visible=30),
+            is_terminal=True, result="timeout",
+        )
+        assert idle < weak  # big idle army punished more
 
 
 class TestRuleEvaluation:

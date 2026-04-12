@@ -20,7 +20,7 @@ _log = logging.getLogger(__name__)
 BASE_WIN_REWARD: float = 100.0
 BASE_LOSS_REWARD: float = -100.0
 BASE_STEP_REWARD: float = 0.001  # survival bonus per step
-BASE_TIMEOUT_REWARD: float = -30.0  # milder than loss: bot survived but didn't close
+BASE_TIMEOUT_REWARD: float = -50.0  # base timeout penalty (adjusted by army gradient)
 
 # Supported comparison operators
 _OPS: dict[str, Any] = {
@@ -142,6 +142,28 @@ class RewardCalculator:
                 )
             )
 
+    @staticmethod
+    def _timeout_reward(state: dict[str, Any]) -> float:
+        """Gradient timeout penalty: punish harder when the bot had a big army
+        but never attacked (passive play), softer when army is small (macro
+        failure is a different problem).
+
+        Range: -80 (big idle army) to -20 (no army at all).
+        Base is -50, adjusted ±30 by army_supply ratio.
+        """
+        army = state.get("army_supply", 0)
+        enemy = state.get("enemy_army_supply_visible", 0)
+        # Ratio: how much bigger our army is vs enemy (capped 0–1).
+        # High ratio = we had a strong army but didn't attack = punish more.
+        if army + enemy == 0:
+            ratio = 0.0
+        else:
+            ratio = min(army / max(army + enemy, 1), 1.0)
+        # ratio ~0.5 → balanced, ratio ~1.0 → we have army, enemy doesn't
+        # Shift so 0.5 maps to 0 adjustment, 1.0 maps to -30, 0.0 maps to +30
+        adjustment = -60.0 * (ratio - 0.5)  # range: +30 to -30
+        return BASE_TIMEOUT_REWARD + adjustment
+
     def compute_step_reward(
         self,
         state: dict[str, Any],
@@ -168,7 +190,7 @@ class RewardCalculator:
             if result == "win":
                 total += BASE_WIN_REWARD
             elif result == "timeout":
-                total += BASE_TIMEOUT_REWARD
+                total += self._timeout_reward(state)
             elif result == "loss":
                 total += BASE_LOSS_REWARD
 
