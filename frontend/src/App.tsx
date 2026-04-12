@@ -117,10 +117,10 @@ function App() {
           </>
         )}
         {tab === "loop" && (
-          <>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px", alignItems: "start" }}>
             <LoopStatus />
             <TriggerControls />
-          </>
+          </div>
         )}
         {tab === "improvements" && (
           <>

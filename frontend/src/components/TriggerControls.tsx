@@ -456,9 +456,9 @@ export function TriggerControls() {
             className="config-grid"
             style={{
               display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "12px 24px",
-              maxWidth: "700px",
+              gridTemplateColumns: "auto 1fr",
+              gap: "8px 12px",
+              alignItems: "center",
             }}
           >
             {CONFIG_FIELDS.map((spec) => {
@@ -470,19 +470,17 @@ export function TriggerControls() {
                   key={spec.key}
                   className="config-field"
                   style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "4px",
+                    display: "contents",
                   }}
                 >
-                  <span style={{ fontSize: "0.85em", color: "#aaa" }}>{spec.label}</span>
+                  <span style={{ fontSize: "0.85em", color: "#aaa", whiteSpace: "nowrap" }}>{spec.label}</span>
                   <input
                     type="number"
                     step={spec.step}
                     value={value}
                     onChange={handleConfigChange(spec.key)}
                     name={spec.key}
-                    style={{ padding: "6px 8px" }}
+                    style={{ padding: "6px 8px", width: "100%" }}
                   />
                 </label>
               );
@@ -510,62 +508,53 @@ export function TriggerControls() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1fr auto",
-            gap: "12px 24px",
-            maxWidth: "700px",
-            alignItems: "end",
+            gridTemplateColumns: "auto 1fr auto",
+            gap: "8px 12px",
+            alignItems: "center",
           }}
         >
-          <label className="config-field" style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-            <span style={{ fontSize: "0.85em", color: "#aaa" }}>Checkpoint{bestLabel}</span>
-            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-              <select
-                value={selectedCheckpoint}
-                onChange={(e) => setSelectedCheckpoint(e.target.value)}
-                aria-label="Checkpoint"
-                style={{ padding: "6px 8px", flex: 1 }}
-              >
-                {checkpoints.length === 0 ? (
-                  <option value="">(none)</option>
-                ) : null}
-                {checkpoints.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-              <button type="button" onClick={() => void fetchCheckpoints()}>
-                Refresh
-              </button>
-            </div>
-          </label>
+          <span style={{ fontSize: "0.85em", color: "#aaa", whiteSpace: "nowrap" }}>Checkpoint{bestLabel}</span>
+          <select
+            value={selectedCheckpoint}
+            onChange={(e) => setSelectedCheckpoint(e.target.value)}
+            aria-label="Checkpoint"
+            style={{ padding: "6px 8px", width: "100%" }}
+          >
+            {checkpoints.length === 0 ? (
+              <option value="">(none)</option>
+            ) : null}
+            {checkpoints.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+          <button type="button" onClick={() => void fetchCheckpoints()}>
+            Refresh
+          </button>
+
+          <span style={{ fontSize: "0.85em", color: "#aaa" }}>Games</span>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={evalGames}
+            onChange={(e) => setEvalGames(Number(e.target.value))}
+            aria-label="Games"
+            style={{ padding: "6px 8px", width: "100%" }}
+          />
           <div />
-          <label className="config-field" style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-            <span style={{ fontSize: "0.85em", color: "#aaa" }}>Games</span>
-            <input
-              type="number"
-              min="1"
-              step="1"
-              value={evalGames}
-              onChange={(e) => setEvalGames(Number(e.target.value))}
-              aria-label="Games"
-              style={{ padding: "6px 8px" }}
-            />
-          </label>
-          <label className="config-field" style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-            <span style={{ fontSize: "0.85em", color: "#aaa" }}>Difficulty</span>
-            <input
-              type="number"
-              min="1"
-              step="1"
-              value={evalDifficulty}
-              onChange={(e) => setEvalDifficulty(Number(e.target.value))}
-              aria-label="Difficulty"
-              style={{ padding: "6px 8px" }}
-            />
-          </label>
-        </div>
-        <div style={{ marginTop: "8px" }}>
+
+          <span style={{ fontSize: "0.85em", color: "#aaa" }}>Difficulty</span>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={evalDifficulty}
+            onChange={(e) => setEvalDifficulty(Number(e.target.value))}
+            aria-label="Difficulty"
+            style={{ padding: "6px 8px", width: "100%" }}
+          />
           <button type="button" onClick={handleEvaluate}>
             Evaluate
           </button>
@@ -641,18 +630,17 @@ export function TriggerControls() {
             {curriculum ? ` / ${curriculum.max_difficulty}` : null}
           </div>
         </div>
-        <div className="control-row">
-          <label className="config-field">
-            <span>New difficulty</span>
-            <input
-              type="number"
-              min="1"
-              step="1"
-              value={curriculumDraft}
-              onChange={(e) => setCurriculumDraft(Number(e.target.value))}
-              aria-label="New difficulty"
-            />
-          </label>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <span style={{ fontSize: "0.85em", color: "#aaa", whiteSpace: "nowrap" }}>New difficulty</span>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={curriculumDraft}
+            onChange={(e) => setCurriculumDraft(Number(e.target.value))}
+            aria-label="New difficulty"
+            style={{ padding: "6px 8px", width: "80px" }}
+          />
           <button
             type="button"
             className="destructive"
