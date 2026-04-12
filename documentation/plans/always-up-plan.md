@@ -702,11 +702,13 @@ The first end-to-end soak run surfaced two findings whose resolution should shap
 - 15+ API endpoints for daemon control, triggers, evaluation, promotions, rollback,
   curriculum. **New in Phase 4:** `GET /api/training/reward-trends?games=N` (Step 2)
   and `reward_logs_size_bytes` field added to `GET /api/training/status` (Step 1).
-- 724 Python unit tests + 115 frontend vitest tests passing (as of Phase 4.5 Step 5 blocker fixes, 2026-04-11).
+- 822 Python unit tests + 105 frontend vitest tests passing (as of soak v4-rebalance, 2026-04-12).
 
 **What's missing:**
-- No real end-to-end soak test yet — the autonomous loop has never been observed
-  running unattended against SC2 for hours (addressed by Phase 4.5).
+- No combat-oriented reward shaping — `reward_rules.json` has 13 rules, all
+  economy/scouting/defense. PPO never chooses ATTACK because there's no gradient
+  toward military production or aggression. Soak v4-rebalance (2026-04-12) confirmed:
+  100% of training games timeout at 480s with the bot spamming expand_now().
 - No WebSocket channel for training/loop events — Loop, Improvements, and Alerts
   tabs still poll every 5s. Decision reaffirmed as deferred in Phase 4; revisit
   after soak-test findings.

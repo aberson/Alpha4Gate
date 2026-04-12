@@ -9,7 +9,7 @@ Goal: AI-vs-AI competition with transparent model introspection and autonomous s
 
 - Python 3.12, uv, burnysc2 v7.1.3, FastAPI, React+TypeScript+Vite
 - Deep learning: PyTorch, Stable Baselines 3 (PPO), SQLite for training data
-- Testing: pytest (682 unit tests) + vitest (105 frontend tests), ruff, mypy strict mode
+- Testing: pytest (822 unit tests) + vitest (105 frontend tests), ruff, mypy strict mode
 
 ## Commands
 

@@ -9,7 +9,7 @@ A StarCraft II Protoss bot combining rule-based decision-making, a PPO neural po
 - **Evaluation metrics** — structured reward shaping, win-rate tracking, training diagnostics, and cross-game statistics
 - **Autonomous self-improvement** — train-play-evaluate loop that runs 24/7, getting stronger with each cycle
 
-**Phase 4.7 complete** — issues #82–#86 closed. Eval pipeline fixes after soak-2026-04-11b surfaced a Phase 4.6 Step 1 regression that silently flagged every eval game as "crashed". Step 1 (#82, BLOCKER) exposes `SC2Env.game_id` as a read-only property so the evaluator reads the post-reset suffixed id instead of the pre-reset base id. Step 2 (#83) widens the #73 crash-visibility watchdog to cover the full promotion + rollback window. Step 3 (#84) pushes an unconditional terminal sentinel on `_obs_queue` in `_run_game_thread`'s finally block so `SC2Env.step()` never stalls 300s after a normal game-end. Steps 4 & 5 (#85, #86) replace a stale `wc -l > 50` soak-test gate with substring grep checks and rename the trainer's misleading "Training: 10 games" log to a PPO-budget framing. 808 Python tests + 105 frontend tests passing, 0 type errors, 0 lint violations. (Phase 4.6 — data-plumbing fixes #75–#81 — and Phase 4.5 — soak-3 blockers #66–#74 — closed previously. Phase 4 — dashboard #50–#59 — closed previously. Phase 3 — autonomous loop #43–#49 — closed previously.)
+**Soak v4-rebalance complete (2026-04-12)** — advisor bridge + reward rebalancing committed and soak-validated in 89-min training run. TrainingAdvisorBridge (dedicated daemon thread with own asyncio loop) eliminates the CancelledError crash that killed advisor integration during training. PrinciplesLookup injects situational strategy context from 812-line guiding principles file. Timeout reduced to 480s (was 900s), gradient timeout penalty fires correctly. Soak validated: 8/8 advisor round-trips, zero CancelledErrors, 2x game throughput. Next: combat reward shaping — PPO action space includes ATTACK but reward_rules.json has zero combat incentives, causing 100% timeout stalls. 822 Python tests + 105 frontend tests passing, 0 type errors, 0 lint violations. (Phase 4.7 — eval pipeline fixes #82–#86 — closed previously. Phase 4.6 — data-plumbing fixes #75–#81 — closed previously.)
 
 **Current capability:** Wins reliably at difficulty 1-3 (Easy through Medium AI). Struggles at 4-5 (Hard).
 
@@ -26,7 +26,7 @@ A StarCraft II Protoss bot combining rule-based decision-making, a PPO neural po
 | Deep learning | PyTorch + Stable Baselines 3 | PPO policy network for strategic decisions |
 | Training data | SQLite | Structured (s,a,r,s') transition storage |
 | Charts | Recharts 3.8 | Per-rule reward trend visualization |
-| Testing (Python) | pytest | 808 unit tests, SC2 integration markers |
+| Testing (Python) | pytest | 822 unit tests, SC2 integration markers |
 | Testing (Frontend) | vitest + jsdom + @testing-library/react | 105 component / hook / lib tests |
 | Linting | ruff + mypy | Strict type checking, consistent style |
 
@@ -124,7 +124,7 @@ The bot follows a build order during the opening, then transitions to dynamic de
 ## Testing
 
 ```bash
-uv run pytest              # 808 unit tests (no SC2 needed)
+uv run pytest              # 822 unit tests (no SC2 needed)
 uv run pytest -m sc2       # SC2 integration tests (SC2 must be running)
 uv run ruff check .        # Lint
 uv run mypy src            # Type check
@@ -151,7 +151,7 @@ Alpha4Gate/
 │   ├── imitation.py         # Imitation pre-training from replays
 │   ├── api.py               # FastAPI server (REST + WebSocket)
 │   └── ...                  # scouting, config, logger, runner, etc.
-├── tests/                   # 808 unit tests (+ SC2 integration markers)
+├── tests/                   # 822 unit tests (+ SC2 integration markers)
 ├── frontend/                # React + TypeScript dashboard (Vite)
 ├── scripts/                 # Live test, training analysis, model evaluation
 ├── documentation/wiki/      # Project wiki (start with index.md)
