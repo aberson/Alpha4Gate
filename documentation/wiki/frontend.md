@@ -3,9 +3,9 @@
 React SPA for live game observation, training metrics, command input, and autonomous
 loop transparency.
 
-> **At a glance:** 9-tab SPA (Live, Stats, Builds, Replays, Decisions, Training, Loop,
-> Improvements, Alerts) built with React + TypeScript + Vite. Live game data via
-> WebSocket (real-time). Training and loop metrics via REST polling (5s). Five custom
+> **At a glance:** 10-tab SPA (Live, Stats, Builds, Replays, Decisions, Training, Loop,
+> Improvements, Alerts, Advisor) built with React + TypeScript + Vite. Live game data via
+> WebSocket (real-time). Training and loop metrics via REST polling (5s). Seven custom
 > hooks handle WebSocket connections, API calls, and client-side alerting. All frontend
 > code is domain-agnostic — it renders whatever JSON the backend sends. Unit tests run
 > under vitest + jsdom.
@@ -29,6 +29,7 @@ Today it's strongest at live game observation and weakest at training visibility
 | **Loop** | LoopStatus + TriggerControls | `/api/training/daemon` + `/api/training/status` + `/api/training/start`/`stop` | 5s poll + on-demand |
 | **Improvements** | RecentImprovements + RewardTrends | `/api/training/promotions/history` + `/api/training/reward-trends` | 5s poll |
 | **Alerts** | AlertsPanel (+ AlertToast overlay) | `useAlerts` hook (derives from `/api/training/*` polls) | 5s poll |
+| **Advisor** | AdvisedControlPanel | `/api/advised/state` + `/api/advised/control` | 3s poll + on-demand |
 
 ### What each component shows
 
@@ -172,11 +173,16 @@ as `*.test.tsx` / `*.test.ts`. Run with `npm run test:run`.
 | `frontend/src/components/RewardTrends.tsx` | Per-rule reward contribution table |
 | `frontend/src/components/AlertToast.tsx` | Transient new-alert overlay |
 | `frontend/src/components/AlertsPanel.tsx` | Full alert history + filter + ack |
+| `frontend/src/components/AdvisedControlPanel.tsx` | Advisor tab: live status, loop controls, hints, reward injection |
+| `frontend/src/components/ConnectionStatus.tsx` | Header connection dot + advised-run badge |
+| `frontend/src/components/StaleDataBanner.tsx` | Reusable stale-data warning banner |
 | `frontend/src/hooks/useWebSocket.ts` | Generic WS hook |
 | `frontend/src/hooks/useGameState.ts` | Game state WS hook |
 | `frontend/src/hooks/useBuildOrders.ts` | Build order API hook |
 | `frontend/src/hooks/useDaemonStatus.ts` | Daemon + training status polling |
 | `frontend/src/hooks/useAlerts.ts` | Client-side alert engine + persistence |
+| `frontend/src/hooks/useApi.ts` | Generic REST polling hook with stale detection |
+| `frontend/src/hooks/useAdvisedRun.ts` | Advised run state polling + control mutations |
 | `frontend/src/lib/alertRules.ts` | Alert rule definitions and evaluator |
 | `frontend/src/lib/alertStorage.ts` | `localStorage` persistence for alerts |
 | `frontend/vitest.config.ts` | Vitest config (jsdom + global setup) |

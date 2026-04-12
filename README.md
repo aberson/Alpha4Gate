@@ -9,7 +9,7 @@ A StarCraft II Protoss bot combining rule-based decision-making, a PPO neural po
 - **Evaluation metrics** — structured reward shaping, win-rate tracking, training diagnostics, and cross-game statistics
 - **Autonomous self-improvement** — train-play-evaluate loop that runs 24/7, getting stronger with each cycle
 
-**Soak v4-rebalance complete (2026-04-12)** — advisor bridge + reward rebalancing committed and soak-validated in 89-min training run. TrainingAdvisorBridge (dedicated daemon thread with own asyncio loop) eliminates the CancelledError crash that killed advisor integration during training. PrinciplesLookup injects situational strategy context from 812-line guiding principles file. Timeout reduced to 480s (was 900s), gradient timeout penalty fires correctly. Soak validated: 8/8 advisor round-trips, zero CancelledErrors, 2x game throughput. Next: combat reward shaping — PPO action space includes ATTACK but reward_rules.json has zero combat incentives, causing 100% timeout stalls. 822 Python tests + 105 frontend tests passing, 0 type errors, 0 lint violations. (Phase 4.7 — eval pipeline fixes #82–#86 — closed previously. Phase 4.6 — data-plumbing fixes #75–#81 — closed previously.)
+**Advisor control panel complete (2026-04-12)** — dashboard Advisor tab for monitoring and controlling `/improve-bot-advised` runs mid-loop. File-based bridge: skill writes `data/advised_run_state.json` at phase boundaries, reads `data/advised_run_control.json` for user overrides (games/cycle, difficulty, fail threshold, strategic hints, reward rules, stop/reset). 3 new API endpoints, AdvisedControlPanel component + useAdvisedRun hook. Win-rate alert suppressed during advised runs (own Phase 5 validation handles regression detection). Stop button calls `/api/shutdown` for immediate process cleanup. 829 Python tests + 126 frontend tests passing, 0 type errors, 0 lint violations.
 
 **Current capability:** Wins reliably at difficulty 1-3 (Easy through Medium AI). Struggles at 4-5 (Hard).
 
@@ -26,8 +26,8 @@ A StarCraft II Protoss bot combining rule-based decision-making, a PPO neural po
 | Deep learning | PyTorch + Stable Baselines 3 | PPO policy network for strategic decisions |
 | Training data | SQLite | Structured (s,a,r,s') transition storage |
 | Charts | Recharts 3.8 | Per-rule reward trend visualization |
-| Testing (Python) | pytest | 822 unit tests, SC2 integration markers |
-| Testing (Frontend) | vitest + jsdom + @testing-library/react | 105 component / hook / lib tests |
+| Testing (Python) | pytest | 829 unit tests, SC2 integration markers |
+| Testing (Frontend) | vitest + jsdom + @testing-library/react | 126 component / hook / lib tests |
 | Linting | ruff + mypy | Strict type checking, consistent style |
 
 ## Dashboard tabs
@@ -43,6 +43,7 @@ A StarCraft II Protoss bot combining rule-based decision-making, a PPO neural po
 | Loop | Daemon state, trigger evaluation, full daemon control panel (Phase 4) |
 | Improvements | Recent promotions/rollbacks + per-rule reward trend chart (Phase 4) |
 | Alerts | Severity-filtered alert list with ack/dismiss + unread badge in nav (Phase 4) |
+| Advisor | Live status, loop controls, strategic hints, reward injection for /improve-bot-advised runs |
 
 In-app `AlertToast` lives at the App root and shows new alerts as they fire, regardless of which tab is active.
 
@@ -124,7 +125,7 @@ The bot follows a build order during the opening, then transitions to dynamic de
 ## Testing
 
 ```bash
-uv run pytest              # 822 unit tests (no SC2 needed)
+uv run pytest              # 829 unit tests (no SC2 needed)
 uv run pytest -m sc2       # SC2 integration tests (SC2 must be running)
 uv run ruff check .        # Lint
 uv run mypy src            # Type check
@@ -135,7 +136,7 @@ cd frontend && npx tsc --noEmit  # TypeScript check
 
 ```
 Alpha4Gate/
-├── src/alpha4gate/          # 38 Python modules
+├── src/alpha4gate/          # 46 Python modules
 │   ├── commands/            # Strategic command system (parser, interpreter, executor, queue)
 │   ├── bot.py               # Main BotAI subclass, game loop orchestration
 │   ├── decision_engine.py   # Strategic state machine (6 states)
@@ -151,7 +152,7 @@ Alpha4Gate/
 │   ├── imitation.py         # Imitation pre-training from replays
 │   ├── api.py               # FastAPI server (REST + WebSocket)
 │   └── ...                  # scouting, config, logger, runner, etc.
-├── tests/                   # 822 unit tests (+ SC2 integration markers)
+├── tests/                   # 829 unit tests (+ SC2 integration markers)
 ├── frontend/                # React + TypeScript dashboard (Vite)
 ├── scripts/                 # Live test, training analysis, model evaluation
 ├── documentation/wiki/      # Project wiki (start with index.md)

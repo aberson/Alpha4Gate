@@ -86,7 +86,7 @@ deferred to a later phase. Monitor `data/reward_logs/` size manually for now.
 
 > **At a glance:** Observer extracts game state every 11 steps. GameLogger writes JSONL
 > in a background thread and feeds the WebSocket broadcast queue. FastAPI drains both
-> queues every 500ms. Three WS endpoints, ~15 REST endpoints. Frontend has 9 components.
+> queues every 500ms. Three WS endpoints, 46 REST endpoints. Frontend has 21 components.
 
 ### Data collection: Observer
 

@@ -9,7 +9,7 @@ Goal: AI-vs-AI competition with transparent model introspection and autonomous s
 
 - Python 3.12, uv, burnysc2 v7.1.3, FastAPI, React+TypeScript+Vite
 - Deep learning: PyTorch, Stable Baselines 3 (PPO), SQLite for training data
-- Testing: pytest (822 unit tests) + vitest (105 frontend tests), ruff, mypy strict mode
+- Testing: pytest (829 unit tests) + vitest (126 frontend tests), ruff, mypy strict mode
 
 ## Commands
 
@@ -27,8 +27,8 @@ bash scripts/start-dev.sh                  # Start backend + frontend together (
 
 ## Directory layout
 
-- `src/alpha4gate/` — 38 Python modules (bot, decision engine, commands/, learning/)
-- `tests/` — 32 test files
+- `src/alpha4gate/` — 46 Python modules (bot, decision engine, commands/, learning/)
+- `tests/` — 45 test files
 - `frontend/` — React dashboard (LiveView, CommandPanel, TrainingDashboard, etc.)
 - `scripts/` — live-test.sh, analyze_rewards.py, evaluate_model.py, etc.
 - `documentation/wiki/` — project wiki (start with `index.md` for system diagram + page map)

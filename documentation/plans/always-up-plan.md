@@ -681,13 +681,16 @@ The first end-to-end soak run surfaced two findings whose resolution should shap
 - SQLite DB — games + transitions + action probabilities, win rate queries, per-model stats
 - WebSocket broadcasting — live game state, decisions, commands (ephemeral)
 - JSONL logging — per-game files in `data/reward_logs/` (always-on, opt-out via `--no-reward-log`)
-- React dashboard (9 tabs) — Live, Stats, Builds, Replays, Decisions, Training, Loop,
-  Improvements, Alerts. Training tab: TrainingDashboard + ModelComparison +
+- React dashboard (10 tabs) — Live, Stats, Builds, Replays, Decisions, Training, Loop,
+  Improvements, Alerts, Advisor. Training tab: TrainingDashboard + ModelComparison +
   ImprovementTimeline + CheckpointList + RewardRuleEditor. Loop tab: LoopStatus +
   TriggerControls (with ConfirmDialog). Improvements tab: RecentImprovements +
   RewardTrends. Alerts tab: AlertsPanel + global AlertToast overlay.
+  Advisor tab: AdvisedControlPanel + useAdvisedRun hook. File-based bridge:
+  skill writes `data/advised_run_state.json`, reads `data/advised_run_control.json`.
+  Win-rate alert suppressed during active advised runs.
 - Frontend test infrastructure — vitest + jsdom, `frontend/vitest.config.ts`, shared
-  setup in `frontend/src/test/setup.ts`, 105 tests currently passing.
+  setup in `frontend/src/test/setup.ts`, 126 tests currently passing.
 - Client-side alert engine — `alertRules.ts`, `alertStorage.ts`, `useAlerts` hook.
   Rules evaluated on each 5s poll, persisted to `localStorage`. **Phase 4.5 #68:**
   backend now exposes a bounded ring buffer of ERROR-level log records via
@@ -699,10 +702,10 @@ The first end-to-end soak run surfaced two findings whose resolution should shap
 - Wiki — 15 pages documenting all systems (documentation/wiki/)
 - Per-checkpoint win rate tracking via `GET /api/training/models`
 - Persistent decision logs with action probability distributions
-- 15+ API endpoints for daemon control, triggers, evaluation, promotions, rollback,
-  curriculum. **New in Phase 4:** `GET /api/training/reward-trends?games=N` (Step 2)
-  and `reward_logs_size_bytes` field added to `GET /api/training/status` (Step 1).
-- 822 Python unit tests + 105 frontend vitest tests passing (as of soak v4-rebalance, 2026-04-12).
+- 46 API endpoints for daemon control, triggers, evaluation, promotions, rollback,
+  curriculum, advised run control. **New:** `GET /api/advised/state`,
+  `GET /api/advised/control`, `PUT /api/advised/control` for dashboard bridge.
+- 829 Python unit tests + 126 frontend vitest tests passing (as of advisor control panel, 2026-04-12).
 
 **What's missing:**
 - No combat-oriented reward shaping — `reward_rules.json` has 13 rules, all

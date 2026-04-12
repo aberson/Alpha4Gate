@@ -2,10 +2,11 @@
 
 What's SC2-specific vs what could work with any game or domain.
 
-> **At a glance:** 25 of 38 Python modules (66%) have zero SC2/burnysc2 imports and are
-> fully domain-agnostic. The entire learning pipeline (trainer, rewards, features,
-> neural engine, database, checkpoints, imitation) is generic. SC2 coupling concentrates
-> in 9 modules: `bot.py`, `connection.py`, `observer.py`, `macro_manager.py`, `micro.py`,
+> **At a glance:** 16 of 23 top-level Python modules (70%) have zero SC2/burnysc2 imports
+> and are fully domain-agnostic (46 .py files total including subdirectories). The entire
+> learning pipeline (trainer, rewards, features, neural engine, database, checkpoints,
+> imitation) is generic. SC2 coupling concentrates in 7 modules: `bot.py`,
+> `connection.py`, `observer.py`, `macro_manager.py`, `micro.py`,
 > `scouting.py`, `commands/executor.py`, and `learning/environment.py` (hybrid). The
 > `SC2Env` gymnasium wrapper is the key bridge — its public interface is domain-agnostic,
 > with SC2 isolated in one private method.
