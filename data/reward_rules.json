@@ -121,6 +121,30 @@
       "active": true
     },
     {
+      "id": "excess-workers-50",
+      "description": "Penalize having more than 50 workers (over-saturated economy)",
+      "condition": {
+        "field": "worker_count",
+        "op": ">",
+        "value": 50
+      },
+      "requires": null,
+      "reward": -0.004,
+      "active": true
+    },
+    {
+      "id": "excess-workers-65",
+      "description": "Stronger penalty for 65+ workers (extreme over-saturation)",
+      "condition": {
+        "field": "worker_count",
+        "op": ">",
+        "value": 65
+      },
+      "requires": null,
+      "reward": -0.008,
+      "active": true
+    },
+    {
       "id": "worker-production",
       "description": "Reward having 16+ workers before 2:00",
       "condition": {
