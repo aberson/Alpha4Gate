@@ -231,7 +231,16 @@ class TrainingOrchestrator:
                 # not arrive. ``games_per_cycle`` still governs the
                 # win-rate window downstream (``get_recent_win_rate``)
                 # which is why the field is retained.
-                est_steps = games_per_cycle * 15
+                # Phase 4.8: increased from 15 to 150 steps per game.
+                # The old estimate (15) was calibrated for a regime where
+                # one RL game consumed the entire budget (~192 steps).
+                # After Fix C (terminal rewards 10x up), games can be
+                # much shorter and the budget fragments across many
+                # micro-games that never reach a terminal state. 150
+                # steps/game × 10 games = 1500 total timesteps gives
+                # enough budget for full-length games to receive the
+                # +100/-100 terminal reward signal.
+                est_steps = games_per_cycle * 150
                 _log.info(
                     "Training cycle %d: PPO.learn(total_timesteps=%d)",
                     self._cycle, est_steps,
