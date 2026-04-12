@@ -77,6 +77,7 @@ class TrainingOrchestrator:
         win_rate_threshold: float = 0.8,
         disk_limit_gb: float = DEFAULT_DISK_LIMIT_GB,
         replay_dir: str | Path | None = None,
+        claude_advisor: Any | None = None,
     ) -> None:
         self._checkpoint_dir = Path(checkpoint_dir)
         self._db_path = Path(db_path)
@@ -94,6 +95,10 @@ class TrainingOrchestrator:
         )
         self._reward_rules_path = reward_rules_path
         self._hyperparams_path = hyperparams_path
+        # Phase 4.8 Approach B: Claude advisor for training-time observation
+        # enrichment. When set, the advisor fires during training games and
+        # its recommendations appear in the observation vector.
+        self._claude_advisor = claude_advisor
         self._map_name = map_name
         self._difficulty = initial_difficulty
         self._max_difficulty = max_difficulty
@@ -430,6 +435,7 @@ class TrainingOrchestrator:
             replay_dir=replay_dir,
             stats_path=stats_path,
             build_order_label="4gate",
+            claude_advisor=self._claude_advisor,
         )
 
     def _init_or_resume_model(self, resume: bool) -> Any:

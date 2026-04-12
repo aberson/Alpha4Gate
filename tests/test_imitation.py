@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from alpha4gate.learning.database import TrainingDB
-from alpha4gate.learning.features import FEATURE_DIM
+from alpha4gate.learning.features import BASE_GAME_FEATURE_DIM as FEATURE_DIM
 from alpha4gate.learning.imitation import run_imitation_training
 
 
@@ -89,18 +89,18 @@ class TestImitationTraining:
         assert result["epochs"] < 100
         assert result["agreement"] >= 0.50
 
-    def test_imitation_model_uses_sc2env_spaces(
+    def test_imitation_model_uses_db_feature_space(
         self, populated_db: TrainingDB, tmp_path: Path
     ) -> None:
-        """Phase 4.5 F8 regression guard.
+        """Imitation model obs space matches DB transitions (BASE_GAME_FEATURE_DIM).
 
-        Imitation must build its dummy env with SC2Env's spaces, not with
-        hardcoded literals. The trainer fix in commit afaeda5 patched
-        trainer.py but missed this duplicate copy in imitation.py.
+        Phase 4.8 changed SC2Env's observation_space to 24 (17 game + 7 advisor),
+        but imitation trains on DB transitions which are 17-dim only. The
+        imitation model should use BASE_GAME_FEATURE_DIM (17), not the full
+        FEATURE_DIM (24). The RL PPO model uses 24; imitation uses 17.
         """
+        import gymnasium
         from stable_baselines3 import PPO
-
-        from alpha4gate.learning.environment import SC2Env
 
         cp_dir = tmp_path / "checkpoints"
         result = run_imitation_training(
@@ -111,7 +111,10 @@ class TestImitationTraining:
         )
         saved = Path(result["saved_path"])
         assert saved.exists()
-        # Load the saved model and assert its spaces match SC2Env
         model = PPO.load(str(saved.with_suffix("")))
-        assert model.observation_space == SC2Env.observation_space
+        expected_space = gymnasium.spaces.Box(
+            low=0.0, high=1.0, shape=(FEATURE_DIM,), dtype=np.float32,
+        )
+        assert model.observation_space == expected_space
+        from alpha4gate.learning.environment import SC2Env
         assert model.action_space == SC2Env.action_space

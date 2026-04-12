@@ -65,11 +65,18 @@ def run_imitation_training(
     for i, (_, divisor) in enumerate(_FEATURE_SPEC):
         norm_states[:, i] = np.clip(states[:, i] / divisor, 0.0, 1.0)
 
-    # Create a dummy gym env for SB3 model initialization. Spaces are read
-    # from SC2Env (single source of truth) so the imitation model and the
-    # RL trainer always agree on shape — Phase 4.5 finding F8.
+    # Create a dummy gym env for SB3 model initialization. The imitation
+    # model trains on DB transitions which are BASE_GAME_FEATURE_DIM (17)
+    # wide — game-state features only, no advisor context. Phase 4.8
+    # expanded SC2Env's observation_space to include 7 advisor features
+    # (FEATURE_DIM=24), but imitation training operates on historical data
+    # that predates the advisor and has no advisor columns in the DB.
+    from alpha4gate.learning.features import BASE_GAME_FEATURE_DIM
+
     dummy_env = gymnasium.make("CartPole-v1")
-    dummy_env.observation_space = SC2Env.observation_space
+    dummy_env.observation_space = gymnasium.spaces.Box(
+        low=0.0, high=1.0, shape=(BASE_GAME_FEATURE_DIM,), dtype=np.float32,
+    )
     dummy_env.action_space = SC2Env.action_space
 
     # Build PPO model with target architecture

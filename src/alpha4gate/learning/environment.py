@@ -26,7 +26,7 @@ from alpha4gate.decision_engine import (
     StrategicState,
 )
 from alpha4gate.learning.database import TrainingDB
-from alpha4gate.learning.features import FEATURE_DIM, encode
+from alpha4gate.learning.features import BASE_GAME_FEATURE_DIM, FEATURE_DIM, encode
 from alpha4gate.learning.rewards import RewardCalculator
 
 _log = logging.getLogger(__name__)
@@ -75,11 +75,17 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         replay_dir: Path | None = None,
         stats_path: Path | None = None,
         build_order_label: str = "4gate",
+        claude_advisor: Any | None = None,
     ) -> None:
         super().__init__()
         self._map_name = map_name
         self._difficulty = difficulty
         self._reward_calc = reward_calculator or RewardCalculator()
+        # Phase 4.8 Approach B: when provided, the Claude advisor fires
+        # during training games and its recommendations are encoded into
+        # the observation vector so PPO can learn from Claude's strategic
+        # guidance. When None, advisor features are all zeros.
+        self._claude_advisor = claude_advisor
         self._db = db
         # Phase 4.6 Step 2: wire legacy dashboard producers into the
         # trainer. Both paths are optional so existing call sites and
@@ -438,6 +444,7 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
             obs_queue=obs_queue,
             action_queue=action_queue,
             reward_calc=self._reward_calc,
+            claude_advisor=getattr(self, "_claude_advisor", None),
         )
 
         difficulty_map: dict[int, Difficulty] = {
@@ -644,11 +651,20 @@ def _make_training_bot(
     obs_queue: queue.Queue[_ObsTuple],
     action_queue: queue.Queue[int | None],
     reward_calc: RewardCalculator,
+    claude_advisor: Any | None = None,
 ) -> Any:
     """Create a full training bot that inherits Alpha4GateBot.
 
     The bot runs full macro/micro/scouting from Alpha4GateBot but lets the
     gym action queue override the strategic state each decision step.
+
+    Args:
+        claude_advisor: Optional ClaudeAdvisor instance. When provided,
+            the advisor fires during training games (rate-limited at ~30s
+            game time intervals) and its recommendations are encoded into
+            the observation vector so PPO can learn to follow Claude's
+            strategic guidance (Approach B from #89). When ``None``,
+            advisor features in the observation are all zeros.
     """
     from alpha4gate.bot import Alpha4GateBot
     from alpha4gate.build_orders import default_4gate
@@ -661,6 +677,7 @@ def _make_training_bot(
                 build_order=default_4gate(),
                 logger=None,
                 enable_console=False,
+                claude_advisor=claude_advisor,
             )
             self._obs_queue_train = obs_queue
             self._action_queue_train = action_queue
@@ -709,7 +726,27 @@ def _make_training_bot(
 
             if iteration % STEPS_PER_ACTION == 0:
                 snapshot = self._build_snapshot()
-                obs = encode(snapshot)
+                # Extract advisor features from the bot's last advisor
+                # response (if the advisor is enabled and has fired at
+                # least once). These become part of the observation so
+                # PPO can learn from Claude's recommendations.
+                _adv_commands: list[dict[str, str]] | None = None
+                _adv_urgency: str | None = None
+                if (
+                    self._claude_advisor is not None
+                    and self._claude_advisor.last_response is not None
+                ):
+                    resp = self._claude_advisor.last_response
+                    _adv_commands = [
+                        {"action": cmd.action}
+                        for cmd in resp.commands
+                    ]
+                    _adv_urgency = resp.urgency
+                obs = encode(
+                    snapshot,
+                    advisor_commands=_adv_commands,
+                    advisor_urgency=_adv_urgency,
+                )
                 state_dict = asdict(snapshot)
 
                 # Check for game time limit — send terminal timeout if exceeded

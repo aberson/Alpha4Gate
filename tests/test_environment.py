@@ -21,6 +21,7 @@ import pytest
 from alpha4gate.decision_engine import GameSnapshot, StrategicState
 from alpha4gate.learning.environment import (
     _ACTION_TO_STATE,
+    BASE_GAME_FEATURE_DIM,
     FEATURE_DIM,
     MAX_GAME_TIME_SECONDS,
     STEPS_PER_ACTION,
@@ -116,7 +117,7 @@ class TestSnapshotToRaw:
         snap = _default_snapshot()
         # Need to bind the method — use the class method directly
         raw = SC2Env._snapshot_to_raw(env, snap)
-        assert raw.shape == (FEATURE_DIM,)
+        assert raw.shape == (BASE_GAME_FEATURE_DIM,)  # raw DB vector is game-state only
 
     def test_raw_values_match_snapshot(self) -> None:
         env = SC2Env.__new__(SC2Env)

@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from alpha4gate.learning.database import TrainingDB
-from alpha4gate.learning.features import FEATURE_DIM
+from alpha4gate.learning.features import BASE_GAME_FEATURE_DIM
 from alpha4gate.learning.trainer import (
     TrainingOrchestrator,
     compute_adjusted_win_rate,
@@ -162,7 +162,7 @@ class TestCycleTracking:
         # Insert enough data to make the file non-trivial
         db.store_game("g1", "Simple64", 1, "win", 300.0, 5.0, "v0")
         for i in range(100):
-            state = np.zeros(FEATURE_DIM, dtype=np.float32)
+            state = np.zeros(BASE_GAME_FEATURE_DIM, dtype=np.float32)
             db.store_transition("g1", i, float(i), state, action=0, reward=0.1)
         db.close()
 

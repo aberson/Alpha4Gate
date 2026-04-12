@@ -40,7 +40,11 @@ class TestEncode:
             battery_count=10,
         )
         vec = encode(snap)
-        np.testing.assert_allclose(vec, np.ones(FEATURE_DIM, dtype=np.float32), atol=1e-6)
+        # First 17 elements (game state) should all be 1.0; last 7
+        # (advisor) are 0.0 since no advisor data was provided.
+        expected = np.ones(FEATURE_DIM, dtype=np.float32)
+        expected[17:] = 0.0
+        np.testing.assert_allclose(vec, expected, atol=1e-6)
 
     def test_clipping_above_max(self) -> None:
         snap = GameSnapshot(minerals=5000, vespene=5000)

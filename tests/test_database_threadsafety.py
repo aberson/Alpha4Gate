@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 
 from alpha4gate.learning.database import TrainingDB
-from alpha4gate.learning.features import FEATURE_DIM
+from alpha4gate.learning.features import BASE_GAME_FEATURE_DIM as FEATURE_DIM
 
 
 class TestThreadSafety:

@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from alpha4gate.learning.features import FEATURE_DIM
+from alpha4gate.learning.features import BASE_GAME_FEATURE_DIM
 
 _log = logging.getLogger(__name__)
 
@@ -233,7 +233,7 @@ class TrainingDB:
         if next_state is not None:
             values.extend(int(v) for v in next_state)
         else:
-            values.extend([None] * FEATURE_DIM)
+            values.extend([None] * BASE_GAME_FEATURE_DIM)
         values.append(1 if done else 0)
         values.append(json.dumps(action_probs) if action_probs is not None else None)
 
@@ -259,7 +259,7 @@ class TrainingDB:
         """Sample n random transitions, returning (states, actions, rewards).
 
         Returns:
-            states: shape (n, FEATURE_DIM) — raw integer values (not normalized)
+            states: shape (n, BASE_GAME_FEATURE_DIM) — raw integer values (not normalized)
             actions: shape (n,)
             rewards: shape (n,)
         """
@@ -271,13 +271,13 @@ class TrainingDB:
             ).fetchall()
         if not rows:
             return (
-                np.zeros((0, FEATURE_DIM), dtype=np.float32),
+                np.zeros((0, BASE_GAME_FEATURE_DIM), dtype=np.float32),
                 np.zeros(0, dtype=np.int64),
                 np.zeros(0, dtype=np.float32),
             )
-        states = np.array([r[:FEATURE_DIM] for r in rows], dtype=np.float32)
-        actions = np.array([r[FEATURE_DIM] for r in rows], dtype=np.int64)
-        rewards = np.array([r[FEATURE_DIM + 1] for r in rows], dtype=np.float32)
+        states = np.array([r[:BASE_GAME_FEATURE_DIM] for r in rows], dtype=np.float32)
+        actions = np.array([r[BASE_GAME_FEATURE_DIM] for r in rows], dtype=np.int64)
+        rewards = np.array([r[BASE_GAME_FEATURE_DIM + 1] for r in rows], dtype=np.float32)
         return states, actions, rewards
 
     def get_game_result(self, game_id: str) -> str | None:

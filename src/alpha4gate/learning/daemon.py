@@ -550,6 +550,13 @@ class TrainingDaemon:
 
             reward_rules = self._settings.data_dir / "reward_rules.json"
             hyperparams = self._settings.data_dir / "hyperparams.json"
+            # Phase 4.8 Approach B: create a ClaudeAdvisor for training
+            # so PPO observations include advisor recommendations.
+            from alpha4gate.claude_advisor import ClaudeAdvisor
+
+            training_advisor = ClaudeAdvisor(
+                data_dir=self._settings.data_dir,
+            )
             orchestrator = TrainingOrchestrator(
                 checkpoint_dir=self._settings.data_dir / "checkpoints",
                 db_path=self._settings.data_dir / "training.db",
@@ -563,6 +570,7 @@ class TrainingDaemon:
                 max_difficulty=self._config.max_difficulty,
                 win_rate_threshold=self._config.win_rate_threshold,
                 replay_dir=self._settings.replay_dir,
+                claude_advisor=training_advisor,
             )
             result = orchestrator.run(
                 n_cycles=self._config.cycles_per_run,
