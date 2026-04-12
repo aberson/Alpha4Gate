@@ -550,13 +550,13 @@ class TrainingDaemon:
 
             reward_rules = self._settings.data_dir / "reward_rules.json"
             hyperparams = self._settings.data_dir / "hyperparams.json"
-            # Phase 4.8 Approach B: create a ClaudeAdvisor for training
-            # so PPO observations include advisor recommendations.
-            from alpha4gate.claude_advisor import ClaudeAdvisor
-
-            training_advisor = ClaudeAdvisor(
-                data_dir=self._settings.data_dir,
-            )
+            # Phase 4.8 Approach B: Claude advisor for training is
+            # DISABLED pending a threading fix — the advisor's async
+            # subprocess calls cause CancelledError in game threads
+            # after the first game. See soak-reward-fix-v2 log for
+            # evidence. Advisor features in the observation space are
+            # all zeros when advisor is None (backward compatible).
+            # TODO: fix advisor threading for multi-game training.
             orchestrator = TrainingOrchestrator(
                 checkpoint_dir=self._settings.data_dir / "checkpoints",
                 db_path=self._settings.data_dir / "training.db",
