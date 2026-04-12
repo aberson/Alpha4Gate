@@ -421,6 +421,38 @@
       "active": true
     },
     {
+      "id": "early-attack-timing",
+      "description": "Reward attacking before 5 minutes with decent army",
+      "condition": {
+        "field": "current_state",
+        "op": "==",
+        "value": "attack"
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": "<",
+        "value": 300
+      },
+      "reward": 0.02,
+      "active": true
+    },
+    {
+      "id": "late-game-stall",
+      "description": "Penalize being in late_game state for too long (after 10 min)",
+      "condition": {
+        "field": "current_state",
+        "op": "==",
+        "value": "late_game"
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 600
+      },
+      "reward": -0.01,
+      "active": true
+    },
+    {
       "id": "army-worker-balance",
       "description": "Reward army supply >= worker count after 3 minutes",
       "condition": {
