@@ -2,7 +2,7 @@
 name: improve-bot-advised
 description: Autonomous advisor-driven improvement loop. Runs games, reviews replays with Claude strategic analysis against Protoss guiding principles, prioritizes improvements, and executes them via /improve-bot — repeating for hours to iteratively strengthen the bot. Designed for overnight unattended runs.
 user-invocable: true
-argument: Optional flags only — no free-text suggestion needed. Flags: `--mode training|dev|both` (default both), `--observe replay|live` (default replay), `--games N` (default 10), `--hours N` (default 4), `--difficulty N` (default current), `--fresh` (discard prior iteration context), `--self-improve-code` (required for dev mode code changes).
+argument: Optional flags only — no free-text suggestion needed. Flags: `--mode training|dev|both` (default training), `--observe replay|live` (default replay), `--games N` (default 10), `--hours N` (default 4), `--difficulty N` (default current), `--fresh` (discard prior iteration context), `--self-improve-code` (implies --mode both if --mode not set).
 ---
 
 # /improve-bot-advised
@@ -11,24 +11,29 @@ Autonomous improvement loop that combines Claude strategic analysis with the exi
 
 **Design goal:** `/improve-bot-advised` in a fresh context window with no additional input should produce a measurably improved bot after a few hours.
 
+**Zero-input contract:** When invoked with no flags, this skill MUST NOT ask the user any questions. It proceeds immediately with safe defaults (training-only mode, replay observation, 10 games/cycle, 4 hours). Every phase is designed to resolve ambiguity autonomously — pick reasonable defaults, log the choice, and keep going. The only exception is if a hard pre-flight failure makes the run impossible (e.g., SC2 not installed, git dirty with conflicts).
+
 ---
 
 ## Flags
 
 | Flag | Values | Default | Purpose |
 |------|--------|---------|---------|
-| `--mode` | `training`, `dev`, `both` | `both` | What kind of improvements to attempt |
+| `--mode` | `training`, `dev`, `both` | `training` | What kind of improvements to attempt. `training` is safe (config/reward changes only, no source code edits). |
 | `--observe` | `replay`, `live` | `replay` | How games are observed (see §Observation Modes) |
 | `--games` | integer | `10` | Games per observation cycle |
 | `--hours` | integer | `4` | Total wall-clock budget |
 | `--difficulty` | integer | current curriculum | SC2 AI difficulty level |
 | `--fresh` | flag | off | Discard prior iteration context; start analysis fresh each cycle |
-| `--self-improve-code` | flag | off | **Required** for `--mode dev` or `--mode both`. Gates autonomous source-code changes. Without it, only `training` mode is allowed. |
+| `--self-improve-code` | flag | off | Enables autonomous source-code changes. Implies `--mode both` if `--mode` is not explicitly set. |
 | `--fail-threshold` | integer (%) | `30` | Win rate drop % that triggers a fail. Highly tunable — see §Validation Philosophy |
 
-**Flag validation:**
-- `--mode dev` or `--mode both` without `--self-improve-code` → error, stop and explain
-- `--mode training` ignores `--self-improve-code` (no code changes in training-only mode)
+**Flag resolution (no user interaction — resolve automatically):**
+- No flags at all → `--mode training --observe replay --games 10 --hours 4 --fail-threshold 30`. Proceed immediately.
+- `--self-improve-code` without explicit `--mode` → `--mode both` (auto-upgrade)
+- `--self-improve-code` with `--mode training` → ignore the flag, stay training-only (no conflict, just redundant)
+- `--mode dev` or `--mode both` without `--self-improve-code` → **auto-downgrade to `--mode training`**, log: "dev/both mode requires --self-improve-code, falling back to training-only". Do NOT ask the user.
+- Ambiguous difficulty → read current curriculum level from `data/checkpoints/manifest.json`, fall back to 1 if not found
 
 ---
 
@@ -58,15 +63,17 @@ After the batch completes, feed both the game logs AND the advisor's decision lo
 
 ### 0.1 Parse flags
 
-Parse all flags from the argument. Apply validation rules. If `--mode` is `dev` or `both` and `--self-improve-code` is not set, stop with a clear error message.
+Parse all flags from the argument. Apply the flag resolution rules from the table above — never ask the user, always resolve automatically. Log any auto-downgrades or flag adjustments to `$LOGFILE`.
 
 ### 0.2 Pre-flight checks
 
+All pre-flight checks resolve autonomously. Only stop if the situation is truly unrecoverable.
+
 ```bash
 # Git state
-git status                            # must be clean
-git rev-parse --abbrev-ref HEAD       # should be master
-git fetch origin && git status -sb    # up to date
+git status                            # check cleanliness
+git rev-parse --abbrev-ref HEAD       # check branch
+git fetch origin && git status -sb    # check sync
 
 # SC2
 ls "C:/Program Files (x86)/StarCraft II/Versions/" # SC2 installed
@@ -76,6 +83,14 @@ uv run pytest --co -q 2>&1 | tail -1              # tests discoverable
 uv run ruff check . --quiet                        # lint clean
 uv run mypy src --quiet                            # types clean
 ```
+
+**Autonomous resolution for common issues:**
+- **Git dirty (untracked files only, no conflicts):** `git stash --include-untracked -m "advised-preflight-$RUN_TS"`. Log the stash. Proceed.
+- **Git dirty (staged/modified tracked files):** Commit them with message `"chore: auto-stash before advised run $RUN_TS"`. Log the commit SHA. Proceed.
+- **Not on master:** `git checkout master`. If that fails (uncommitted changes), stash first, then checkout. Log.
+- **Behind origin/master:** `git pull --rebase origin master`. If conflicts, STOP — this is unrecoverable without human judgment.
+- **Quality gates fail (pytest/mypy/ruff):** Log failures but proceed anyway — the pre-existing failures are the baseline, not a blocker. The skill will still gate its own changes against these.
+- **SC2 not found:** STOP — this is a hard requirement, log and exit.
 
 ### 0.3 Record baseline
 
