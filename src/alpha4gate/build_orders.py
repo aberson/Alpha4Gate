@@ -174,6 +174,7 @@ def default_4gate() -> BuildOrder:
             BuildStep(supply=21, action="build", target="Pylon"),
             BuildStep(supply=23, action="build", target="Gateway"),
             BuildStep(supply=25, action="build", target="Gateway"),
+            BuildStep(supply=25, action="build", target="Assimilator"),
             BuildStep(supply=27, action="build", target="Gateway"),
         ],
     )

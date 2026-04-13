@@ -166,7 +166,7 @@ class TestPersistence:
         loaded = load_build_orders(path)
         assert len(loaded) == 1
         assert loaded[0].id == "4gate"
-        assert len(loaded[0].steps) == 9
+        assert len(loaded[0].steps) == 10
 
     def test_load_nonexistent_returns_empty(self, tmp_path: Path) -> None:
         path = tmp_path / "nonexistent.json"
@@ -183,7 +183,7 @@ class TestPersistence:
 class TestDefault4Gate:
     def test_has_9_steps(self) -> None:
         order = default_4gate()
-        assert len(order.steps) == 9
+        assert len(order.steps) == 10
 
     def test_starts_with_pylon(self) -> None:
         order = default_4gate()
