@@ -402,7 +402,7 @@
     },
     {
       "id": "passive-army-idle",
-      "description": "Penalize large idle army not in attack state after 5 minutes",
+      "description": "Penalize idle army not in attack state (lowered: was army>=40)",
       "condition": {
         "field": "current_state",
         "op": "!=",
@@ -411,9 +411,41 @@
       "requires": {
         "field": "army_supply",
         "op": ">=",
-        "value": 40
+        "value": 20
       },
       "reward": -0.015,
+      "active": true
+    },
+    {
+      "id": "defend-too-long",
+      "description": "Penalize staying in defend state after 8 minutes (new)",
+      "condition": {
+        "field": "current_state",
+        "op": "==",
+        "value": "defend"
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 480
+      },
+      "reward": -0.03,
+      "active": true
+    },
+    {
+      "id": "defend-with-army",
+      "description": "Penalize defending with army >= 15 supply after 6 minutes (new)",
+      "condition": {
+        "field": "current_state",
+        "op": "==",
+        "value": "defend"
+      },
+      "requires": {
+        "field": "army_supply",
+        "op": ">=",
+        "value": 15
+      },
+      "reward": -0.02,
       "active": true
     },
     {

@@ -295,6 +295,7 @@ def _run_single_game(settings: Settings, args: argparse.Namespace) -> None:
 
 def _run_batch(settings: Settings, args: argparse.Namespace) -> None:
     """Run N games in sequence, recording transitions for training."""
+    import socket
     import uuid
 
     from sc2.data import Result
@@ -303,6 +304,19 @@ def _run_batch(settings: Settings, args: argparse.Namespace) -> None:
     from alpha4gate.bot import Alpha4GateBot
     from alpha4gate.connection import run_bot
     from alpha4gate.learning.database import TrainingDB
+
+    # Guard: abort if the API server is already running (likely with daemon),
+    # since concurrent game launches cause SC2 connection errors.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        if sock.connect_ex(("127.0.0.1", settings.web_ui_port)) == 0:
+            _log.error(
+                "API server already running on port %d — this likely means a "
+                "daemon is spawning games concurrently. Shut it down first "
+                "(POST /api/shutdown or kill the process) before running "
+                "--batch.",
+                settings.web_ui_port,
+            )
+            raise SystemExit(1)
     from alpha4gate.learning.rewards import RewardCalculator
     from alpha4gate.logger import GameLogger
 
@@ -378,7 +392,7 @@ def _run_batch(settings: Settings, args: argparse.Namespace) -> None:
             difficulty=args.difficulty or 1,
             result=result_str,
             duration_secs=bot.time if hasattr(bot, "time") else 0.0,
-            total_reward=0.0,
+            total_reward=reward_calc.episode_total,
             model_version=model_version,
         )
 

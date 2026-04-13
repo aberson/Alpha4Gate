@@ -78,6 +78,7 @@ class RewardCalculator:
         self._log_dir: Path | None = None
         if rules_path is not None:
             self.load_rules(rules_path)
+        self.episode_total: float = 0.0
         if log_dir is not None:
             self._log_dir = Path(log_dir)
             self._log_dir.mkdir(parents=True, exist_ok=True)
@@ -102,6 +103,7 @@ class RewardCalculator:
         Requires that ``log_dir`` was set at construction time.
         """
         self.close_game_log()
+        self.episode_total = 0.0
         if self._log_dir is not None:
             path = self._log_dir / f"game_{game_id}.jsonl"
             self._log_file = open(path, "a")  # noqa: SIM115
@@ -204,6 +206,8 @@ class RewardCalculator:
             ):
                 total += rule.reward
                 fired_rules.append({"id": rule.rule_id, "reward": rule.reward})
+
+        self.episode_total += total
 
         # Log per-step reward breakdown if logging is enabled
         if self._log_file is not None:
