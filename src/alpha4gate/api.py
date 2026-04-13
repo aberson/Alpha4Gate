@@ -228,11 +228,103 @@ async def get_status() -> dict[str, Any]:
 
 @app.get("/api/stats")
 async def get_stats() -> dict[str, Any]:
-    """Get game statistics."""
-    stats_path = _data_dir / "stats.json"
-    if stats_path.exists():
-        return json.loads(stats_path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
-    return {"games": [], "aggregates": {"total_wins": 0, "total_losses": 0}}
+    """Get game statistics from training.db.
+
+    Returns per-difficulty breakdowns, recent games with full detail,
+    and overall aggregates.
+    """
+    import sqlite3
+
+    db_path = _data_dir / "training.db"
+    if not db_path.exists():
+        return {
+            "total_games": 0,
+            "by_difficulty": [],
+            "recent_games": [],
+            "overall": {"wins": 0, "losses": 0, "win_rate": 0},
+        }
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+
+    # Overall totals
+    c.execute("SELECT result, COUNT(*) as cnt FROM games GROUP BY result")
+    totals = {row["result"]: row["cnt"] for row in c.fetchall()}
+    wins = totals.get("win", 0)
+    losses = totals.get("loss", 0)
+    total = wins + losses
+
+    # Per-difficulty breakdown
+    c.execute("""
+        SELECT difficulty,
+               COUNT(*) as total,
+               SUM(CASE WHEN result='win' THEN 1 ELSE 0 END) as wins,
+               SUM(CASE WHEN result='loss' THEN 1 ELSE 0 END) as losses,
+               ROUND(AVG(duration_secs), 0) as avg_duration,
+               ROUND(AVG(total_reward), 1) as avg_reward,
+               ROUND(MIN(total_reward), 1) as min_reward,
+               ROUND(MAX(total_reward), 1) as max_reward
+        FROM games
+        GROUP BY difficulty
+        ORDER BY difficulty
+    """)
+    by_difficulty = []
+    for row in c.fetchall():
+        d_total = row["total"]
+        d_wins = row["wins"]
+        by_difficulty.append({
+            "difficulty": row["difficulty"],
+            "total": d_total,
+            "wins": d_wins,
+            "losses": row["losses"],
+            "win_rate": round(d_wins / d_total, 3) if d_total > 0 else 0,
+            "avg_duration_secs": row["avg_duration"],
+            "avg_reward": row["avg_reward"],
+            "min_reward": row["min_reward"],
+            "max_reward": row["max_reward"],
+        })
+
+    # Recent games (last 30)
+    c.execute("""
+        SELECT game_id, map_name, difficulty, result,
+               ROUND(duration_secs, 0) as duration,
+               ROUND(total_reward, 1) as reward,
+               model_version, created_at
+        FROM games ORDER BY rowid DESC LIMIT 30
+    """)
+    recent = [dict(row) for row in c.fetchall()]
+
+    # Win rate over last N games (rolling window for trend)
+    c.execute("""
+        SELECT result, difficulty, created_at
+        FROM games ORDER BY rowid DESC LIMIT 50
+    """)
+    trend_rows = [dict(row) for row in c.fetchall()]
+    # Compute rolling 10-game win rate
+    win_trend: list[dict[str, Any]] = []
+    for i in range(0, len(trend_rows) - 9):
+        window = trend_rows[i : i + 10]
+        w = sum(1 for r in window if r["result"] == "win")
+        win_trend.append({
+            "index": i,
+            "win_rate": round(w / 10, 2),
+            "timestamp": window[0]["created_at"],
+        })
+
+    conn.close()
+
+    return {
+        "total_games": total,
+        "overall": {
+            "wins": wins,
+            "losses": losses,
+            "win_rate": round(wins / total, 3) if total > 0 else 0,
+        },
+        "by_difficulty": by_difficulty,
+        "recent_games": recent,
+        "win_trend": win_trend,
+    }
 
 
 @app.get("/api/build-orders")

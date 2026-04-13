@@ -56,13 +56,29 @@ class TestStatsEndpoint:
         resp = client.get("/api/stats")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["games"] == []
+        assert data["total_games"] == 0
+        assert data["recent_games"] == []
 
-    def test_stats_from_file(self, client: TestClient, tmp_path: Path) -> None:
-        stats = {"games": [{"result": "win"}], "aggregates": {"total_wins": 1, "total_losses": 0}}
-        (tmp_path / "data" / "stats.json").write_text(json.dumps(stats))
+    def test_stats_from_db(self, client: TestClient, tmp_path: Path) -> None:
+        import sqlite3
+
+        db_path = tmp_path / "data" / "training.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "CREATE TABLE games (game_id TEXT, map_name TEXT, "
+            "difficulty INTEGER, result TEXT, duration_secs REAL, "
+            "total_reward REAL, model_version TEXT, created_at TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO games VALUES "
+            "('g1','Simple64',1,'win',300,5.0,'v1','2026-01-01T00:00:00')"
+        )
+        conn.commit()
+        conn.close()
         resp = client.get("/api/stats")
-        assert resp.json()["games"][0]["result"] == "win"
+        data = resp.json()
+        assert data["total_games"] == 1
+        assert data["overall"]["wins"] == 1
 
 
 class TestBuildOrderEndpoints:
