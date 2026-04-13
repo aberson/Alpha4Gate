@@ -96,6 +96,7 @@ export function Stats() {
   return (
     <div className="stats training-dashboard">
       {isStale ? <StaleDataBanner lastSuccess={lastSuccess} label="Stats" /> : null}
+      <h2>Statistics</h2>
 
       {/* Overall summary cards */}
       <div
