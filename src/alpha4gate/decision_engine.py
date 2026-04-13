@@ -277,8 +277,10 @@ class DecisionEngine:
         if snapshot.army_supply >= self.ATTACK_ARMY_SUPPLY:
             return StrategicState.ATTACK
 
-        # Default to expand when not attacking or defending
+        # After successful defense, counterattack if army is strong enough
         if self._state == StrategicState.DEFEND and not snapshot.enemy_army_near_base:
+            if snapshot.army_supply >= self.ATTACK_ARMY_SUPPLY:
+                return StrategicState.ATTACK
             return StrategicState.EXPAND
 
         if self._state in (
