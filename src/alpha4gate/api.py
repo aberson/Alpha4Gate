@@ -609,6 +609,41 @@ async def get_training_reward_trends(
     return aggregate_reward_trends(reward_logs_dir, games)
 
 
+@app.post("/api/training/reset")
+async def reset_training_data() -> dict[str, Any]:
+    """Reset training data: back up and delete training.db + reward_logs.
+
+    Creates timestamped backups before deleting so data can be recovered.
+    """
+    import shutil
+    import time
+
+    results: list[str] = []
+    timestamp = int(time.time())
+
+    # Back up and remove training.db
+    db_path = _data_dir / "training.db"
+    if db_path.exists():
+        backup = _data_dir / f"training.pre-reset-{timestamp}.db"
+        shutil.copy2(db_path, backup)
+        db_path.unlink()
+        results.append(f"training.db backed up to {backup.name} and deleted")
+    else:
+        results.append("training.db not found (already clean)")
+
+    # Back up and remove reward_logs
+    reward_logs_dir = _data_dir / "reward_logs"
+    if reward_logs_dir.exists():
+        backup_dir = _data_dir / f"reward_logs.pre-reset-{timestamp}"
+        shutil.copytree(reward_logs_dir, backup_dir)
+        shutil.rmtree(reward_logs_dir)
+        results.append(f"reward_logs backed up to {backup_dir.name} and deleted")
+    else:
+        results.append("reward_logs not found (already clean)")
+
+    return {"results": results, "backup_timestamp": timestamp}
+
+
 @app.get("/api/training/history")
 async def get_training_history() -> dict[str, Any]:
     """Get training game history with win rates."""

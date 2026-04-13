@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useApi } from "../hooks/useApi";
 import { StaleDataBanner } from "./StaleDataBanner";
 import {
@@ -142,6 +142,8 @@ export function RewardTrends({
   const [sortColumn, setSortColumn] = useState<SortColumn>("total_contribution");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [hiddenRules, setHiddenRules] = useState<Set<string>>(() => new Set());
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resetStatus, setResetStatus] = useState<string | null>(null);
 
   const {
     data: rawData,
@@ -199,6 +201,22 @@ export function RewardTrends({
     return sortDirection === "asc" ? " \u25B2" : " \u25BC";
   }
 
+  const handleReset = useCallback(async () => {
+    setShowResetConfirm(false);
+    setResetStatus("Resetting...");
+    try {
+      const res = await fetch("/api/training/reset", { method: "POST" });
+      const body = await res.json();
+      setResetStatus(
+        `Reset complete: ${(body.results as string[]).join("; ")}`,
+      );
+      setTimeout(() => setResetStatus(null), 8000);
+    } catch (err) {
+      setResetStatus(`Reset failed: ${err}`);
+      setTimeout(() => setResetStatus(null), 8000);
+    }
+  }, []);
+
   if (data === null) {
     return (
       <div className="reward-trends">
@@ -241,7 +259,72 @@ export function RewardTrends({
         <span style={{ marginLeft: "12px", color: "#888" }}>
           Scanned {data.n_games} game{data.n_games === 1 ? "" : "s"}
         </span>
+        <button
+          onClick={() => setShowResetConfirm(true)}
+          style={{
+            marginLeft: "auto",
+            padding: "4px 12px",
+            background: "#c0392b",
+            color: "#fff",
+            border: "none",
+            borderRadius: "4px",
+            cursor: "pointer",
+            fontSize: "0.85em",
+          }}
+        >
+          Reset Training Data
+        </button>
       </div>
+      {showResetConfirm && (
+        <div
+          style={{
+            background: "rgba(192, 57, 43, 0.15)",
+            border: "1px solid #c0392b",
+            borderRadius: "6px",
+            padding: "12px 16px",
+            marginBottom: "12px",
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+          }}
+        >
+          <span style={{ color: "#e74c3c", fontWeight: "bold" }}>
+            This will delete training.db and all reward logs. A timestamped backup will be created. Continue?
+          </span>
+          <button
+            onClick={handleReset}
+            style={{
+              padding: "4px 16px",
+              background: "#c0392b",
+              color: "#fff",
+              border: "none",
+              borderRadius: "4px",
+              cursor: "pointer",
+              fontWeight: "bold",
+            }}
+          >
+            Yes, Reset
+          </button>
+          <button
+            onClick={() => setShowResetConfirm(false)}
+            style={{
+              padding: "4px 16px",
+              background: "#555",
+              color: "#fff",
+              border: "none",
+              borderRadius: "4px",
+              cursor: "pointer",
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+      {resetStatus && (
+        <div style={{ color: "#f1c40f", marginBottom: "12px", fontSize: "0.85em" }}>
+          {resetStatus}
+        </div>
+      )}
 
       {isEmpty ? (
         <div
