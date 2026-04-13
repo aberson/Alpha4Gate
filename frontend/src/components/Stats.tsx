@@ -75,7 +75,7 @@ function WinRateBar({ rate, size = "normal" }: { rate: number; size?: "normal" |
 export function Stats() {
   const { data, isStale, isLoading, lastSuccess } = useApi<StatsResponse>(
     "/api/stats",
-    { pollMs: 10000 },
+    { pollMs: 10000, cacheKey: "/api/stats/v2" },
   );
   const [diffFilter, setDiffFilter] = useState<DifficultyFilter>("all");
 
