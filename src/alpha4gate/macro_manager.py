@@ -291,7 +291,23 @@ class MacroManager:
                 return  # One upgrade at a time
 
     def _check_gas(self, bot: BotAI) -> None:
-        """Build assimilators on bases that don't have them."""
+        """Build assimilators on bases that don't have them.
+
+        Limits to 1 gas per base in the first 4 minutes to preserve
+        mineral income for army production, then allows full saturation.
+        """
+        gas_count = len(bot.gas_buildings)
+        base_count = len(bot.townhalls)
+
+        # Limit gas in the first 4 minutes to preserve mineral income
+        try:
+            game_time = float(bot.time)
+        except (TypeError, AttributeError):
+            game_time = 300.0  # default: assume late enough to allow full gas
+        max_gas = base_count if game_time < 240 else base_count * 2
+        if gas_count >= max_gas:
+            return
+
         for nexus in bot.townhalls.ready:
             geysers = bot.vespene_geyser.closer_than(10, nexus)
             for geyser in geysers:
