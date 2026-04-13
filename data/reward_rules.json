@@ -34,14 +34,14 @@
     },
     {
       "id": "no-supply-block",
-      "description": "Penalize being supply blocked",
+      "description": "Penalize being supply blocked (strengthened: was -0.005)",
       "condition": {
         "field": "supply_used",
         "op": "==",
         "value_field": "supply_cap"
       },
       "requires": null,
-      "reward": -0.005,
+      "reward": -0.02,
       "active": true
     },
     {
