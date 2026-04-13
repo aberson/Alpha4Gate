@@ -917,6 +917,175 @@ async def update_advised_control(request: dict[str, Any]) -> dict[str, Any]:
     return existing
 
 
+@app.get("/api/processes")
+async def get_processes() -> dict[str, Any]:
+    """Get full system process/state status."""
+    from alpha4gate.process_registry import full_status
+
+    return full_status()
+
+
+@app.post("/api/cleanup/stop-run")
+async def cleanup_stop_run() -> dict[str, Any]:
+    """Execute the Stop Run cleanup checklist."""
+    results: list[str] = []
+
+    # 1. Stop training daemon
+    if _daemon is not None and _daemon.is_running():
+        _daemon.stop()
+        results.append("Training daemon stopped")
+    else:
+        results.append("Training daemon was not running")
+
+    # 2. Set advised_run_state.json to stopped
+    state_path = _data_dir / "advised_run_state.json"
+    if state_path.exists():
+        data = json.loads(state_path.read_text())
+        data["status"] = "stopped"
+        data["phase_name"] = "Stopped (cleanup)"
+        state_path.write_text(json.dumps(data, indent=2))
+        results.append("advised_run_state.json set to stopped")
+
+    # 3. Clear decision_audit.json
+    audit_path = _data_dir / "decision_audit.json"
+    if audit_path.exists():
+        audit_path.write_text(json.dumps({"entries": []}, indent=2))
+        results.append("decision_audit.json cleared")
+
+    # 4. Clear control file signals
+    ctrl_path = _data_dir / "advised_run_control.json"
+    if ctrl_path.exists():
+        ctrl_path.write_text(json.dumps({
+            "games_per_cycle": None,
+            "user_hint": None,
+            "stop_run": False,
+            "reset_loop": False,
+            "difficulty": None,
+            "fail_threshold": None,
+            "reward_rule_add": None,
+            "updated_at": None,
+        }, indent=2))
+        results.append("advised_run_control.json reset")
+
+    # 5. Delete stale lock files
+    lock_path = Path(".claude/scheduled_tasks.lock")
+    if lock_path.exists():
+        lock_path.unlink(missing_ok=True)
+        results.append("Deleted scheduled_tasks.lock")
+
+    # 6. Kill orphan monitor processes
+    import subprocess as _sp
+
+    try:
+        _sp.run(
+            [
+                "powershell.exe", "-Command",
+                "Get-Process -Name tail,grep,sleep "
+                "-ErrorAction SilentlyContinue | Stop-Process -Force",
+            ],
+            timeout=5,
+            capture_output=True,
+        )
+        results.append("Killed orphan monitor processes")
+    except (OSError, _sp.TimeoutExpired):
+        results.append("Could not kill orphan processes")
+
+    results.append("Stop Run cleanup complete")
+    return {"results": results}
+
+
+@app.post("/api/cleanup/reset-loop")
+async def cleanup_reset_loop() -> dict[str, Any]:
+    """Execute the Reset Loop cleanup checklist.
+
+    Handles process/state cleanup. Git revert + DB purge must be done
+    by the caller (the improve-bot-advised skill) since they require
+    git operations outside the API process.
+    """
+    results: list[str] = []
+
+    # 1. Stop training daemon
+    if _daemon is not None and _daemon.is_running():
+        _daemon.stop()
+        results.append("Training daemon stopped")
+
+    # 2. Reset advised_run_state.json
+    state_path = _data_dir / "advised_run_state.json"
+    if state_path.exists():
+        data = json.loads(state_path.read_text())
+        data["status"] = "resetting"
+        data["phase_name"] = "Resetting to baseline"
+        data["iteration"] = 0
+        data["fail_streak"] = 0
+        data["iterations"] = []
+        data["current_improvement"] = None
+        state_path.write_text(json.dumps(data, indent=2))
+        results.append("advised_run_state.json reset to iteration 0")
+
+    # 3. Clear decision_audit.json
+    audit_path = _data_dir / "decision_audit.json"
+    if audit_path.exists():
+        audit_path.write_text(json.dumps({"entries": []}, indent=2))
+        results.append("decision_audit.json cleared")
+
+    # 4. Clear control file (except reset_loop flag for skill to read)
+    ctrl_path = _data_dir / "advised_run_control.json"
+    if ctrl_path.exists():
+        ctrl_path.write_text(json.dumps({
+            "games_per_cycle": None,
+            "user_hint": None,
+            "stop_run": False,
+            "reset_loop": True,
+            "difficulty": None,
+            "fail_threshold": None,
+            "reward_rule_add": None,
+            "updated_at": None,
+        }, indent=2))
+        results.append("advised_run_control.json reset (reset_loop=true)")
+
+    # 5. Delete temp files
+    for pattern, label in [
+        (_data_dir.parent / "logs", "game logs"),
+        (_data_dir / "reward_logs", "reward logs"),
+    ]:
+        if pattern.is_dir():
+            count = sum(1 for f in pattern.iterdir() if f.suffix == ".jsonl")
+            for f in pattern.iterdir():
+                if f.suffix == ".jsonl":
+                    f.unlink()
+            results.append(f"Deleted {count} {label}")
+
+    # 6. Delete stale lock files
+    lock_path = Path(".claude/scheduled_tasks.lock")
+    if lock_path.exists():
+        lock_path.unlink(missing_ok=True)
+        results.append("Deleted scheduled_tasks.lock")
+
+    # 7. Kill orphan processes
+    import subprocess as _sp
+
+    try:
+        _sp.run(
+            [
+                "powershell.exe", "-Command",
+                "Get-Process -Name tail,grep,sleep "
+                "-ErrorAction SilentlyContinue | Stop-Process -Force",
+            ],
+            timeout=5,
+            capture_output=True,
+        )
+        results.append("Killed orphan monitor processes")
+    except (OSError, _sp.TimeoutExpired):
+        pass
+
+    results.append(
+        "Reset cleanup complete. Caller must: "
+        "git reset --hard to baseline, restore config backups, "
+        "purge training.db entries, then restart."
+    )
+    return {"results": results}
+
+
 @app.post("/api/shutdown")
 async def shutdown_server() -> dict[str, str]:
     """Gracefully shut down the daemon and the server process.

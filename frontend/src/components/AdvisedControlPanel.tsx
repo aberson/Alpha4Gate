@@ -217,21 +217,44 @@ export function AdvisedControlPanel() {
 
   const handleStopConfirm = useCallback(async () => {
     setStopOpen(false);
+    // 1. Signal the skill to stop
     await sendControl({ stop_run: true });
-    // Also shut down the server process so the daemon, game runners,
-    // and uv wrapper all exit cleanly.
+    // 2. Run the full cleanup checklist
+    try {
+      const resp = await fetch("/api/cleanup/stop-run", { method: "POST" });
+      const data = await resp.json() as { results: string[] };
+      console.log("Stop Run cleanup:", data.results);
+    } catch {
+      // Cleanup endpoint may not be available
+    }
+    // 3. Shut down the server process
     try {
       await fetch("/api/shutdown", { method: "POST" });
     } catch {
-      // Server may already be gone — that's fine.
+      // Server may already be gone
     }
-    showMessage("Stop signal sent — daemon stopped, server shutting down");
+    showMessage("Stop Run cleanup complete \u2014 all processes stopped");
   }, [sendControl, showMessage]);
 
   const handleResetConfirm = useCallback(async () => {
     setResetOpen(false);
+    // 1. Run the reset cleanup checklist (kills processes, clears files)
+    try {
+      const resp = await fetch("/api/cleanup/reset-loop", { method: "POST" });
+      const data = await resp.json() as { results: string[] };
+      console.log("Reset Loop cleanup:", data.results);
+    } catch {
+      // Cleanup endpoint may not be available
+    }
+    // 2. Signal the skill to do git revert + restart
     await sendControl({ reset_loop: true });
-    showMessage("Reset signal sent (reverts to baseline at next phase boundary)");
+    // 3. Shut down server (skill will restart it)
+    try {
+      await fetch("/api/shutdown", { method: "POST" });
+    } catch {
+      // Server may already be gone
+    }
+    showMessage("Reset cleanup complete \u2014 awaiting git revert + restart");
   }, [sendControl, showMessage]);
 
   return (

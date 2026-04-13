@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { LiveView } from "./components/LiveView";
 import { Stats } from "./components/Stats";
-import { BuildOrderEditor } from "./components/BuildOrderEditor";
 import { ReplayBrowser } from "./components/ReplayBrowser";
 import { DecisionQueue } from "./components/DecisionQueue";
 import { TrainingDashboard } from "./components/TrainingDashboard";
@@ -15,6 +14,7 @@ import { RecentImprovements } from "./components/RecentImprovements";
 import { RewardTrends } from "./components/RewardTrends";
 import { AdvisedControlPanel } from "./components/AdvisedControlPanel";
 import { AdvisedImprovements } from "./components/AdvisedImprovements";
+import { ProcessMonitor } from "./components/ProcessMonitor";
 import { AlertsPanel } from "./components/AlertsPanel";
 import { AlertToast } from "./components/AlertToast";
 import { ConnectionStatus } from "./components/ConnectionStatus";
@@ -25,8 +25,8 @@ import "./App.css";
 type Tab =
   | "live"
   | "stats"
-  | "builds"
   | "replays"
+  | "processes"
   | "decisions"
   | "training"
   | "loop"
@@ -62,10 +62,7 @@ function App() {
           <button onClick={() => setTab("stats")} className={tab === "stats" ? "active" : ""}>
             Stats
           </button>
-          <button onClick={() => setTab("builds")} className={tab === "builds" ? "active" : ""}>
-            Build Orders
-          </button>
-          <button onClick={() => setTab("replays")} className={tab === "replays" ? "active" : ""}>
+<button onClick={() => setTab("replays")} className={tab === "replays" ? "active" : ""}>
             Replays
           </button>
           <button
@@ -113,6 +110,12 @@ function App() {
             Improvements
           </button>
           <button
+            onClick={() => setTab("processes")}
+            className={tab === "processes" ? "active" : ""}
+          >
+            Processes
+          </button>
+          <button
             onClick={() => setTab("alerts")}
             className={tab === "alerts" ? "active" : ""}
           >
@@ -130,8 +133,7 @@ function App() {
       <main>
         {tab === "live" && <LiveView />}
         {tab === "stats" && <Stats />}
-        {tab === "builds" && <BuildOrderEditor />}
-        {tab === "replays" && <ReplayBrowser />}
+{tab === "replays" && <ReplayBrowser />}
         {tab === "decisions" && <DecisionQueue />}
         {tab === "training" && (
           <>
@@ -156,6 +158,7 @@ function App() {
             <RewardTrends />
           </>
         )}
+        {tab === "processes" && <ProcessMonitor />}
         {tab === "alerts" && (
           <AlertsPanel
             alerts={alerts}
