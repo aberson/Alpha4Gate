@@ -74,74 +74,74 @@
     },
     {
       "id": "mineral-floating",
-      "description": "Penalize banking over 1000 minerals",
+      "description": "Penalize banking over 1000 minerals (strengthened: was -0.008)",
       "condition": {
         "field": "minerals",
         "op": ">",
         "value": 1000
       },
       "requires": null,
-      "reward": -0.008,
+      "reward": -0.02,
       "active": true
     },
     {
       "id": "mineral-floating-severe",
-      "description": "Stronger penalty for banking over 2000 minerals",
+      "description": "Stronger penalty for banking over 2000 minerals (strengthened: was -0.015)",
       "condition": {
         "field": "minerals",
         "op": ">",
         "value": 2000
       },
       "requires": null,
-      "reward": -0.015,
+      "reward": -0.04,
       "active": true
     },
     {
       "id": "mineral-floating-extreme",
-      "description": "Heavy penalty for banking over 3000 minerals",
+      "description": "Heavy penalty for banking over 3000 minerals (strengthened: was -0.025)",
       "condition": {
         "field": "minerals",
         "op": ">",
         "value": 3000
       },
       "requires": null,
-      "reward": -0.025,
+      "reward": -0.06,
       "active": true
     },
     {
       "id": "gas-floating",
-      "description": "Penalize banking over 500 gas",
+      "description": "Penalize banking over 500 gas (strengthened: was -0.005)",
       "condition": {
         "field": "vespene",
         "op": ">",
         "value": 500
       },
       "requires": null,
-      "reward": -0.005,
+      "reward": -0.015,
       "active": true
     },
     {
       "id": "excess-workers-50",
-      "description": "Penalize having more than 50 workers (over-saturated economy)",
+      "description": "Penalize having more than 50 workers (strengthened: was -0.004)",
       "condition": {
         "field": "worker_count",
         "op": ">",
         "value": 50
       },
       "requires": null,
-      "reward": -0.004,
+      "reward": -0.015,
       "active": true
     },
     {
       "id": "excess-workers-65",
-      "description": "Stronger penalty for 65+ workers (extreme over-saturation)",
+      "description": "Stronger penalty for 65+ workers (strengthened: was -0.008)",
       "condition": {
         "field": "worker_count",
         "op": ">",
         "value": 65
       },
       "requires": null,
-      "reward": -0.008,
+      "reward": -0.03,
       "active": true
     },
     {
@@ -438,7 +438,7 @@
     },
     {
       "id": "late-game-stall",
-      "description": "Penalize being in late_game state for too long (after 10 min)",
+      "description": "Penalize being in late_game state for too long (after 10 min, strengthened: was -0.01)",
       "condition": {
         "field": "current_state",
         "op": "==",
@@ -449,7 +449,7 @@
         "op": ">=",
         "value": 600
       },
-      "reward": -0.01,
+      "reward": -0.03,
       "active": true
     },
     {
