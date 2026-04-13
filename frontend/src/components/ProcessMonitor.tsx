@@ -36,7 +36,9 @@ interface ProcessStatus {
 }
 
 const ROLE_COLORS: Record<string, string> = {
-  backend: "#3498db",
+  "backend-server": "#3498db",
+  "backend-runner": "#2980b9",
+  "backend-wrapper": "#2471a3",
   daemon: "#9b59b6",
   advisor: "#e67e22",
   frontend: "#2ecc71",

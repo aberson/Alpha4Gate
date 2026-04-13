@@ -50,14 +50,19 @@ def scan_processes() -> list[ProcessInfo]:
     """Scan system for known Alpha4Gate-related processes."""
     procs: list[ProcessInfo] = []
 
-    # Use PowerShell to get process info in JSON
+    # Use PowerShell to get process info in JSON.
+    # Format StartTime as ISO 8601 to avoid \/Date(...)\/  serialization.
     ps_cmd = (
         "Get-Process -Name python,uv,node,SC2_x64 "
-        "-ErrorAction SilentlyContinue | "
-        "Select-Object Id,ProcessName,StartTime,"
-        "@{N='CommandLine';E={(Get-CimInstance Win32_Process "
-        "-Filter \"ProcessId=$($_.Id)\").CommandLine}} | "
-        "ConvertTo-Json -Compress"
+        "-ErrorAction SilentlyContinue | ForEach-Object { "
+        "$cim = Get-CimInstance Win32_Process "
+        "-Filter \"ProcessId=$($_.Id)\" -ErrorAction SilentlyContinue; "
+        "[PSCustomObject]@{ "
+        "Id=$_.Id; ProcessName=$_.ProcessName; "
+        "StartTimeISO=if($_.StartTime){$_.StartTime.ToString('o')}else{$null}; "
+        "CommandLine=if($cim){$cim.CommandLine}else{$null}; "
+        "ParentPid=if($cim){$cim.ParentProcessId}else{$null} "
+        "} } | ConvertTo-Json -Compress"
     )
     raw = _run_ps(ps_cmd)
     if not raw:
@@ -72,20 +77,17 @@ def scan_processes() -> list[ProcessInfo]:
     if isinstance(entries, dict):
         entries = [entries]
 
+    # Build PID set for parent-child detection
+    all_pids = {e.get("Id") for e in entries}
+
     for entry in entries:
         pid = entry.get("Id")
         name = entry.get("ProcessName", "")
         cmdline = entry.get("CommandLine") or ""
-        start = entry.get("StartTime")
+        start_str = entry.get("StartTimeISO")
+        parent_pid = entry.get("ParentPid")
 
-        # Parse start time from PowerShell format
-        start_str = None
-        if isinstance(start, str):
-            start_str = start
-        elif isinstance(start, dict) and "DateTime" in start:
-            start_str = start["DateTime"]
-
-        role = _classify_process(name, cmdline)
+        role = _classify_process(name, cmdline, pid, parent_pid, all_pids)
         details = _summarize_cmdline(cmdline)
 
         procs.append(
@@ -108,7 +110,13 @@ def scan_processes() -> list[ProcessInfo]:
     return procs
 
 
-def _classify_process(name: str, cmdline: str) -> str:
+def _classify_process(
+    name: str,
+    cmdline: str,
+    pid: int | None = None,
+    parent_pid: int | None = None,
+    all_pids: set[int | None] | None = None,
+) -> str:
     """Classify a process by its role."""
     lower = cmdline.lower()
     if name == "SC2_x64":
@@ -116,7 +124,14 @@ def _classify_process(name: str, cmdline: str) -> str:
     if name == "node":
         return "frontend"
     if "alpha4gate" in lower and "--serve" in lower:
-        return "backend"
+        # Distinguish: if this process's parent is also in our set
+        # and also has --serve, this is the uvicorn child (server).
+        # The parent is the runner entry point (backend-runner).
+        if parent_pid and all_pids and parent_pid in all_pids:
+            return "backend-server"
+        if name == "uv":
+            return "backend-wrapper"
+        return "backend-runner"
     if "alpha4gate" in lower and "--batch" in lower:
         return "game-runner"
     if "alpha4gate" in lower:
