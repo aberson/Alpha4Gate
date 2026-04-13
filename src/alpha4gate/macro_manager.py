@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 # Saturation constants
 WORKERS_PER_BASE_MINERALS = 16  # 2 per mineral patch, ~8 patches
 WORKERS_PER_GAS = 3
-MAX_WORKERS = 70
+MAX_WORKERS = 44
 
 # Supply constants
 SUPPLY_BUFFER = 8  # Build pylon when supply_cap - supply_used <= buffer
@@ -120,10 +120,21 @@ class MacroManager:
             )
 
     def _check_workers(self, bot: BotAI) -> None:
-        """Train probes if below saturation."""
+        """Train probes if below saturation.
+
+        Pauses probe production when floating minerals and army supply
+        is low, freeing supply headroom for gateway army production.
+        """
         ideal_workers = self._ideal_worker_count(bot)
         current_workers = len(bot.units(UnitTypeId.PROBE))
         pending_workers = bot.already_pending(UnitTypeId.PROBE)
+
+        # Pause probes when floating minerals and army is undersized,
+        # so gateway production can use the supply headroom.
+        minerals = int(bot.minerals)
+        army_supply = int(bot.supply_used) - current_workers
+        if minerals > 400 and army_supply < 20 and current_workers >= 22:
+            return
 
         if current_workers + pending_workers < ideal_workers:
             # Train from idle nexus
