@@ -773,6 +773,13 @@ class Alpha4GateBot(BotAI):
         else:
             rally = self._defense_rally()
 
+        # Defensive containment: during DEFEND/FORTIFY, only engage enemies
+        # near our base. Don't chase enemies across the map — it causes
+        # piecemeal fights and constant attrition.
+        if state in (StrategicState.DEFEND, StrategicState.FORTIFY) and rally:
+            rally_pt = Point2(rally)
+            enemies = [e for e in enemies if e.distance_to(rally_pt) < 25]
+
         commands = self.micro_controller.generate_commands(
             own_units=army,
             enemy_units=enemies,
