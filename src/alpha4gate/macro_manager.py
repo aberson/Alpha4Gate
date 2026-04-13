@@ -299,12 +299,13 @@ class MacroManager:
         gas_count = len(bot.gas_buildings)
         base_count = len(bot.townhalls)
 
-        # Limit gas in the first 4 minutes to preserve mineral income
+        # Limit gas early to preserve mineral income for army
         try:
             game_time = float(bot.time)
         except (TypeError, AttributeError):
             game_time = 300.0  # default: assume late enough to allow full gas
-        max_gas = base_count if game_time < 240 else base_count * 2
+        # 1 gas per base before 3 min, then full 2 per base
+        max_gas = base_count if game_time < 180 else base_count * 2
         if gas_count >= max_gas:
             return
 
