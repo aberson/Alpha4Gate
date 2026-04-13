@@ -252,12 +252,46 @@ export function RewardTrends({
         </div>
       ) : (
         <>
+          <div
+            className="reward-trends-chart"
+            style={{ width: "100%", height: 320, marginBottom: "16px" }}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                <XAxis
+                  dataKey="game"
+                  label={{ value: "game index", position: "insideBottom", offset: -4 }}
+                />
+                <YAxis
+                  label={{
+                    value: "contribution",
+                    angle: -90,
+                    position: "insideLeft",
+                  }}
+                />
+                <Tooltip />
+                <Legend onClick={handleLegendClick} />
+                {data.rules.map((rule, index) => (
+                  <Line
+                    key={rule.rule_id}
+                    type="monotone"
+                    dataKey={rule.rule_id}
+                    stroke={colorForIndex(index)}
+                    dot={false}
+                    connectNulls
+                    hide={hiddenRules.has(rule.rule_id)}
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
           <table
             className="reward-trends-table"
             style={{
               width: "100%",
               borderCollapse: "collapse",
-              marginBottom: "16px",
             }}
           >
             <thead>
@@ -332,41 +366,6 @@ export function RewardTrends({
               ))}
             </tbody>
           </table>
-
-          <div
-            className="reward-trends-chart"
-            style={{ width: "100%", height: 320 }}
-          >
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-                <XAxis
-                  dataKey="game"
-                  label={{ value: "game index", position: "insideBottom", offset: -4 }}
-                />
-                <YAxis
-                  label={{
-                    value: "contribution",
-                    angle: -90,
-                    position: "insideLeft",
-                  }}
-                />
-                <Tooltip />
-                <Legend onClick={handleLegendClick} />
-                {data.rules.map((rule, index) => (
-                  <Line
-                    key={rule.rule_id}
-                    type="monotone"
-                    dataKey={rule.rule_id}
-                    stroke={colorForIndex(index)}
-                    dot={false}
-                    connectNulls
-                    hide={hiddenRules.has(rule.rule_id)}
-                  />
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
         </>
       )}
     </div>
