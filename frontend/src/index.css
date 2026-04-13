@@ -66,6 +66,11 @@ body {
   margin: 0;
 }
 
+main {
+  padding: 0 24px 24px;
+  text-align: left;
+}
+
 h1,
 h2 {
   font-family: var(--heading);

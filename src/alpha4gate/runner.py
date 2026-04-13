@@ -271,6 +271,11 @@ def _run_single_game(settings: Settings, args: argparse.Namespace) -> None:
     game_id = uuid.uuid4().hex[:12]
     reward_calc.open_game_log(game_id)
 
+    # Record to training DB so games show in dashboard Game History
+    from alpha4gate.learning.database import TrainingDB
+
+    db = TrainingDB(settings.data_dir / "training.db")
+
     decision_mode = DecisionMode(args.decision_mode)
     bot = Alpha4GateBot(
         build_order=build_order,
@@ -279,6 +284,8 @@ def _run_single_game(settings: Settings, args: argparse.Namespace) -> None:
         model_path=args.model_path,
         claude_advisor=claude_advisor,
         reward_calculator=reward_calc,
+        training_db=db,
+        game_id=game_id,
     )
     result = run_bot(
         bot,
@@ -290,6 +297,24 @@ def _run_single_game(settings: Settings, args: argparse.Namespace) -> None:
 
     logger.stop()
     reward_calc.close()
+
+    # Store game result in training DB for dashboard visibility
+    from sc2.data import Result
+
+    result_str = "win" if result == Result.Victory else "loss"
+    bot.record_final_transition(result_str)
+    model_version = args.model_path or args.decision_mode
+    db.store_game(
+        game_id=game_id,
+        map_name=args.map,
+        difficulty=args.difficulty or 1,
+        result=result_str,
+        duration_secs=bot.time if hasattr(bot, "time") else 0.0,
+        total_reward=reward_calc.episode_total,
+        model_version=str(model_version),
+    )
+    db.close()
+
     print(f"\nGame result: {result}")
 
 

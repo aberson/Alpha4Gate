@@ -375,6 +375,32 @@ git push origin master
 
 For significant milestones, run `/repo-update` to update README and docs.
 
+### 6.3 Training soak (2 games)
+
+After a passed iteration, run a quick 2-game training soak so the PPO model sees the new behavior and a checkpoint is created. This keeps the neural policy in sync with rule-based code changes and populates the dashboard Training/Checkpoints tabs.
+
+```bash
+# Start backend with daemon (daemon auto-runs games + trains)
+DEBUG_ENDPOINTS=1 PYTHONUNBUFFERED=1 uv run python -m alpha4gate.runner --serve --daemon 2>&1 &
+DAEMON_PID=$!
+
+# Wait for 2 games to complete — poll training.db game count
+INITIAL_GAMES=$(python -c "import sqlite3; c=sqlite3.connect('data/training.db'); print(c.execute('SELECT COUNT(*) FROM games').fetchone()[0]); c.close()")
+while true; do
+    CURRENT=$(python -c "import sqlite3; c=sqlite3.connect('data/training.db'); print(c.execute('SELECT COUNT(*) FROM games').fetchone()[0]); c.close()")
+    if [ $((CURRENT - INITIAL_GAMES)) -ge 2 ]; then break; fi
+    sleep 10
+done
+
+# Stop daemon cleanly
+curl -s -X POST http://localhost:8765/api/shutdown || true
+wait $DAEMON_PID 2>/dev/null || true
+```
+
+**Budget guard:** Cap the training soak at 5 minutes wall-clock. If 2 games haven't finished by then, stop anyway — the daemon may be stuck or games may be very long. Log the number of games completed.
+
+**Skip condition:** If the iteration was training-only (config changes, no code), skip the soak — the daemon will pick up config changes on its own next time it runs.
+
 ---
 
 ## Phase 7: Cleanup & Loop
