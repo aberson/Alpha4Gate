@@ -44,7 +44,7 @@ STEPS_PER_ACTION: int = 22
 WARMUP_GAME_SECONDS: float = 0.0  # disabled — PPO learns faster without forced OPENING
 
 # Max game time in seconds before forcing a timeout (prevents passive stalls)
-MAX_GAME_TIME_SECONDS: float = 480.0  # 8 minutes — shorter episodes = more training iterations
+MAX_GAME_TIME_SECONDS: float = 18000.0  # 5 hours — let games end naturally so all reward rules fire
 
 # Single source of truth for the bridge observation tuple shape:
 # (obs_vector, info_dict, done_flag, result_string).
