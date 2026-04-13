@@ -1,7 +1,6 @@
 import { useState, useCallback } from "react";
 import { useApi } from "../hooks/useApi";
 import { StaleDataBanner } from "./StaleDataBanner";
-import { ConfirmDialog } from "./ConfirmDialog";
 
 interface ProcessEntry {
   name: string;
@@ -80,7 +79,6 @@ function Badge({ label, color }: { label: string; color: string }) {
 export function ProcessMonitor() {
   const { data, isStale, isLoading, lastSuccess, refresh } =
     useApi<ProcessStatus>("/api/processes", { pollMs: 5000 });
-  const [shutdownOpen, setShutdownOpen] = useState(false);
   const [message, setMessage] = useState("");
 
   const backendOnline = data !== null && !isStale;
@@ -91,17 +89,6 @@ export function ProcessMonitor() {
       setMessage("Restarting backend\u2026 will reconnect in a few seconds");
     } catch {
       setMessage("Failed to send restart signal");
-    }
-    setTimeout(() => setMessage(""), 5000);
-  }, []);
-
-  const handleShutdown = useCallback(async () => {
-    setShutdownOpen(false);
-    try {
-      await fetch("/api/shutdown", { method: "POST" });
-      setMessage("Backend shutting down");
-    } catch {
-      setMessage("Failed to send shutdown signal");
     }
     setTimeout(() => setMessage(""), 5000);
   }, []);
@@ -170,7 +157,7 @@ export function ProcessMonitor() {
             {backendOnline ? "ON" : "OFF"}
           </span>
         </div>
-        <div style={{ display: "flex", gap: "8px", marginLeft: "auto" }}>
+        <div style={{ marginLeft: "auto" }}>
           <button
             type="button"
             onClick={() => void handleRestart()}
@@ -187,34 +174,8 @@ export function ProcessMonitor() {
           >
             Restart
           </button>
-          <button
-            type="button"
-            onClick={() => setShutdownOpen(true)}
-            style={{
-              padding: "6px 14px",
-              fontSize: "0.85em",
-              backgroundColor: "#e74c3c",
-              color: "#fff",
-              border: "none",
-              borderRadius: "4px",
-              cursor: "pointer",
-              fontWeight: 600,
-            }}
-          >
-            Shut Down
-          </button>
         </div>
       </section>
-
-      <ConfirmDialog
-        open={shutdownOpen}
-        title="Shut down backend?"
-        message="The backend server will exit. You will need to restart it manually from the terminal. The Processes tab will stop working."
-        confirmLabel="Shut Down"
-        destructive
-        onConfirm={() => void handleShutdown()}
-        onCancel={() => setShutdownOpen(false)}
-      />
 
       {/* Feedback toast */}
       {message ? (
