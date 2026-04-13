@@ -241,7 +241,10 @@ export function TriggerControls() {
 
   // --- Daemon start/stop ---
   const running = status?.running ?? false;
-  const handleStart = useCallback(async () => {
+  const [startOpen, setStartOpen] = useState(false);
+
+  const handleStartConfirm = useCallback(async () => {
+    setStartOpen(false);
     setDaemonMessage("");
     try {
       const res = await postJson<StartStopResponse>("/api/training/start", {});
@@ -302,8 +305,10 @@ export function TriggerControls() {
   const [evalGames, setEvalGames] = useState<number>(10);
   const [evalDifficulty, setEvalDifficulty] = useState<number>(1);
   const [evalResult, setEvalResult] = useState<string>("");
+  const [evalOpen, setEvalOpen] = useState(false);
 
   const handleEvaluate = useCallback(async () => {
+    setEvalOpen(false);
     setEvalResult("");
     if (!selectedCheckpoint) {
       setEvalResult("Select a checkpoint first");
@@ -426,7 +431,7 @@ export function TriggerControls() {
         <div className="control-row">
           <button
             type="button"
-            onClick={handleStart}
+            onClick={() => setStartOpen(true)}
             disabled={loading || running}
             aria-label="Start daemon"
           >
@@ -446,6 +451,14 @@ export function TriggerControls() {
             </span>
           ) : null}
         </div>
+        <ConfirmDialog
+          open={startOpen}
+          title="Start training daemon?"
+          message="This will start the training daemon which spawns SC2 games every 60 seconds for PPO training. Games will run at max speed in the background."
+          confirmLabel="Start Daemon"
+          onConfirm={() => void handleStartConfirm()}
+          onCancel={() => setStartOpen(false)}
+        />
       </section>
 
       {/* B. Daemon config form */}
@@ -555,7 +568,7 @@ export function TriggerControls() {
             aria-label="Difficulty"
             style={{ padding: "6px 8px", width: "100%" }}
           />
-          <button type="button" onClick={handleEvaluate}>
+          <button type="button" onClick={() => setEvalOpen(true)}>
             Evaluate
           </button>
         </div>
@@ -569,6 +582,14 @@ export function TriggerControls() {
             {evalResult}
           </div>
         ) : null}
+        <ConfirmDialog
+          open={evalOpen}
+          title="Run manual evaluation?"
+          message={`This will spawn ${evalGames} SC2 game(s) at difficulty ${evalDifficulty} to evaluate checkpoint ${selectedCheckpoint || "(none)"}. Games run at max speed in the background.`}
+          confirmLabel="Evaluate"
+          onConfirm={() => void handleEvaluate()}
+          onCancel={() => setEvalOpen(false)}
+        />
       </section>
 
       {/* D. Manual promote / rollback */}
