@@ -34,7 +34,7 @@ def _state(**overrides: Any) -> dict[str, Any]:
         "base_count": 1,
         "enemy_army_near_base": False,
         "enemy_army_supply_visible": 10,
-        "game_time_seconds": 400.0,
+        "game_time_seconds": 150.0,
         "gateway_count": 1,
         "robo_count": 0,
         "forge_count": 0,

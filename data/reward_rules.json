@@ -583,6 +583,54 @@
       },
       "reward": -0.006,
       "active": true
+    },
+    {
+      "id": "low-army-4min",
+      "description": "Penalize army < 20 supply after 4 minutes (advised iteration 1)",
+      "condition": {
+        "field": "army_supply",
+        "op": "<",
+        "value": 20
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 240
+      },
+      "reward": -0.02,
+      "active": true
+    },
+    {
+      "id": "low-army-6min",
+      "description": "Penalize army < 30 supply after 6 minutes (advised iteration 1)",
+      "condition": {
+        "field": "army_supply",
+        "op": "<",
+        "value": 30
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 360
+      },
+      "reward": -0.025,
+      "active": true
+    },
+    {
+      "id": "low-army-8min",
+      "description": "Penalize army < 40 supply after 8 minutes (advised iteration 1)",
+      "condition": {
+        "field": "army_supply",
+        "op": "<",
+        "value": 40
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 480
+      },
+      "reward": -0.03,
+      "active": true
     }
   ]
 }
