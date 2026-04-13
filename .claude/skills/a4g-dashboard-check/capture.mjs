@@ -18,8 +18,7 @@ const EVIDENCE_DIR = resolve(PROJECT_ROOT, ".ui-dashboard-evidence");
 const ALL_TABS = [
   { name: "live", label: "Live" },
   { name: "stats", label: "Stats" },
-  { name: "games", label: "Games" },
-  { name: "decisions", label: "Decisions" },
+{ name: "decisions", label: "Decisions" },
   { name: "training", label: "Training" },
   { name: "loop", label: "Loop" },
   { name: "advisor", label: "Advisor" },
@@ -42,9 +41,12 @@ async function main() {
 
   console.log(`Capturing ${tabs.length} tabs to ${EVIDENCE_DIR}/`);
 
-  // Load the app
-  await page.goto("http://localhost:3000", { waitUntil: "networkidle", timeout: 15000 });
-  await page.waitForTimeout(2000);
+  // Load the app — use domcontentloaded instead of networkidle because
+  // Vite's HMR WebSocket keeps the network active and can cause timeouts.
+  await page.goto("http://localhost:3000", { waitUntil: "domcontentloaded", timeout: 15000 });
+  // Wait for the React app to render (nav buttons appear)
+  await page.waitForSelector("nav button", { timeout: 10000 });
+  await page.waitForTimeout(1000);
 
   for (const tab of tabs) {
     try {
@@ -56,7 +58,13 @@ async function main() {
         // Fallback: try any link/button with matching text
         await page.getByText(tab.label, { exact: true }).first().click();
       }
-      await page.waitForTimeout(2000);
+      if (tab.name === "processes") {
+        // Wait for the process scan API to resolve (shows "Active Processes" heading)
+        await page.waitForSelector("h3:has-text('Active Processes')", { timeout: 15000 }).catch(() => {});
+        await page.waitForTimeout(500);
+      } else {
+        await page.waitForTimeout(2000);
+      }
 
       const out = resolve(EVIDENCE_DIR, `${tab.name}.png`);
       await page.screenshot({ path: out, fullPage: true });

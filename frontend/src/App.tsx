@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { LiveView } from "./components/LiveView";
 import { Stats } from "./components/Stats";
-import { GameHistory } from "./components/GameHistory";
 import { DecisionQueue } from "./components/DecisionQueue";
 import { TrainingDashboard } from "./components/TrainingDashboard";
 import { CheckpointList } from "./components/CheckpointList";
@@ -25,8 +24,7 @@ import "./App.css";
 type Tab =
   | "live"
   | "stats"
-  | "games"
-  | "processes"
+| "processes"
   | "decisions"
   | "training"
   | "loop"
@@ -62,10 +60,7 @@ function App() {
           <button onClick={() => setTab("stats")} className={tab === "stats" ? "active" : ""}>
             Stats
           </button>
-<button onClick={() => setTab("games")} className={tab === "games" ? "active" : ""}>
-            Games
-          </button>
-          <button
+<button
             onClick={() => setTab("decisions")}
             className={tab === "decisions" ? "active" : ""}
           >
@@ -133,8 +128,7 @@ function App() {
       <main>
         {tab === "live" && <LiveView />}
         {tab === "stats" && <Stats />}
-{tab === "games" && <GameHistory />}
-        {tab === "decisions" && <DecisionQueue />}
+{tab === "decisions" && <DecisionQueue />}
         {tab === "training" && (
           <>
             <TrainingDashboard />

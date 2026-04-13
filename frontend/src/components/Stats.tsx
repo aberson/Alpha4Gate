@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback, useEffect, Fragment } from "react";
 import { useApi } from "../hooks/useApi";
 import { StaleDataBanner } from "./StaleDataBanner";
 
@@ -14,7 +14,15 @@ interface DifficultyStats {
   max_reward: number;
 }
 
-interface RecentGame {
+interface StatsResponse {
+  total_games: number;
+  overall: { wins: number; losses: number; win_rate: number };
+  by_difficulty: DifficultyStats[];
+  recent_games: never[]; // still returned by API but unused now
+  win_trend: { index: number; win_rate: number; timestamp: string }[];
+}
+
+interface GameRow {
   game_id: string;
   map_name: string;
   difficulty: number;
@@ -25,15 +33,33 @@ interface RecentGame {
   created_at: string;
 }
 
-interface StatsResponse {
-  total_games: number;
-  overall: { wins: number; losses: number; win_rate: number };
-  by_difficulty: DifficultyStats[];
-  recent_games: RecentGame[];
-  win_trend: { index: number; win_rate: number; timestamp: string }[];
+interface GamesResponse {
+  games: GameRow[];
+  total: number;
+}
+
+interface RewardStep {
+  game_time: number;
+  total_reward: number;
+  fired_rules: { id: string; reward: number }[];
+  is_terminal?: boolean;
+  result?: string | null;
+}
+
+interface GameDetailResponse {
+  game: GameRow | null;
+  reward_steps: RewardStep[];
 }
 
 type DifficultyFilter = "all" | number;
+
+const RESULT_COLORS: Record<string, string> = {
+  win: "#2ecc71",
+  loss: "#e74c3c",
+  timeout: "#f39c12",
+};
+
+const PAGE_SIZE = 30;
 
 function formatDuration(secs: number): string {
   const m = Math.floor(secs / 60);
@@ -72,14 +98,111 @@ function WinRateBar({ rate, size = "normal" }: { rate: number; size?: "normal" |
   );
 }
 
+function RewardTimeline({ gameId }: { gameId: string }) {
+  const [detail, setDetail] = useState<GameDetailResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch(`/api/games/${gameId}`);
+        const data = (await resp.json()) as GameDetailResponse;
+        if (!cancelled) setDetail(data);
+      } catch {
+        if (!cancelled) setDetail(null);
+      }
+      if (!cancelled) setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [gameId]);
+
+  if (loading) return <tr><td colSpan={7} style={{ color: "#888", padding: "8px 0" }}>Loading reward timeline...</td></tr>;
+  if (!detail?.reward_steps?.length) return <tr><td colSpan={7} style={{ color: "#666", padding: "8px 0", fontSize: "0.85em" }}>No per-step reward log available.</td></tr>;
+
+  return (
+    <tr>
+      <td colSpan={7} style={{ padding: "8px 16px 16px" }}>
+        <div style={{ maxHeight: "300px", overflowY: "auto" }}>
+          <table style={{ width: "100%", fontSize: "0.8em" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "right" }}>Time</th>
+                <th style={{ textAlign: "right" }}>Reward</th>
+                <th style={{ textAlign: "left" }}>Fired Rules</th>
+              </tr>
+            </thead>
+            <tbody>
+              {detail.reward_steps.map((step, i) => (
+                <tr
+                  key={i}
+                  style={{
+                    backgroundColor: step.is_terminal ? "rgba(255,255,255,0.05)" : undefined,
+                  }}
+                >
+                  <td style={{ textAlign: "right", fontFamily: "monospace" }}>
+                    {step.game_time.toFixed(1)}s
+                  </td>
+                  <td
+                    style={{
+                      textAlign: "right",
+                      fontFamily: "monospace",
+                      color: step.total_reward >= 0 ? "#2ecc71" : "#e74c3c",
+                    }}
+                  >
+                    {step.total_reward > 0 ? "+" : ""}
+                    {step.total_reward.toFixed(2)}
+                  </td>
+                  <td style={{ color: "#aaa" }}>
+                    {step.fired_rules.length > 0
+                      ? step.fired_rules
+                          .map((r) => `${r.id} (${r.reward > 0 ? "+" : ""}${r.reward})`)
+                          .join(", ")
+                      : "\u2014"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 export function Stats() {
-  const { data, isStale, isLoading, lastSuccess } = useApi<StatsResponse>(
+  const { data: statsData, isStale: statsStale, isLoading, lastSuccess } = useApi<StatsResponse>(
     "/api/stats",
     { pollMs: 10000, cacheKey: "/api/stats/v2" },
   );
-  const [diffFilter, setDiffFilter] = useState<DifficultyFilter>("all");
 
-  if (!data) {
+  // Game history state
+  const [filterDifficulty, setFilterDifficulty] = useState<DifficultyFilter>("all");
+  const [filterResult, setFilterResult] = useState<string>("");
+  const [page, setPage] = useState(0);
+  const [expandedGameId, setExpandedGameId] = useState<string | null>(null);
+
+  const gamesParams = new URLSearchParams();
+  gamesParams.set("limit", String(PAGE_SIZE));
+  gamesParams.set("offset", String(page * PAGE_SIZE));
+  if (filterDifficulty !== "all") gamesParams.set("difficulty", String(filterDifficulty));
+  if (filterResult) gamesParams.set("result", filterResult);
+
+  const { data: gamesData, isStale: gamesStale, lastSuccess: gamesLastSuccess } = useApi<GamesResponse>(
+    `/api/games?${gamesParams.toString()}`,
+    { pollMs: 10000, cacheKey: `games-${filterDifficulty}-${filterResult}-${page}` },
+  );
+
+  const games = gamesData?.games ?? [];
+  const total = gamesData?.total ?? 0;
+  const totalPages = Math.ceil(total / PAGE_SIZE);
+
+  const handleFilterChange = useCallback(() => {
+    setPage(0);
+    setExpandedGameId(null);
+  }, []);
+
+  if (!statsData) {
     return (
       <div className="stats training-dashboard">
         <h2>Statistics</h2>
@@ -88,17 +211,13 @@ export function Stats() {
     );
   }
 
-  const filteredGames =
-    diffFilter === "all"
-      ? data.recent_games
-      : data.recent_games.filter((g) => g.difficulty === diffFilter);
-
   return (
     <div className="stats training-dashboard">
-      {isStale ? <StaleDataBanner lastSuccess={lastSuccess} label="Stats" /> : null}
+      {statsStale ? <StaleDataBanner lastSuccess={lastSuccess} label="Stats" /> : null}
       <h2>Statistics</h2>
       <p style={{ color: "#888", fontSize: "0.85em", margin: "0 0 16px" }}>
-        Aggregate results from training.db: overall win/loss record, per-difficulty breakdown with average reward and duration, and the most recent games filterable by difficulty. Higher avg reward at a given difficulty indicates better reward shaping alignment with winning behavior.
+        Aggregate results from training.db: overall win/loss record, per-difficulty breakdown,
+        and full game history with per-step reward timeline.
       </p>
 
       {/* Overall summary cards */}
@@ -112,24 +231,24 @@ export function Stats() {
       >
         <div className="stat-card">
           <label>Total Games</label>
-          <span style={{ fontSize: "1.5em", fontWeight: 700 }}>{data.total_games}</span>
+          <span style={{ fontSize: "1.5em", fontWeight: 700 }}>{statsData.total_games}</span>
         </div>
         <div className="stat-card">
           <label>Overall Record</label>
           <span>
-            <span style={{ color: "#2ecc71", fontWeight: 600 }}>{data.overall.wins}W</span>
+            <span style={{ color: "#2ecc71", fontWeight: 600 }}>{statsData.overall.wins}W</span>
             {" / "}
-            <span style={{ color: "#e74c3c", fontWeight: 600 }}>{data.overall.losses}L</span>
+            <span style={{ color: "#e74c3c", fontWeight: 600 }}>{statsData.overall.losses}L</span>
           </span>
         </div>
         <div className="stat-card">
           <label>Win Rate</label>
-          <WinRateBar rate={data.overall.win_rate} size="large" />
+          <WinRateBar rate={statsData.overall.win_rate} size="large" />
         </div>
         <div className="stat-card">
           <label>Difficulties Played</label>
           <span style={{ fontSize: "1.2em", fontWeight: 600 }}>
-            {data.by_difficulty.map((d) => d.difficulty).join(", ")}
+            {statsData.by_difficulty.map((d) => d.difficulty).join(", ")}
           </span>
         </div>
       </div>
@@ -150,7 +269,7 @@ export function Stats() {
             </tr>
           </thead>
           <tbody>
-            {data.by_difficulty.map((d) => (
+            {statsData.by_difficulty.map((d) => (
               <tr key={d.difficulty}>
                 <td style={{ textAlign: "center", fontWeight: 700, fontSize: "1.1em" }}>
                   {d.difficulty}
@@ -187,87 +306,169 @@ export function Stats() {
         </table>
       </section>
 
-      {/* Recent games */}
+      {/* Game History (merged from Games tab) */}
       <section>
-        <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "12px" }}>
-          <h3 style={{ margin: 0 }}>Recent Games</h3>
+        {gamesStale && games.length > 0 ? (
+          <StaleDataBanner lastSuccess={gamesLastSuccess} label="Games" />
+        ) : null}
+
+        <h3>
+          Game History{" "}
+          <span style={{ fontSize: "0.7em", color: "#888", fontWeight: 400 }}>
+            ({total} total)
+          </span>
+        </h3>
+
+        {/* Filters */}
+        <div style={{ display: "flex", gap: "12px", marginBottom: "12px", alignItems: "center", flexWrap: "wrap" }}>
           <div style={{ display: "flex", gap: "4px" }}>
             <button
               type="button"
-              onClick={() => setDiffFilter("all")}
-              className={diffFilter === "all" ? "active" : ""}
+              onClick={() => { setFilterDifficulty("all"); handleFilterChange(); }}
+              className={filterDifficulty === "all" ? "active" : ""}
               style={{ padding: "3px 10px", fontSize: "0.8em" }}
             >
               All
             </button>
-            {data.by_difficulty.map((d) => (
+            {statsData.by_difficulty.map((d) => (
               <button
                 key={d.difficulty}
                 type="button"
-                onClick={() => setDiffFilter(d.difficulty)}
-                className={diffFilter === d.difficulty ? "active" : ""}
+                onClick={() => { setFilterDifficulty(d.difficulty); handleFilterChange(); }}
+                className={filterDifficulty === d.difficulty ? "active" : ""}
                 style={{ padding: "3px 10px", fontSize: "0.8em" }}
               >
                 Diff {d.difficulty}
               </button>
             ))}
           </div>
+          <label style={{ fontSize: "0.85em" }}>
+            Result:{" "}
+            <select
+              value={filterResult}
+              onChange={(e) => {
+                setFilterResult(e.target.value);
+                handleFilterChange();
+              }}
+              style={{ padding: "4px 8px" }}
+            >
+              <option value="">All</option>
+              <option value="win">Win</option>
+              <option value="loss">Loss</option>
+              <option value="timeout">Timeout</option>
+            </select>
+          </label>
         </div>
-        {filteredGames.length === 0 ? (
-          <p style={{ color: "#888" }}>No games match the filter.</p>
+
+        {/* Game table */}
+        {games.length === 0 ? (
+          <p style={{ color: "#888" }}>
+            {total === 0 ? "No games recorded yet." : "No games match the current filters."}
+          </p>
         ) : (
-          <table style={{ width: "100%", fontSize: "0.85em" }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "center" }}>Diff</th>
-                <th style={{ textAlign: "center" }}>Result</th>
-                <th style={{ textAlign: "center" }}>Duration</th>
-                <th style={{ textAlign: "center" }}>Reward</th>
-                <th style={{ textAlign: "left" }}>Model</th>
-                <th style={{ textAlign: "left" }}>Time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredGames.map((g) => (
-                <tr key={g.game_id}>
-                  <td style={{ textAlign: "center", fontWeight: 600 }}>{g.difficulty}</td>
-                  <td style={{ textAlign: "center" }}>
-                    <span
-                      style={{
-                        padding: "2px 8px",
-                        borderRadius: "3px",
-                        fontWeight: 600,
-                        fontSize: "0.85em",
-                        backgroundColor:
-                          g.result === "win"
-                            ? "rgba(46, 204, 113, 0.2)"
-                            : "rgba(231, 76, 60, 0.2)",
-                        color: g.result === "win" ? "#2ecc71" : "#e74c3c",
-                      }}
-                    >
-                      {g.result}
-                    </span>
-                  </td>
-                  <td style={{ textAlign: "center", fontFamily: "monospace" }}>
-                    {formatDuration(g.duration)}
-                  </td>
-                  <td
-                    style={{
-                      textAlign: "center",
-                      fontFamily: "monospace",
-                      color: g.reward >= 0 ? "#2ecc71" : g.reward === 0 ? "#888" : "#e74c3c",
-                    }}
-                  >
-                    {g.reward === 0 ? "\u2014" : g.reward.toFixed(1)}
-                  </td>
-                  <td style={{ color: "#aaa" }}>{g.model_version}</td>
-                  <td style={{ color: "#888", fontSize: "0.9em" }}>
-                    {new Date(g.created_at).toLocaleString()}
-                  </td>
+          <>
+            <table style={{ width: "100%", fontSize: "0.85em" }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left" }}>Date</th>
+                  <th style={{ textAlign: "left" }}>Map</th>
+                  <th style={{ textAlign: "center" }}>Diff</th>
+                  <th style={{ textAlign: "center" }}>Result</th>
+                  <th style={{ textAlign: "right" }}>Duration</th>
+                  <th style={{ textAlign: "right" }}>Reward</th>
+                  <th style={{ textAlign: "left" }}>Model</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {games.map((g) => {
+                  const isExpanded = expandedGameId === g.game_id;
+                  return (
+                    <Fragment key={g.game_id}>
+                      <tr
+                        onClick={() => setExpandedGameId(isExpanded ? null : g.game_id)}
+                        style={{
+                          cursor: "pointer",
+                          backgroundColor: isExpanded ? "rgba(255,255,255,0.05)" : undefined,
+                        }}
+                        onMouseEnter={(e) =>
+                          (e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.03)")
+                        }
+                        onMouseLeave={(e) =>
+                          (e.currentTarget.style.backgroundColor =
+                            isExpanded ? "rgba(255,255,255,0.05)" : "")
+                        }
+                      >
+                        <td style={{ color: "#aaa", fontSize: "0.9em" }}>
+                          {new Date(g.created_at).toLocaleString()}
+                        </td>
+                        <td>{g.map_name}</td>
+                        <td style={{ textAlign: "center" }}>{g.difficulty}</td>
+                        <td style={{ textAlign: "center" }}>
+                          <span
+                            style={{
+                              color: RESULT_COLORS[g.result] ?? "#888",
+                              fontWeight: 600,
+                              textTransform: "uppercase",
+                              fontSize: "0.85em",
+                            }}
+                          >
+                            {g.result}
+                          </span>
+                        </td>
+                        <td style={{ textAlign: "right", fontFamily: "monospace" }}>
+                          {formatDuration(g.duration)}
+                        </td>
+                        <td
+                          style={{
+                            textAlign: "right",
+                            fontFamily: "monospace",
+                            color: g.reward >= 0 ? "#2ecc71" : "#e74c3c",
+                          }}
+                        >
+                          {g.reward > 0 ? "+" : ""}
+                          {g.reward}
+                        </td>
+                        <td style={{ color: "#aaa", fontSize: "0.9em" }}>{g.model_version}</td>
+                      </tr>
+                      {isExpanded && <RewardTimeline gameId={g.game_id} />}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "center",
+                  gap: "8px",
+                  marginTop: "12px",
+                }}
+              >
+                <button
+                  type="button"
+                  disabled={page === 0}
+                  onClick={() => setPage((p) => p - 1)}
+                  style={{ padding: "4px 12px", fontSize: "0.85em" }}
+                >
+                  Prev
+                </button>
+                <span style={{ color: "#888", fontSize: "0.85em", lineHeight: "28px" }}>
+                  Page {page + 1} of {totalPages}
+                </span>
+                <button
+                  type="button"
+                  disabled={page >= totalPages - 1}
+                  onClick={() => setPage((p) => p + 1)}
+                  style={{ padding: "4px 12px", fontSize: "0.85em" }}
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </>
         )}
       </section>
     </div>

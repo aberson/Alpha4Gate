@@ -92,7 +92,7 @@ Output the detected tier and a summary table:
 | Tab | Status | Issues |
 |-----|--------|--------|
 | Live | ✓ | Connected, idle, "Waiting for game data..." |
-| Stats | ✓ | 52 games displayed, 0% win rate |
+| Stats | ✓ | 52 games displayed, 0% win rate, game history paginated |
 | Processes | ⚠ | 2 duplicate BACKEND-SERVER entries |
 | ... | ... | ... |
 ```
@@ -111,8 +111,7 @@ historical data from the DB. No live game data expected.
 | Tab | Expected | Failure indicators |
 |-----|----------|-------------------|
 | **Live** | Green "Live" dot. "Waiting for game data..." is normal. Command Panel visible with input field and Send button. | "Stale" indicator, "backend offline" banner, no nav tabs rendering, blank page |
-| **Stats** | Game count, win rate tables, recent games list. Data should match training.db. "Last connected" should be recent (< 2 min). | "backend offline, showing cached data" banner, zero games when DB has data, stale "Last connected" timestamp |
-| **Games** | Game history table with rows if DB has games. Filter dropdowns working. | Empty table when DB has games, missing columns (reward, duration), "No games" when games exist |
+| **Stats** | Summary cards, per-difficulty breakdown, and Game History section with paginated table. Difficulty filter buttons and result dropdown working. Clicking a game row expands an inline reward timeline. Data should match training.db. "Last connected" should be recent (< 2 min). | "backend offline, showing cached data" banner, zero games when DB has data, stale "Last connected" timestamp, game rows not expanding on click, empty table when DB has games |
 | **Decisions** | Decision log entries if any games have been played. May be empty on fresh DB. | Error messages, table rendering failures |
 | **Training** | Current checkpoint name, total games, DB size, win rate windows. Checkpoint list. | Missing checkpoint data, "0 games" when DB has games, no model versions listed |
 | **Loop** | Daemon state: "IDLE (stopped)". "Would Trigger?" evaluation. Config panel with editable fields. | Daemon showing "running" when not started, config fields not rendering, missing trigger evaluation |
@@ -144,7 +143,7 @@ Live data should be streaming. This is the richest state to verify.
 | Tab | Additional expectations beyond T1 |
 |-----|----------------------------------|
 | **Live** | Game time ticking, minerals/gas/supply updating, unit list populated, strategic state shown (not "Waiting for game data..."). Score increasing. |
-| **Stats** | "Last connected" updating in real-time (< 30s). |
+| **Stats** | "Last connected" updating in real-time (< 30s). Game History section updating with new games. |
 | **Decisions** | New decision entries appearing as strategy changes happen. Claude advisor entries if advisor is active. |
 | **Processes** | BACKEND-RUNNER process visible (game runner), SC2 process running. |
 
@@ -163,7 +162,7 @@ The daemon auto-spawns games every 60 seconds.
 | **Loop** | Daemon state: "RUNNING" or "CHECKING". Runs completed should increment. Last run timestamp should be recent. |
 | **Training** | Total games count should be increasing over time. New checkpoints may appear. |
 | **Processes** | Daemon process visible. May also see BACKEND-RUNNER (active game). |
-| **Games** | New games appearing in history as daemon completes them. |
+| **Stats** (Game History section) | New games appearing in history as daemon completes them. |
 
 **Key T4 checks:**
 - Daemon shows "running" (not "idle/stopped")
@@ -182,7 +181,7 @@ The most complex state. The advisor loop drives everything.
 | **Processes** | Backend-server ON. May see game runner during observation phases. No duplicate servers. |
 | **Alerts** | "Advisor CLI failed" errors during replay-mode games are expected and harmless. Backend errors are NOT expected. |
 | **Training** | If a training soak ran, game count should have increased. |
-| **Stats** | Game count increasing as observation + validation games complete. |
+| **Stats** | Game count increasing as observation + validation games complete. New games appearing in Game History section. |
 
 **Key T5 checks:**
 - Advisor shows "running" with correct phase/iteration
@@ -201,7 +200,7 @@ The most complex state. The advisor loop drives everything.
 | "backend offline, showing cached data" | Yellow/orange banner on any tab | WebSocket disconnected. Backend may have restarted. Refresh browser. |
 | "Stale (Xm ago)" | Yellow indicator next to nav | WebSocket not receiving heartbeats. Check backend process is alive. |
 | Duplicate BACKEND-SERVER in Processes | Two python `--serve` entries | Multiple server processes spawned. Kill extras, keep one. |
-| Empty game history when DB has data | Games tab shows "No games" | Backend not reading from correct `data/training.db` path. |
+| Empty game history when DB has data | Stats Game History section shows "No games" | Backend not reading from correct `data/training.db` path. |
 | Reward trends flatline after game N | Improvements tab chart drops to zero | RL training games using different reward path. Check `MAX_GAME_TIME_SECONDS`. |
 | Advisor tab shows "running" but run finished | Stale `advised_run_state.json` | The advised run crashed without writing final state. Update manually. |
 | Port 3000 "free" on Processes tab | Frontend column shows unbound | Frontend dev server not running. Start with `cd frontend && npm run dev`. |
