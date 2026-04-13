@@ -84,6 +84,7 @@ class MacroManager:
         self._check_production_buildings(bot)
         self._check_warp_gate_research(bot)
         self._check_forge_and_upgrades(bot)
+        self._check_shield_batteries(bot)
         self._check_gas(bot)
 
         return self._pending
@@ -289,6 +290,32 @@ class MacroManager:
                     )
                 )
                 return  # One upgrade at a time
+
+    def _check_shield_batteries(self, bot: BotAI) -> None:
+        """Build 1-2 Shield Batteries near the natural for defense."""
+        # Need CyberneticsCore + 2 bases
+        cyber = bot.structures(UnitTypeId.CYBERNETICSCORE)
+        try:
+            has_cyber = bool(cyber.ready)
+        except AttributeError:
+            has_cyber = bool(cyber)
+        if not has_cyber or len(bot.townhalls) < 2:
+            return
+
+        battery_count = len(bot.structures(UnitTypeId.SHIELDBATTERY))
+        if battery_count >= 2:
+            return
+        pending = bot.already_pending(UnitTypeId.SHIELDBATTERY)
+        if pending > 0:
+            return
+        if bot.can_afford(UnitTypeId.SHIELDBATTERY):
+            self._pending.append(
+                MacroDecision(
+                    action="build",
+                    target="ShieldBattery",
+                    reason=f"Defensive battery ({battery_count}/2)",
+                )
+            )
 
     def _check_gas(self, bot: BotAI) -> None:
         """Build assimilators on bases that don't have them.
