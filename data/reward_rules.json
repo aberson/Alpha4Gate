@@ -450,7 +450,7 @@
     },
     {
       "id": "defend-with-army",
-      "description": "Penalize defending with army >= 15 supply after 6 minutes (new)",
+      "description": "Penalize defending with army >= 15 supply (raised: was -0.02, advised iter 4)",
       "condition": {
         "field": "current_state",
         "op": "==",
@@ -462,6 +462,22 @@
         "value": 15
       },
       "reward": -0.02,
+      "active": true
+    },
+    {
+      "id": "defend-with-strong-army",
+      "description": "Heavy penalty for defending with army >= 30 supply (advised iter 4)",
+      "condition": {
+        "field": "current_state",
+        "op": "==",
+        "value": "defend"
+      },
+      "requires": {
+        "field": "army_supply",
+        "op": ">=",
+        "value": 30
+      },
+      "reward": -0.06,
       "active": true
     },
     {
