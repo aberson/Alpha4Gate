@@ -385,38 +385,77 @@ DEBUG_ENDPOINTS=1 PYTHONUNBUFFERED=1 uv run python -m alpha4gate.runner --serve 
 DAEMON_PID=$!
 
 # Wait for 2 games to complete — poll training.db game count
+SOAK_START=$(date +%s)
 INITIAL_GAMES=$(python -c "import sqlite3; c=sqlite3.connect('data/training.db'); print(c.execute('SELECT COUNT(*) FROM games').fetchone()[0]); c.close()")
 while true; do
+    SOAK_ELAPSED=$(( $(date +%s) - SOAK_START ))
+    if [ $SOAK_ELAPSED -ge 300 ]; then echo "Training soak timeout (5m)"; break; fi
     CURRENT=$(python -c "import sqlite3; c=sqlite3.connect('data/training.db'); print(c.execute('SELECT COUNT(*) FROM games').fetchone()[0]); c.close()")
     if [ $((CURRENT - INITIAL_GAMES)) -ge 2 ]; then break; fi
     sleep 10
 done
 
-# Stop daemon cleanly
+# --- MANDATORY SOAK CLEANUP (always runs, even on timeout) ---
+# 1. Graceful shutdown via API
 curl -s -X POST http://localhost:8765/api/shutdown || true
-wait $DAEMON_PID 2>/dev/null || true
+sleep 2
+
+# 2. Force-kill any remaining Python/uv runner processes spawned by the soak.
+#    Match on the --daemon flag to avoid killing non-daemon backends.
+powershell.exe -Command "Get-WmiObject Win32_Process | Where-Object { \$_.CommandLine -match 'alpha4gate.*--daemon' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }"
+
+# 3. Verify port 8765 is free before continuing
+for attempt in 1 2 3 4 5; do
+    python -c "import socket; s=socket.socket(); r=s.connect_ex(('127.0.0.1',8765)); s.close(); exit(0 if r!=0 else 1)" && break
+    sleep 2
+done
 ```
 
-**Budget guard:** Cap the training soak at 5 minutes wall-clock. If 2 games haven't finished by then, stop anyway — the daemon may be stuck or games may be very long. Log the number of games completed.
+**Budget guard:** Cap the training soak at 5 minutes wall-clock. The `SOAK_ELAPSED` check inside the loop enforces this.
 
 **Skip condition:** If the iteration was training-only (config changes, no code), skip the soak — the daemon will pick up config changes on its own next time it runs.
+
+**Verification gate:** Do NOT proceed to Phase 7 until port 8765 is confirmed free. A lingering daemon will cause the next iteration's game launches to fail with port-conflict errors.
 
 ---
 
 ## Phase 7: Cleanup & Loop
 
-### 7.1 Kill orphaned background processes
+### 7.1 Process cleanup between iterations
 
-Between iterations, kill any leftover Monitor / tail / grep / sleep processes from game observation. These accumulate if not cleaned up.
+Between iterations, ensure **all** processes from the prior iteration are stopped. Orphaned processes cause port conflicts, SC2 connection errors, and leaked memory. Run every step — don't skip even if you think the process is already dead.
 
 ```bash
-# Kill any orphaned tail/grep/sleep spawned by earlier Monitor or log-watching phases.
-# Use TaskStop on any background tasks that are still running.
-# As a fallback, find and kill stale shell monitor processes:
+# 1. Stop any backend/daemon via API (idempotent, safe if nothing is listening)
+curl -s -X POST http://localhost:8765/api/shutdown || true
+sleep 2
+
+# 2. Force-kill any Python processes running alpha4gate (daemon, runner, batch)
+#    This catches processes that didn't respond to /api/shutdown.
+#    NEVER kill SC2_x64.exe — only Python/uv wrappers.
+powershell.exe -Command "Get-WmiObject Win32_Process | Where-Object { \$_.CommandLine -match 'alpha4gate' -and \$_.CommandLine -notmatch 'SC2' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }"
+
+# 3. Kill monitoring helpers (tail, grep, sleep) from log-watching phases
 powershell.exe -Command "Get-Process -Name tail,grep,sleep -ErrorAction SilentlyContinue | Stop-Process -Force"
+
+# 4. Use TaskStop on ALL background Bash tasks from this conversation
+#    (game runners, log monitors, daemon processes)
+```
+Use `TaskStop` on every background task ID that was started during this iteration. Don't rely on them having exited — check and stop each one.
+
+```bash
+# 5. Verify port 8765 is free — block until it is (max 15 seconds)
+for attempt in 1 2 3 4 5; do
+    python -c "import socket; s=socket.socket(); r=s.connect_ex(('127.0.0.1',8765)); s.close(); exit(0 if r!=0 else 1)" && break
+    echo "Port 8765 still in use, waiting..."
+    sleep 3
+done
+
+# 6. Final verification — if port is STILL in use, log an error but continue
+python -c "import socket; s=socket.socket(); r=s.connect_ex(('127.0.0.1',8765)); s.close(); exit(0 if r!=0 else 1)" || echo "WARNING: port 8765 still occupied — next iteration may fail"
 ```
 
-Use `TaskStop` on any background Bash tasks from Phase 1 observation that are still running. Do NOT kill SC2_x64.exe or the backend (python/uv) processes — only monitoring helpers.
+**Hard rule:** Do NOT proceed to Phase 1 of the next iteration until step 5 confirms port 8765 is free. A lingering process on that port will cause every subsequent game launch to fail or conflict.
 
 ### 7.2 Prepare for next iteration
 
@@ -499,18 +538,25 @@ git push origin "advised/run/$RUN_TS/final"
 
 ### Final cleanup
 
-Shut down all processes spawned during the run. Order matters:
+Shut down **every** process spawned during the run. This is the same sequence as Phase 7.1 but runs at end-of-run when nothing needs to survive.
 
-1. Stop the backend via the shutdown endpoint (stops daemon + exits server + kills uv wrapper):
-   ```bash
-   curl -s -X POST http://localhost:8765/api/shutdown || true
-   ```
-2. Kill any orphaned monitor processes (tail/grep/sleep) from game observation:
-   ```bash
-   powershell.exe -Command "Get-Process -Name tail,grep,sleep -ErrorAction SilentlyContinue | Stop-Process -Force"
-   ```
-3. Use `TaskStop` on any remaining background Bash tasks.
-4. Do NOT kill SC2_x64.exe.
+```bash
+# 1. Graceful shutdown via API
+curl -s -X POST http://localhost:8765/api/shutdown || true
+sleep 2
+
+# 2. Force-kill ALL alpha4gate Python processes (daemon, runner, batch, serve)
+powershell.exe -Command "Get-WmiObject Win32_Process | Where-Object { \$_.CommandLine -match 'alpha4gate' -and \$_.CommandLine -notmatch 'SC2' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }"
+
+# 3. Kill monitoring helpers
+powershell.exe -Command "Get-Process -Name tail,grep,sleep -ErrorAction SilentlyContinue | Stop-Process -Force"
+
+# 4. Verify port is free
+python -c "import socket; s=socket.socket(); r=s.connect_ex(('127.0.0.1',8765)); s.close(); exit(0 if r!=0 else 1)" || echo "WARNING: port 8765 still occupied after final cleanup"
+```
+
+5. Use `TaskStop` on **all** remaining background Bash tasks from this conversation.
+6. Do NOT kill SC2_x64.exe.
 
 ---
 
