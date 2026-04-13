@@ -238,22 +238,36 @@ class DecisionEngine:
 
         return self._state
 
+    # Minimum enemy supply near base to interrupt an ongoing attack.
+    # Prevents small raids from pulling the entire army back home.
+    DEFEND_INTERRUPT_THRESHOLD: int = 8
+
     def _compute_next_state(self, snapshot: GameSnapshot) -> StrategicState:
         """Determine the next state based on current game conditions."""
         # Defend if enemy is near base — but allow counterattack when
         # our army is strong enough to break out of the DEFEND loop.
         if snapshot.enemy_army_near_base:
             enemy_vis = snapshot.enemy_army_supply_visible
-            can_counterattack = (
-                snapshot.army_supply >= self.ATTACK_ARMY_SUPPLY
-                and (
-                    enemy_vis == 0
-                    or snapshot.army_supply
-                    >= enemy_vis * self._attack_supply_ratio
+
+            # Hysteresis: when already attacking, only switch to DEFEND if
+            # the enemy presence near base is substantial (>= threshold).
+            # Small raids shouldn't pull the whole army back.
+            if (
+                self._state == StrategicState.ATTACK
+                and enemy_vis < self.DEFEND_INTERRUPT_THRESHOLD
+            ):
+                pass  # stay in ATTACK — ignore minor raid
+            else:
+                can_counterattack = (
+                    snapshot.army_supply >= self.ATTACK_ARMY_SUPPLY
+                    and (
+                        enemy_vis == 0
+                        or snapshot.army_supply
+                        >= enemy_vis * self._attack_supply_ratio
+                    )
                 )
-            )
-            if not can_counterattack:
-                return StrategicState.DEFEND
+                if not can_counterattack:
+                    return StrategicState.DEFEND
 
         # FORTIFY: enter when outgunned and recently retreated (lower priority than DEFEND)
         own_supply = snapshot.army_supply
