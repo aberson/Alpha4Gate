@@ -376,36 +376,90 @@ async def delete_build_order(order_id: str) -> dict[str, Any]:
     return {"deleted": False}
 
 
-@app.get("/api/replays")
-async def get_replays() -> dict[str, Any]:
-    """List available replays."""
-    replays: list[dict[str, Any]] = []
-    if _replay_dir.exists():
-        for f in sorted(_replay_dir.glob("*.SC2Replay"), reverse=True):
-            replay_id = f.stem.replace("game_", "")
-            replays.append({
-                "id": replay_id,
-                "timestamp": replay_id,
-                "filename": f.name,
-            })
-    return {"replays": replays}
+@app.get("/api/games")
+async def get_games(
+    limit: int = 100,
+    offset: int = 0,
+    difficulty: int | None = None,
+    result: str | None = None,
+) -> dict[str, Any]:
+    """List games from training.db with optional filters."""
+    import sqlite3
+
+    db_path = _data_dir / "training.db"
+    if not db_path.exists():
+        return {"games": [], "total": 0}
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+
+    where_clauses: list[str] = []
+    params: list[Any] = []
+    if difficulty is not None:
+        where_clauses.append("difficulty = ?")
+        params.append(difficulty)
+    if result is not None:
+        where_clauses.append("result = ?")
+        params.append(result)
+
+    where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+    # Total count
+    c = conn.execute(f"SELECT COUNT(*) FROM games{where_sql}", params)
+    total = c.fetchone()[0]
+
+    # Paginated rows
+    c = conn.execute(
+        f"SELECT game_id, map_name, difficulty, result, "
+        f"ROUND(duration_secs, 0) as duration, "
+        f"ROUND(total_reward, 1) as reward, "
+        f"model_version, created_at "
+        f"FROM games{where_sql} ORDER BY rowid DESC LIMIT ? OFFSET ?",
+        [*params, limit, offset],
+    )
+    games = [dict(row) for row in c.fetchall()]
+    conn.close()
+
+    return {"games": games, "total": total}
 
 
-@app.get("/api/replays/{replay_id}")
-async def get_replay(replay_id: str) -> dict[str, Any]:
-    """Get parsed replay details."""
-    # Placeholder — actual parsing implemented in Step 8
-    return {
-        "id": replay_id,
-        "timeline": [],
-        "stats": {
-            "minerals_collected": 0,
-            "gas_collected": 0,
-            "units_produced": 0,
-            "units_lost": 0,
-            "structures_built": 0,
-        },
-    }
+@app.get("/api/games/{game_id}")
+async def get_game_detail(game_id: str) -> dict[str, Any]:
+    """Get details for a single game, including per-step reward breakdown."""
+    import sqlite3
+
+    db_path = _data_dir / "training.db"
+    game: dict[str, Any] = {}
+    if db_path.exists():
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        c = conn.execute(
+            "SELECT game_id, map_name, difficulty, result, "
+            "ROUND(duration_secs, 0) as duration, "
+            "ROUND(total_reward, 1) as reward, "
+            "model_version, created_at FROM games WHERE game_id = ?",
+            [game_id],
+        )
+        row = c.fetchone()
+        if row:
+            game = dict(row)
+        conn.close()
+
+    if not game:
+        return {"game": None, "reward_steps": []}
+
+    # Per-step reward log (if available)
+    reward_steps: list[dict[str, Any]] = []
+    reward_log = _data_dir / "reward_logs" / f"game_{game_id}.jsonl"
+    if reward_log.exists():
+        for line in reward_log.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                try:
+                    reward_steps.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+
+    return {"game": game, "reward_steps": reward_steps}
 
 
 @app.get("/api/decision-log")
@@ -1209,6 +1263,68 @@ def _kill_spawned_processes() -> list[str]:
         pass
 
     return results
+
+
+@app.post("/api/kill-daemons")
+async def kill_daemon_processes() -> dict[str, Any]:
+    """Kill daemon backend processes (those started with --daemon).
+
+    Preserves: the --serve-only backend (this process), frontend, SC2.
+    Targets: python/uv processes whose command line contains ``--daemon``.
+    """
+    import subprocess as _sp
+
+    results: list[str] = []
+    my_pid = os.getpid()
+
+    # Also stop the in-process daemon thread if running
+    if _daemon is not None and _daemon.is_running():
+        _daemon.stop()
+        results.append("In-process training daemon stopped")
+
+    # Find and kill python/uv processes with --daemon in their cmdline
+    try:
+        ps_cmd = (
+            "Get-Process -Name python,uv -ErrorAction SilentlyContinue | "
+            "ForEach-Object { $cim = Get-CimInstance Win32_Process "
+            "-Filter \"ProcessId=$($_.Id)\" -ErrorAction SilentlyContinue; "
+            "[PSCustomObject]@{ Id=$_.Id; "
+            "CommandLine=if($cim){$cim.CommandLine}else{$null} "
+            "} } | ConvertTo-Json -Compress"
+        )
+        out = _sp.run(
+            ["powershell.exe", "-Command", ps_cmd],
+            capture_output=True, text=True, timeout=10,
+        )
+        if out.stdout.strip():
+            entries = json.loads(out.stdout.strip())
+            if isinstance(entries, dict):
+                entries = [entries]
+            killed = 0
+            for entry in entries:
+                pid = entry.get("Id")
+                cmdline = entry.get("CommandLine") or ""
+                if (
+                    pid
+                    and pid != my_pid
+                    and pid != os.getppid()
+                    and "--daemon" in cmdline
+                ):
+                    _sp.run(
+                        ["powershell.exe", "-Command",
+                         f"Stop-Process -Id {pid} -Force "
+                         "-ErrorAction SilentlyContinue"],
+                        timeout=5, capture_output=True,
+                    )
+                    killed += 1
+            if killed:
+                results.append(f"Killed {killed} daemon process(es)")
+            else:
+                results.append("No daemon processes found")
+    except (OSError, _sp.TimeoutExpired, json.JSONDecodeError):
+        results.append("Could not scan for daemon processes")
+
+    return {"results": results}
 
 
 @app.post("/api/shutdown")

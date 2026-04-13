@@ -93,6 +93,24 @@ export function ProcessMonitor() {
     setTimeout(() => setMessage(""), 5000);
   }, []);
 
+  const handleKillDaemons = useCallback(async () => {
+    try {
+      const res = await fetch("/api/kill-daemons", { method: "POST" });
+      const body = (await res.json()) as { results?: string[] };
+      setMessage(body.results?.join("; ") ?? "Daemons killed");
+    } catch {
+      setMessage("Failed to kill daemons");
+    }
+    setTimeout(() => {
+      setMessage("");
+      refresh();
+    }, 3000);
+  }, [refresh]);
+
+  // Check if any daemon processes are present
+  const hasDaemons =
+    data?.processes.some((p) => p.details.includes("--daemon")) ?? false;
+
   if (!data) {
     return (
       <div className="process-monitor training-dashboard">
@@ -165,7 +183,25 @@ export function ProcessMonitor() {
             </span>
           )}
         </div>
-        <div style={{ marginLeft: "auto" }}>
+        <div style={{ marginLeft: "auto", display: "flex", gap: "8px" }}>
+          {hasDaemons && (
+            <button
+              type="button"
+              onClick={() => void handleKillDaemons()}
+              style={{
+                padding: "6px 14px",
+                fontSize: "0.85em",
+                backgroundColor: "#e74c3c",
+                color: "#fff",
+                border: "none",
+                borderRadius: "4px",
+                cursor: "pointer",
+                fontWeight: 600,
+              }}
+            >
+              Kill Daemons
+            </button>
+          )}
           <button
             type="button"
             onClick={() => void handleRestart()}

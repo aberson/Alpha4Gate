@@ -75,28 +75,6 @@ export interface DecisionEntry {
   claude_advice: string | null;
 }
 
-/** Replay summary. */
-export interface ReplaySummary {
-  id: string;
-  timestamp: string;
-  map?: string;
-  result?: string;
-  duration_seconds?: number;
-  filename: string;
-}
-
-/** Replay detail. */
-export interface ReplayDetail {
-  id: string;
-  timeline: { game_time_seconds: number; event: string; detail: string }[];
-  stats: {
-    minerals_collected: number;
-    gas_collected: number;
-    units_produced: number;
-    units_lost: number;
-    structures_built: number;
-  };
-}
 
 /** Command system types. */
 export type CommandModeValue = "ai_assisted" | "human_only" | "hybrid_cmd";
