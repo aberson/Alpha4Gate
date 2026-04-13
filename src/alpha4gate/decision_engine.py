@@ -96,7 +96,7 @@ class DecisionEngine:
     """
 
     # Thresholds for state transitions
-    ATTACK_ARMY_SUPPLY: int = 20
+    ATTACK_ARMY_SUPPLY: int = 12
     LATE_GAME_BASE_COUNT: int = 3
     LATE_GAME_TIME_SECONDS: float = 480.0  # 8 minutes
 
