@@ -116,7 +116,7 @@ historical data from the DB. No live game data expected.
 | **Training** | Current checkpoint name, total games, DB size, win rate windows. Checkpoint list. | Missing checkpoint data, "0 games" when DB has games, no model versions listed |
 | **Loop** | Daemon state: "IDLE (stopped)". "Would Trigger?" evaluation. Config panel with editable fields. | Daemon showing "running" when not started, config fields not rendering, missing trigger evaluation |
 | **Advisor** | Last run's iteration history if one completed. "COMPLETED" or no-run state. Control panel visible. | Crash, blank panel, "running" status when no run is active |
-| **Improvements** | Reward trends chart (may need games to populate). Promote/Rollback section. | Chart not rendering, missing rule toggles |
+| **Improvements** | Reward trends chart (may need games to populate). Promote/Rollback section. Red "Reset Training Data" button in Reward Trends controls row. | Chart not rendering, missing rule toggles, missing Reset button |
 | **Processes** | Backend ON (green), port 8765 bound (green). Process list showing backend + frontend. State files listed. | Backend OFF, port unbound, duplicate BACKEND-SERVER entries, orphan processes |
 | **Alerts** | Alert list (may be empty). Ack/Dismiss buttons if alerts exist. | Page not rendering, error fetching alerts |
 
@@ -126,6 +126,7 @@ historical data from the DB. No live game data expected.
 - Historical data renders correctly from DB
 - No duplicate backend processes on Processes tab
 - Port 8765 shows "bound" (green)
+- Improvements tab: "Reset Training Data" button visible in Reward Trends controls row (red button, right-aligned). Clicking shows confirmation dialog with warning text and Yes/Cancel buttons. Do NOT click "Yes" during a check — just verify the button and dialog render.
 
 ### T2: SC2 Ready (+ SC2 running)
 
@@ -202,5 +203,6 @@ The most complex state. The advisor loop drives everything.
 | Duplicate BACKEND-SERVER in Processes | Two python `--serve` entries | Multiple server processes spawned. Kill extras, keep one. |
 | Empty game history when DB has data | Stats Game History section shows "No games" | Backend not reading from correct `data/training.db` path. |
 | Reward trends flatline after game N | Improvements tab chart drops to zero | RL training games using different reward path. Check `MAX_GAME_TIME_SECONDS`. |
+| Reward trends noisy/stale after code changes | Chart shows old data from pre-change games | Click "Reset Training Data" button on Reward Trends to clear DB + logs (creates backup). |
 | Advisor tab shows "running" but run finished | Stale `advised_run_state.json` | The advised run crashed without writing final state. Update manually. |
 | Port 3000 "free" on Processes tab | Frontend column shows unbound | Frontend dev server not running. Start with `cd frontend && npm run dev`. |
