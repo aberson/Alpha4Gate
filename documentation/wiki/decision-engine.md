@@ -31,11 +31,17 @@ output when in NEURAL or HYBRID mode.
               │         │ no                                    │
               │  3+ bases AND 480+ seconds? ──yes──> LATE_GAME  │
               │         │ no                                    │
-              │  army_supply >= 20? ──yes──> ATTACK             │
+              │  army_supply >= 12? ──yes──> ATTACK             │
               │         │ no                                    │
               │         └──> EXPAND                             │
               └────────────────────────────────────────────────┘
 ```
+
+**Counterattack:** When leaving DEFEND (enemy retreated) and
+`army_supply >= ATTACK_ARMY_SUPPLY`, transitions to ATTACK instead of EXPAND.
+
+**Late-game attack:** LATE_GAME runs attack micro (attack rally + combat commands),
+not just idle rally.
 
 FORTIFY exits when: enemy supply drops to 0 OR own supply reaches
 `enemy_supply * attack_supply_ratio`.
@@ -44,7 +50,7 @@ FORTIFY exits when: enemy supply drops to 0 OR own supply reaches
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
-| `ATTACK_ARMY_SUPPLY` | 20 | Minimum army supply to transition to ATTACK |
+| `ATTACK_ARMY_SUPPLY` | 12 | Minimum army supply to transition to ATTACK |
 | `LATE_GAME_BASE_COUNT` | 3 | Bases needed for LATE_GAME |
 | `LATE_GAME_TIME_SECONDS` | 480.0 | Time (8 min) needed for LATE_GAME |
 | `fortify_trigger_ratio` | 1.5 (default) | Enemy/own supply ratio to trigger FORTIFY |

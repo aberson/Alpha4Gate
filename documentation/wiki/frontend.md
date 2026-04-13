@@ -3,7 +3,7 @@
 React SPA for live game observation, training metrics, command input, and autonomous
 loop transparency.
 
-> **At a glance:** 10-tab SPA (Live, Stats, Replays, Decisions, Training, Loop,
+> **At a glance:** 10-tab SPA (Live, Stats, Games, Decisions, Training, Loop,
 > Advisor, Improvements, Processes, Alerts) built with React + TypeScript + Vite. Live game data via
 > WebSocket (real-time). Training and loop metrics via REST polling (5s). Seven custom
 > hooks handle WebSocket connections, API calls, and client-side alerting. All frontend
@@ -22,7 +22,7 @@ Today it's strongest at live game observation and weakest at training visibility
 |-----|-------------|-------------|---------|
 | **Live** | LiveView + CommandPanel | `/ws/game` + `/ws/commands` | Real-time WebSocket |
 | **Stats** | Stats | `/api/stats` (training.db) | 10s poll |
-| **Replays** | ReplayBrowser | `/api/replays` | One-time fetch (stub) |
+| **Games** | GameHistory | `/api/games` (training.db) | 10s poll |
 | **Decisions** | DecisionQueue | `/api/decision-log` + `/ws/decisions` | Initial fetch + live |
 | **Training** | TrainingDashboard + ModelComparison + ImprovementTimeline + CheckpointList + RewardRuleEditor | `/api/training/*` + `/api/reward-rules` | 5s poll + one-time |
 | **Loop** | LoopStatus + TriggerControls | `/api/training/daemon` + `/api/training/status` + `/api/training/start`/`stop` | 5s poll + on-demand |
@@ -55,7 +55,7 @@ difficulty). Best checkpoint marked with indicator.
 **DecisionQueue:** Last 20 state transitions: game step, from/to state, reason, Claude
 advice.
 
-**ReplayBrowser:** File listing with basic stats on click (stub — parsing not implemented).
+**GameHistory:** Browsable, filterable game list from training.db with per-game reward breakdown. Click a game to see step-by-step reward timeline with fired rules.
 
 **ModelComparison:** Per-checkpoint win rate table (Phase 2). Pulls `/api/training/models`.
 
@@ -162,7 +162,7 @@ as `*.test.tsx` / `*.test.ts`. Run with `npm run test:run`.
 | `frontend/src/components/RewardRuleEditor.tsx` | Reward rule editing |
 | `frontend/src/components/Stats.tsx` | Game statistics |
 | `frontend/src/components/DecisionQueue.tsx` | Decision log |
-| `frontend/src/components/ReplayBrowser.tsx` | Replay browser (stub) |
+| `frontend/src/components/GameHistory.tsx` | Game history browser with reward breakdown |
 | `frontend/src/components/ProcessMonitor.tsx` | Live process inventory and health |
 | `frontend/src/components/AdvisedImprovements.tsx` | Advisor-driven improvement history |
 | `frontend/src/components/ConfirmDialog.tsx` | Reusable confirm modal (used by TriggerControls) |

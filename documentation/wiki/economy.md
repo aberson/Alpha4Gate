@@ -6,7 +6,7 @@ How the bot manages workers, supply, production, and expansion.
 > production buildings, gas). Build orders drive the OPENING phase via a supply-threshold
 > sequencer. FortificationManager adds static defense during FORTIFY. BuildBacklog
 > retries failed builds with a 120s expiry. Constants like WORKERS_PER_BASE=16 and
-> MAX_WORKERS=70 are hardcoded.
+> MAX_WORKERS=44 are hardcoded. Warp Gate research is auto-queued at the Cybernetics Core.
 
 ## Purpose & Design
 
@@ -76,8 +76,8 @@ Failed builds (e.g., not enough minerals, no valid placement) go into BuildBackl
 |----------|-------|-------|
 | `WORKERS_PER_BASE_MINERALS` | 16 | macro_manager.py |
 | `WORKERS_PER_GAS` | 3 | macro_manager.py |
-| `MAX_WORKERS` | 70 | macro_manager.py |
-| `SUPPLY_BUFFER` | 4 | macro_manager.py |
+| `MAX_WORKERS` | 44 | macro_manager.py |
+| `SUPPLY_BUFFER` | 8 | macro_manager.py (scales with gateway count) |
 | `GATEWAY_PER_BASE` | 2 | macro_manager.py |
 | `ROBO_THRESHOLD_BASES` | 2 | macro_manager.py |
 | `DEFAULT_EXPIRY_SECONDS` | 120.0 | build_backlog.py |

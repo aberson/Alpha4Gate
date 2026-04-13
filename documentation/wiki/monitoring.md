@@ -267,7 +267,7 @@ User types "build stalkers" in CommandPanel
 | **CheckpointList** | `/api/training/checkpoints` | One-time fetch | Table: name, type, metadata details, best indicator |
 | **DecisionQueue** | `/api/decision-log` + `/ws/decisions` | Initial fetch + live | Last 20 state transitions: step, from, to, reason, Claude advice |
 | **Stats** | `/api/stats` | One-time fetch | Total wins/losses, by-map breakdown, last 10 games table |
-| **ReplayBrowser** | `/api/replays` | One-time fetch | Replay file list, stats on click (placeholder) |
+| **GameHistory** | `/api/games` | 10s poll | Browsable game list from training.db with per-game reward breakdown |
 | **RewardRuleEditor** | `/api/reward-rules` | One-time fetch + manual save | Table: rule ID, description, reward value (editable), active toggle |
 
 ### Timing constants
@@ -324,7 +324,7 @@ Compact JSON (no spaces). One file per game session. Deduplicated by `game_step`
 | `frontend/src/components/CheckpointList.tsx` | Checkpoint table |
 | `frontend/src/components/DecisionQueue.tsx` | Decision state transition log |
 | `frontend/src/components/Stats.tsx` | Game statistics |
-| `frontend/src/components/ReplayBrowser.tsx` | Replay listing (stub) |
+| `frontend/src/components/GameHistory.tsx` | Game history browser with reward breakdown |
 | `frontend/src/components/ProcessMonitor.tsx` | Live process inventory and health |
 | `frontend/src/components/RewardRuleEditor.tsx` | Reward rule editing |
 | `logs/` | JSONL game logs (gitignored) |

@@ -9,9 +9,9 @@ A StarCraft II Protoss bot combining rule-based decision-making, a PPO neural po
 - **Evaluation metrics** — structured reward shaping, win-rate tracking, training diagnostics, and cross-game statistics
 - **Autonomous self-improvement** — train-play-evaluate loop that runs 24/7, getting stronger with each cycle
 
-**Dashboard overhaul + improvement loop runs (2026-04-13)** — Major dashboard polish: new Processes tab (live system process monitor, port status, state files, backend Restart button), rebuilt Stats page from training.db (per-difficulty breakdown, reward data, filtering), Stop/Reset cleanup endpoints that preserve backend+frontend, improvement_log.json tracker, confirmation dialogs on game-spawning buttons, tab descriptions on all 17 components. Two `/improve-bot-advised` runs at difficulty 3: 41 reward rules, mineral-float gateway scaling code fix in macro_manager.py (peak supply 65→89). Training DB purged for clean slate. 829 Python tests + 124 frontend tests passing, 0 type errors, 0 lint violations.
+**Advised improvement run 3 complete (2026-04-13)** — First `--self-improve-code` run at difficulty 4: 8 iterations, 5 code improvements landed (pylon scaling, probe cap, Warp Gate research + warp-in production, counterattack-after-defense, late-game attack micro). Bot transformed from dying at 10-15 min to surviving 40+ min at 200/200 supply with 77 Zealots. Single-game runs now record to training.db. Skill updated with 2-game training soak + robust process cleanup. 829 Python tests, 0 type errors, 0 lint violations.
 
-**Current capability:** Wins reliably at difficulty 1-3 (Easy through Medium AI). Struggles at 4-5 (Hard). Bot now builds 5-7 gateways dynamically but still doesn't attack — addressing attack behavior is the next priority.
+**Current capability:** Wins reliably at difficulty 1-3. Survives 40+ min at difficulty 4 (200/200 supply, counterattacks, Warp Gate warp-ins) but can't close games yet — pure Zealot army can't break fortified positions. Next: mixed composition, attack-move to enemy base, Chrono Boost.
 
 ## Stack
 
@@ -35,15 +35,15 @@ A StarCraft II Protoss bot combining rule-based decision-making, a PPO neural po
 | Tab | Purpose |
 |---|---|
 | Live | Real-time game state stream (WebSocket) |
-| Stats | Cross-game win rates and aggregate stats |
-| Build Orders | Spawning Tool build order browser + editor |
-| Replays | Match replay browser and analysis |
+| Stats | Cross-game win rates and aggregate stats from training.db |
+| Games | Game history browser with per-game reward breakdown |
 | Decisions | Live decision log with rule firings and Claude advice |
-| Training | Model comparison + improvement timeline (Phase 2) |
-| Loop | Daemon state, trigger evaluation, full daemon control panel (Phase 4) |
-| Improvements | Recent promotions/rollbacks + per-rule reward trend chart (Phase 4) |
-| Alerts | Severity-filtered alert list with ack/dismiss + unread badge in nav (Phase 4) |
-| Advisor | Live status, loop controls, strategic hints, reward injection for /improve-bot-advised runs |
+| Training | Model comparison + improvement timeline + checkpoint list + reward rule editor |
+| Loop | Daemon state, trigger evaluation, full daemon control panel |
+| Advisor | Live advised-run status, loop controls, strategic hints, reward injection |
+| Improvements | Recent promotions/rollbacks + per-rule reward trend chart |
+| Processes | Live system process monitor, port status, state files, backend restart |
+| Alerts | Severity-filtered alert list with ack/dismiss + unread badge in nav |
 
 In-app `AlertToast` lives at the App root and shows new alerts as they fire, regardless of which tab is active.
 

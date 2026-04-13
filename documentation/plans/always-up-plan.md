@@ -667,7 +667,7 @@ The first end-to-end soak run surfaced two findings whose resolution should shap
 
 ---
 
-## Current State (2026-04-09)
+## Current State (2026-04-13)
 
 **What exists:**
 - TrainingOrchestrator — full RL loop, CLI + daemon-triggered
@@ -681,14 +681,16 @@ The first end-to-end soak run surfaced two findings whose resolution should shap
 - SQLite DB — games + transitions + action probabilities, win rate queries, per-model stats
 - WebSocket broadcasting — live game state, decisions, commands (ephemeral)
 - JSONL logging — per-game files in `data/reward_logs/` (always-on, opt-out via `--no-reward-log`)
-- React dashboard (10 tabs) — Live, Stats, Builds, Replays, Decisions, Training, Loop,
-  Improvements, Alerts, Advisor. Training tab: TrainingDashboard + ModelComparison +
-  ImprovementTimeline + CheckpointList + RewardRuleEditor. Loop tab: LoopStatus +
-  TriggerControls (with ConfirmDialog). Improvements tab: RecentImprovements +
-  RewardTrends. Alerts tab: AlertsPanel + global AlertToast overlay.
-  Advisor tab: AdvisedControlPanel + useAdvisedRun hook. File-based bridge:
-  skill writes `data/advised_run_state.json`, reads `data/advised_run_control.json`.
-  Win-rate alert suppressed during active advised runs.
+- React dashboard (10 tabs) — Live, Stats, Games, Decisions, Training, Loop,
+  Advisor, Improvements, Processes, Alerts. Games tab: GameHistory (browsable game list
+  from training.db with per-game reward breakdown). Training tab: TrainingDashboard +
+  ModelComparison + ImprovementTimeline + CheckpointList + RewardRuleEditor. Loop tab:
+  LoopStatus + TriggerControls (with ConfirmDialog). Advisor tab: AdvisedControlPanel +
+  useAdvisedRun hook (file-based bridge via `data/advised_run_state.json` /
+  `data/advised_run_control.json`, win-rate alert suppressed during active runs).
+  Improvements tab: RecentImprovements + RewardTrends + AdvisedImprovements.
+  Processes tab: ProcessMonitor (live system process monitor, port status, state files,
+  backend restart). Alerts tab: AlertsPanel + global AlertToast overlay.
 - Frontend test infrastructure — vitest + jsdom, `frontend/vitest.config.ts`, shared
   setup in `frontend/src/test/setup.ts`, 126 tests currently passing.
 - Client-side alert engine — `alertRules.ts`, `alertStorage.ts`, `useAlerts` hook.
@@ -705,19 +707,27 @@ The first end-to-end soak run surfaced two findings whose resolution should shap
 - 46 API endpoints for daemon control, triggers, evaluation, promotions, rollback,
   curriculum, advised run control. **New:** `GET /api/advised/state`,
   `GET /api/advised/control`, `PUT /api/advised/control` for dashboard bridge.
-- 829 Python unit tests + 124 frontend vitest tests passing (as of dashboard overhaul, 2026-04-13).
-- Two `/improve-bot-advised` runs completed at difficulty 3. 41 reward rules (up from 13).
-- Mineral-float gateway scaling code fix in `macro_manager.py` — bot dynamically adds gateways when minerals > 500.
-- New Processes tab, rebuilt Stats page (from training.db), cleanup endpoints, improvement tracker.
-- Training DB purged 2026-04-13 for clean slate.
+- 829 Python unit tests + 126 frontend vitest tests passing.
+- Three `/improve-bot-advised` runs completed (run 1+2 at diff 3, run 3 at diff 4).
+- 41 reward rules active.
+- **Run 3 code improvements (landed 2026-04-13):** pylon scaling (`SUPPLY_BUFFER` 4→8,
+  scales with gateway count), probe cap (`MAX_WORKERS` 70→44, pause when floating),
+  attack threshold (`ATTACK_ARMY_SUPPLY` 20→12), Warp Gate research + warp-in production,
+  counterattack after defense (DEFEND→ATTACK transition), late-game attack micro
+  (LATE_GAME state runs attack rally + micro). Bot went from dying at 10-15 min to
+  surviving 40+ min at 200/200 supply with 77 Zealots at difficulty 4.
+- Single-game runs now record to training.db (fixed: `_run_single_game` was missing
+  `training_db` param, causing empty Game History and reward logs for 36+ games).
+- Skill updated: Phase 6.3 training soak (2 games after each passed iteration),
+  robust process cleanup (force-kill alpha4gate processes, port 8765 verification).
 
-**What's missing:**
-- Bot never enters attack state (0% of game time) — addresses needed in `decision_engine.py`
-  strategy transitions. Reward rules for attack exist (41 total, including attack-state-mid/late
-  at +0.04/+0.06) but rule-based strategy layer overrides neural policy. Next run should use
-  `--self-improve-code` to modify attack thresholds.
-- No WebSocket channel for training/loop events — Loop, Improvements, and Alerts
-  tabs still poll every 5s. Decision reaffirmed as deferred; revisit after soak-test findings.
+**What's missing / next:**
+- Bot survives at difficulty 4 but can't close games — pure Zealot army can't break
+  fortified positions. Need: attack-move to enemy base, mixed composition (Stalkers +
+  Immortals), Chrono Boost automation.
+- PPO model is stale (trained at diff 1, 0% win rate). Training soak added to skill
+  but hasn't run yet.
+- No WebSocket channel for training/loop events — tabs poll every 5s. Deferred.
 - No domain abstraction (SC2 code still interleaved with training loop — Phase 5).
 
 ## Decisions
