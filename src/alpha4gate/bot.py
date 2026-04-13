@@ -336,9 +336,12 @@ class Alpha4GateBot(BotAI):
         await self._run_scouting()
 
         # --- Micro: combat commands for army units ---
-        if state in (StrategicState.ATTACK, StrategicState.DEFEND, StrategicState.FORTIFY):
+        if state in (
+            StrategicState.ATTACK, StrategicState.DEFEND,
+            StrategicState.FORTIFY, StrategicState.LATE_GAME,
+        ):
             await self._run_micro(state)
-        elif state in (StrategicState.EXPAND, StrategicState.LATE_GAME):
+        elif state == StrategicState.EXPAND:
             # Rally idle army to a defensive position near natural
             await self._rally_idle_army()
 
@@ -733,7 +736,7 @@ class Alpha4GateBot(BotAI):
         snapshot = self._build_snapshot()
         cm = self.coherence_manager
 
-        if state == StrategicState.ATTACK:
+        if state in (StrategicState.ATTACK, StrategicState.LATE_GAME):
             rally = self._resolve_attack_rally(army, snapshot, cm)
 
             # Hard coherence gate: in ATTACK state, if army is not grouped,
