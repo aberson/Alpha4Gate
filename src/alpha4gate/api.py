@@ -1137,6 +1137,45 @@ async def shutdown_server() -> dict[str, str]:
     return {"status": "shutting_down"}
 
 
+@app.post("/api/restart")
+async def restart_server() -> dict[str, str]:
+    """Restart the backend: spawn a new process, then shut down this one.
+
+    The new process inherits the same flags (--serve --daemon if daemon
+    was active). The old process exits after the response is sent.
+    """
+    import subprocess as _sp
+    import sys
+
+    # Build the command to start the new backend
+    cmd = [sys.executable, "-m", "alpha4gate.runner", "--serve"]
+    daemon_was_running = _daemon is not None and _daemon.is_running()
+    if daemon_was_running and _daemon is not None:
+        cmd.append("--daemon")
+        _daemon.stop()
+        _log.info("Daemon stopped for restart")
+
+    # Spawn detached process (survives parent exit)
+    _CREATE_NEW_PROCESS_GROUP = 0x00000200
+    _DETACHED_PROCESS = 0x00000008
+    creation_flags = (
+        _CREATE_NEW_PROCESS_GROUP | _DETACHED_PROCESS
+        if sys.platform == "win32"
+        else 0
+    )
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    if "DEBUG_ENDPOINTS" in os.environ:
+        env["DEBUG_ENDPOINTS"] = "1"
+    _sp.Popen(cmd, creationflags=creation_flags, env=env,
+              close_fds=True, start_new_session=True)
+    _log.info("Spawned new backend process: %s", " ".join(cmd))
+
+    # Schedule exit of current process
+    loop = asyncio.get_running_loop()
+    loop.call_later(1.0, _exit_server)
+    return {"status": "restarting"}
+
+
 def _exit_server() -> None:
     """Raise SystemExit so uvicorn shuts down cleanly."""
     import signal as _signal

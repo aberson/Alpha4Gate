@@ -1,5 +1,7 @@
+import { useState, useCallback } from "react";
 import { useApi } from "../hooks/useApi";
 import { StaleDataBanner } from "./StaleDataBanner";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 interface ProcessEntry {
   name: string;
@@ -76,12 +78,40 @@ function Badge({ label, color }: { label: string; color: string }) {
 export function ProcessMonitor() {
   const { data, isStale, isLoading, lastSuccess, refresh } =
     useApi<ProcessStatus>("/api/processes", { pollMs: 5000 });
+  const [shutdownOpen, setShutdownOpen] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const backendOnline = data !== null && !isStale;
+
+  const handleRestart = useCallback(async () => {
+    try {
+      await fetch("/api/restart", { method: "POST" });
+      setMessage("Restarting backend\u2026 will reconnect in a few seconds");
+    } catch {
+      setMessage("Failed to send restart signal");
+    }
+    setTimeout(() => setMessage(""), 5000);
+  }, []);
+
+  const handleShutdown = useCallback(async () => {
+    setShutdownOpen(false);
+    try {
+      await fetch("/api/shutdown", { method: "POST" });
+      setMessage("Backend shutting down");
+    } catch {
+      setMessage("Failed to send shutdown signal");
+    }
+    setTimeout(() => setMessage(""), 5000);
+  }, []);
 
   if (!data) {
     return (
       <div className="process-monitor training-dashboard">
         <h2>Processes</h2>
         <p>{isLoading ? "Scanning..." : "Backend offline \u2014 cannot scan processes."}</p>
+        <p style={{ color: "#888", fontSize: "0.85em" }}>
+          Start the backend with: <code>uv run python -m alpha4gate.runner --serve --daemon</code>
+        </p>
       </div>
     );
   }
@@ -109,6 +139,101 @@ export function ProcessMonitor() {
           Refresh
         </button>
       </div>
+
+      {/* Backend controls */}
+      <section
+        style={{
+          marginBottom: "24px",
+          padding: "12px 16px",
+          borderRadius: "6px",
+          backgroundColor: "rgba(255,255,255,0.03)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          display: "flex",
+          alignItems: "center",
+          gap: "16px",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <span
+            style={{
+              width: "12px",
+              height: "12px",
+              borderRadius: "50%",
+              backgroundColor: backendOnline ? "#2ecc71" : "#e74c3c",
+              display: "inline-block",
+            }}
+          />
+          <strong>Backend</strong>
+          <span style={{ color: backendOnline ? "#2ecc71" : "#e74c3c", fontSize: "0.85em" }}>
+            {backendOnline ? "ON" : "OFF"}
+          </span>
+        </div>
+        <div style={{ display: "flex", gap: "8px", marginLeft: "auto" }}>
+          <button
+            type="button"
+            onClick={() => void handleRestart()}
+            style={{
+              padding: "6px 14px",
+              fontSize: "0.85em",
+              backgroundColor: "#3498db",
+              color: "#fff",
+              border: "none",
+              borderRadius: "4px",
+              cursor: "pointer",
+              fontWeight: 600,
+            }}
+          >
+            Restart
+          </button>
+          <button
+            type="button"
+            onClick={() => setShutdownOpen(true)}
+            style={{
+              padding: "6px 14px",
+              fontSize: "0.85em",
+              backgroundColor: "#e74c3c",
+              color: "#fff",
+              border: "none",
+              borderRadius: "4px",
+              cursor: "pointer",
+              fontWeight: 600,
+            }}
+          >
+            Shut Down
+          </button>
+        </div>
+      </section>
+
+      <ConfirmDialog
+        open={shutdownOpen}
+        title="Shut down backend?"
+        message="The backend server will exit. You will need to restart it manually from the terminal. The Processes tab will stop working."
+        confirmLabel="Shut Down"
+        destructive
+        onConfirm={() => void handleShutdown()}
+        onCancel={() => setShutdownOpen(false)}
+      />
+
+      {/* Feedback toast */}
+      {message ? (
+        <div
+          role="status"
+          style={{
+            position: "fixed",
+            bottom: "24px",
+            right: "24px",
+            padding: "12px 20px",
+            borderRadius: "6px",
+            backgroundColor: "#2c3e50",
+            color: "#ecf0f1",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+            fontSize: "0.9em",
+            zIndex: 1000,
+          }}
+        >
+          {message}
+        </div>
+      ) : null}
 
       {/* Process table */}
       <section style={{ marginBottom: "24px" }}>
