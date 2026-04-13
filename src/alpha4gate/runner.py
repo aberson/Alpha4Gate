@@ -205,10 +205,25 @@ def _start_server(settings: Settings, daemon: bool = False) -> None:
 
 
 def _start_server_background(settings: Settings) -> None:
-    """Start the FastAPI server in a background daemon thread."""
+    """Start the FastAPI server in a background daemon thread.
+
+    Skips startup if the port is already in use (e.g. a persistent
+    ``--serve`` process is already running). This prevents the
+    dashboard from going offline when game processes exit.
+    """
+    import socket
     import threading
 
     import uvicorn
+
+    # Check if a server is already listening — if so, skip.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        if sock.connect_ex(("127.0.0.1", settings.web_ui_port)) == 0:
+            _log.info(
+                "API server already running on port %s, skipping background start",
+                settings.web_ui_port,
+            )
+            return
 
     from alpha4gate.api import configure
 
