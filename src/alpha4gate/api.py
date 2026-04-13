@@ -973,24 +973,11 @@ async def cleanup_stop_run() -> dict[str, Any]:
         lock_path.unlink(missing_ok=True)
         results.append("Deleted scheduled_tasks.lock")
 
-    # 6. Kill orphan monitor processes
-    import subprocess as _sp
+    # 6. Kill game runners, advisor, and orphan monitor processes.
+    #    Do NOT kill the backend (this process) or frontend (node/vite).
+    results.extend(_kill_spawned_processes())
 
-    try:
-        _sp.run(
-            [
-                "powershell.exe", "-Command",
-                "Get-Process -Name tail,grep,sleep "
-                "-ErrorAction SilentlyContinue | Stop-Process -Force",
-            ],
-            timeout=5,
-            capture_output=True,
-        )
-        results.append("Killed orphan monitor processes")
-    except (OSError, _sp.TimeoutExpired):
-        results.append("Could not kill orphan processes")
-
-    results.append("Stop Run cleanup complete")
+    results.append("Stop Run cleanup complete (backend + frontend still alive)")
     return {"results": results}
 
 
@@ -1061,22 +1048,9 @@ async def cleanup_reset_loop() -> dict[str, Any]:
         lock_path.unlink(missing_ok=True)
         results.append("Deleted scheduled_tasks.lock")
 
-    # 7. Kill orphan processes
-    import subprocess as _sp
-
-    try:
-        _sp.run(
-            [
-                "powershell.exe", "-Command",
-                "Get-Process -Name tail,grep,sleep "
-                "-ErrorAction SilentlyContinue | Stop-Process -Force",
-            ],
-            timeout=5,
-            capture_output=True,
-        )
-        results.append("Killed orphan monitor processes")
-    except (OSError, _sp.TimeoutExpired):
-        pass
+    # 7. Kill game runners, advisor, and orphan processes.
+    #    Do NOT kill the backend (this process) or frontend (node/vite).
+    results.extend(_kill_spawned_processes())
 
     results.append(
         "Reset cleanup complete. Caller must: "
@@ -1084,6 +1058,65 @@ async def cleanup_reset_loop() -> dict[str, Any]:
         "purge training.db entries, then restart."
     )
     return {"results": results}
+
+
+def _kill_spawned_processes() -> list[str]:
+    """Kill game runners, advisor subprocesses, and orphan monitors.
+
+    Preserves: backend (this process), frontend (node/vite), SC2_x64.
+    """
+    import subprocess as _sp
+
+    results: list[str] = []
+    my_pid = os.getpid()
+
+    # Find and kill python/uv processes that are NOT this backend.
+    # We identify game runners by checking if they're alpha4gate processes
+    # that aren't our own PID or our parent (uv wrapper).
+    try:
+        ps_cmd = (
+            "Get-Process -Name python,uv -ErrorAction SilentlyContinue | "
+            "Select-Object Id,ProcessName | ConvertTo-Json -Compress"
+        )
+        out = _sp.run(
+            ["powershell.exe", "-Command", ps_cmd],
+            capture_output=True, text=True, timeout=10,
+        )
+        if out.stdout.strip():
+            entries = json.loads(out.stdout.strip())
+            if isinstance(entries, dict):
+                entries = [entries]
+            killed = 0
+            for entry in entries:
+                pid = entry.get("Id")
+                if pid and pid != my_pid and pid != os.getppid():
+                    _sp.run(
+                        ["powershell.exe", "-Command",
+                         f"Stop-Process -Id {pid} -Force "
+                         "-ErrorAction SilentlyContinue"],
+                        timeout=5, capture_output=True,
+                    )
+                    killed += 1
+            if killed:
+                results.append(f"Killed {killed} python/uv process(es)")
+            else:
+                results.append("No extra python/uv processes to kill")
+    except (OSError, _sp.TimeoutExpired, json.JSONDecodeError):
+        results.append("Could not scan python/uv processes")
+
+    # Kill orphan monitor processes (tail/grep/sleep)
+    try:
+        _sp.run(
+            ["powershell.exe", "-Command",
+             "Get-Process -Name tail,grep,sleep "
+             "-ErrorAction SilentlyContinue | Stop-Process -Force"],
+            timeout=5, capture_output=True,
+        )
+        results.append("Killed orphan monitor processes")
+    except (OSError, _sp.TimeoutExpired):
+        pass
+
+    return results
 
 
 @app.post("/api/shutdown")

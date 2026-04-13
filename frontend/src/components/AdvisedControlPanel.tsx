@@ -219,7 +219,8 @@ export function AdvisedControlPanel() {
     setStopOpen(false);
     // 1. Signal the skill to stop
     await sendControl({ stop_run: true });
-    // 2. Run the full cleanup checklist
+    // 2. Run the full cleanup checklist (kills daemon, game runners,
+    //    advisor, orphans — but NOT backend or frontend)
     try {
       const resp = await fetch("/api/cleanup/stop-run", { method: "POST" });
       const data = await resp.json() as { results: string[] };
@@ -227,18 +228,15 @@ export function AdvisedControlPanel() {
     } catch {
       // Cleanup endpoint may not be available
     }
-    // 3. Shut down the server process
-    try {
-      await fetch("/api/shutdown", { method: "POST" });
-    } catch {
-      // Server may already be gone
-    }
-    showMessage("Stop Run cleanup complete \u2014 all processes stopped");
+    // Backend stays alive as a monitoring shell so the Processes tab
+    // can verify everything actually stopped.
+    showMessage("Stop Run cleanup complete \u2014 dashboard still active for monitoring");
   }, [sendControl, showMessage]);
 
   const handleResetConfirm = useCallback(async () => {
     setResetOpen(false);
-    // 1. Run the reset cleanup checklist (kills processes, clears files)
+    // 1. Run the reset cleanup checklist (kills daemon, game runners,
+    //    advisor, orphans, clears files — but NOT backend or frontend)
     try {
       const resp = await fetch("/api/cleanup/reset-loop", { method: "POST" });
       const data = await resp.json() as { results: string[] };
@@ -248,12 +246,7 @@ export function AdvisedControlPanel() {
     }
     // 2. Signal the skill to do git revert + restart
     await sendControl({ reset_loop: true });
-    // 3. Shut down server (skill will restart it)
-    try {
-      await fetch("/api/shutdown", { method: "POST" });
-    } catch {
-      // Server may already be gone
-    }
+    // Backend stays alive — skill will restart the daemon inside it.
     showMessage("Reset cleanup complete \u2014 awaiting git revert + restart");
   }, [sendControl, showMessage]);
 
