@@ -187,7 +187,7 @@ class TestProductionBuildings:
         assert len(gw_decisions) >= 1
 
     def test_no_gateway_when_at_target(self) -> None:
-        bot = _mock_bot(gateway_count=3, base_count=1)
+        bot = _mock_bot(gateway_count=2, base_count=1)
         mgr = MacroManager()
         decisions = mgr.evaluate(bot, StrategicState.EXPAND)
         gw_decisions = [d for d in decisions if d.target == "Gateway"]

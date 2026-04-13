@@ -24,7 +24,7 @@ SUPPLY_BUFFER = 8  # Build pylon when supply_cap - supply_used <= buffer
 PYLON_SUPPLY = 8
 
 # Production constants
-GATEWAY_PER_BASE = 3
+GATEWAY_PER_BASE = 2
 ROBO_THRESHOLD_BASES = 2
 
 # Mineral-float gateway scaling: add gateways when floating minerals
