@@ -117,16 +117,23 @@ Write run header to `$LOGFILE`:
 
 ### 0.4 Start systems
 
+**Backend lifecycle rule:** Start exactly ONE `--serve` process at the beginning of the run. This process must stay alive for the entire run so the dashboard can monitor progress. **Never start a second `--serve` process.** The runner's `_start_server_background()` already skips spawning a server when port 8765 is occupied, so game invocations won't conflict. For daemon soaks, use `--serve --daemon` on the SAME process (shut down the API-only backend first, start daemon, then restart API-only after soak).
+
 ```bash
 export PYTHONUNBUFFERED=1
 
-# Start backend (headless by default, daemon ON for training)
-DEBUG_ENDPOINTS=1 PYTHONUNBUFFERED=1 uv run python -m alpha4gate.runner --serve --daemon 2>&1 | tee -a "$LOGFILE" &
-BACKEND_PID=$!
+# Check if backend is already running — only start if port is free
+python -c "import socket; s=socket.socket(); r=s.connect_ex(('127.0.0.1',8765)); s.close(); exit(0 if r!=0 else 1)" && {
+  DEBUG_ENDPOINTS=1 PYTHONUNBUFFERED=1 uv run python -m alpha4gate.runner --serve 2>&1 &
+  BACKEND_PID=$!
+  echo "Backend started (PID $BACKEND_PID)"
+} || echo "Backend already running, skipping"
 
 # Start frontend (optional — skip in headless replay mode unless user wants it)
 # cd frontend && npm run dev &
 ```
+
+**Before daemon soaks:** shut down the existing backend (`/api/shutdown`), wait for port free, then start `--serve --daemon`. After soak completes, shut down daemon, wait for port free, restart `--serve` (API only). Never leave two server processes alive simultaneously.
 
 ### 0.5 Seed game
 
@@ -379,8 +386,18 @@ For significant milestones, run `/repo-update` to update README and docs.
 
 After a passed iteration, run a quick 2-game training soak so the PPO model sees the new behavior and a checkpoint is created. This keeps the neural policy in sync with rule-based code changes and populates the dashboard Training/Checkpoints tabs.
 
+**Important:** Shut down the existing API-only backend before starting the daemon, then restart API-only after the soak. Never run two server processes simultaneously — duplicate processes cause the dashboard to flicker offline as they fight over port 8765.
+
 ```bash
-# Start backend with daemon (daemon auto-runs games + trains)
+# 1. Shut down existing API-only backend
+curl -s -X POST http://localhost:8765/api/shutdown || true
+# Wait for port to free (max 10s)
+for i in 1 2 3 4 5; do
+    python -c "import socket; s=socket.socket(); r=s.connect_ex(('127.0.0.1',8765)); s.close(); exit(0 if r!=0 else 1)" && break
+    sleep 2
+done
+
+# 2. Start backend with daemon (daemon auto-runs games + trains)
 DEBUG_ENDPOINTS=1 PYTHONUNBUFFERED=1 uv run python -m alpha4gate.runner --serve --daemon 2>&1 &
 DAEMON_PID=$!
 
@@ -415,7 +432,20 @@ done
 
 **Skip condition:** If the iteration was training-only (config changes, no code), skip the soak — the daemon will pick up config changes on its own next time it runs.
 
-**Verification gate:** Do NOT proceed to Phase 7 until port 8765 is confirmed free. A lingering daemon will cause the next iteration's game launches to fail with port-conflict errors.
+**Restart API-only backend after soak:** Once the daemon is confirmed dead and port 8765 is free, restart the API-only backend so the dashboard stays alive for the next iteration:
+
+```bash
+# Restart API-only backend (no daemon) for dashboard monitoring
+DEBUG_ENDPOINTS=1 PYTHONUNBUFFERED=1 uv run python -m alpha4gate.runner --serve 2>&1 &
+BACKEND_PID=$!
+# Verify it's up
+for i in 1 2 3 4 5; do
+    python -c "import socket; s=socket.socket(); r=s.connect_ex(('127.0.0.1',8765)); s.close(); exit(0 if r==0 else 1)" && break
+    sleep 1
+done
+```
+
+**Verification gate:** Do NOT proceed to Phase 7 until the API-only backend is confirmed running on port 8765. A missing backend means the dashboard goes dark for the rest of the run.
 
 ---
 
