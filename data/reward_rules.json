@@ -282,7 +282,7 @@
     },
     {
       "id": "gateway-scaling-6",
-      "description": "Reward 6+ gateways for multi-base economy",
+      "description": "Reward 6+ gateways for multi-base economy (strengthened: was 0.005)",
       "condition": {
         "field": "gateway_count",
         "op": ">=",
@@ -293,7 +293,7 @@
         "op": ">=",
         "value": 2
       },
-      "reward": 0.005,
+      "reward": 0.015,
       "active": true
     },
     {
@@ -313,8 +313,24 @@
       "active": true
     },
     {
+      "id": "too-few-gateways-5",
+      "description": "Penalize having < 5 gateways with 2+ bases after 5 minutes (new)",
+      "condition": {
+        "field": "gateway_count",
+        "op": "<",
+        "value": 5
+      },
+      "requires": {
+        "field": "base_count",
+        "op": ">=",
+        "value": 2
+      },
+      "reward": -0.01,
+      "active": true
+    },
+    {
       "id": "too-few-gateways",
-      "description": "Penalize having fewer gateways than bases after 4 minutes",
+      "description": "Penalize having fewer than 4 gateways after 4 minutes (strengthened: was -0.005)",
       "condition": {
         "field": "gateway_count",
         "op": "<",
@@ -325,7 +341,7 @@
         "op": ">=",
         "value": 240
       },
-      "reward": -0.005,
+      "reward": -0.01,
       "active": true
     },
     {
