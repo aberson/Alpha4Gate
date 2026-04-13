@@ -213,6 +213,9 @@ export function RewardTrends({
     <div className="reward-trends training-dashboard">
       {isStale ? <StaleDataBanner lastSuccess={lastSuccess} label="Reward Trends" /> : null}
       <h2>Reward Trends</h2>
+      <p style={{ color: "#888", fontSize: "0.85em", margin: "0 0 16px" }}>
+        Per-rule reward contribution over recent games, shown as a summary table (total and per-game averages) and a line chart. Rules with flat or zero contribution may be misfiring or redundant; high-variance rules are worth inspecting for condition correctness.
+      </p>
 
       <div
         className="reward-trends-controls"

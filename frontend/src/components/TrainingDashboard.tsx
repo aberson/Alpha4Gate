@@ -66,6 +66,9 @@ export function TrainingDashboard() {
         <StaleDataBanner lastSuccess={lastSuccess} label="Training Status" />
       ) : null}
       <h2>Training Status</h2>
+      <p style={{ color: "#888", fontSize: "0.85em", margin: "0 0 16px" }}>
+        PPO training health at a glance: active checkpoint, total games and transitions collected, database size, and rolling win rates across multiple windows. A diverging trend between last-10 and overall win rate signals recent improvement or regression.
+      </p>
 
       <div className="status-grid">
         <div className="stat-card">

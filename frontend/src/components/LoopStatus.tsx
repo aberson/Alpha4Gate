@@ -130,6 +130,9 @@ export function LoopStatus() {
   return (
     <div className="loop-status training-dashboard">
       <h2>Training Loop</h2>
+      <p style={{ color: "#888", fontSize: "0.85em", margin: "0 0 16px" }}>
+        Autonomous training daemon state: current phase (idle/checking/training), runs completed, and whether the trigger conditions are met for the next run. "Would Trigger?" summarizes whether transitions and time thresholds are satisfied right now.
+      </p>
 
       <div className="status-grid">
         <div className="stat-card">

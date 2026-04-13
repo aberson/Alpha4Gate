@@ -72,6 +72,9 @@ export function RewardRuleEditor() {
     <div className="reward-rule-editor">
       {isStale && rules.length > 0 ? <StaleDataBanner lastSuccess={lastSuccess} label="Reward Rules" /> : null}
       <h2>Reward Rules</h2>
+      <p style={{ color: "#888", fontSize: "0.85em", margin: "0 0 16px" }}>
+        The full set of reward shaping rules driving PPO training. Toggle individual rules on/off or adjust reward magnitudes here; changes take effect on the next training cycle after saving. Rule values are additive per game step where conditions fire.
+      </p>
       {rules.length === 0 ? (
         <div className="empty">No reward rules configured</div>
       ) : (

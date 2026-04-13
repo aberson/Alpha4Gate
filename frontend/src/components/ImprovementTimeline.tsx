@@ -34,6 +34,9 @@ export function ImprovementTimeline() {
     <div className="improvement-timeline">
       {isStale ? <StaleDataBanner lastSuccess={lastSuccess} label="Improvement Timeline" /> : null}
       <h2>Improvement Timeline</h2>
+      <p style={{ color: "#888", fontSize: "0.85em", margin: "0 0 16px" }}>
+        Model version history ordered chronologically, with win-rate delta between each successive version. Green arrows indicate improvement; red indicates regression after a training cycle.
+      </p>
       <table>
         <thead>
           <tr>

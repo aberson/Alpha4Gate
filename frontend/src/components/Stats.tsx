@@ -97,6 +97,9 @@ export function Stats() {
     <div className="stats training-dashboard">
       {isStale ? <StaleDataBanner lastSuccess={lastSuccess} label="Stats" /> : null}
       <h2>Statistics</h2>
+      <p style={{ color: "#888", fontSize: "0.85em", margin: "0 0 16px" }}>
+        Aggregate results from training.db: overall win/loss record, per-difficulty breakdown with average reward and duration, and the most recent games filterable by difficulty. Higher avg reward at a given difficulty indicates better reward shaping alignment with winning behavior.
+      </p>
 
       {/* Overall summary cards */}
       <div

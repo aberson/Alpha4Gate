@@ -37,6 +37,9 @@ export function CheckpointList() {
     <div className="checkpoint-list">
       {isStale ? <StaleDataBanner lastSuccess={lastSuccess} label="Checkpoints" /> : null}
       <h2>Checkpoints</h2>
+      <p style={{ color: "#888", fontSize: "0.85em", margin: "0 0 16px" }}>
+        All saved PPO checkpoints with their type metadata (e.g. curriculum, evaluation), agreement score, win rate at evaluation time, and which one is currently promoted as best. Use TriggerControls to promote or roll back.
+      </p>
       <table>
         <thead>
           <tr>

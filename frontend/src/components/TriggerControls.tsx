@@ -424,6 +424,9 @@ export function TriggerControls() {
   return (
     <div className="trigger-controls training-dashboard">
       <h2>Loop Controls</h2>
+      <p style={{ color: "#888", fontSize: "0.85em", margin: "0 0 16px" }}>
+        Operator panel for the training daemon: start/stop the loop, tune its config (game counts, difficulty, trigger thresholds), manually evaluate or promote a checkpoint, and override the curriculum difficulty when the autonomous advancement isn't moving fast enough.
+      </p>
 
       {/* A. Daemon control */}
       <section className="control-panel" aria-labelledby="panel-daemon">

@@ -77,8 +77,8 @@ export function AdvisedImprovements() {
         <StaleDataBanner lastSuccess={lastSuccess} label="Advised Improvements" />
       ) : null}
       <h2>Advised Improvement Log</h2>
-      <p style={{ color: "#888", fontSize: "0.85em", margin: "0 0 12px" }}>
-        Changes made by <code>/improve-bot-advised</code> runs
+      <p style={{ color: "#888", fontSize: "0.85em", margin: "0 0 16px" }}>
+        Persistent record of every change attempted by <code>/improve-bot-advised</code> runs, classified as training-only or code-dev and tagged with pass/fail result. Use this to audit what the advisor changed, why, and whether it moved the win rate.
       </p>
 
       {items.length === 0 ? (

@@ -213,6 +213,9 @@ export function RecentImprovements({
         <StaleDataBanner lastSuccess={lastSuccess} label="Recent Improvements" />
       ) : null}
       <h2>Recent Improvements</h2>
+      <p style={{ color: "#888", fontSize: "0.85em", margin: "0 0 16px" }}>
+        Promotion and rollback history for model checkpoints: each event shows which checkpoint was evaluated, its win-rate delta versus the prior best, and the reason the PromotionManager accepted or rejected it. Rejected evaluations are visible under "All".
+      </p>
 
       <div className="improvement-filters" role="group" aria-label="Filter improvements">
         <button

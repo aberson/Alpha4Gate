@@ -53,6 +53,9 @@ export function DecisionQueue() {
         <StaleDataBanner lastSuccess={lastSuccess} label="Decision Log" />
       ) : null}
       <h2>Decision Log</h2>
+      <p style={{ color: "#888", fontSize: "0.85em", margin: "0 0 16px" }}>
+        Live and historical record of strategic state transitions during games. Each row shows which state the bot moved from/to, the triggering reason, and any Claude advisor suggestion that influenced the decision.
+      </p>
       {noData ? (
         <p>
           {isLoading

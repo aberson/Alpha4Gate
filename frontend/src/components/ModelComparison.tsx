@@ -41,6 +41,9 @@ export function ModelComparison() {
     <div className="model-comparison">
       {isStale ? <StaleDataBanner lastSuccess={lastSuccess} label="Model Comparison" /> : null}
       <h2>Model Comparison</h2>
+      <p style={{ color: "#888", fontSize: "0.85em", margin: "0 0 16px" }}>
+        Head-to-head win rate comparison across all trained model versions. The starred row is the current promoted best. Use this to judge whether recent training cycles actually moved the needle.
+      </p>
       <table>
         <thead>
           <tr>

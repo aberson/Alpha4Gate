@@ -30,6 +30,9 @@ export function LiveView() {
     <div className="live-view-layout">
       <div className="live-view">
         <h2>Live Game — {timeStr}</h2>
+        <p style={{ color: "#888", fontSize: "0.85em", margin: "0 0 16px" }}>
+          Live snapshot of the running game: economy (minerals/gas/supply), score, and unit/structure counts updated each game step. Strategic state shows which phase of the bot's state machine is active.
+        </p>
         <div className="stats-row">
           <span>Step: {gameState.game_step}</span>
           <span>Minerals: {gameState.minerals}</span>

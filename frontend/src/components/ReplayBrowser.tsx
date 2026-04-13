@@ -22,6 +22,9 @@ export function ReplayBrowser() {
     <div className="replay-browser">
       {isStale && replays.length > 0 ? <StaleDataBanner lastSuccess={lastSuccess} label="Replays" /> : null}
       <h2>Replays</h2>
+      <p style={{ color: "#888", fontSize: "0.85em", margin: "0 0 16px" }}>
+        SC2 replay files saved from completed games. Select a replay to inspect the game timeline, resource totals, and key events — useful for post-mortem analysis of specific wins or losses.
+      </p>
       {replays.length === 0 ? (
         <p>No replays available.</p>
       ) : (

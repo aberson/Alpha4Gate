@@ -128,6 +128,9 @@ export function ProcessMonitor() {
           Refresh
         </button>
       </div>
+      <p style={{ color: "#888", fontSize: "0.85em", margin: "0 0 16px" }}>
+        Live inventory of all Alpha4Gate processes (backend, daemon, advisor, game runners, SC2), port binding status, state-file contents, and accumulated log/temp file counts. Stale or orphan entries here indicate a process that crashed without cleaning up.
+      </p>
 
       {/* Backend controls */}
       <section

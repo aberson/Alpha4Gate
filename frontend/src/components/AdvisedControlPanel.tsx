@@ -262,6 +262,10 @@ export function AdvisedControlPanel() {
         <StatusBadge status={run.status} />
       </div>
 
+      <p style={{ color: "#888", fontSize: "0.85em", margin: "0 0 16px" }}>
+        Live control panel for an active <code>/improve-bot-advised</code> run. Monitor phase, iteration, and win-rate trajectory; inject strategic hints to the advisor; adjust games-per-cycle or difficulty mid-run; and stop or reset the loop if it stalls.
+      </p>
+
       {run.status === "idle" ? (
         <div className="stat-card" style={{ textAlign: "center", padding: "32px" }}>
           <p style={{ color: "#888", fontSize: "1.1em" }}>
