@@ -83,6 +83,7 @@ class MacroManager:
         self._check_expansion(bot, strategic_state)
         self._check_production_buildings(bot)
         self._check_warp_gate_research(bot)
+        self._check_forge_and_upgrades(bot)
         self._check_gas(bot)
 
         return self._pending
@@ -233,6 +234,61 @@ class MacroManager:
                     reason="Unlock WarpGate for instant warp-ins",
                 )
             )
+
+    def _check_forge_and_upgrades(self, bot: BotAI) -> None:
+        """Build a Forge after CyberCore is ready, then research attack/armor upgrades."""
+        # Need CyberneticsCore before Forge
+        cyber_structs = bot.structures(UnitTypeId.CYBERNETICSCORE)
+        try:
+            cyber_ready = cyber_structs.ready
+        except AttributeError:
+            cyber_ready = cyber_structs  # test mock returns plain list
+        if not cyber_ready:
+            return
+
+        forge_structs = bot.structures(UnitTypeId.FORGE)
+        if not forge_structs:
+            if bot.already_pending(UnitTypeId.FORGE) == 0 and bot.can_afford(
+                UnitTypeId.FORGE
+            ):
+                self._pending.append(
+                    MacroDecision(
+                        action="build",
+                        target="Forge",
+                        reason="Unlocking ground upgrades",
+                    )
+                )
+            return
+
+        # Forge exists — research upgrades (attack first, then armor)
+        try:
+            forges_idle = forge_structs.ready.idle
+        except AttributeError:
+            forges_idle = forge_structs  # test mock
+        if not forges_idle:
+            return
+
+        upgrade_queue: list[UpgradeId] = [
+            UpgradeId.PROTOSSGROUNDWEAPONSLEVEL1,
+            UpgradeId.PROTOSSGROUNDARMORSLEVEL1,
+            UpgradeId.PROTOSSGROUNDWEAPONSLEVEL2,
+            UpgradeId.PROTOSSGROUNDARMORSLEVEL2,
+        ]
+        for upgrade in upgrade_queue:
+            try:
+                if bot.already_pending_upgrade(upgrade) > 0:
+                    continue
+            except (TypeError, AttributeError):
+                continue
+            if bot.can_afford(upgrade):
+                self._pending.append(
+                    MacroDecision(
+                        action="research",
+                        target=upgrade.name,
+                        reason=f"Researching {upgrade.name}",
+                    )
+                )
+                return  # One upgrade at a time
 
     def _check_gas(self, bot: BotAI) -> None:
         """Build assimilators on bases that don't have them."""

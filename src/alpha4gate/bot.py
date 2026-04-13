@@ -569,6 +569,17 @@ class Alpha4GateBot(BotAI):
                     cores.first.research(UpgradeId.WARPGATERESEARCH)
                     self._actions_this_step.append(decision.to_dict())
                     return True
+            else:
+                # Ground upgrades from Forge
+                try:
+                    upgrade_id = UpgradeId[decision.target]
+                except KeyError:
+                    return False
+                forges = self.structures(UnitTypeId.FORGE).ready.idle
+                if forges and self.can_afford(upgrade_id):
+                    forges.first.research(upgrade_id)
+                    self._actions_this_step.append(decision.to_dict())
+                    return True
         return False
 
     # ------------------------------------------------------------------ #
