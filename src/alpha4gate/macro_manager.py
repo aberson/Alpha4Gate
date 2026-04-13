@@ -19,7 +19,7 @@ WORKERS_PER_GAS = 3
 MAX_WORKERS = 70
 
 # Supply constants
-SUPPLY_BUFFER = 4  # Build pylon when supply_cap - supply_used <= buffer
+SUPPLY_BUFFER = 8  # Build pylon when supply_cap - supply_used <= buffer
 PYLON_SUPPLY = 8
 
 # Production constants
@@ -86,19 +86,36 @@ class MacroManager:
         return self._pending
 
     def _check_supply(self, bot: BotAI) -> None:
-        """Build pylons when supply is getting tight."""
+        """Build pylons when supply is getting tight.
+
+        Scales the supply buffer with gateway count so multi-gateway
+        warp-in cycles don't get supply-blocked.
+        """
         supply_left = int(bot.supply_cap) - int(bot.supply_used)
-        # Don't build past 200
         if bot.supply_cap >= 200:
             return
-        # Check if we already have pylons building
+
+        gateway_count = len(bot.structures(UnitTypeId.GATEWAY)) + len(
+            bot.structures(UnitTypeId.WARPGATE)
+        )
+        # Each gateway warp-in needs ~2 supply; buffer enough for a full cycle
+        desired_buffer = max(SUPPLY_BUFFER, gateway_count * 2)
+
         pending_pylons = bot.already_pending(UnitTypeId.PYLON)
-        if supply_left <= SUPPLY_BUFFER and pending_pylons == 0:
+        pylons_needed = int(max(
+            0,
+            (desired_buffer - supply_left + PYLON_SUPPLY - 1) // PYLON_SUPPLY
+            - pending_pylons,
+        ))
+        for _ in range(min(pylons_needed, 2)):
             self._pending.append(
                 MacroDecision(
                     action="build",
                     target="Pylon",
-                    reason=f"Supply tight ({int(bot.supply_used)}/{int(bot.supply_cap)})",
+                    reason=(
+                        f"Supply tight ({int(bot.supply_used)}/{int(bot.supply_cap)},"
+                        f" need {desired_buffer} buffer)"
+                    ),
                 )
             )
 
