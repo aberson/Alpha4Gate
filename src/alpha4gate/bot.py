@@ -675,9 +675,12 @@ class Alpha4GateBot(BotAI):
                     )
                     break
 
-        # Robos → immortals (prefer) or observers
+        # Robos → immortals (prefer) or observers (capped at 2)
+        obs_count = len(self.units(UnitTypeId.OBSERVER))
         for robo in self.structures(UnitTypeId.ROBOTICSFACILITY).idle:
             for unit_id in _ROBO_ARMY:
+                if unit_id == UnitTypeId.OBSERVER and obs_count >= 2:
+                    continue
                 if self.can_afford(unit_id) and self.supply_left >= 2:
                     robo.train(unit_id)
                     self._actions_this_step.append(
