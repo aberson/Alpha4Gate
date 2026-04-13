@@ -705,16 +705,19 @@ The first end-to-end soak run surfaced two findings whose resolution should shap
 - 46 API endpoints for daemon control, triggers, evaluation, promotions, rollback,
   curriculum, advised run control. **New:** `GET /api/advised/state`,
   `GET /api/advised/control`, `PUT /api/advised/control` for dashboard bridge.
-- 829 Python unit tests + 126 frontend vitest tests passing (as of advisor control panel, 2026-04-12).
+- 829 Python unit tests + 124 frontend vitest tests passing (as of dashboard overhaul, 2026-04-13).
+- Two `/improve-bot-advised` runs completed at difficulty 3. 41 reward rules (up from 13).
+- Mineral-float gateway scaling code fix in `macro_manager.py` — bot dynamically adds gateways when minerals > 500.
+- New Processes tab, rebuilt Stats page (from training.db), cleanup endpoints, improvement tracker.
+- Training DB purged 2026-04-13 for clean slate.
 
 **What's missing:**
-- No combat-oriented reward shaping — `reward_rules.json` has 13 rules, all
-  economy/scouting/defense. PPO never chooses ATTACK because there's no gradient
-  toward military production or aggression. Soak v4-rebalance (2026-04-12) confirmed:
-  100% of training games timeout at 480s with the bot spamming expand_now().
+- Bot never enters attack state (0% of game time) — addresses needed in `decision_engine.py`
+  strategy transitions. Reward rules for attack exist (41 total, including attack-state-mid/late
+  at +0.04/+0.06) but rule-based strategy layer overrides neural policy. Next run should use
+  `--self-improve-code` to modify attack thresholds.
 - No WebSocket channel for training/loop events — Loop, Improvements, and Alerts
-  tabs still poll every 5s. Decision reaffirmed as deferred in Phase 4; revisit
-  after soak-test findings.
+  tabs still poll every 5s. Decision reaffirmed as deferred; revisit after soak-test findings.
 - No domain abstraction (SC2 code still interleaved with training loop — Phase 5).
 
 ## Decisions

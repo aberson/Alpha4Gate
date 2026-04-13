@@ -3,8 +3,8 @@
 React SPA for live game observation, training metrics, command input, and autonomous
 loop transparency.
 
-> **At a glance:** 10-tab SPA (Live, Stats, Builds, Replays, Decisions, Training, Loop,
-> Improvements, Alerts, Advisor) built with React + TypeScript + Vite. Live game data via
+> **At a glance:** 10-tab SPA (Live, Stats, Replays, Decisions, Training, Loop,
+> Advisor, Improvements, Processes, Alerts) built with React + TypeScript + Vite. Live game data via
 > WebSocket (real-time). Training and loop metrics via REST polling (5s). Seven custom
 > hooks handle WebSocket connections, API calls, and client-side alerting. All frontend
 > code is domain-agnostic — it renders whatever JSON the backend sends. Unit tests run
@@ -21,15 +21,15 @@ Today it's strongest at live game observation and weakest at training visibility
 | Tab | Component(s) | Data source | Refresh |
 |-----|-------------|-------------|---------|
 | **Live** | LiveView + CommandPanel | `/ws/game` + `/ws/commands` | Real-time WebSocket |
-| **Stats** | Stats | `/api/stats` | One-time fetch |
-| **Builds** | BuildOrderEditor | `/api/build-orders` | One-time fetch |
+| **Stats** | Stats | `/api/stats` (training.db) | 10s poll |
 | **Replays** | ReplayBrowser | `/api/replays` | One-time fetch (stub) |
 | **Decisions** | DecisionQueue | `/api/decision-log` + `/ws/decisions` | Initial fetch + live |
 | **Training** | TrainingDashboard + ModelComparison + ImprovementTimeline + CheckpointList + RewardRuleEditor | `/api/training/*` + `/api/reward-rules` | 5s poll + one-time |
 | **Loop** | LoopStatus + TriggerControls | `/api/training/daemon` + `/api/training/status` + `/api/training/start`/`stop` | 5s poll + on-demand |
-| **Improvements** | RecentImprovements + RewardTrends | `/api/training/promotions/history` + `/api/training/reward-trends` | 5s poll |
-| **Alerts** | AlertsPanel (+ AlertToast overlay) | `useAlerts` hook (derives from `/api/training/*` polls) | 5s poll |
 | **Advisor** | AdvisedControlPanel | `/api/advised/state` + `/api/advised/control` | 3s poll + on-demand |
+| **Improvements** | AdvisedImprovements + RecentImprovements + RewardTrends | `/api/improvements` + `/api/training/promotions/history` + `/api/training/reward-trends` | 5-10s poll |
+| **Processes** | ProcessMonitor | `/api/processes` | 5s poll |
+| **Alerts** | AlertsPanel (+ AlertToast overlay) | `useAlerts` hook (derives from `/api/training/*` polls) | 5s poll |
 
 ### What each component shows
 
@@ -54,8 +54,6 @@ difficulty). Best checkpoint marked with indicator.
 
 **DecisionQueue:** Last 20 state transitions: game step, from/to state, reason, Claude
 advice.
-
-**BuildOrderEditor:** Build order list with supply-threshold steps. Create/delete.
 
 **ReplayBrowser:** File listing with basic stats on click (stub — parsing not implemented).
 
@@ -96,7 +94,7 @@ auto-dismissing after a timeout. Clicking it jumps to the Alerts tab.
 |------|---------|---------|
 | `useWebSocket({url, onMessage, reconnectInterval})` | Generic WS client | Auto-reconnect (3s default), JSON parsing, cleanup on unmount |
 | `useGameState()` | Live game state | Wraps useWebSocket for `/ws/game`, returns `{gameState, connected}` |
-| `useBuildOrders()` | Build order CRUD | GET/POST/DELETE via `/api/build-orders`, returns `{orders, loading, createOrder, deleteOrder, refresh}` |
+| `useBuildOrders()` | Build order CRUD | GET/POST/DELETE via `/api/build-orders`, returns `{orders, loading, createOrder, deleteOrder, refresh}` (backend API remains; no longer used by a visible tab) |
 | `useDaemonStatus()` | Loop status polling | 5s poll of `/api/training/daemon` + `/api/training/status`, returns merged `{daemon, status, error}` |
 | `useAlerts()` | Client-side alert engine | 5s poll of training endpoints, runs `alertRules.ts` over the snapshot, persists via `alertStorage.ts`, returns `{alerts, ackedIds, unreadCount, newAlertsThisPoll, ackAlert, dismissAlert, markAllRead, clearHistory}` |
 
@@ -164,8 +162,9 @@ as `*.test.tsx` / `*.test.ts`. Run with `npm run test:run`.
 | `frontend/src/components/RewardRuleEditor.tsx` | Reward rule editing |
 | `frontend/src/components/Stats.tsx` | Game statistics |
 | `frontend/src/components/DecisionQueue.tsx` | Decision log |
-| `frontend/src/components/BuildOrderEditor.tsx` | Build order CRUD |
 | `frontend/src/components/ReplayBrowser.tsx` | Replay browser (stub) |
+| `frontend/src/components/ProcessMonitor.tsx` | Live process inventory and health |
+| `frontend/src/components/AdvisedImprovements.tsx` | Advisor-driven improvement history |
 | `frontend/src/components/ConfirmDialog.tsx` | Reusable confirm modal (used by TriggerControls) |
 | `frontend/src/components/LoopStatus.tsx` | Daemon state + trigger preview + disk usage |
 | `frontend/src/components/TriggerControls.tsx` | Start/stop daemon + editable config |
@@ -178,7 +177,6 @@ as `*.test.tsx` / `*.test.ts`. Run with `npm run test:run`.
 | `frontend/src/components/StaleDataBanner.tsx` | Reusable stale-data warning banner |
 | `frontend/src/hooks/useWebSocket.ts` | Generic WS hook |
 | `frontend/src/hooks/useGameState.ts` | Game state WS hook |
-| `frontend/src/hooks/useBuildOrders.ts` | Build order API hook |
 | `frontend/src/hooks/useDaemonStatus.ts` | Daemon + training status polling |
 | `frontend/src/hooks/useAlerts.ts` | Client-side alert engine + persistence |
 | `frontend/src/hooks/useApi.ts` | Generic REST polling hook with stale detection |

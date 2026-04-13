@@ -94,14 +94,14 @@ Ten tabs. See [frontend.md](frontend.md) for full component breakdown.
 
 - **Live** — real-time game state, resources, units, Claude advice, command input
 - **Stats** — win/loss history by map and opponent
-- **Builds** — create and edit build orders
 - **Replays** — browse replay files (parsing not fully implemented)
 - **Decisions** — strategic state transition log
 - **Training** — checkpoint list, win rates, reward rule editor
 - **Loop** — daemon state, trigger evaluation, full daemon control panel
-- **Improvements** — recent promotions/rollbacks, per-rule reward trends
-- **Alerts** — severity-filtered alert list with ack/dismiss
 - **Advisor** — live status, loop controls, strategic hints for /improve-bot-advised runs
+- **Improvements** — recent promotions/rollbacks, per-rule reward trends
+- **Processes** — live process inventory and health
+- **Alerts** — severity-filtered alert list with ack/dismiss
 
 ## How does Claude fit in?
 

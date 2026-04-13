@@ -99,7 +99,7 @@ export function ProcessMonitor() {
         <h2>Processes</h2>
         <p>{isLoading ? "Scanning..." : "Backend offline \u2014 cannot scan processes."}</p>
         <p style={{ color: "#888", fontSize: "0.85em" }}>
-          Start the backend with: <code>uv run python -m alpha4gate.runner --serve --daemon</code>
+          Start the backend with: <code>uv run python -m alpha4gate.runner --serve</code>
         </p>
       </div>
     );
@@ -161,7 +161,7 @@ export function ProcessMonitor() {
           </span>
           {!backendOnline && (
             <span style={{ color: "#888", fontSize: "0.8em", marginLeft: "8px" }}>
-              Start with: <code>uv run python -m alpha4gate.runner --serve --daemon</code>
+              Start with: <code>uv run python -m alpha4gate.runner --serve</code>
             </span>
           )}
         </div>

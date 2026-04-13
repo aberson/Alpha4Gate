@@ -205,6 +205,7 @@ src/alpha4gate/
 ├── build_orders.py        # BuildOrder/BuildStep/BuildSequencer
 ├── build_backlog.py       # Retry queue for failed builds
 ├── replay_parser.py       # Replay parsing (stub)
+├── process_registry.py    # Process inventory + health tracking
 ├── commands/
 │   ├── primitives.py      # CommandPrimitive, CommandAction, CommandMode
 │   ├── parser.py          # Regex text parser

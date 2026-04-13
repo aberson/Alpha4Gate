@@ -9,9 +9,9 @@ A StarCraft II Protoss bot combining rule-based decision-making, a PPO neural po
 - **Evaluation metrics** — structured reward shaping, win-rate tracking, training diagnostics, and cross-game statistics
 - **Autonomous self-improvement** — train-play-evaluate loop that runs 24/7, getting stronger with each cycle
 
-**Advisor control panel complete (2026-04-12)** — dashboard Advisor tab for monitoring and controlling `/improve-bot-advised` runs mid-loop. File-based bridge: skill writes `data/advised_run_state.json` at phase boundaries, reads `data/advised_run_control.json` for user overrides (games/cycle, difficulty, fail threshold, strategic hints, reward rules, stop/reset). 3 new API endpoints, AdvisedControlPanel component + useAdvisedRun hook. Win-rate alert suppressed during advised runs (own Phase 5 validation handles regression detection). Stop button calls `/api/shutdown` for immediate process cleanup. 829 Python tests + 126 frontend tests passing, 0 type errors, 0 lint violations.
+**Dashboard overhaul + improvement loop runs (2026-04-13)** — Major dashboard polish: new Processes tab (live system process monitor, port status, state files, backend Restart button), rebuilt Stats page from training.db (per-difficulty breakdown, reward data, filtering), Stop/Reset cleanup endpoints that preserve backend+frontend, improvement_log.json tracker, confirmation dialogs on game-spawning buttons, tab descriptions on all 17 components. Two `/improve-bot-advised` runs at difficulty 3: 41 reward rules, mineral-float gateway scaling code fix in macro_manager.py (peak supply 65→89). Training DB purged for clean slate. 829 Python tests + 124 frontend tests passing, 0 type errors, 0 lint violations.
 
-**Current capability:** Wins reliably at difficulty 1-3 (Easy through Medium AI). Struggles at 4-5 (Hard).
+**Current capability:** Wins reliably at difficulty 1-3 (Easy through Medium AI). Struggles at 4-5 (Hard). Bot now builds 5-7 gateways dynamically but still doesn't attack — addressing attack behavior is the next priority.
 
 ## Stack
 

@@ -114,6 +114,7 @@ This is excellent design for domain abstraction — swap `_sync_game()` and
 | `batch_runner.py` | No | GameRecord aggregation |
 | `replay_parser.py` | No | ReplayStats/TimelineEvent dataclasses (stub) |
 | `claude_advisor.py` | No (Tier 1) | LLM client; prompt template mentions SC2 but no code dependency |
+| `process_registry.py` | No | Process inventory + health tracking; no SC2 imports |
 
 ### SC2-coupled modules (Tier 2-3)
 
