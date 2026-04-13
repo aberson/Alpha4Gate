@@ -254,7 +254,7 @@ export function RewardTrends({
         <>
           <div
             className="reward-trends-chart"
-            style={{ width: "100%", height: 320, marginBottom: "16px" }}
+            style={{ width: "100%", height: 960, marginBottom: "16px" }}
           >
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData}>
