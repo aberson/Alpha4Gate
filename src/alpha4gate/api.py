@@ -1239,13 +1239,13 @@ async def restart_server() -> dict[str, str]:
     import subprocess as _sp
     import sys
 
-    # Build the command to start the new backend
+    # Build the command to start the new backend.
+    # Never inherit --daemon — the improvement loop skill should be the
+    # one that starts the daemon, not a UI restart button.
     cmd = [sys.executable, "-m", "alpha4gate.runner", "--serve"]
-    daemon_was_running = _daemon is not None and _daemon.is_running()
-    if daemon_was_running and _daemon is not None:
-        cmd.append("--daemon")
+    if _daemon is not None and _daemon.is_running():
         _daemon.stop()
-        _log.info("Daemon stopped for restart")
+        _log.info("Daemon stopped for restart (will NOT restart with --daemon)")
 
     # Spawn detached process (survives parent exit)
     _CREATE_NEW_PROCESS_GROUP = 0x00000200
