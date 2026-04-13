@@ -26,6 +26,11 @@ PYLON_SUPPLY = 8
 GATEWAY_PER_BASE = 2
 ROBO_THRESHOLD_BASES = 2
 
+# Mineral-float gateway scaling: add gateways when floating minerals
+MINERAL_FLOAT_GATEWAY_THRESHOLD = 500  # minerals above which we add gateways
+MINERAL_FLOAT_GATEWAY_PER_500 = 1       # 1 extra gateway per 500 floating minerals
+MAX_GATEWAYS = 12                        # hard cap to prevent overbuilding
+
 
 @dataclass
 class MacroDecision:
@@ -146,13 +151,23 @@ class MacroManager:
         )
         desired_gateways = base_count * GATEWAY_PER_BASE
 
+        # Mineral-float scaling: if floating minerals, add more gateways
+        # to convert excess income into army faster
+        minerals = int(bot.minerals)
+        if minerals > MINERAL_FLOAT_GATEWAY_THRESHOLD:
+            extra = (minerals - MINERAL_FLOAT_GATEWAY_THRESHOLD) // 500 + 1
+            desired_gateways = max(desired_gateways, gateway_count + extra)
+        desired_gateways = min(desired_gateways, MAX_GATEWAYS)
+
         pending_gateways = bot.already_pending(UnitTypeId.GATEWAY)
         if gateway_count + pending_gateways < desired_gateways:
             self._pending.append(
                 MacroDecision(
                     action="build",
                     target="Gateway",
-                    reason=f"Gateways {gateway_count}/{desired_gateways}",
+                    reason=self._gateway_reason(
+                        gateway_count, desired_gateways, minerals,
+                    ),
                 )
             )
 
@@ -186,6 +201,14 @@ class MacroManager:
                             )
                         )
                         return  # One at a time
+
+    @staticmethod
+    def _gateway_reason(current: int, desired: int, minerals: int) -> str:
+        """Build reason string for gateway construction."""
+        reason = f"Gateways {current}/{desired}"
+        if minerals > MINERAL_FLOAT_GATEWAY_THRESHOLD:
+            reason += f" (floating {minerals}m)"
+        return reason
 
     @staticmethod
     def _ideal_worker_count(bot: BotAI) -> int:

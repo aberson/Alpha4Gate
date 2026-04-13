@@ -716,6 +716,18 @@ async def get_promotion_latest() -> dict[str, Any]:
     return {"latest": latest}
 
 
+@app.get("/api/improvements")
+async def get_improvements() -> dict[str, Any]:
+    """Get the improvement log (changes made by improve-bot-advised runs)."""
+    path = _data_dir / "improvement_log.json"
+    if not path.exists():
+        return {"improvements": []}
+    import json as _json
+
+    result: dict[str, Any] = _json.loads(path.read_text())
+    return result
+
+
 @app.post("/api/training/promote", response_model=None)
 async def manual_promote(request: dict[str, Any]) -> JSONResponse | dict[str, Any]:
     """Manually promote a checkpoint (skips evaluation).

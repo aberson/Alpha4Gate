@@ -14,6 +14,7 @@ import { TriggerControls } from "./components/TriggerControls";
 import { RecentImprovements } from "./components/RecentImprovements";
 import { RewardTrends } from "./components/RewardTrends";
 import { AdvisedControlPanel } from "./components/AdvisedControlPanel";
+import { AdvisedImprovements } from "./components/AdvisedImprovements";
 import { AlertsPanel } from "./components/AlertsPanel";
 import { AlertToast } from "./components/AlertToast";
 import { ConnectionStatus } from "./components/ConnectionStatus";
@@ -150,6 +151,7 @@ function App() {
         {tab === "advisor" && <AdvisedControlPanel />}
         {tab === "improvements" && (
           <>
+            <AdvisedImprovements />
             <RecentImprovements />
             <RewardTrends />
           </>

@@ -1,0 +1,100 @@
+{
+  "improvements": [
+    {
+      "id": "advised-20260412-2007-iter1",
+      "timestamp": "2026-04-12T20:50:00Z",
+      "run_id": "20260412-2007",
+      "iteration": 1,
+      "title": "Stronger mineral floating penalties",
+      "type": "training",
+      "description": "Added mineral-floating-moderate penalty at 500+ minerals (-0.01). Strengthened 1000+ penalty from -0.02 to -0.04, and 2000+ from -0.04 to -0.06.",
+      "principles": ["§1 Core Strategic Objective", "§4.2 Resource Spending"],
+      "result": "pass",
+      "metrics": {
+        "observation_wins": "0/10",
+        "validation_wins": "1/10",
+        "duration_delta_pct": 35
+      },
+      "files_changed": ["data/reward_rules.json"]
+    },
+    {
+      "id": "advised-20260412-2007-iter2",
+      "timestamp": "2026-04-12T21:38:00Z",
+      "run_id": "20260412-2007",
+      "iteration": 2,
+      "title": "Lower passive defense thresholds + defend-too-long penalties",
+      "type": "training",
+      "description": "Lowered passive-army-idle threshold from army>=40 to army>=20. Added defend-too-long (-0.03 after 8min) and defend-with-army (-0.02 with army>=15 after 6min) penalties.",
+      "principles": ["§10 Combat Rules", "§28 Win Condition Tracking"],
+      "result": "stopped",
+      "metrics": {},
+      "files_changed": ["data/reward_rules.json"]
+    },
+    {
+      "id": "advised-20260412-2007-bugfix1",
+      "timestamp": "2026-04-12T21:45:00Z",
+      "run_id": "20260412-2007",
+      "iteration": null,
+      "title": "Batch guard: prevent concurrent game launches",
+      "type": "dev",
+      "description": "Added port check in _run_batch to abort if API server/daemon is already running on the same port.",
+      "principles": [],
+      "result": "pass",
+      "metrics": {},
+      "files_changed": ["src/alpha4gate/runner.py"]
+    },
+    {
+      "id": "advised-20260412-2007-bugfix2",
+      "timestamp": "2026-04-12T21:45:00Z",
+      "run_id": "20260412-2007",
+      "iteration": null,
+      "title": "Fix total_reward=0.0 in batch mode",
+      "type": "dev",
+      "description": "Replaced hardcoded total_reward=0.0 with RewardCalculator.episode_total. Added episode_total accumulator to RewardCalculator.",
+      "principles": [],
+      "result": "pass",
+      "metrics": {},
+      "files_changed": ["src/alpha4gate/runner.py", "src/alpha4gate/learning/rewards.py"]
+    },
+    {
+      "id": "advised-20260412-2212-iter1",
+      "timestamp": "2026-04-12T22:24:00Z",
+      "run_id": "20260412-2212",
+      "iteration": 1,
+      "title": "Strengthen gateway scaling incentives",
+      "type": "training",
+      "description": "Strengthened gateway-scaling-6 reward from +0.005 to +0.015. Added too-few-gateways-5 penalty. Note: had no observable effect — gateway count is hardcoded in rule-based strategy.",
+      "principles": ["§4.2 Resource Spending", "§5.2 Production Scaling"],
+      "result": "pass",
+      "metrics": {
+        "observation_wins": "0/2",
+        "validation_wins": "0/2",
+        "duration_delta_pct": 11
+      },
+      "files_changed": ["data/reward_rules.json"]
+    },
+    {
+      "id": "advised-20260412-2212-iter2",
+      "timestamp": "2026-04-12T22:30:00Z",
+      "run_id": "20260412-2212",
+      "iteration": 2,
+      "title": "Mineral-float gateway scaling",
+      "type": "dev",
+      "description": "Added dynamic gateway scaling in macro_manager.py: when minerals > 500, the bot adds extra gateways (1 per 500 floating minerals, capped at 12). This bypasses the hardcoded GATEWAY_PER_BASE limit.",
+      "principles": ["§4.2 Resource Spending", "§5.2 Production Scaling", "§24 Common Failure Modes"],
+      "result": "pass",
+      "metrics": {
+        "observation_wins": "0/2",
+        "validation_wins": "0/2",
+        "duration_delta_pct": 19,
+        "peak_supply_before": "65-67",
+        "peak_supply_after": "89-90",
+        "peak_gateways_before": "4",
+        "peak_gateways_after": "5-7",
+        "minerals_8min_before": "1195-1765",
+        "minerals_8min_after": "45-188"
+      },
+      "files_changed": ["src/alpha4gate/macro_manager.py"]
+    }
+  ]
+}
