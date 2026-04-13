@@ -78,6 +78,11 @@ _TARGET_MAP: dict[str, UnitTypeId] = {
     "Colossus": UnitTypeId.COLOSSUS,
     "PhotonCannon": UnitTypeId.PHOTONCANNON,
     "ShieldBattery": UnitTypeId.SHIELDBATTERY,
+    "FleetBeacon": UnitTypeId.FLEETBEACON,
+    "VoidRay": UnitTypeId.VOIDRAY,
+    "Carrier": UnitTypeId.CARRIER,
+    "Tempest": UnitTypeId.TEMPEST,
+    "Phoenix": UnitTypeId.PHOENIX,
 }
 
 # Army units to train from gateways (priority order)
@@ -573,16 +578,25 @@ class Alpha4GateBot(BotAI):
                     self._actions_this_step.append(decision.to_dict())
                     return True
             else:
-                # Ground upgrades from Forge
                 try:
                     upgrade_id = UpgradeId[decision.target]
                 except KeyError:
                     return False
-                forges = self.structures(UnitTypeId.FORGE).ready.idle
-                if forges and self.can_afford(upgrade_id):
-                    forges.first.research(upgrade_id)
-                    self._actions_this_step.append(decision.to_dict())
-                    return True
+                # Twilight Council upgrades (Charge, Blink)
+                _TC_UPGRADES = {UpgradeId.CHARGE, UpgradeId.BLINKTECH}
+                if upgrade_id in _TC_UPGRADES:
+                    tcs = self.structures(UnitTypeId.TWILIGHTCOUNCIL).ready.idle
+                    if tcs and self.can_afford(upgrade_id):
+                        tcs.first.research(upgrade_id)
+                        self._actions_this_step.append(decision.to_dict())
+                        return True
+                else:
+                    # Ground upgrades from Forge
+                    forges = self.structures(UnitTypeId.FORGE).ready.idle
+                    if forges and self.can_afford(upgrade_id):
+                        forges.first.research(upgrade_id)
+                        self._actions_this_step.append(decision.to_dict())
+                        return True
         return False
 
     # ------------------------------------------------------------------ #
@@ -684,9 +698,20 @@ class Alpha4GateBot(BotAI):
                     )
                     break
 
-        # Robos → immortals (prefer) or observers (capped at 2)
+        # Robos → colossus (if RoboBay) > immortals > observers (capped at 2)
         obs_count = len(self.units(UnitTypeId.OBSERVER))
+        has_robo_bay = bool(self.structures(UnitTypeId.ROBOTICSBAY).ready)
+        colossus_count = len(self.units(UnitTypeId.COLOSSUS))
         for robo in self.structures(UnitTypeId.ROBOTICSFACILITY).idle:
+            # Colossus: build up to 3 if Robotics Bay is ready
+            if has_robo_bay and colossus_count < 3:
+                if self.can_afford(UnitTypeId.COLOSSUS) and self.supply_left >= 6:
+                    robo.train(UnitTypeId.COLOSSUS)
+                    self._actions_this_step.append(
+                        {"action": "Train", "target": "Colossus"}
+                    )
+                    colossus_count += 1
+                    continue
             for unit_id in _ROBO_ARMY:
                 if unit_id == UnitTypeId.OBSERVER and obs_count >= 2:
                     continue
@@ -696,6 +721,29 @@ class Alpha4GateBot(BotAI):
                         {"action": "Train", "target": unit_id.name}
                     )
                     break
+
+        # Stargates → void rays, then carriers (if Fleet Beacon)
+        has_fleet_beacon = bool(self.structures(UnitTypeId.FLEETBEACON).ready)
+        voidray_count = len(self.units(UnitTypeId.VOIDRAY))
+        carrier_count = len(self.units(UnitTypeId.CARRIER))
+        for sg in self.structures(UnitTypeId.STARGATE).idle:
+            # Carriers if Fleet Beacon exists (cap at 3)
+            if has_fleet_beacon and carrier_count < 3:
+                if self.can_afford(UnitTypeId.CARRIER) and self.supply_left >= 6:
+                    sg.train(UnitTypeId.CARRIER)
+                    self._actions_this_step.append(
+                        {"action": "Train", "target": "Carrier"}
+                    )
+                    carrier_count += 1
+                    continue
+            # Void Rays (cap at 4)
+            if voidray_count < 4:
+                if self.can_afford(UnitTypeId.VOIDRAY) and self.supply_left >= 4:
+                    sg.train(UnitTypeId.VOIDRAY)
+                    self._actions_this_step.append(
+                        {"action": "Train", "target": "VoidRay"}
+                    )
+                    voidray_count += 1
 
     # ------------------------------------------------------------------ #
     #  Scouting

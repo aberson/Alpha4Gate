@@ -84,6 +84,7 @@ class MacroManager:
         self._check_production_buildings(bot)
         self._check_warp_gate_research(bot)
         self._check_forge_and_upgrades(bot)
+        self._check_twilight_upgrades(bot)
         self._check_shield_batteries(bot)
         self._check_gas(bot)
 
@@ -237,6 +238,64 @@ class MacroManager:
                         )
                     )
 
+        # Twilight Council after CyberCore — unlocks Charge/Blink upgrades
+        if cyber_count >= 1:
+            tc_count = len(bot.structures(UnitTypeId.TWILIGHTCOUNCIL))
+            if tc_count == 0 and bot.already_pending(UnitTypeId.TWILIGHTCOUNCIL) == 0:
+                self._pending.append(
+                    MacroDecision(
+                        action="build",
+                        target="TwilightCouncil",
+                        reason="Unlocking Charge/Blink upgrades",
+                    )
+                )
+
+        # Robotics Bay after Robo — unlocks Colossus
+        robo_structs = bot.structures(UnitTypeId.ROBOTICSFACILITY)
+        try:
+            has_robo_ready = bool(robo_structs.ready)
+        except AttributeError:
+            has_robo_ready = bool(robo_structs)
+        if has_robo_ready:
+            rb_count = len(bot.structures(UnitTypeId.ROBOTICSBAY))
+            if rb_count == 0 and bot.already_pending(UnitTypeId.ROBOTICSBAY) == 0:
+                self._pending.append(
+                    MacroDecision(
+                        action="build",
+                        target="RoboticsBay",
+                        reason="Unlocking Colossus production",
+                    )
+                )
+
+        # Stargate after CyberCore — unlocks air units (Void Ray, Phoenix, Carrier)
+        if cyber_count >= 1 and base_count >= 3:
+            sg_count = len(bot.structures(UnitTypeId.STARGATE))
+            if sg_count == 0 and bot.already_pending(UnitTypeId.STARGATE) == 0:
+                self._pending.append(
+                    MacroDecision(
+                        action="build",
+                        target="Stargate",
+                        reason="Unlocking air tech on 3rd base",
+                    )
+                )
+
+        # Fleet Beacon after Stargate — unlocks Carrier and Tempest
+        sg_structs = bot.structures(UnitTypeId.STARGATE)
+        try:
+            has_sg_ready = bool(sg_structs.ready)
+        except AttributeError:
+            has_sg_ready = bool(sg_structs)
+        if has_sg_ready:
+            fb_count = len(bot.structures(UnitTypeId.FLEETBEACON))
+            if fb_count == 0 and bot.already_pending(UnitTypeId.FLEETBEACON) == 0:
+                self._pending.append(
+                    MacroDecision(
+                        action="build",
+                        target="FleetBeacon",
+                        reason="Unlocking Carrier/Tempest production",
+                    )
+                )
+
     def _check_warp_gate_research(self, bot: BotAI) -> None:
         """Research Warp Gate at the Cybernetics Core when available."""
         try:
@@ -294,6 +353,36 @@ class MacroManager:
             UpgradeId.PROTOSSGROUNDARMORSLEVEL1,
             UpgradeId.PROTOSSGROUNDWEAPONSLEVEL2,
             UpgradeId.PROTOSSGROUNDARMORSLEVEL2,
+        ]
+        for upgrade in upgrade_queue:
+            try:
+                if bot.already_pending_upgrade(upgrade) > 0:
+                    continue
+            except (TypeError, AttributeError):
+                continue
+            if bot.can_afford(upgrade):
+                self._pending.append(
+                    MacroDecision(
+                        action="research",
+                        target=upgrade.name,
+                        reason=f"Researching {upgrade.name}",
+                    )
+                )
+                return  # One upgrade at a time
+
+    def _check_twilight_upgrades(self, bot: BotAI) -> None:
+        """Research Charge and Blink at the Twilight Council."""
+        tc_structs = bot.structures(UnitTypeId.TWILIGHTCOUNCIL)
+        try:
+            tc_idle = tc_structs.ready.idle
+        except AttributeError:
+            tc_idle = tc_structs
+        if not tc_idle:
+            return
+
+        upgrade_queue: list[UpgradeId] = [
+            UpgradeId.CHARGE,  # Zealots close distance instantly
+            UpgradeId.BLINKTECH,  # Stalkers can blink (micro)
         ]
         for upgrade in upgrade_queue:
             try:
