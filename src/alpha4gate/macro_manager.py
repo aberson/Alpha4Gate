@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from sc2.ids.unit_typeid import UnitTypeId
+from sc2.ids.upgrade_id import UpgradeId
 
 from alpha4gate.decision_engine import StrategicState
 
@@ -81,6 +82,7 @@ class MacroManager:
         self._check_workers(bot)
         self._check_expansion(bot, strategic_state)
         self._check_production_buildings(bot)
+        self._check_warp_gate_research(bot)
         self._check_gas(bot)
 
         return self._pending
@@ -212,6 +214,25 @@ class MacroManager:
                             reason="Unlocking Robo tech after 2nd base",
                         )
                     )
+
+    def _check_warp_gate_research(self, bot: BotAI) -> None:
+        """Research Warp Gate at the Cybernetics Core when available."""
+        try:
+            if bot.already_pending_upgrade(UpgradeId.WARPGATERESEARCH) > 0:
+                return
+        except (TypeError, AttributeError):
+            return
+        cores = bot.structures(UnitTypeId.CYBERNETICSCORE).ready.idle
+        if not cores:
+            return
+        if bot.can_afford(UpgradeId.WARPGATERESEARCH):
+            self._pending.append(
+                MacroDecision(
+                    action="research",
+                    target="WarpGateResearch",
+                    reason="Unlock WarpGate for instant warp-ins",
+                )
+            )
 
     def _check_gas(self, bot: BotAI) -> None:
         """Build assimilators on bases that don't have them."""

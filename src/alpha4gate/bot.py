@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from sc2.bot_ai import BotAI
+from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId
+from sc2.ids.upgrade_id import UpgradeId
 from sc2.position import Point2
 
 from alpha4gate.army_coherence import ArmyCoherenceManager
@@ -80,6 +82,11 @@ _TARGET_MAP: dict[str, UnitTypeId] = {
 
 # Army units to train from gateways (priority order)
 _GATEWAY_ARMY: list[UnitTypeId] = [UnitTypeId.STALKER, UnitTypeId.ZEALOT]
+# WarpGate abilities for each unit type (priority order)
+_WARPGATE_ABILITIES: list[tuple[UnitTypeId, AbilityId]] = [
+    (UnitTypeId.STALKER, AbilityId.WARPGATETRAIN_STALKER),
+    (UnitTypeId.ZEALOT, AbilityId.WARPGATETRAIN_ZEALOT),
+]
 # Army units to train from robos
 _ROBO_ARMY: list[UnitTypeId] = [UnitTypeId.IMMORTAL, UnitTypeId.OBSERVER]
 
@@ -552,6 +559,13 @@ class Alpha4GateBot(BotAI):
             if unit_id and self._train_unit(unit_id):
                 self._actions_this_step.append(decision.to_dict())
                 return True
+        elif decision.action == "research":
+            if decision.target == "WarpGateResearch":
+                cores = self.structures(UnitTypeId.CYBERNETICSCORE).ready.idle
+                if cores and self.can_afford(UpgradeId.WARPGATERESEARCH):
+                    cores.first.research(UpgradeId.WARPGATERESEARCH)
+                    self._actions_this_step.append(decision.to_dict())
+                    return True
         return False
 
     # ------------------------------------------------------------------ #
@@ -614,8 +628,30 @@ class Alpha4GateBot(BotAI):
     # ------------------------------------------------------------------ #
 
     async def _produce_army(self) -> None:
-        """Train army units from idle gateways and robos."""
-        # Gateways → stalkers (prefer) or zealots
+        """Train army units from idle gateways/warpgates and robos."""
+        # WarpGates → warp in at nearest pylon
+        for wg in self.structures(UnitTypeId.WARPGATE).ready:
+            abilities_list = await self.get_available_abilities([wg])
+            abilities = abilities_list[0] if abilities_list else []
+            for unit_id, ability in _WARPGATE_ABILITIES:
+                if ability not in abilities:
+                    continue
+                if not self.can_afford(unit_id) or self.supply_left < 2:
+                    continue
+                pylons = self.structures(UnitTypeId.PYLON).ready
+                if not pylons:
+                    break
+                pos = await self.find_placement(
+                    ability, pylons.closest_to(self.start_location).position,
+                )
+                if pos is not None:
+                    wg.warp_in(unit_id, pos)
+                    self._actions_this_step.append(
+                        {"action": "WarpIn", "target": unit_id.name},
+                    )
+                break
+
+        # Regular Gateways → stalkers (prefer) or zealots
         for gw in self.structures(UnitTypeId.GATEWAY).idle:
             for unit_id in _GATEWAY_ARMY:
                 if self.can_afford(unit_id) and self.supply_left >= 2:
