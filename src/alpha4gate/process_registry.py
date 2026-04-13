@@ -77,8 +77,10 @@ def scan_processes() -> list[ProcessInfo]:
     if isinstance(entries, dict):
         entries = [entries]
 
-    # Build PID set for parent-child detection
-    all_pids = {e.get("Id") for e in entries}
+    # Build PID→name map for parent-child detection
+    pid_to_name: dict[int | None, str] = {
+        e.get("Id"): e.get("ProcessName", "") for e in entries
+    }
 
     for entry in entries:
         pid = entry.get("Id")
@@ -87,7 +89,7 @@ def scan_processes() -> list[ProcessInfo]:
         start_str = entry.get("StartTimeISO")
         parent_pid = entry.get("ParentPid")
 
-        role = _classify_process(name, cmdline, pid, parent_pid, all_pids)
+        role = _classify_process(name, cmdline, pid, parent_pid, pid_to_name)
         details = _summarize_cmdline(cmdline)
 
         procs.append(
@@ -115,7 +117,7 @@ def _classify_process(
     cmdline: str,
     pid: int | None = None,
     parent_pid: int | None = None,
-    all_pids: set[int | None] | None = None,
+    pid_to_name: dict[int | None, str] | None = None,
 ) -> str:
     """Classify a process by its role."""
     lower = cmdline.lower()
@@ -124,13 +126,13 @@ def _classify_process(
     if name == "node":
         return "frontend"
     if "alpha4gate" in lower and "--serve" in lower:
-        # Distinguish: if this process's parent is also in our set
-        # and also has --serve, this is the uvicorn child (server).
-        # The parent is the runner entry point (backend-runner).
-        if parent_pid and all_pids and parent_pid in all_pids:
-            return "backend-server"
         if name == "uv":
             return "backend-wrapper"
+        # Check parent: if parent is python → this is uvicorn (server).
+        # If parent is uv → this is the runner entry point.
+        parent_name = (pid_to_name or {}).get(parent_pid, "")
+        if parent_name == "python":
+            return "backend-server"
         return "backend-runner"
     if "alpha4gate" in lower and "--batch" in lower:
         return "game-runner"
