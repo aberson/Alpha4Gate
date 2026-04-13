@@ -156,6 +156,11 @@ export function ProcessMonitor() {
           <span style={{ color: backendOnline ? "#2ecc71" : "#e74c3c", fontSize: "0.85em" }}>
             {backendOnline ? "ON" : "OFF"}
           </span>
+          {!backendOnline && (
+            <span style={{ color: "#888", fontSize: "0.8em", marginLeft: "8px" }}>
+              Start with: <code>uv run python -m alpha4gate.runner --serve --daemon</code>
+            </span>
+          )}
         </div>
         <div style={{ marginLeft: "auto" }}>
           <button
