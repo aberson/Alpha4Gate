@@ -300,6 +300,9 @@ class Alpha4GateBot(BotAI):
         if self._training_db is not None and iteration % 22 == 0:
             self._record_transition(snapshot, state)
 
+        # --- Worker distribution: transfer probes to unsaturated bases/gas ---
+        await self.distribute_workers()
+
         # --- Opening: follow build order + keep training probes ---
         if state == StrategicState.OPENING:
             await self._execute_build_order(snapshot)
@@ -760,15 +763,16 @@ class Alpha4GateBot(BotAI):
             rally = self._resolve_attack_rally(army, snapshot, cm)
 
             # Hard coherence gate: in ATTACK state, if army is not grouped,
-            # skip micro entirely and gather all units to staging point.
+            # gather units at staging point before pushing.
+            # BYPASS when army is overwhelming (50+ supply) — just attack-move.
             # Does NOT apply in DEFEND — must fight immediately even if ungrouped.
-            if not cm.is_coherent(army):
+            if not cm.is_coherent(army) and snapshot.army_supply < 50:
                 staging = self._get_staging_point()
                 if staging is not None:
                     staging_pt = Point2(staging)
                     for u in army:
                         if u.distance_to(staging_pt) > 5:
-                            u.move(staging_pt)
+                            u.attack(staging_pt)
                 return
         else:
             rally = self._defense_rally()
