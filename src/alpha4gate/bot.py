@@ -98,7 +98,7 @@ class Alpha4GateBot(BotAI):
     _STAGING_RECALC_SECONDS: float = 30.0
 
     # At this supply or above, attack the enemy main instead of the natural
-    PUSH_MAIN_SUPPLY: int = 160
+    PUSH_MAIN_SUPPLY: int = 60
 
     # Maps StrategicState → action index (inverse of _ACTION_TO_STATE in environment.py)
     _STATE_TO_ACTION: dict[StrategicState, int] = {
@@ -798,7 +798,12 @@ class Alpha4GateBot(BotAI):
                 elif cmd.target_position:
                     unit.attack(Point2(cmd.target_position))
             elif cmd.action == "move" and cmd.target_position is not None:
-                unit.move(Point2(cmd.target_position))
+                # In attack states, use attack-move so army fights enemies
+                # encountered along the way instead of walking past them.
+                if state in (StrategicState.ATTACK, StrategicState.LATE_GAME):
+                    unit.attack(Point2(cmd.target_position))
+                else:
+                    unit.move(Point2(cmd.target_position))
 
     async def _rally_idle_army(self) -> None:
         """Move idle army units to staging point (pre-stage) or defense rally."""
