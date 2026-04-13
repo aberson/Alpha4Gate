@@ -240,9 +240,20 @@ class DecisionEngine:
 
     def _compute_next_state(self, snapshot: GameSnapshot) -> StrategicState:
         """Determine the next state based on current game conditions."""
-        # Defend takes highest priority if enemy is near base
+        # Defend if enemy is near base — but allow counterattack when
+        # our army is strong enough to break out of the DEFEND loop.
         if snapshot.enemy_army_near_base:
-            return StrategicState.DEFEND
+            enemy_vis = snapshot.enemy_army_supply_visible
+            can_counterattack = (
+                snapshot.army_supply >= self.ATTACK_ARMY_SUPPLY
+                and (
+                    enemy_vis == 0
+                    or snapshot.army_supply
+                    >= enemy_vis * self._attack_supply_ratio
+                )
+            )
+            if not can_counterattack:
+                return StrategicState.DEFEND
 
         # FORTIFY: enter when outgunned and recently retreated (lower priority than DEFEND)
         own_supply = snapshot.army_supply
