@@ -44,3 +44,4 @@ frontend/build/
 # ruff
 .ruff_cache/
 .ui-review-evidence/
+.ui-dashboard-evidence/
