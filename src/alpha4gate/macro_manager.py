@@ -181,6 +181,26 @@ class MacroManager:
         gateway_count = len(bot.structures(UnitTypeId.GATEWAY)) + len(
             bot.structures(UnitTypeId.WARPGATE)
         )
+
+        # CyberneticsCore safety net: if a Gateway is ready but no CyberCore
+        # exists, build one. The build order may have silently failed to place it.
+        cyber_count = len(bot.structures(UnitTypeId.CYBERNETICSCORE))
+        if cyber_count == 0 and gateway_count >= 1:
+            gw_structs = bot.structures(UnitTypeId.GATEWAY)
+            wg_structs = bot.structures(UnitTypeId.WARPGATE)
+            try:
+                has_ready = bool(gw_structs.ready) or bool(wg_structs.ready)
+            except AttributeError:
+                has_ready = bool(gw_structs) or bool(wg_structs)
+            if has_ready and bot.already_pending(UnitTypeId.CYBERNETICSCORE) == 0:
+                self._pending.append(
+                    MacroDecision(
+                        action="build",
+                        target="CyberneticsCore",
+                        reason="Safety net: CyberCore missing after opening",
+                    )
+                )
+
         desired_gateways = base_count * GATEWAY_PER_BASE
 
         # Mineral-float scaling: if floating minerals, add more gateways

@@ -644,10 +644,14 @@ class Alpha4GateBot(BotAI):
     async def _produce_army(self) -> None:
         """Train army units from idle gateways/warpgates and robos."""
         # WarpGates → warp in at nearest pylon
+        # When gas is high (>200), skip Zealots — save minerals for Stalkers
+        gas_high = int(self.vespene) > 200
         for wg in self.structures(UnitTypeId.WARPGATE).ready:
             abilities_list = await self.get_available_abilities([wg])
             abilities = abilities_list[0] if abilities_list else []
             for unit_id, ability in _WARPGATE_ABILITIES:
+                if gas_high and unit_id == UnitTypeId.ZEALOT:
+                    continue
                 if ability not in abilities:
                     continue
                 if not self.can_afford(unit_id) or self.supply_left < 2:
@@ -668,6 +672,8 @@ class Alpha4GateBot(BotAI):
         # Regular Gateways → stalkers (prefer) or zealots
         for gw in self.structures(UnitTypeId.GATEWAY).idle:
             for unit_id in _GATEWAY_ARMY:
+                if gas_high and unit_id == UnitTypeId.ZEALOT:
+                    continue  # save minerals for Stalkers
                 if self.can_afford(unit_id) and self.supply_left >= 2:
                     gw.train(unit_id)
                     self._actions_this_step.append(
