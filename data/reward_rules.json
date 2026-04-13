@@ -73,27 +73,39 @@
       "active": true
     },
     {
+      "id": "mineral-floating-moderate",
+      "description": "Penalize banking over 500 minerals (new: address chronic floating)",
+      "condition": {
+        "field": "minerals",
+        "op": ">",
+        "value": 500
+      },
+      "requires": null,
+      "reward": -0.01,
+      "active": true
+    },
+    {
       "id": "mineral-floating",
-      "description": "Penalize banking over 1000 minerals (strengthened: was -0.008)",
+      "description": "Penalize banking over 1000 minerals (strengthened: was -0.02)",
       "condition": {
         "field": "minerals",
         "op": ">",
         "value": 1000
       },
       "requires": null,
-      "reward": -0.02,
+      "reward": -0.04,
       "active": true
     },
     {
       "id": "mineral-floating-severe",
-      "description": "Stronger penalty for banking over 2000 minerals (strengthened: was -0.015)",
+      "description": "Stronger penalty for banking over 2000 minerals (strengthened: was -0.04)",
       "condition": {
         "field": "minerals",
         "op": ">",
         "value": 2000
       },
       "requires": null,
-      "reward": -0.04,
+      "reward": -0.06,
       "active": true
     },
     {
