@@ -386,7 +386,7 @@
     },
     {
       "id": "attack-state-mid",
-      "description": "Reward choosing ATTACK state after 4 minutes",
+      "description": "Reward choosing ATTACK state after 4 minutes (doubled: was 0.04, advised iter 3)",
       "condition": {
         "field": "current_state",
         "op": "==",
@@ -397,12 +397,12 @@
         "op": ">=",
         "value": 240
       },
-      "reward": 0.04,
+      "reward": 0.08,
       "active": true
     },
     {
       "id": "attack-state-late",
-      "description": "Reward choosing ATTACK state after 6 minutes (stronger)",
+      "description": "Reward choosing ATTACK state after 6 minutes (raised: was 0.06, advised iter 3)",
       "condition": {
         "field": "current_state",
         "op": "==",
@@ -413,7 +413,7 @@
         "op": ">=",
         "value": 360
       },
-      "reward": 0.06,
+      "reward": 0.10,
       "active": true
     },
     {
@@ -434,7 +434,7 @@
     },
     {
       "id": "defend-too-long",
-      "description": "Penalize staying in defend state after 8 minutes (new)",
+      "description": "Penalize staying in defend state after 8 minutes (raised: was -0.03, advised iter 3)",
       "condition": {
         "field": "current_state",
         "op": "==",
@@ -445,7 +445,7 @@
         "op": ">=",
         "value": 480
       },
-      "reward": -0.03,
+      "reward": -0.05,
       "active": true
     },
     {
