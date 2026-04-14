@@ -819,6 +819,38 @@
       },
       "reward": 0.02,
       "active": true
+    },
+    {
+      "id": "army-oversupply-idle",
+      "description": "Heavy penalty for 40+ army not attacking (targets retry-storm stall observed in iter 1 timeouts, advised 20260414-0017 iter 3)",
+      "condition": {
+        "field": "current_state",
+        "op": "!=",
+        "value": "attack"
+      },
+      "requires": {
+        "field": "army_supply",
+        "op": ">=",
+        "value": 40
+      },
+      "reward": -0.04,
+      "active": true
+    },
+    {
+      "id": "army-oversupply-idle-late",
+      "description": "Extreme penalty for 60+ army idle (decisive force should push, advised 20260414-0017 iter 3)",
+      "condition": {
+        "field": "current_state",
+        "op": "!=",
+        "value": "attack"
+      },
+      "requires": {
+        "field": "army_supply",
+        "op": ">=",
+        "value": 60
+      },
+      "reward": -0.06,
+      "active": true
     }
   ]
 }
