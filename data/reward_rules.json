@@ -413,7 +413,7 @@
         "op": ">=",
         "value": 360
       },
-      "reward": 0.10,
+      "reward": 0.1,
       "active": true
     },
     {
@@ -694,6 +694,38 @@
         "value": 480
       },
       "reward": -0.03,
+      "active": true
+    },
+    {
+      "id": "low-supply-cap-12min",
+      "description": "Penalize supply cap < 140 after 12 minutes (advised run 20260413-2110)",
+      "condition": {
+        "field": "supply_cap",
+        "op": "<",
+        "value": 140
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 720
+      },
+      "reward": -0.035,
+      "active": true
+    },
+    {
+      "id": "low-supply-cap-15min",
+      "description": "Penalize supply cap < 180 after 15 minutes (advised run 20260413-2110)",
+      "condition": {
+        "field": "supply_cap",
+        "op": "<",
+        "value": 180
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 900
+      },
+      "reward": -0.04,
       "active": true
     }
   ]
