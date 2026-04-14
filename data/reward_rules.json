@@ -743,6 +743,50 @@
       },
       "reward": 0.06,
       "active": true
+    },
+    {
+      "id": "tech-progress-tight",
+      "description": "Reward having robo before 5:00 (tighter than tech-progress, advised 20260414-0017)",
+      "condition": {
+        "field": "robo_count",
+        "op": ">=",
+        "value": 1
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": "<",
+        "value": 300
+      },
+      "reward": 0.008,
+      "active": true
+    },
+    {
+      "id": "tech-progress-strong",
+      "description": "Reward 2+ robo for multi-line Colossus/Immortal production (advised 20260414-0017)",
+      "condition": {
+        "field": "robo_count",
+        "op": ">=",
+        "value": 2
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": "<",
+        "value": 480
+      },
+      "reward": 0.012,
+      "active": true
+    },
+    {
+      "id": "upgrade-progression-strong",
+      "description": "Reward 5+ upgrades (deep tech, advised 20260414-0017)",
+      "condition": {
+        "field": "upgrade_count",
+        "op": ">=",
+        "value": 5
+      },
+      "requires": null,
+      "reward": 0.01,
+      "active": true
     }
   ]
 }
