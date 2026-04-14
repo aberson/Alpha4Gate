@@ -72,4 +72,5 @@ Post-merge validation (outside build-step): replay-parse a fresh timeout game af
 ## Step 1: Add DispatchGuard + wire into WarpIn and build dispatch
 
 - **Issue:** #104
+- **Status:** DONE (2026-04-14, commit a22b632, tag `improve-bot/run/20260414-1127/retry-storm-dedup/merged`)
 - **Problem:** Implement `DispatchGuard` with `should_dispatch(key, now)` / `mark_dispatched(key, now)` keyed on `(action_name, target_name)` with a per-action cooldown policy (default 2s for WarpIn, 5s for build). Wire it into `_produce_army` (WarpIn path in [bot.py:661-701](src/alpha4gate/bot.py#L661-L701)) and `_drain_backlog` (build retry path in [bot.py:633-655](src/alpha4gate/bot.py#L633-L655)). Skip the dispatch (and the `_actions_this_step.append`) when the guard denies. Write unit tests covering first-dispatch-allowed, within-cooldown-suppressed, after-cooldown-allowed, and independent-keys.
