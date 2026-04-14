@@ -22,7 +22,7 @@ Three systems handle economy:
 |-------|---------|--------|
 | Supply | supply_cap - supply_used <= 4 | Build pylon |
 | Workers | worker_count < ideal | Train probe from idle nexus |
-| Expansion | workers near saturation AND minerals >= 400 | Expand (skip during DEFEND) |
+| Expansion | workers near saturation AND minerals >= 400 | Expand (skip during DEFEND, except when mineral-banked >= 1500 and base_count < 4 — "anti-float override") |
 | Production | gateways < base_count * 2 | Build gateway (robo after 2nd base) |
 | Gas | base has no assimilators | Build assimilator |
 

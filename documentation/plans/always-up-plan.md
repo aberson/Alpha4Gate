@@ -708,23 +708,51 @@ The first end-to-end soak run surfaced two findings whose resolution should shap
   curriculum, advised run control. **New:** `GET /api/advised/state`,
   `GET /api/advised/control`, `PUT /api/advised/control` for dashboard bridge.
 - 829 Python unit tests + 126 frontend vitest tests passing.
-- Three `/improve-bot-advised` runs completed (run 1+2 at diff 3, run 3 at diff 4).
-- 41 reward rules active.
+- Four `/improve-bot-advised` runs completed (run 1+2 at diff 3, run 3 at diff 4, run 4 at diff 3).
+- 48 reward rules active (see `data/reward_rules.json`; only affect PPO via
+  `--decision-mode hybrid`, not default rule-based play).
 - **Run 3 code improvements (landed 2026-04-13):** pylon scaling (`SUPPLY_BUFFER` 4→8,
   scales with gateway count), probe cap (`MAX_WORKERS` 70→44, pause when floating),
   attack threshold (`ATTACK_ARMY_SUPPLY` 20→12), Warp Gate research + warp-in production,
   counterattack after defense (DEFEND→ATTACK transition), late-game attack micro
   (LATE_GAME state runs attack rally + micro). Bot went from dying at 10-15 min to
   surviving 40+ min at 200/200 supply with 77 Zealots at difficulty 4.
+- **Run 4 code improvements (landed 2026-04-13):** anti-float expansion override in
+  `macro_manager.py:_check_expansion` (allow expansion during DEFEND when minerals
+  ≥1500, workers near saturation, and base_count < 4 — breaks the "die with a bank"
+  death spiral where bot sits on 7000+ minerals while losing); warp-in forward pylon
+  selection in `bot.py:_produce_army` (iterate pylons furthest-to-nearest from start,
+  first one where `find_placement` succeeds with `placement_step=2` wins — forward
+  pylons have more open space than crowded main AND deploy closer to fights). Win rate
+  4/5 → 5/5 at difficulty 3 (iteration 1 validation); 5/5 in iteration 3 validation.
+- **Run 4 revert (2026-04-13):** force-push at `supply_used ≥ 195 AND minerals ≥ 5000`
+  in `_resolve_attack_rally` targeted a real observed pathology (33-min Tie game at
+  199/200 supply with 15,615m float in retreat-restage loop) but the trigger fired
+  **zero times** across 5 validation games — reverted as inert code. New cross-project
+  lesson filed: `feedback_small_sample_validation_inert_fix.md` — instrument fix
+  triggers and require they fired at least once in validation; rare pathologies need
+  ≥30-game samples.
 - Single-game runs now record to training.db (fixed: `_run_single_game` was missing
   `training_db` param, causing empty Game History and reward logs for 36+ games).
 - Skill updated: Phase 6.3 training soak (2 games after each passed iteration),
   robust process cleanup (force-kill alpha4gate processes, port 8765 verification).
+- **Run 4 side fixes:** `frontend/src/components/RewardTrends.tsx:handleReset`
+  hardened against undefined response bodies (prior 404s crashed on
+  `body.results.join()`); stale dashboard reward-trend data (139 old JSONL files)
+  archived to `data/reward_logs.pre-advised-20260413-1601/`.
 
 **What's missing / next:**
-- Bot survives at difficulty 4 but can't close games — pure Zealot army can't break
-  fortified positions. Need: attack-move to enemy base, mixed composition (Stalkers +
-  Immortals), Chrono Boost automation.
+- Bot now wins 100% at difficulty 3. Next: run `/improve-bot-advised` at difficulty 4
+  to push against harder opponents. Diff 4 is where run 3 plateaued (survives 40+ min
+  but can't close fortified positions).
+- Observer over-production (`bot.py:730`) — cap check uses `len(self.units(OBSERVER))`
+  (alive only), missing in-training Observers. Symptom: `Train/OBSERVER` fires ~17×
+  per winning game (wastes 425m/1275g/game). Safe iteration-4 target: add
+  `self.already_pending(UnitTypeId.OBSERVER)` to the cap check.
+- Rare 199/200-supply stalemate (~1-in-20 games) remains unfixed. Small-sample
+  validation can't detect a fix; needs ≥30-game validation or a dynamic mechanism
+  (e.g., `attack_supply_ratio` that decays as mineral float grows) rather than a
+  discrete threshold.
 - PPO model is stale (trained at diff 1, 0% win rate). Training soak added to skill
   but hasn't run yet.
 - No WebSocket channel for training/loop events — tabs poll every 5s. Deferred.

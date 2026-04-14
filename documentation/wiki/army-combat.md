@@ -81,7 +81,17 @@ oscillation (attack → retreat → attack). Reset when attack is committed.
 structure along the line from own base. Fallback: 70% of distance to enemy start
 location if no structures known. Recalculated every 30 seconds.
 
+**Warp-in placement (`bot.py:_produce_army`):** Warp gates cycle pylons
+**furthest-to-nearest** from `start_location` and warp in at the first pylon where
+`find_placement(ability, pylon.position, placement_step=2)` succeeds. Forward pylons
+(natural, third, forward proxy) have more open space than the crowded main base AND
+deploy Stalkers closer to fights. Falls back to main-base pylon only when all forward
+placements fail. Rationale: before this logic (landed 2026-04-13 in advised run 4),
+warp-ins always targeted the closest pylon to start, producing piles of Stalkers
+trapped behind Nexus/Gateway/Assimilator with no exit path.
+
 | File | Purpose |
 |------|---------|
 | `src/alpha4gate/army_coherence.py` | ArmyCoherenceManager — parameters, staging, attack/retreat |
 | `src/alpha4gate/micro.py` | MicroController — target selection, kiting, commands |
+| `src/alpha4gate/bot.py` (`_produce_army`) | Unit training — warp-in forward pylon selection, robo priorities |

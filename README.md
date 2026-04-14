@@ -9,9 +9,9 @@ A StarCraft II Protoss bot combining rule-based decision-making, a PPO neural po
 - **Evaluation metrics** — structured reward shaping, win-rate tracking, training diagnostics, and cross-game statistics
 - **Autonomous self-improvement** — train-play-evaluate loop that runs 24/7, getting stronger with each cycle
 
-**Advised improvement run 3 complete (2026-04-13)** — First `--self-improve-code` run at difficulty 4: 8 iterations, 5 code improvements landed (pylon scaling, probe cap, Warp Gate research + warp-in production, counterattack-after-defense, late-game attack micro). Bot transformed from dying at 10-15 min to surviving 40+ min at 200/200 supply with 77 Zealots. Single-game runs now record to training.db. Skill updated with 2-game training soak + robust process cleanup. 829 Python tests, 0 type errors, 0 lint violations.
+**Advised improvement run 4 complete (2026-04-13)** — Second `--self-improve-code` run at difficulty 3: 3 iterations, 2 code improvements landed, 1 reverted as inert. Anti-float expansion override (`macro_manager.py`) allows expansion during DEFEND when workers saturated and ≥1500m banked, breaking the "die with a bank" death spiral. Warp-in forward pylon selection (`bot.py`) iterates pylons furthest-to-nearest from start so Stalkers stop getting trapped behind main-base buildings. Win rate 80% → 100% at difficulty 3. 829 Python tests, 0 type errors, 0 lint violations.
 
-**Current capability:** Wins reliably at difficulty 1-3. Survives 40+ min at difficulty 4 (200/200 supply, counterattacks, Warp Gate warp-ins) but can't close games yet — pure Zealot army can't break fortified positions. Next: mixed composition, attack-move to enemy base, Chrono Boost.
+**Current capability:** Wins 100% at difficulty 1-3. Survives 40+ min at difficulty 4 (200/200 supply, counterattacks, Warp Gate warp-ins) but can't close games yet — pure Zealot army can't break fortified positions. Next: mixed composition, attack-move to enemy base, Chrono Boost.
 
 ## Stack
 
