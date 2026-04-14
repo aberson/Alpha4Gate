@@ -915,6 +915,22 @@
       },
       "reward": 0.006,
       "active": true
+    },
+    {
+      "id": "supply-block-with-minerals",
+      "description": "Compound penalty: supply-blocked while holding 300+ minerals (could have built supply) (advised 20260414-0017 iter 6)",
+      "condition": {
+        "field": "minerals",
+        "op": ">=",
+        "value": 300
+      },
+      "requires": {
+        "field": "supply_used",
+        "op": "==",
+        "value_field": "supply_cap"
+      },
+      "reward": -0.03,
+      "active": true
     }
   ]
 }
