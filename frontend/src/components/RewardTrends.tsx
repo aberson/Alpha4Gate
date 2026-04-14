@@ -207,9 +207,13 @@ export function RewardTrends({
     try {
       const res = await fetch("/api/training/reset", { method: "POST" });
       const body = await res.json();
-      setResetStatus(
-        `Reset complete: ${(body.results as string[]).join("; ")}`,
-      );
+      if (!res.ok) {
+        setResetStatus(`Reset failed: ${body.detail ?? res.statusText}`);
+      } else if (Array.isArray(body.results)) {
+        setResetStatus(`Reset complete: ${body.results.join("; ")}`);
+      } else {
+        setResetStatus("Reset complete");
+      }
       setTimeout(() => setResetStatus(null), 8000);
     } catch (err) {
       setResetStatus(`Reset failed: ${err}`);

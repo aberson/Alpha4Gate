@@ -157,22 +157,36 @@ class MacroManager:
 
     def _check_expansion(self, bot: BotAI, strategic_state: StrategicState) -> None:
         """Take a new expansion if saturated and safe."""
-        if strategic_state == StrategicState.DEFEND:
-            return  # Don't expand while defending
-
         base_count = len(bot.townhalls)
         current_workers = len(bot.units(UnitTypeId.PROBE))
         ideal_for_current = base_count * WORKERS_PER_BASE_MINERALS
+        minerals = int(bot.minerals)
+
+        # Anti-float override: during DEFEND, allow expansion when floating
+        # severe minerals on saturated bases. Sitting on a huge bank while
+        # defending is a guaranteed loss — the extra base adds supply cap
+        # and new building real estate.
+        if strategic_state == StrategicState.DEFEND:
+            float_override = (
+                minerals >= 1500
+                and current_workers >= ideal_for_current - 2
+                and base_count < 4
+            )
+            if not float_override:
+                return
 
         # Expand when worker count is close to saturation of current bases
         if current_workers >= ideal_for_current - 2 and bot.minerals >= 400:
             pending_nexus = bot.already_pending(UnitTypeId.NEXUS)
             if pending_nexus == 0:
+                reason = f"Workers near saturation ({current_workers}/{ideal_for_current})"
+                if strategic_state == StrategicState.DEFEND:
+                    reason = f"Anti-float expand: floating {minerals}m while defending"
                 self._pending.append(
                     MacroDecision(
                         action="expand",
                         target="Nexus",
-                        reason=f"Workers near saturation ({current_workers}/{ideal_for_current})",
+                        reason=reason,
                     )
                 )
 
