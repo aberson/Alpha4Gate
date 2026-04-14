@@ -883,6 +883,38 @@
       },
       "reward": 0.012,
       "active": true
+    },
+    {
+      "id": "natural-defense-cannons",
+      "description": "Reward 2+ cannons with 2+ bases (natural denial, advised 20260414-0017 iter 5)",
+      "condition": {
+        "field": "cannon_count",
+        "op": ">=",
+        "value": 2
+      },
+      "requires": {
+        "field": "base_count",
+        "op": ">=",
+        "value": 2
+      },
+      "reward": 0.01,
+      "active": true
+    },
+    {
+      "id": "defensive-batteries",
+      "description": "Reward 1+ shield battery after 4:00 (sustained defense, advised 20260414-0017 iter 5)",
+      "condition": {
+        "field": "battery_count",
+        "op": ">=",
+        "value": 1
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 240
+      },
+      "reward": 0.006,
+      "active": true
     }
   ]
 }
