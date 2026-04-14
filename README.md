@@ -103,6 +103,38 @@ cd frontend && npm run dev
 # Opens http://localhost:3000 proxying to :8765
 ```
 
+### Running without Claude
+
+The Claude advisor is optional. Pass `--no-claude` (or simply don't install the `claude` CLI) and the bot runs entirely on its rule-based strategy + optional PPO policy. Skip step 2's Claude-auth note during setup.
+
+What still works without Claude:
+
+| Feature | Notes |
+|---|---|
+| Rule-based play vs SC2 AI | `uv run python -m alpha4gate.runner --no-claude --difficulty 3` |
+| Batch runs + stats aggregation | `--batch 10 --no-claude` |
+| Neural (PPO) play and training | Rule-based or hybrid decision mode; training loop is Claude-free |
+| Dashboard — Live, Stats, Decisions, Training, Loop, Improvements, Processes, Alerts | All tabs render and update as normal |
+| Build order editor + reward rule editor | Pure local config |
+| Command panel — Human Only / Hybrid modes | Natural-language command parser runs locally |
+| Daemon loop (auto-training, promotion, rollback) | Does not call Claude |
+
+What needs Claude:
+
+- **Advisor tab** and the `/improve-bot-advised` autonomous improvement loop
+- **Live strategic advice** shown on the Live tab mid-game
+- **AI-Assisted command mode** (falls back gracefully if unavailable)
+
+Quick start without Claude:
+
+```bash
+uv sync
+cd frontend && npm install && cd ..
+uv run python -m alpha4gate.runner --map Simple64 --difficulty 3 --no-claude --realtime
+# In another terminal, watch the dashboard:
+bash scripts/start-dev.sh
+```
+
 ## Architecture
 
 ```
