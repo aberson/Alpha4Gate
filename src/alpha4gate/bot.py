@@ -25,6 +25,7 @@ from alpha4gate.commands import (
     get_command_queue,
     get_command_settings,
 )
+from alpha4gate.commands.dispatch_guard import DispatchGuard
 from alpha4gate.console import print_status
 from alpha4gate.decision_engine import DecisionEngine, GameSnapshot, StrategicState
 from alpha4gate.fortification import FortificationManager
@@ -142,6 +143,7 @@ class Alpha4GateBot(BotAI):
         self._logger = logger
         self._enable_console = enable_console
         self._actions_this_step: list[dict[str, Any]] = []
+        self._dispatch_guard = DispatchGuard()
         self._decision_mode = decision_mode
         self._neural_engine: NeuralDecisionEngine | None = None
         if decision_mode != DecisionMode.RULES and model_path is not None:
@@ -646,8 +648,15 @@ class Alpha4GateBot(BotAI):
         if entry is not None:
             unit_id = _TARGET_MAP.get(entry.structure_type)
             if unit_id is not None:
+                if not self._dispatch_guard.should_dispatch(
+                    "build", entry.structure_type, snapshot.game_time_seconds,
+                ):
+                    return
                 built = await self._build_structure(unit_id)
                 if built:
+                    self._dispatch_guard.mark_dispatched(
+                        "build", entry.structure_type, snapshot.game_time_seconds,
+                    )
                     self._actions_this_step.append({
                         "action": "build",
                         "target": entry.structure_type,
@@ -694,7 +703,14 @@ class Alpha4GateBot(BotAI):
                         pos = candidate
                         break
                 if pos is not None:
+                    if not self._dispatch_guard.should_dispatch(
+                        "WarpIn", unit_id.name, self.time,
+                    ):
+                        break
                     wg.warp_in(unit_id, pos)
+                    self._dispatch_guard.mark_dispatched(
+                        "WarpIn", unit_id.name, self.time,
+                    )
                     self._actions_this_step.append(
                         {"action": "WarpIn", "target": unit_id.name},
                     )

@@ -14,6 +14,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from alpha4gate.army_coherence import ArmyCoherenceManager
 from alpha4gate.bot import Alpha4GateBot
 from alpha4gate.build_backlog import BuildBacklog
+from alpha4gate.commands.dispatch_guard import DispatchGuard
 from alpha4gate.decision_engine import DecisionEngine, GameSnapshot
 from alpha4gate.fortification import FortificationManager
 
@@ -49,6 +50,8 @@ def _make_bot(seed: int = 42) -> MagicMock:
     # Coherence manager
     cm = ArmyCoherenceManager(seed=seed)
     bot.coherence_manager = cm
+
+    bot._dispatch_guard = DispatchGuard()
 
     # Decision engine
     bot.decision_engine = DecisionEngine(
