@@ -787,6 +787,38 @@
       "requires": null,
       "reward": 0.01,
       "active": true
+    },
+    {
+      "id": "three-base-economy",
+      "description": "Reward reaching 3+ bases after 6:00 (economic ceiling for diff 5+, advised 20260414-0017 iter 2)",
+      "condition": {
+        "field": "base_count",
+        "op": ">=",
+        "value": 3
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 360
+      },
+      "reward": 0.015,
+      "active": true
+    },
+    {
+      "id": "three-base-early",
+      "description": "Reward 3+ bases before 8:00 (fast eco, advised 20260414-0017 iter 2)",
+      "condition": {
+        "field": "base_count",
+        "op": ">=",
+        "value": 3
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": "<",
+        "value": 480
+      },
+      "reward": 0.02,
+      "active": true
     }
   ]
 }
