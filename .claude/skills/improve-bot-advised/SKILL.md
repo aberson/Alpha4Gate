@@ -139,6 +139,10 @@ python -c "import socket; s=socket.socket(); r=s.connect_ex(('127.0.0.1',8765));
 
 Run 1 game to verify the full pipeline works before entering the loop. If it fails, stop and report — don't burn the budget on a broken setup.
 
+### 0.6 Dashboard check
+
+Run `/a4g-dashboard-check` to verify all dashboard tabs render correctly and reflect the post-seed-game state. This catches stale WebSockets, missing data, duplicate backend processes, and UI regressions before the long loop begins. If the check reports any `✗` (broken) tabs, stop and fix before proceeding. `⚠` (warning) issues should be logged but are not blockers.
+
 ### 0.6 Baseline tag
 
 ```bash

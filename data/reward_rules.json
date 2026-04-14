@@ -386,7 +386,7 @@
     },
     {
       "id": "attack-state-mid",
-      "description": "Reward choosing ATTACK state after 4 minutes (doubled: was 0.04, advised iter 3)",
+      "description": "Reward choosing ATTACK state after 4 minutes (raised to 0.12 from 0.08, advised run 20260413-2145 to route around bot.py:872 move-vs-attack bug)",
       "condition": {
         "field": "current_state",
         "op": "==",
@@ -397,12 +397,12 @@
         "op": ">=",
         "value": 240
       },
-      "reward": 0.08,
+      "reward": 0.12,
       "active": true
     },
     {
       "id": "attack-state-late",
-      "description": "Reward choosing ATTACK state after 6 minutes (raised: was 0.06, advised iter 3)",
+      "description": "Reward choosing ATTACK state after 6 minutes (raised to 0.15 from 0.1, advised run 20260413-2145)",
       "condition": {
         "field": "current_state",
         "op": "==",
@@ -413,7 +413,7 @@
         "op": ">=",
         "value": 360
       },
-      "reward": 0.1,
+      "reward": 0.15,
       "active": true
     },
     {
@@ -482,7 +482,7 @@
     },
     {
       "id": "aggressive-finish",
-      "description": "Reward attacking with a strong army (60+ supply)",
+      "description": "Reward attacking with a strong army (60+ supply) (raised to 0.05 from 0.03, advised run 20260413-2145)",
       "condition": {
         "field": "current_state",
         "op": "==",
@@ -493,7 +493,7 @@
         "op": ">=",
         "value": 60
       },
-      "reward": 0.03,
+      "reward": 0.05,
       "active": true
     },
     {
@@ -726,6 +726,22 @@
         "value": 900
       },
       "reward": -0.04,
+      "active": true
+    },
+    {
+      "id": "attack-state-early",
+      "description": "Reward choosing ATTACK state after 3 minutes with 15+ army supply (added advised run 20260413-2145)",
+      "condition": {
+        "field": "strategic_state",
+        "op": "==",
+        "value": "ATTACK"
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 180
+      },
+      "reward": 0.06,
       "active": true
     }
   ]
