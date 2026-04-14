@@ -139,15 +139,21 @@ class TestEconomyRewards:
         assert abs(reward - BASE_STEP_REWARD) < 0.001
 
     def test_expand_on_time_fires(self, calc: RewardCalculator) -> None:
-        base = calc.compute_step_reward(_state())
-        s = _state(base_count=2, game_time_seconds=250.0)
-        reward = calc.compute_step_reward(s)
+        # Compare matching game_time so time-gated penalties cancel; delta isolates expand-on-time.
+        base_s = _state(game_time_seconds=250.0)
+        expand_s = _state(base_count=2, game_time_seconds=250.0)
+        base = calc.compute_step_reward(base_s)
+        reward = calc.compute_step_reward(expand_s)
         assert reward > base  # +0.2 from expand-on-time
 
     def test_expand_on_time_too_late(self, calc: RewardCalculator) -> None:
-        s = _state(base_count=2, game_time_seconds=350.0)
-        reward = calc.compute_step_reward(s)
-        assert abs(reward - BASE_STEP_REWARD) < 0.001
+        # At t=350 the expand-on-time window has closed; base_count=2 should not add reward.
+        # gateway_count=5 avoids too-few-gateways-5 firing on the base_count>=2 state only.
+        base_s = _state(game_time_seconds=350.0, gateway_count=5)
+        too_late_s = _state(base_count=2, game_time_seconds=350.0, gateway_count=5)
+        base = calc.compute_step_reward(base_s)
+        reward = calc.compute_step_reward(too_late_s)
+        assert abs(reward - base) < 0.001
 
     def test_mineral_floating_penalty(self, calc: RewardCalculator) -> None:
         base = calc.compute_step_reward(_state())
@@ -156,7 +162,8 @@ class TestEconomyRewards:
         assert reward < base  # -0.02 from mineral-floating
 
     def test_mineral_floating_not_triggered(self, calc: RewardCalculator) -> None:
-        s = _state(minerals=800)
+        # minerals=400 is below the lowest floating threshold (500).
+        s = _state(minerals=400)
         reward = calc.compute_step_reward(s)
         assert abs(reward - BASE_STEP_REWARD) < 0.001
 
@@ -193,9 +200,11 @@ class TestMilitaryRewards:
         assert abs(reward - BASE_STEP_REWARD) < 0.001
 
     def test_tech_progress_fires(self, calc: RewardCalculator) -> None:
-        base = calc.compute_step_reward(_state())
-        s = _state(robo_count=1, game_time_seconds=300.0)
-        reward = calc.compute_step_reward(s)
+        # Compare matching game_time so time-gated penalties cancel; delta isolates tech-progress.
+        base_s = _state(game_time_seconds=300.0)
+        tech_s = _state(robo_count=1, game_time_seconds=300.0)
+        base = calc.compute_step_reward(base_s)
+        reward = calc.compute_step_reward(tech_s)
         assert reward > base  # +0.05 from tech-progress
 
     def test_gateway_efficiency_fires(self, calc: RewardCalculator) -> None:
