@@ -676,9 +676,23 @@ class Alpha4GateBot(BotAI):
                 pylons = self.structures(UnitTypeId.PYLON).ready
                 if not pylons:
                     break
-                pos = await self.find_placement(
-                    ability, pylons.closest_to(self.start_location).position,
+                # Prefer forward pylons (furthest from main) — they have more
+                # open space than the crowded main base, and warping forward
+                # avoids trapping units behind Nexus/Gateway/Assimilator.
+                # Try each pylon in descending distance from start, fall back
+                # to main base only if no forward placement works.
+                sorted_pylons = sorted(
+                    pylons,
+                    key=lambda p: -p.position.distance_to(self.start_location),
                 )
+                pos = None
+                for pylon in sorted_pylons:
+                    candidate = await self.find_placement(
+                        ability, pylon.position, placement_step=2,
+                    )
+                    if candidate is not None:
+                        pos = candidate
+                        break
                 if pos is not None:
                     wg.warp_in(unit_id, pos)
                     self._actions_this_step.append(
