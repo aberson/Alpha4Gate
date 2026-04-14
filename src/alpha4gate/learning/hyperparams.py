@@ -23,6 +23,15 @@ _PPO_KWARGS = {
     "max_grad_norm",
 }
 
+# Keys consumed by the trainer/training harness, not by PPO().
+# to_ppo_kwargs() drops these silently so PPO() does not choke on them.
+# Trainer pulls these directly from the full params dict.
+_TRAINING_KWARGS = {
+    "policy_type",        # "MlpPolicy" | "MlpLstmPolicy"
+    "kl_rules_coef",      # 0.0 disables KL-to-rules auxiliary loss
+    "use_imitation_init", # load v0_pretrain as starting point when true
+}
+
 
 def load_hyperparams(path: str | Path) -> dict[str, Any]:
     """Load hyperparameters from a JSON file.
@@ -47,6 +56,8 @@ def to_ppo_kwargs(params: dict[str, Any]) -> dict[str, Any]:
             kwargs["policy_kwargs"] = {"net_arch": value}
         elif key in _PPO_KWARGS:
             kwargs[key] = value
+        elif key in _TRAINING_KWARGS:
+            continue  # consumed by trainer, not by PPO()
         else:
             _log.warning("Unknown hyperparameter key ignored: %s", key)
     return kwargs

@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from alpha4gate.learning.database import TrainingDB
-from alpha4gate.learning.features import BASE_GAME_FEATURE_DIM as FEATURE_DIM
+from alpha4gate.learning.features import BASE_GAME_FEATURE_DIM, FEATURE_DIM
 from alpha4gate.learning.imitation import run_imitation_training
 
 
@@ -23,7 +23,7 @@ def populated_db(tmp_path: Path) -> TrainingDB:
     # for similar states, so the neural net can learn the pattern
     rng = np.random.RandomState(42)
     for i in range(200):
-        state = rng.randint(0, 100, size=FEATURE_DIM).astype(np.float32)
+        state = rng.randint(0, 100, size=BASE_GAME_FEATURE_DIM).astype(np.float32)
         # Deterministic action based on army_supply (index 4):
         # low army → EXPAND (1), high army → ATTACK (2)
         action = 1 if state[4] < 50 else 2
@@ -92,12 +92,14 @@ class TestImitationTraining:
     def test_imitation_model_uses_db_feature_space(
         self, populated_db: TrainingDB, tmp_path: Path
     ) -> None:
-        """Imitation model obs space matches DB transitions (BASE_GAME_FEATURE_DIM).
+        """Imitation model obs space is FEATURE_DIM so v0_pretrain round-trips.
 
-        Phase 4.8 changed SC2Env's observation_space to 24 (17 game + 7 advisor),
-        but imitation trains on DB transitions which are 17-dim only. The
-        imitation model should use BASE_GAME_FEATURE_DIM (17), not the full
-        FEATURE_DIM (24). The RL PPO model uses 24; imitation uses 17.
+        DB transitions are 17-dim (BASE_GAME_FEATURE_DIM, game features
+        only — no advisor context). The imitation training path pads
+        each row with 7 zeros for the advisor slots so the saved model's
+        input layer matches SC2Env.observation_space (24). That lets
+        the trainer's ``use_imitation_init`` path load v0_pretrain
+        directly without dimension mismatch.
         """
         import gymnasium
         from stable_baselines3 import PPO

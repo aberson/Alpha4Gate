@@ -97,14 +97,15 @@ class NeuralDecisionEngine:
         return state
 
     def _update_probabilities(self, obs: np.ndarray[Any, np.dtype[np.float32]]) -> None:
-        """Extract action probabilities from the model for logging."""
-        try:
-            import torch
+        """Extract action probabilities from the model for logging.
 
-            with torch.no_grad():
-                obs_tensor = torch.as_tensor(obs).unsqueeze(0).to(self._model.device)
-                dist = self._model.policy.get_distribution(obs_tensor)
-                probs = dist.distribution.probs[0].cpu().numpy()  # type: ignore[union-attr]
-                self._last_probabilities = [float(p) for p in probs]
-        except Exception:
-            self._last_probabilities = []
+        Uses ``policy_probe.get_action_probs`` so this works identically
+        for feed-forward and recurrent policies. The recurrent variant
+        uses a zero-initialised LSTM state — that's only for the
+        dashboard-facing probability log, not for action selection
+        (which goes through ``model.predict`` above).
+        """
+        from alpha4gate.learning.policy_probe import get_action_probs
+
+        probs = get_action_probs(self._model, obs)
+        self._last_probabilities = [float(p) for p in probs]

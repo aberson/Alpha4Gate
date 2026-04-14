@@ -15,6 +15,58 @@ from alpha4gate.learning.database import TrainingDB
 _log = logging.getLogger(__name__)
 
 
+def _imitation_model_class(policy_type: str) -> Any:
+    """Pick the SB3 class matching ``policy_type`` for BC.
+
+    Plain PPO / RecurrentPPO — no KL-to-rules here. Imitation already is
+    the supervised signal; a KL term on top would be redundant.
+    """
+    if policy_type == "MlpLstmPolicy":
+        from sb3_contrib import RecurrentPPO
+        return RecurrentPPO
+    from stable_baselines3 import PPO
+    return PPO
+
+
+def _bc_logits(
+    policy: Any, batch_states: torch.Tensor, is_recurrent: bool,
+) -> torch.Tensor:
+    """Return action logits for BC, handling both policy families.
+
+    Feed-forward: skip through ``mlp_extractor`` + ``action_net`` for the
+    tightest forward path. Recurrent: run a single-step LSTM pass with
+    zero hidden state and ``episode_starts=1``. BC data is stored as
+    independent (s,a) pairs, so there's no temporal context to thread
+    anyway — the LSTM gate just zeros out.
+    """
+    if not is_recurrent:
+        features = policy.extract_features(batch_states, policy.features_extractor)
+        latent_pi, _ = policy.mlp_extractor(features)
+        return policy.action_net(latent_pi)
+
+    # Recurrent path: replicate what RecurrentActorCriticPolicy does in
+    # get_distribution but without constructing the Distribution object.
+    from sb3_contrib.common.recurrent.type_aliases import RNNStates
+
+    batch_size = batch_states.shape[0]
+    device = batch_states.device
+    shape = policy.lstm_hidden_state_shape  # (num_layers, 1, hidden)
+    num_layers, _, hidden = shape
+    pi_h = torch.zeros(num_layers, batch_size, hidden, device=device)
+    pi_c = torch.zeros(num_layers, batch_size, hidden, device=device)
+    vf_h = torch.zeros(num_layers, batch_size, hidden, device=device)
+    vf_c = torch.zeros(num_layers, batch_size, hidden, device=device)
+    lstm_states = RNNStates((pi_h, pi_c), (vf_h, vf_c))
+    episode_starts = torch.ones(batch_size, device=device)
+
+    features = policy.extract_features(batch_states, policy.pi_features_extractor)
+    latent_pi, _ = policy._process_sequence(
+        features, lstm_states.pi, episode_starts, policy.lstm_actor,
+    )
+    latent_pi = policy.mlp_extractor.forward_actor(latent_pi)
+    return policy.action_net(latent_pi)
+
+
 def run_imitation_training(
     db: TrainingDB,
     checkpoint_dir: str | Path,
@@ -44,9 +96,13 @@ def run_imitation_training(
         Dict with training stats (epochs, final_loss, agreement, saved_path).
     """
     import gymnasium
-    from stable_baselines3 import PPO
 
     from alpha4gate.learning.environment import SC2Env
+    from alpha4gate.learning.features import (
+        BASE_GAME_FEATURE_DIM,
+        FEATURE_DIM,
+        _FEATURE_SPEC,
+    )
     from alpha4gate.learning.hyperparams import load_hyperparams, to_ppo_kwargs
 
     # Load all transitions
@@ -58,39 +114,46 @@ def run_imitation_training(
     states, actions, rewards = db.sample_batch(total)
     _log.info("Loaded %d transitions for imitation training", total)
 
-    # Normalize states to [0, 1] using feature spec
-    from alpha4gate.learning.features import _FEATURE_SPEC
-
-    norm_states = np.zeros_like(states)
+    # Normalize 17 base game-state features to [0, 1], then pad with 7 zeros
+    # for the advisor slots. Padding keeps the saved checkpoint's input
+    # shape aligned with SC2Env.observation_space (FEATURE_DIM=24) so the
+    # trainer can load v0_pretrain directly without dimension mismatch.
+    # The DB only stores the 17 base features — advisor context is
+    # ephemeral — so the advisor slots are legitimately zero at BC time.
+    base = np.zeros_like(states)
     for i, (_, divisor) in enumerate(_FEATURE_SPEC):
-        norm_states[:, i] = np.clip(states[:, i] / divisor, 0.0, 1.0)
-
-    # Create a dummy gym env for SB3 model initialization. The imitation
-    # model trains on DB transitions which are BASE_GAME_FEATURE_DIM (17)
-    # wide — game-state features only, no advisor context. Phase 4.8
-    # expanded SC2Env's observation_space to include 7 advisor features
-    # (FEATURE_DIM=24), but imitation training operates on historical data
-    # that predates the advisor and has no advisor columns in the DB.
-    from alpha4gate.learning.features import BASE_GAME_FEATURE_DIM
-
-    dummy_env = gymnasium.make("CartPole-v1")
-    dummy_env.observation_space = gymnasium.spaces.Box(
-        low=0.0, high=1.0, shape=(BASE_GAME_FEATURE_DIM,), dtype=np.float32,
+        base[:, i] = np.clip(states[:, i] / divisor, 0.0, 1.0)
+    pad_width = FEATURE_DIM - BASE_GAME_FEATURE_DIM
+    norm_states = np.concatenate(
+        [base, np.zeros((base.shape[0], pad_width), dtype=base.dtype)], axis=1,
     )
+
+    # Build dummy env with the FULL SC2Env observation space so the model
+    # we train here round-trips into the trainer.
+    dummy_env = gymnasium.make("CartPole-v1")
+    dummy_env.observation_space = SC2Env.observation_space
     dummy_env.action_space = SC2Env.action_space
 
-    # Build PPO model with target architecture
+    # Build model with target architecture. Dispatch on policy_type so the
+    # v0_pretrain checkpoint matches whatever the trainer will instantiate.
+    params: dict[str, Any] = {}
     ppo_kwargs: dict[str, Any] = {"policy_kwargs": {"net_arch": [128, 128]}}
     if hyperparams_path is not None:
         params = load_hyperparams(hyperparams_path)
         ppo_kwargs = to_ppo_kwargs(params)
-
-    model = PPO("MlpPolicy", dummy_env, **ppo_kwargs)
+    policy_type = str(params.get("policy_type", "MlpPolicy"))
+    model_cls = _imitation_model_class(policy_type)
+    model = model_cls(policy_type, dummy_env, **ppo_kwargs)
     dummy_env.close()
 
-    # Custom PyTorch training loop for behavior cloning
+    # Custom PyTorch training loop for behavior cloning.
+    # Uses a policy-type-aware forward helper because MlpLstmPolicy has no
+    # mlp_extractor — its forward path threads through the LSTM. BC with
+    # sequence-of-1 data can't exploit recurrence (hidden state is fresh
+    # each step) but still trains the feature extractor and action head.
     policy = model.policy
     optimizer = torch.optim.Adam(policy.parameters(), lr=learning_rate)
+    is_recurrent = policy_type == "MlpLstmPolicy"
 
     states_tensor = torch.tensor(norm_states, dtype=torch.float32)
     actions_tensor = torch.tensor(actions, dtype=torch.long)
@@ -110,12 +173,7 @@ def run_imitation_training(
             batch_states = states_tensor[batch_idx].to(model.device)
             batch_actions = actions_tensor[batch_idx].to(model.device)
 
-            # Forward pass through policy network
-            features = policy.extract_features(
-                batch_states, policy.features_extractor
-            )
-            latent_pi, _ = policy.mlp_extractor(features)
-            logits = policy.action_net(latent_pi)
+            logits = _bc_logits(policy, batch_states, is_recurrent)
 
             # Cross-entropy loss (action prediction)
             loss = torch.nn.functional.cross_entropy(logits, batch_actions)
@@ -132,12 +190,9 @@ def run_imitation_training(
 
         # Compute action agreement
         with torch.no_grad():
-            all_features = policy.extract_features(
-                states_tensor.to(model.device),
-                policy.features_extractor,
+            all_logits = _bc_logits(
+                policy, states_tensor.to(model.device), is_recurrent,
             )
-            all_latent, _ = policy.mlp_extractor(all_features)
-            all_logits = policy.action_net(all_latent)
             predicted = all_logits.argmax(dim=1).cpu()
             agreement = (predicted == actions_tensor).float().mean().item()
 

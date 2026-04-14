@@ -104,6 +104,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Auto-start the training daemon when running --serve",
     )
+    parser.add_argument(
+        "--ensure-pretrain",
+        action="store_true",
+        help=(
+            "Before starting --train rl, run imitation training once if "
+            "no v0_pretrain checkpoint exists. Required for the imitation-init "
+            "path to work on a fresh data dir. No-op if v0_pretrain already exists."
+        ),
+    )
     return parser
 
 
@@ -130,6 +139,36 @@ def main(argv: list[str] | None = None) -> None:
         _run_single_game(settings, args)
 
 
+def _ensure_pretrain_checkpoint(settings: Settings, hyperparams_path: Path) -> None:
+    """Run imitation training if no v0_pretrain checkpoint exists.
+
+    This is the opt-in safety net for the ``use_imitation_init`` flow in
+    hyperparams.json: it turns "RL training silently falls back to a
+    fresh model because no one ran --train imitation first" into an
+    explicit, observable one-time step.
+    """
+    from alpha4gate.learning.database import TrainingDB
+    from alpha4gate.learning.imitation import run_imitation_training
+
+    checkpoint_dir = settings.data_dir / "checkpoints"
+    pretrain = checkpoint_dir / "v0_pretrain.zip"
+    if pretrain.exists():
+        _log.info("--ensure-pretrain: %s already exists, skipping", pretrain)
+        return
+
+    _log.info("--ensure-pretrain: %s missing, running imitation training", pretrain)
+    db = TrainingDB(settings.data_dir / "training.db")
+    try:
+        result = run_imitation_training(
+            db=db,
+            checkpoint_dir=checkpoint_dir,
+            hyperparams_path=hyperparams_path if hyperparams_path.exists() else None,
+        )
+    finally:
+        db.close()
+    _log.info("--ensure-pretrain: imitation complete: %s", result)
+
+
 def _run_training(settings: Settings, args: argparse.Namespace) -> None:
     """Run training (imitation or RL)."""
     if args.train == "imitation":
@@ -150,6 +189,9 @@ def _run_training(settings: Settings, args: argparse.Namespace) -> None:
 
         reward_rules = settings.data_dir / "reward_rules.json"
         hyperparams = settings.data_dir / "hyperparams.json"
+
+        if getattr(args, "ensure_pretrain", False):
+            _ensure_pretrain_checkpoint(settings, hyperparams)
 
         orchestrator = TrainingOrchestrator(
             checkpoint_dir=settings.data_dir / "checkpoints",

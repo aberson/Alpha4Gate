@@ -361,7 +361,8 @@ class TrainingOrchestrator:
         import json
 
         import numpy as np
-        import torch
+
+        from alpha4gate.learning.policy_probe import get_action_probs
 
         diag_path = self._checkpoint_dir.parent / "diagnostic_states.json"
         if not diag_path.exists():
@@ -383,19 +384,16 @@ class TrainingOrchestrator:
         }
         for ds in diag_states:
             obs = np.array(ds["features"], dtype=np.float32)
-            try:
-                with torch.no_grad():
-                    obs_t = torch.as_tensor(obs).unsqueeze(0).to(model.device)
-                    dist = model.policy.get_distribution(obs_t)
-                    probs = dist.distribution.probs[0].cpu().numpy()
-                    action = int(probs.argmax())
-                    cycle_diag["states"].append({
-                        "name": ds["name"],
-                        "action": action,
-                        "probs": [round(float(p), 4) for p in probs],
-                    })
-            except Exception:
+            probs = get_action_probs(model, obs)
+            if probs.size == 0:
                 _log.warning("Could not get diagnostics for %s", ds["name"])
+                continue
+            action = int(probs.argmax())
+            cycle_diag["states"].append({
+                "name": ds["name"],
+                "action": action,
+                "probs": [round(float(p), 4) for p in probs],
+            })
 
         existing.append(cycle_diag)
         with open(output_path, "w") as f:
@@ -449,38 +447,87 @@ class TrainingOrchestrator:
         )
 
     def _init_or_resume_model(self, resume: bool) -> Any:
-        """Initialize a new PPO model or load from latest checkpoint.
+        """Initialize or load a PPO model, dispatching on ``policy_type``.
 
-        The dummy env's observation and action spaces are read directly from
-        ``SC2Env`` so the model is guaranteed to match whatever the real env
-        will hand it later. Hardcoding spaces here was the root cause of two
-        Phase 4.5 findings (F1: obs space drift 15→17, F6: action space drift
-        5→6) — the model and env must use a single source of truth.
+        Picks one of ``{PPO, PPOWithKL, RecurrentPPO, RecurrentPPOWithKL}``
+        based on hyperparams ``policy_type`` and ``kl_rules_coef``. When
+        ``use_imitation_init`` is set and a ``v0_pretrain`` checkpoint
+        exists, loads that as the starting point (AlphaStar-style
+        supervised initialization). Resume takes priority over the
+        imitation path.
+
+        The dummy env's observation and action spaces are read directly
+        from ``SC2Env`` so the model cannot silently drift from what the
+        real env will hand it later. Hardcoding spaces here was the
+        root cause of two Phase 4.5 findings (F1: obs space drift
+        15->17, F6: action space drift 5->6).
         """
         import gymnasium
-        from stable_baselines3 import PPO
 
-        from alpha4gate.learning.checkpoints import get_best_name, load_checkpoint
         from alpha4gate.learning.environment import SC2Env
         from alpha4gate.learning.hyperparams import load_hyperparams, to_ppo_kwargs
 
-        if resume:
-            best = get_best_name(self._checkpoint_dir)
-            if best is not None:
-                _log.info("Resuming from checkpoint: %s", best)
-                return load_checkpoint(self._checkpoint_dir, best)
+        params: dict[str, Any] = {}
+        if self._hyperparams_path is not None:
+            params = load_hyperparams(self._hyperparams_path)
+        policy_type = str(params.get("policy_type", "MlpPolicy"))
+        kl_coef = float(params.get("kl_rules_coef", 0.0))
+        use_imitation = bool(params.get("use_imitation_init", False))
 
-        # Create new model. Read spaces from SC2Env (the producer) so model
-        # init can never silently drift from what the env actually provides.
+        model_cls = self._pick_model_class(policy_type, kl_coef)
+
+        if resume:
+            best = self._resume_checkpoint_name()
+            if best is not None:
+                _log.info("Resuming from checkpoint: %s (class=%s)",
+                          best, model_cls.__name__)
+                return model_cls.load(str(self._checkpoint_dir / best))
+
+        if use_imitation:
+            pretrain = self._checkpoint_dir / "v0_pretrain.zip"
+            if pretrain.exists():
+                _log.info("Loading imitation-pretrained checkpoint v0_pretrain (class=%s)",
+                          model_cls.__name__)
+                return model_cls.load(str(pretrain.with_suffix("")))
+            _log.warning(
+                "use_imitation_init=true but %s not found. "
+                "Run imitation training first (--train imitation) or pass "
+                "--ensure-pretrain. Falling through to a fresh model.",
+                pretrain,
+            )
+
         dummy_env = gymnasium.make("CartPole-v1")
         dummy_env.observation_space = SC2Env.observation_space
         dummy_env.action_space = SC2Env.action_space
-
-        ppo_kwargs: dict[str, Any] = {"policy_kwargs": {"net_arch": [128, 128]}}
-        if self._hyperparams_path is not None:
-            params = load_hyperparams(self._hyperparams_path)
-            ppo_kwargs = to_ppo_kwargs(params)
-
-        model = PPO("MlpPolicy", dummy_env, **ppo_kwargs)
+        ppo_kwargs: dict[str, Any] = to_ppo_kwargs(params) if params else {
+            "policy_kwargs": {"net_arch": [128, 128]},
+        }
+        if kl_coef > 0.0:
+            ppo_kwargs["kl_rules_coef"] = kl_coef
+        model = model_cls(policy_type, dummy_env, **ppo_kwargs)
         dummy_env.close()
         return model
+
+    @staticmethod
+    def _pick_model_class(policy_type: str, kl_coef: float) -> Any:
+        """Dispatch: (policy_type, kl_coef>0) -> concrete SB3 model class."""
+        from sb3_contrib import RecurrentPPO
+        from stable_baselines3 import PPO
+
+        from alpha4gate.learning.ppo_kl import PPOWithKL, RecurrentPPOWithKL
+
+        use_kl = kl_coef > 0.0
+        if policy_type == "MlpLstmPolicy":
+            return RecurrentPPOWithKL if use_kl else RecurrentPPO
+        return PPOWithKL if use_kl else PPO
+
+    def _resume_checkpoint_name(self) -> str | None:
+        """Return best checkpoint name if one exists, else None."""
+        from alpha4gate.learning.checkpoints import get_best_name
+
+        name = get_best_name(self._checkpoint_dir)
+        if name is None:
+            return None
+        if not (self._checkpoint_dir / f"{name}.zip").exists():
+            return None
+        return name
