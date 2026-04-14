@@ -851,6 +851,38 @@
       },
       "reward": -0.06,
       "active": true
+    },
+    {
+      "id": "enemy-visibility-midgame",
+      "description": "Reward tracking 3+ enemy structures after 4:00 (midgame tech-detection proxy, advised 20260414-0017 iter 4)",
+      "condition": {
+        "field": "enemy_structure_count",
+        "op": ">=",
+        "value": 3
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 240
+      },
+      "reward": 0.008,
+      "active": true
+    },
+    {
+      "id": "enemy-visibility-late",
+      "description": "Reward tracking 5+ enemy structures after 7:00 (late-game scouting, advised 20260414-0017 iter 4)",
+      "condition": {
+        "field": "enemy_structure_count",
+        "op": ">=",
+        "value": 5
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 420
+      },
+      "reward": 0.012,
+      "active": true
     }
   ]
 }
