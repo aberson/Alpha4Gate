@@ -681,9 +681,10 @@ The first end-to-end soak run surfaced two findings whose resolution should shap
 - SQLite DB — games + transitions + action probabilities, win rate queries, per-model stats
 - WebSocket broadcasting — live game state, decisions, commands (ephemeral)
 - JSONL logging — per-game files in `data/reward_logs/` (always-on, opt-out via `--no-reward-log`)
-- React dashboard (10 tabs) — Live, Stats, Games, Decisions, Training, Loop,
-  Advisor, Improvements, Processes, Alerts. Games tab: GameHistory (browsable game list
-  from training.db with per-game reward breakdown). Training tab: TrainingDashboard +
+- React dashboard (9 tabs) — Live, Stats, Decisions, Training, Loop,
+  Advisor, Improvements, Processes, Alerts. Stats tab absorbs the former Games tab:
+  per-difficulty win-rate table + expandable browsable game list from training.db with
+  per-game reward breakdown (consolidated in commit b6c00c6). Training tab: TrainingDashboard +
   ModelComparison + ImprovementTimeline + CheckpointList + RewardRuleEditor. Loop tab:
   LoopStatus + TriggerControls (with ConfirmDialog). Advisor tab: AdvisedControlPanel +
   useAdvisedRun hook (file-based bridge via `data/advised_run_state.json` /
@@ -776,3 +777,20 @@ The first end-to-end soak run surfaced two findings whose resolution should shap
   disk usage proportionally to games played. Disk management (log rotation, compression,
   max file age, cleanup scripts) is deferred to a later phase. For now, monitor
   `data/reward_logs/` size manually. The training DB already has a 200 GB disk guard.
+
+---
+
+## Docs accuracy pass (2026-04-13)
+
+Not a new phase — end-of-session cleanup to resync docs with code.
+
+### What changed
+
+- `README.md` — `npm start` → `npm run dev` (no `start` script in `frontend/package.json`); removed stale "Games" tab row from dashboard table; module count 46 → 47; added `bash scripts/start-dev.sh` as the one-shot Dashboard option; removed the "Wins 100% at difficulty 1-3 / survives 40+ min at diff 4" capability line (superseded by the run-4 block).
+- `documentation/wiki/frontend.md` — removed Games tab / GameHistory references in the at-a-glance summary, tab-layout table, component descriptions, and file inventory. Updated Stats entry to describe the absorbed reward-timeline feature.
+- `documentation/wiki/monitoring.md` — removed GameHistory references in the frontend components table and key file locations. `/api/games` endpoint is still present and is consumed by `Stats.tsx`.
+- `documentation/plans/always-up-plan.md` — "10 tabs" → "9 tabs"; Games tab description replaced with note that Stats absorbed it (commit `b6c00c6`).
+
+### Why
+
+The Games tab was consolidated into Stats (with expandable per-game reward timeline) in commit `b6c00c6`. Docs still referenced the old layout in five files. Found and fixed during a `/repo-update` drift check.

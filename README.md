@@ -11,8 +11,6 @@ A StarCraft II Protoss bot combining rule-based decision-making, a PPO neural po
 
 **Advised improvement run 4 complete (2026-04-13)** — Second `--self-improve-code` run at difficulty 3: 3 iterations, 2 code improvements landed, 1 reverted as inert. Anti-float expansion override (`macro_manager.py`) allows expansion during DEFEND when workers saturated and ≥1500m banked, breaking the "die with a bank" death spiral. Warp-in forward pylon selection (`bot.py`) iterates pylons furthest-to-nearest from start so Stalkers stop getting trapped behind main-base buildings. Win rate 80% → 100% at difficulty 3. 829 Python tests, 0 type errors, 0 lint violations.
 
-**Current capability:** Wins 100% at difficulty 1-3. Survives 40+ min at difficulty 4 (200/200 supply, counterattacks, Warp Gate warp-ins) but can't close games yet — pure Zealot army can't break fortified positions. Next: mixed composition, attack-move to enemy base, Chrono Boost.
-
 ## Stack
 
 | Layer | Tool | Why |
@@ -36,7 +34,6 @@ A StarCraft II Protoss bot combining rule-based decision-making, a PPO neural po
 |---|---|
 | Live | Real-time game state stream (WebSocket) |
 | Stats | Cross-game win rates and aggregate stats from training.db |
-| Games | Game history browser with per-game reward breakdown |
 | Decisions | Live decision log with rule firings and Claude advice |
 | Training | Model comparison + improvement timeline + checkpoint list + reward rule editor |
 | Loop | Daemon state, trigger evaluation, full daemon control panel |
@@ -94,11 +91,15 @@ uv run python -m alpha4gate.runner --map Simple64
 ### Dashboard
 
 ```bash
+# One-shot: start backend + frontend together (Git Bash)
+bash scripts/start-dev.sh
+
+# Or in two terminals:
 # Terminal 1: backend
 uv run python -m alpha4gate.runner --serve
 
 # Terminal 2: frontend dev server
-cd frontend && npm start
+cd frontend && npm run dev
 # Opens http://localhost:3000 proxying to :8765
 ```
 
@@ -136,7 +137,7 @@ cd frontend && npx tsc --noEmit  # TypeScript check
 
 ```
 Alpha4Gate/
-├── src/alpha4gate/          # 46 Python modules
+├── src/alpha4gate/          # 47 Python modules
 │   ├── commands/            # Strategic command system (parser, interpreter, executor, queue)
 │   ├── bot.py               # Main BotAI subclass, game loop orchestration
 │   ├── decision_engine.py   # Strategic state machine (6 states)

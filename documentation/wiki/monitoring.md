@@ -266,8 +266,7 @@ User types "build stalkers" in CommandPanel
 | **TrainingDashboard** | `/api/training/*` | 5s poll | Current checkpoint, total games, transitions, DB size, win rates (10/50/100/overall) |
 | **CheckpointList** | `/api/training/checkpoints` | One-time fetch | Table: name, type, metadata details, best indicator |
 | **DecisionQueue** | `/api/decision-log` + `/ws/decisions` | Initial fetch + live | Last 20 state transitions: step, from, to, reason, Claude advice |
-| **Stats** | `/api/stats` | One-time fetch | Total wins/losses, by-map breakdown, last 10 games table |
-| **GameHistory** | `/api/games` | 10s poll | Browsable game list from training.db with per-game reward breakdown |
+| **Stats** | `/api/stats` + `/api/games` | 10s poll | Per-difficulty win rates + expandable browsable game list from training.db with per-game reward breakdown |
 | **RewardRuleEditor** | `/api/reward-rules` | One-time fetch + manual save | Table: rule ID, description, reward value (editable), active toggle |
 
 ### Timing constants
@@ -323,8 +322,7 @@ Compact JSON (no spaces). One file per game session. Deduplicated by `game_step`
 | `frontend/src/components/TrainingDashboard.tsx` | Training metrics (5s poll) |
 | `frontend/src/components/CheckpointList.tsx` | Checkpoint table |
 | `frontend/src/components/DecisionQueue.tsx` | Decision state transition log |
-| `frontend/src/components/Stats.tsx` | Game statistics |
-| `frontend/src/components/GameHistory.tsx` | Game history browser with reward breakdown |
+| `frontend/src/components/Stats.tsx` | Per-difficulty win rates + expandable game history with reward timeline |
 | `frontend/src/components/ProcessMonitor.tsx` | Live process inventory and health |
 | `frontend/src/components/RewardRuleEditor.tsx` | Reward rule editing |
 | `logs/` | JSONL game logs (gitignored) |
