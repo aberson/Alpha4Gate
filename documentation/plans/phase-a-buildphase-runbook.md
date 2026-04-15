@@ -19,6 +19,7 @@ replacement.
 - **Problem:** You have uncommitted changes on master (reward_rules.json, new data dirs). Stash or commit them, then `git checkout feat/lstm-kl-imitation`, run `uv run pytest` and confirm ~834 unit tests pass. Do NOT start Phase A validation on a dirty working tree. Report PASS with test count, or BLOCKED if tests regress on the branch.
 - **Type:** operator
 - **Issue:** #100
+- **Status:** DONE (2026-04-15) — 864 tests passing on `68a27f7` (master merged into branch, pushed to origin)
 
 ### Step 2: A.1 no-op regression
 - **Problem:** On branch feat/lstm-kl-imitation with all new flags at shipped defaults (`use_imitation_init: false`, `kl_rules_coef: 0.0`, `policy_type: MlpPolicy`), run `uv run python -m alpha4gate.runner --train rl --cycles 1 --games-per-cycle 3 --difficulty 3`. Pass = cycle completes, checkpoint saves, win-rate logged, no import/shape/class-mismatch error from `_init_or_resume_model`. Capture the wall-clock of this cycle — Step 4 (A.3) needs it as a baseline for the ≤1.5× overhead check. Report PASS with wall-clock seconds, or BLOCKED with the error.
