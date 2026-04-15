@@ -834,12 +834,31 @@ async def get_evaluation_status(job_id: str) -> JSONResponse | dict[str, Any]:
         "games_requested": job.n_games,
         "games_completed": job.games_completed,
         "difficulty": job.difficulty,
+        "cancel_requested": job.cancel_requested,
     }
     if job.result is not None:
         response["result"] = asdict(job.result)
     if job.error is not None:
         response["error"] = job.error
     return response
+
+
+@app.post("/api/training/evaluate/{job_id}/stop")
+async def stop_evaluation(job_id: str) -> JSONResponse:
+    """Request cancellation of an in-flight evaluation job.
+
+    The current game finishes (no safe way to interrupt an SC2 game mid-step),
+    then the loop exits. Poll GET /api/training/evaluate/{job_id} to observe
+    the transition to status ``cancelled``.
+    """
+    evaluator = _get_evaluator()
+    outcome = evaluator.cancel_job(job_id)
+    if outcome == "not_found":
+        return JSONResponse(status_code=404, content={"error": "Job not found"})
+    return JSONResponse(
+        status_code=200,
+        content={"job_id": job_id, "status": outcome},
+    )
 
 
 # --- Promotion Endpoints ---
