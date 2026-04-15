@@ -66,6 +66,10 @@ def _make_minimal_env() -> SC2Env:
     env._total_reward = 0.0
     env._game_start_time = 0.0
     env._game_store_failed_count = 0
+    env._watchdog_soft_seconds = 1800.0
+    env._watchdog_hard_seconds = 2700.0
+    env._game_wall_start = time.monotonic()
+    env._soft_cancel_sent = False
     return env
 
 

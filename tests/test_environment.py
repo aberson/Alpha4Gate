@@ -1335,3 +1335,132 @@ class TestTimeoutLeavesGameSc2Live:
             assert steps > 0
         finally:
             env.close()
+
+
+class TestPerGameWatchdog:
+    """Per-game wall-clock watchdog (soak-2026-04-15 postmortem).
+
+    A single SC2 game that runs for 5h of real time (observations still
+    flowing, neither player advancing) used to block the whole
+    orchestrator. ``SC2Env.step()`` now enforces a soft gate (shutdown
+    sentinel) and a hard gate (synthesize terminal, abandon thread).
+    """
+
+    def _bare_env(self, soft: float, hard: float) -> SC2Env:
+        env = SC2Env.__new__(SC2Env)
+        env._obs_queue = queue.Queue()
+        env._action_queue = queue.Queue()
+        env._game_thread = None
+        env._step_index = 0
+        env._last_snapshot = None
+        env._total_reward = 0.0
+        env._game_start_time = 0.0
+        env._game_id = "wd_test"
+        env._game_store_failed_count = 0
+        env._watchdog_soft_seconds = soft
+        env._watchdog_hard_seconds = hard
+        env._game_wall_start = time.monotonic()
+        env._soft_cancel_sent = False
+        return env
+
+    def test_hard_gate_returns_synthetic_terminal(self) -> None:
+        env = self._bare_env(soft=0.01, hard=0.02)
+        # Push game-wall-start far enough into the past that hard fires.
+        env._game_wall_start = time.monotonic() - 10.0
+
+        obs, reward, done, truncated, info = env.step(0)
+
+        assert done is True
+        assert truncated is False
+        assert info.get("error") == "watchdog_hard_timeout"
+        assert reward == -10.0
+        assert obs.shape == (FEATURE_DIM,)
+        assert env._game_store_failed_count == 1
+        # Action should NOT have been pushed to the queue — we bailed
+        # before the send to avoid feeding a dead thread.
+        assert env._action_queue.qsize() == 0
+
+    def test_soft_gate_sends_shutdown_sentinel_once(self) -> None:
+        env = self._bare_env(soft=0.01, hard=60.0)
+        env._game_wall_start = time.monotonic() - 5.0
+
+        # Pre-load an obs so step() can complete normally after the
+        # soft-gate push.
+        env._reward_calc = RewardCalculator()
+        env._db = None
+        env._obs_queue.put(
+            (
+                np.zeros(FEATURE_DIM, dtype=np.float32),
+                {"snapshot": GameSnapshot(), "strategic_state": "OPENING"},
+                False,
+                None,
+            )
+        )
+        env.step(0)
+        assert env._soft_cancel_sent is True
+        # Queue should hold: sentinel (None) + the real action (0).
+        sentinel = env._action_queue.get_nowait()
+        real = env._action_queue.get_nowait()
+        assert sentinel is None
+        assert real == 0
+
+        # Pre-load another obs; second step must NOT push another None.
+        env._obs_queue.put(
+            (
+                np.zeros(FEATURE_DIM, dtype=np.float32),
+                {"snapshot": GameSnapshot(), "strategic_state": "OPENING"},
+                False,
+                None,
+            )
+        )
+        env.step(1)
+        remaining = []
+        while not env._action_queue.empty():
+            remaining.append(env._action_queue.get_nowait())
+        # Only the real action this time — no second sentinel.
+        assert remaining == [1]
+
+    def test_below_soft_gate_is_no_op(self) -> None:
+        env = self._bare_env(soft=60.0, hard=120.0)
+        env._reward_calc = RewardCalculator()
+        env._db = None
+        env._obs_queue.put(
+            (
+                np.zeros(FEATURE_DIM, dtype=np.float32),
+                {"snapshot": GameSnapshot(), "strategic_state": "OPENING"},
+                False,
+                None,
+            )
+        )
+        env.step(0)
+        assert env._soft_cancel_sent is False
+        assert env._game_store_failed_count == 0
+
+    def test_reset_clears_watchdog_state(self) -> None:
+        env = self._bare_env(soft=0.01, hard=60.0)
+        env._soft_cancel_sent = True
+        old_start = env._game_wall_start - 100.0
+        env._game_wall_start = old_start
+
+        def fake_start(self: threading.Thread) -> None:
+            new_obs_q = self._args[0]  # type: ignore[attr-defined]
+            new_obs_q.put(
+                (
+                    np.zeros(FEATURE_DIM, dtype=np.float32),
+                    {"strategic_state": "OPENING"},
+                    False,
+                    None,
+                )
+            )
+
+        # ``reset()`` touches several things our bare env didn't wire
+        # up; patch the heavy ones to no-ops.
+        env._base_game_id = "wd_test"
+        env._reward_calc = None  # reset() uses getattr fallback
+        env._replay_dir = None
+
+        with patch.object(threading.Thread, "start", fake_start):
+            env.reset()
+
+        assert env._soft_cancel_sent is False
+        assert env._game_wall_start > old_start

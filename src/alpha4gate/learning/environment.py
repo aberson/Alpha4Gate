@@ -6,6 +6,7 @@ import logging
 import queue
 import sqlite3
 import threading
+import time
 import uuid
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -46,6 +47,20 @@ WARMUP_GAME_SECONDS: float = 0.0  # disabled — PPO learns faster without force
 # Max game time in seconds before forcing a timeout (prevents passive stalls)
 MAX_GAME_TIME_SECONDS: float = 18000.0  # 5 hours — let games end naturally so all reward rules fire
 
+# Per-game wall-clock watchdog (soak-2026-04-15 postmortem).
+# The SC2-side MAX_GAME_TIME_SECONDS is 5h of game-time, which an idle
+# passive game can burn in real wall time (observations keep flowing but
+# neither player pushes). One stuck eval game in the 04-15 soak ate 5h
+# of real wall time and blocked the whole orchestrator. Two gates:
+#   - soft: push the shutdown sentinel on the action queue so
+#     ``_sync_game``'s ``_resign_and_mark_done`` ends the game cleanly
+#     and training/eval moves to the next game.
+#   - hard: synthesize a terminal observation directly and abandon the
+#     game thread when the soft path didn't take (game thread wedged
+#     on burnysc2 I/O and not polling the action queue).
+WATCHDOG_SOFT_SECONDS: float = 1800.0  # 30 min — resign-via-sentinel
+WATCHDOG_HARD_SECONDS: float = 2700.0  # 45 min — synthesize terminal and move on
+
 # Single source of truth for the bridge observation tuple shape:
 # (obs_vector, info_dict, done_flag, result_string).
 # All queue annotations in this module reference this alias; see
@@ -85,6 +100,8 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         stats_path: Path | None = None,
         build_order_label: str = "4gate",
         advisor_bridge: Any | None = None,
+        watchdog_soft_seconds: float = WATCHDOG_SOFT_SECONDS,
+        watchdog_hard_seconds: float = WATCHDOG_HARD_SECONDS,
     ) -> None:
         super().__init__()
         self._map_name = map_name
@@ -148,6 +165,18 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         # loudly instead of silently dropping out of ``get_recent_win_rate``.
         # See Bug B in the soak-2026-04-11 cycle 5 postmortem.
         self._game_store_failed_count: int = 0
+
+        # Per-game wall-clock watchdog state (soak-2026-04-15).
+        # ``_game_wall_start`` is set in ``reset()`` right before the game
+        # thread spawns and read by ``step()`` on every iteration.
+        # ``_soft_cancel_sent`` ensures the shutdown sentinel is pushed
+        # at most once per game — PPO may call ``step()`` many times
+        # between soft-gate trigger and the game thread actually draining
+        # the action queue.
+        self._watchdog_soft_seconds: float = watchdog_soft_seconds
+        self._watchdog_hard_seconds: float = watchdog_hard_seconds
+        self._game_wall_start: float = 0.0
+        self._soft_cancel_sent: bool = False
 
     @property
     def game_store_failed_count(self) -> int:
@@ -239,6 +268,8 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         self._step_index = 0
         self._total_reward = 0.0
         self._last_snapshot = None
+        self._game_wall_start = time.monotonic()
+        self._soft_cancel_sent = False
 
         # Create FRESH queues for the new game. Issue #72: if the previous
         # game_thread was orphaned (for example because close() timed out
@@ -265,6 +296,35 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         self, action: int
     ) -> tuple[NDArray[np.float32], float, bool, bool, dict[str, Any]]:
         """Apply action, advance 22 game steps, return new observation."""
+        # Per-game wall-clock watchdog (soak-2026-04-15). Checked BEFORE
+        # pushing an action so a wedged game can't burn another step's
+        # latency before being ended. Two gates:
+        #   - Hard gate: abandon the game thread outright and return a
+        #     synthetic terminal so PPO/eval moves to the next game. The
+        #     thread becomes a zombie; #72's queue-swap in ``reset()``
+        #     keeps its residual writes isolated.
+        #   - Soft gate: push the None sentinel to ``_action_queue`` so
+        #     ``_sync_game``'s ``_resign_and_mark_done`` fires and the
+        #     game ends cleanly. Fire at most once per game.
+        elapsed = time.monotonic() - self._game_wall_start
+        if elapsed > self._watchdog_hard_seconds:
+            _log.error(
+                "Watchdog HARD timeout: game %s ran %.0fs real-time "
+                "(>%.0fs); abandoning game thread and forcing terminal.",
+                self._game_id, elapsed, self._watchdog_hard_seconds,
+            )
+            self._game_store_failed_count += 1
+            obs = np.zeros(FEATURE_DIM, dtype=np.float32)
+            return obs, -10.0, True, False, {"error": "watchdog_hard_timeout"}
+        if elapsed > self._watchdog_soft_seconds and not self._soft_cancel_sent:
+            _log.error(
+                "Watchdog SOFT timeout: game %s ran %.0fs real-time "
+                "(>%.0fs); sending shutdown sentinel to game thread.",
+                self._game_id, elapsed, self._watchdog_soft_seconds,
+            )
+            self._action_queue.put(None)
+            self._soft_cancel_sent = True
+
         # Send action to game thread
         self._action_queue.put(action)
 
