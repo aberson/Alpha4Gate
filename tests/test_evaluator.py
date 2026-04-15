@@ -504,6 +504,52 @@ class TestJobCancellation:
         assert job.result is not None
         assert job.result.games_played == 0
 
+    def test_evaluate_cancel_check_pre_loop(
+        self, evaluator: ModelEvaluator
+    ) -> None:
+        """cancel_check returning True from game 0 yields 0 games played."""
+        model = MagicMock()
+        env = _mock_env()
+
+        with (
+            patch.object(evaluator, "_load_model", return_value=model),
+            patch.object(evaluator, "_create_env", return_value=env),
+            patch.object(evaluator, "_get_game_result", return_value="win"),
+        ):
+            result = evaluator.evaluate(
+                "v1", 5, difficulty=1, cancel_check=lambda: True
+            )
+
+        assert result.games_played == 0
+        assert result.wins == 0
+        assert result.losses == 0
+
+    def test_evaluate_cancel_check_mid_loop(
+        self, evaluator: ModelEvaluator
+    ) -> None:
+        """cancel_check flipping after first game produces partial result."""
+        model = MagicMock()
+        model.predict.return_value = (np.array(0), None)
+        env = _mock_env()
+
+        calls = {"n": 0}
+
+        def cancel_after_first() -> bool:
+            calls["n"] += 1
+            return calls["n"] > 1  # False on first check, True after
+
+        with (
+            patch.object(evaluator, "_load_model", return_value=model),
+            patch.object(evaluator, "_create_env", return_value=env),
+            patch.object(evaluator, "_get_game_result", return_value="win"),
+        ):
+            result = evaluator.evaluate(
+                "v1", 10, difficulty=1, cancel_check=cancel_after_first
+            )
+
+        assert result.games_played == 1
+        assert result.wins == 1
+
     def test_run_job_mid_run_cancellation(
         self, evaluator: ModelEvaluator
     ) -> None:

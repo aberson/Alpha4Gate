@@ -128,7 +128,9 @@ class TestPromotionManagerPromotes:
         evaluator._checkpoint_dir = tmp_path
 
         # v2 has 0.7 win rate, v1 has 0.5 -- delta of 0.2 > 0.05 threshold
-        def eval_side_effect(checkpoint: str, n_games: int, difficulty: int) -> EvalResult:
+        def eval_side_effect(
+            checkpoint: str, n_games: int, difficulty: int, **_kw: Any
+        ) -> EvalResult:
             if checkpoint == "v2":
                 return _make_eval_result("v2", 0.7, n_games)
             return _make_eval_result("v1", 0.5, n_games)
@@ -170,7 +172,9 @@ class TestPromotionManagerPromotes:
         evaluator = MagicMock()
         evaluator._checkpoint_dir = tmp_path
 
-        def eval_side_effect(checkpoint: str, n_games: int, difficulty: int) -> EvalResult:
+        def eval_side_effect(
+            checkpoint: str, n_games: int, difficulty: int, **_kw: Any
+        ) -> EvalResult:
             if checkpoint == "v2":
                 return _make_eval_result("v2", 0.3, n_games)
             return _make_eval_result("v1", 0.7, n_games)
@@ -193,7 +197,9 @@ class TestPromotionManagerPromotes:
         evaluator._checkpoint_dir = tmp_path
 
         # Use only 2 games each (total 4 < min_eval_games=10)
-        def eval_side_effect(checkpoint: str, n_games: int, difficulty: int) -> EvalResult:
+        def eval_side_effect(
+            checkpoint: str, n_games: int, difficulty: int, **_kw: Any
+        ) -> EvalResult:
             if checkpoint == "v2":
                 return _make_eval_result("v2", 1.0, games=2)
             return _make_eval_result("v1", 0.0, games=2)
@@ -225,7 +231,9 @@ class TestPromotionGateCrashRefusal:
         evaluator = MagicMock()
         evaluator._checkpoint_dir = tmp_path
 
-        def eval_side_effect(checkpoint: str, n_games: int, difficulty: int) -> EvalResult:
+        def eval_side_effect(
+            checkpoint: str, n_games: int, difficulty: int, **_kw: Any
+        ) -> EvalResult:
             if checkpoint == "v2":
                 return _make_eval_result("v2", 0.9, crashed=2)
             return _make_eval_result("v1", 0.5, crashed=0)
@@ -249,7 +257,9 @@ class TestPromotionGateCrashRefusal:
         evaluator = MagicMock()
         evaluator._checkpoint_dir = tmp_path
 
-        def eval_side_effect(checkpoint: str, n_games: int, difficulty: int) -> EvalResult:
+        def eval_side_effect(
+            checkpoint: str, n_games: int, difficulty: int, **_kw: Any
+        ) -> EvalResult:
             if checkpoint == "v2":
                 return _make_eval_result("v2", 0.9, crashed=0)
             return _make_eval_result("v1", 0.5, crashed=3)
@@ -289,7 +299,9 @@ class TestPromotionGateCrashRefusal:
         evaluator = MagicMock()
         evaluator._checkpoint_dir = tmp_path
 
-        def eval_side_effect(checkpoint: str, n_games: int, difficulty: int) -> EvalResult:
+        def eval_side_effect(
+            checkpoint: str, n_games: int, difficulty: int, **_kw: Any
+        ) -> EvalResult:
             if checkpoint == "v2":
                 return _make_eval_result("v2", 0.9, crashed=1)
             return _make_eval_result("v1", 0.5, crashed=0)
@@ -301,6 +313,53 @@ class TestPromotionGateCrashRefusal:
 
         assert decision.promoted is True
         assert get_best_name(tmp_path) == "v2"
+
+
+class TestPromotionCancelCheck:
+    """cancel_check passed to evaluate_and_promote threads through to both
+    underlying evaluate() calls. The daemon's self._stop_event.is_set is the
+    production caller, so POST /api/training/stop also halts promotion evals.
+    """
+
+    def test_cancel_check_forwarded_no_previous_best(
+        self, tmp_path: Path
+    ) -> None:
+        model = _mock_model()
+        save_checkpoint(model, tmp_path, "v1", is_best=False)
+
+        evaluator = MagicMock()
+        evaluator._checkpoint_dir = tmp_path
+        evaluator.evaluate.return_value = _make_eval_result("v1", 0.6)
+
+        sentinel: Any = lambda: False  # noqa: E731
+        pm = PromotionManager(evaluator, PromotionConfig())
+        pm.evaluate_and_promote("v1", difficulty=1, cancel_check=sentinel)
+
+        evaluator.evaluate.assert_called_once()
+        assert evaluator.evaluate.call_args.kwargs["cancel_check"] is sentinel
+
+    def test_cancel_check_forwarded_to_both_evals(self, tmp_path: Path) -> None:
+        model = _mock_model()
+        save_checkpoint(model, tmp_path, "v1", is_best=True)
+        save_checkpoint(model, tmp_path, "v2")
+
+        evaluator = MagicMock()
+        evaluator._checkpoint_dir = tmp_path
+
+        def side_effect(
+            checkpoint: str, n_games: int, difficulty: int, **_kw: Any
+        ) -> EvalResult:
+            return _make_eval_result(checkpoint, 0.5, n_games)
+
+        evaluator.evaluate.side_effect = side_effect
+
+        sentinel: Any = lambda: False  # noqa: E731
+        pm = PromotionManager(evaluator, PromotionConfig())
+        pm.evaluate_and_promote("v2", difficulty=1, cancel_check=sentinel)
+
+        assert evaluator.evaluate.call_count == 2
+        for call in evaluator.evaluate.call_args_list:
+            assert call.kwargs["cancel_check"] is sentinel
 
 
 class TestPromotionManagerManual:
@@ -498,7 +557,9 @@ class TestActionDistributionShift:
         evaluator = MagicMock()
         evaluator._checkpoint_dir = tmp_path
 
-        def eval_side_effect(checkpoint: str, n_games: int, difficulty: int) -> EvalResult:
+        def eval_side_effect(
+            checkpoint: str, n_games: int, difficulty: int, **_kw: Any
+        ) -> EvalResult:
             dist = [0.6, 0.4] if checkpoint == "v2" else [0.3, 0.7]
             return EvalResult(
                 checkpoint=checkpoint,
@@ -814,7 +875,9 @@ class TestPromotionReasonCodes:
         evaluator = MagicMock()
         evaluator._checkpoint_dir = tmp_path
 
-        def eval_side_effect(checkpoint: str, n_games: int, difficulty: int) -> EvalResult:
+        def eval_side_effect(
+            checkpoint: str, n_games: int, difficulty: int, **_kw: Any
+        ) -> EvalResult:
             if checkpoint == "v2":
                 return _make_eval_result("v2", 0.9, n_games)
             return _make_eval_result("v1", 0.5, n_games)
@@ -851,7 +914,9 @@ class TestPromotionReasonCodes:
         evaluator = MagicMock()
         evaluator._checkpoint_dir = tmp_path
 
-        def eval_side_effect(checkpoint: str, n_games: int, difficulty: int) -> EvalResult:
+        def eval_side_effect(
+            checkpoint: str, n_games: int, difficulty: int, **_kw: Any
+        ) -> EvalResult:
             if checkpoint == "v2":
                 return _make_eval_result("v2", 1.0, games=2)
             return _make_eval_result("v1", 0.0, games=2)
@@ -872,7 +937,9 @@ class TestPromotionReasonCodes:
         evaluator = MagicMock()
         evaluator._checkpoint_dir = tmp_path
 
-        def eval_side_effect(checkpoint: str, n_games: int, difficulty: int) -> EvalResult:
+        def eval_side_effect(
+            checkpoint: str, n_games: int, difficulty: int, **_kw: Any
+        ) -> EvalResult:
             if checkpoint == "v2":
                 return _make_eval_result("v2", 0.9, crashed=2)
             return _make_eval_result("v1", 0.5, crashed=0)

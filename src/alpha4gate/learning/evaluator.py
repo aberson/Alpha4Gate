@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -82,6 +83,7 @@ class ModelEvaluator:
         n_games: int,
         difficulty: int,
         job_id: str | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> EvalResult:
         """Run N evaluation games with inference only and return aggregated stats.
 
@@ -92,7 +94,11 @@ class ModelEvaluator:
             job_id: Optional job id. When provided, the loop checks the job's
                 ``cancel_requested`` flag between games and returns a partial
                 EvalResult covering only games completed before the cancel.
-                Independent callers (e.g., promotion gate) leave this None.
+            cancel_check: Optional callable returning True to signal cancel.
+                Checked between games alongside the job_id flag; either signal
+                breaks the loop. The daemon passes ``self._stop_event.is_set``
+                so that ``POST /api/training/stop`` also halts in-flight
+                promotion evals, not just training runs.
 
         Returns:
             EvalResult with win rate and statistics.
@@ -117,6 +123,15 @@ class ModelEvaluator:
                         n_games,
                     )
                     break
+            if cancel_check is not None and cancel_check():
+                _log.info(
+                    "Eval cancelled by cancel_check before game %d/%d "
+                    "(checkpoint=%s)",
+                    game_idx + 1,
+                    n_games,
+                    checkpoint_name,
+                )
+                break
 
             game_id = f"eval_{checkpoint_name}_{uuid.uuid4().hex[:8]}"
             _log.info(
