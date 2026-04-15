@@ -32,7 +32,7 @@ bash scripts/start-dev.sh                  # Start backend + frontend together (
 - `frontend/` — React dashboard (LiveView, CommandPanel, TrainingDashboard, etc.)
 - `scripts/` — live-test.sh, analyze_rewards.py, evaluate_model.py, etc.
 - `documentation/wiki/` — project wiki (start with `index.md` for system diagram + page map)
-- `documentation/plans/` — active plans (always-up-plan.md)
+- `documentation/plans/` — active plans (alpha4gate-master-plan.md)
 - `documentation/archived/` — completed plans (Phase 1, Phase 2, improvement cycles)
 - `data/` — stats, training.db, checkpoints (gitignored)
 - `logs/` — JSONL game logs (gitignored)
@@ -48,7 +48,7 @@ WebSocket endpoints: /ws/game, /ws/decisions, /ws/commands.
 All Phase 1 (rule-based) and Phase 2 (deep learning) features complete.
 Five improvement cycles done: army coherence, natural denial, neural training, strategic commands, defensive fortification.
 Wins reliably at difficulty 1-3, struggles at 4-5.
-Active plan: `documentation/plans/always-up-plan.md` — autonomous improvement loop.
+Active plan: `documentation/plans/alpha4gate-master-plan.md` — platform + full-stack versioning + AlphaStar-style PPO upgrades. Always-up Phases 1–4.5 (daemon, evaluator, promotion gate, rollback, 9-tab dashboard) are the Baseline; full history in `documentation/archived/always-up-plan.md`.
 Wiki: `documentation/wiki/index.md` — system diagram and deep-dive pages.
 
 ## SC2 requirements

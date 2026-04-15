@@ -1,37 +1,63 @@
-# Alpha4Gate — Master Upgrade Plan (AlphaStar + Versioning)
+# Alpha4Gate — Master Plan (Platform + AlphaStar + Versioning)
 
 ## Source
 
-This plan merges two predecessors, both archived under `documentation/archived/`:
+This plan is the third-generation merge. It supersedes three predecessors,
+all archived under `documentation/archived/`:
 
 - `alphastar-upgrade-plan.md` — AlphaStar-inspired PPO upgrades (LSTM, obs
   expansion, self-play, z-statistic, autoregressive actions, transformer).
-- `bot-versioning-selfplay-plan.md` — full-stack bot versioning with subprocess
-  self-play and Elo ladder (the "big-box" approach).
+- `bot-versioning-selfplay-plan.md` — full-stack bot versioning with
+  subprocess self-play and Elo ladder (the "big-box" approach).
+- `always-up-plan.md` — autonomous improvement platform (daemon,
+  evaluator, promotion gate, rollback, curriculum, transparency
+  dashboard). Phases 1–4.5 of that plan shipped and are this plan's
+  Baseline; its Phase 5 (Domain Abstraction) is dropped as subsumed by
+  full-stack versioning.
 
-The plans had one major overlap: **self-play**. The AlphaStar plan's Phase C
-(checkpoint-only opponent pool) is strictly weaker than the versioning plan's
-full-stack approach, and it self-destructs as soon as later AlphaStar phases
-change the feature spec, action space, or bot code. Phase C is deleted here;
-its goal is delivered by the versioning infrastructure.
+Two structural decisions made during the merges:
+
+1. **AlphaStar Phase C (checkpoint-only opponent pool) was deleted** in
+   the prior merge — strictly weaker than full-stack self-play and
+   self-destructs as soon as later phases change the feature spec.
+2. **Always-up Phase 5 (Domain interface / CartPole validation) is
+   dropped** in this merge — `bots/vN/` already provides the domain
+   boundary via physical isolation. A typed Environment / FeatureSpec /
+   RewardSpec abstraction is redundant with per-version stacks and
+   would be built long before anyone would ever run the loop on a
+   non-SC2 domain. Finding #11 (promotion-gate bootstrap) becomes a
+   Phase 1 cleanup line item; Finding #12 (daemon idle deadlock) is
+   structurally resolved by Phase 3 (subprocess self-play produces
+   transitions while the daemon is otherwise idle).
 
 ## Vision
 
-Break the "stuck at difficulty 4–5" ceiling by:
+Alpha4Gate is an **autonomous improvement platform** whose first domain
+is SC2 Protoss. The platform already plays, evaluates, trains, promotes,
+and rolls back models unattended, with full dashboard transparency
+(phases 1–4.5 shipped). The next era breaks the "stuck at difficulty 4–5"
+ceiling by:
 
 1. Validating the pending `feat/lstm-kl-imitation` PR on the current stack.
 2. Versioning the entire bot stack — every improvement snapshot is a
    self-contained `bots/vN/` directory that can be rehydrated and played
    against any other version via subprocess self-play.
 3. Layering AlphaStar-inspired PPO upgrades (obs expansion, build-order z,
-   autoregressive actions, transformer) as per-version improvements inside
-   the sandbox, promoted by Elo gain vs prior versions.
+   autoregressive actions, transformer) as per-version improvements
+   inside the sandbox, promoted by Elo gain vs prior versions.
+4. Keeping the existing daemon/evaluator/promotion/rollback loop running
+   as the intra-version improvement engine. Elo vs prior `bots/vN/`
+   becomes the cross-version promotion signal layered on top.
 
-The versioning substrate is the primary investment; AlphaStar capabilities
-ride on top of it.
+The versioning substrate is the primary new investment; AlphaStar
+capabilities ride on top of it. The platform infrastructure from the
+always-up plan stays in place underneath.
 
 ## Principles
 
+- **Transparency first.** Every decision, training cycle, promotion, and
+  rollback is observable via the dashboard. A feature that isn't visible
+  to the operator is a feature that isn't finished.
 - **Validate before compounding.** Every phase has a go/no-go gate. No
   architecture is stacked on top of unvalidated changes.
 - **Cheapest lever first.** Obs signal and training regime changes beat
@@ -45,7 +71,10 @@ ride on top of it.
   defines bot-spawn + result-reporting contracts. Changes require human PR.
 - **Subprocess-per-version is the only self-play mode.** No in-process
   fallback. Clean isolation beats the small performance cost.
-- **Self-play Elo is the truth signal.** SC2-AI win rate is secondary.
+- **Two-tier promotion.** Intra-version promotion uses WR delta on the
+  existing daemon loop; cross-version promotion (`vN` → `vN+1`) uses
+  Elo gain via subprocess self-play. SC2-AI WR is the daily signal; Elo
+  is the cross-version truth signal.
 - **Imitation is the backbone.** `v0_pretrain` is the cold-start for every
   RL run inside a given version. Phases that break this contract need extra
   justification.
@@ -54,14 +83,17 @@ ride on top of it.
   policy class, reward rules. Append-only within a version is still good
   hygiene (supports the padding trick for imitation DB reuse) but is no
   longer a cross-version rule.
+- **Domain abstraction via isolation, not interfaces.** Generality is
+  achieved by running different stacks as independent subprocesses, not
+  by defining a typed `Environment` / `FeatureSpec` / `RewardSpec` layer.
 
 ## Glossary
 
 | Term | Definition |
 |------|-----------|
 | **`v0_pretrain`** | Imitation-pretrained PPO checkpoint at `<version>/data/checkpoints/v0_pretrain.zip`. Behavior-cloned from rule-based decisions in `<version>/data/training.db`. Per-version, not shared. |
-| **KL-to-rules** | Auxiliary loss term from the `feat/lstm-kl-imitation` PR. After each PPO gradient step, an extra pass over the rollout buffer applies `kl_rules_coef * CE(policy_logits, rule_engine_action)`. Disabled at `kl_rules_coef=0.0`. |
-| **Padding trick** | When a version's obs width grows, DB rows stored at the old width are zero-padded to match. Within-version only; not a cross-version contract. |
+| **KL-to-rules** | Auxiliary loss from the `feat/lstm-kl-imitation` PR. After each PPO gradient step, `kl_rules_coef * CE(policy_logits, rule_engine_action)` is applied. Disabled at `kl_rules_coef=0.0`. |
+| **Padding trick** | When a version's obs width grows, DB rows stored at the old width are zero-padded to match. Within-version only. |
 | **`_FEATURE_SPEC`** | Tuple list in `<version>/learning/features.py` defining obs slots. Single source of truth within a version. |
 | **`_compute_next_state`** | Rule-engine method in `<version>/decision_engine.py` mapping `GameSnapshot` → `StrategicState`. KL-to-rules teacher. |
 | **`ACTION_TO_STATE`** | Canonical list in `decision_engine.py` mapping PPO action indices to `StrategicState`. |
@@ -69,8 +101,13 @@ ride on top of it.
 | **Orchestrator** | `src/orchestrator/` — subprocess manager, registry, snapshot, self-play, ladder. The only code the skill cannot touch. |
 | **Bot-spawn contract** | Every `bots/vN/` must run via `python -m bots.vN --role {p1\|p2\|solo} --map ... --sc2-connect ... --result-out ... --seed ...`. |
 | **Diagnostic states** | Fixed obs vectors at `<version>/data/diagnostic_states.json` logged each training cycle. Within-version regression canary. |
-| **`improve-bot-advised`** | Autonomous improvement skill at `.claude/skills/improve-bot-advised/SKILL.md`. After this plan's Phase 5, it is sandboxed to `bots/current/**`. |
-| **PFSP-lite** | Prioritised-fictitious-self-play sampling. `w_i ∝ (1 - win_rate_vs_opponent_i)²`, cold-start uniform. Lives inside `src/orchestrator/ladder.py` or `selfplay.py`. |
+| **`improve-bot-advised`** | Autonomous improvement skill at `.claude/skills/improve-bot-advised/SKILL.md`. After Phase 5 it is sandboxed to `bots/current/**`. |
+| **PFSP-lite** | Prioritised-fictitious-self-play sampling. `w_i ∝ (1 - win_rate_vs_opponent_i)²`, cold-start uniform. Lives in `src/orchestrator/ladder.py` or `selfplay.py`. |
+| **`TrainingDaemon`** | Background thread in the API server that runs the intra-version RL loop. Triggers on transition count or time. Built in always-up Phase 3; runs today. |
+| **`PromotionManager`** | Intra-version promoter: compares new checkpoint WR against current best in `training.db`, promotes on ≥ 5% delta. Built in always-up Phase 3. |
+| **`RollbackMonitor`** | Intra-version regression detector: reverts `manifest.best` to `previous_best` on ≥ 15% WR drop over 30 games. Built in always-up Phase 3. |
+| **Intra-version promotion** | WR-based promotion *within* a single `bots/vN/` across training cycles. Uses `PromotionManager`. |
+| **Cross-version promotion** | Elo-based promotion `bots/vN/` → `bots/vN+1/` via subprocess self-play. Built in Phase 4. |
 
 ## How to read this plan
 
@@ -106,10 +143,10 @@ Per phase:
 
 ```
 Track 1 — Validation   [Phase A]   on current src/alpha4gate/
-Track 2 — Versioning   [0–5]       subprocess spike → move → registry → self-play → ladder → sandbox
+Track 2 — Versioning   [0–5]       subprocess spike → move+data migration → registry → self-play → ladder → sandbox
 Track 3 — Capability   [B, D, E]   per-version improvements inside bots/current/**
 Track 4 — Capability-F [F]         deferred; only if B/D/E insufficient
-Track 5 — Operational  [6]         autonomous self-improvement loop (needs 5 + at least one capability phase)
+Track 5 — Operational  [6]         cross-version self-play loop on top of existing daemon (needs 5 + at least one capability phase)
 ```
 
 ## Decision graph
@@ -119,7 +156,7 @@ Phase A (validate PR) ── gate: ≥ baseline WR → merge
     │
     └─ Phase 0 (subprocess spike) ── BLOCKING
             │
-            ├─ pass ──→ Phase 1 (bots/v0/) ──→ Phase 2 (registry) ──→ Phase 3 (self-play) ──→ Phase 4 (ladder) ──→ Phase 5 (sandbox)
+            ├─ pass ──→ Phase 1 (bots/v0/ + data migration) ──→ Phase 2 (registry) ──→ Phase 3 (self-play) ──→ Phase 4 (ladder) ──→ Phase 5 (sandbox)
             │                                                                                                                │
             │                                                                                   ┌────────────┬────────────┬──┘
             │                                                                                   ▼            ▼            ▼
@@ -133,14 +170,48 @@ Phase A (validate PR) ── gate: ≥ baseline WR → merge
 
 ## Baseline (as of 2026-04-15)
 
+**Model / training stack:**
+
 - **Policy:** SB3 `MlpPolicy`, 2×128 MLP, pure on-policy PPO
 - **Observation:** 24-dim scalar (17 game + 7 advisor)
 - **Action:** `Discrete(6)` strategic states
 - **Training:** vs built-in AI only, no self-play
 - **Win rate:** 75%+ at difficulty 3, struggles at 4–5
 - **Pending PR:** `feat/lstm-kl-imitation` branch (commit 498f405) adds
-  LSTM (`MlpLstmPolicy`), KL-to-rules auxiliary loss, imitation-init. **Not
-  yet validated.** See Phase A.
+  LSTM (`MlpLstmPolicy`), KL-to-rules auxiliary loss, imitation-init.
+  **Not yet validated.** See Phase A.
+
+**Autonomous platform (from completed always-up Phases 1–4.5):**
+
+- `TrainingDaemon` — threaded daemon in API server, transition-count +
+  time triggers, curriculum auto-advance, persistent config in
+  `data/daemon_config.json`.
+- `ModelEvaluator` + `PromotionManager` + `PromotionLogger` —
+  inference-only eval, WR-delta promotion gate, JSON + wiki logging.
+- `RollbackMonitor` — regression detection + auto-revert with
+  difficulty floor.
+- `training.db` (SQLite) — games + transitions + action probabilities,
+  per-model WR queries, source of truth for intra-version promotion.
+- `data/reward_logs/` — always-on per-game JSONL; aggregated via
+  `learning/reward_aggregator.py` for the dashboard Reward Trends card.
+- Dashboard (9 tabs): Live, Stats, Decisions, Training, Loop, Advisor,
+  Improvements, Processes, Alerts. Client-side alert engine with a
+  backend ERROR ring buffer.
+- 46 API endpoints for daemon/trigger/evaluate/promote/rollback/
+  curriculum/advised-run control.
+- 48 reward rules in `data/reward_rules.json` (only affect PPO under
+  `--decision-mode hybrid`, not rule-based default play).
+- **829 Python unit tests + 126 frontend vitest tests passing.**
+- Four `/improve-bot-advised` runs completed; run-4 code improvements
+  landed (anti-float expansion override, warp-in forward pylon
+  selection, bot wins 100% at difficulty 3).
+- **Outstanding findings.** `phase-4-5-backlog.md` holds the
+  dashboard-polish / daemon-tuning / docs-gaps carryover. Finding #11
+  (unconditional bootstrap promotion) is picked up as a Phase 1 cleanup
+  line item. Finding #12 (daemon idle deadlock) is resolved by Phase 3.
+
+See `documentation/archived/always-up-plan.md` for the full
+phase-by-phase history of how this baseline was built.
 
 ---
 
@@ -157,7 +228,7 @@ does not regress baseline before anything else is layered on.
 
 | Step | Description |
 |------|-------------|
-| A.0 | Checkout `feat/lstm-kl-imitation`; confirm 834 unit tests pass |
+| A.0 | Checkout `feat/lstm-kl-imitation`; confirm 829 unit tests pass |
 | A.1 | **No-op regression** — all flags at safe defaults. Confirms patch is a true no-op when off |
 | A.2 | **Imitation init alone** — `use_imitation_init: true`, `--ensure-pretrain`. Verify `v0_pretrain.zip` created + loaded |
 | A.3 | **KL-to-rules alone** — `kl_rules_coef: 0.1`, keep `MlpPolicy`. Verify no NaN, extra-pass overhead bounded |
@@ -254,13 +325,20 @@ Spike script is throwaway; no state to undo.
 
 ---
 
-## Phase 1 — Move full stack to `bots/v0/`; scaffold orchestrator
+## Phase 1 — Move full stack + data to `bots/v0/`; scaffold orchestrator
 
 **Track:** Versioning. **Goal:** `src/alpha4gate/` becomes `bots/v0/`.
-Orchestrator scaffolded. Everything works exactly as before, just loaded
-via the registry.
+`data/` splits: per-version state moves into `bots/v0/data/`, shared
+cross-version state stays at the repo root. Orchestrator scaffolded.
+Everything — including the daemon, dashboard, and every existing script —
+works exactly as before, just loaded via the registry.
 
 **Prerequisites:** Phase 0 pass.
+
+**Effort estimate is intentionally larger than the prior draft.** This
+phase does the code move AND the data migration AND fixes Finding #11 in
+one shot; interim broken state on a move of this size is worse than a
+bigger single commit.
 
 ### Scope
 
@@ -277,9 +355,26 @@ via the registry.
    `orchestrator/`.
 7. Update `runner.py` invocations in scripts to go through the
    orchestrator for spawning.
-8. Per-version `data/` dir: `bots/v0/data/` holds training.db,
-   checkpoints, reward_rules.json, hyperparams.json. Shared `data/`
-   holds only cross-version state (ladder, selfplay results).
+8. **Data migration (per-version vs shared split):**
+   - **Move to `bots/v0/data/`:** `training.db`, `checkpoints/`,
+     `reward_rules.json`, `hyperparams.json`, `reward_logs/`,
+     `daemon_config.json`, `diagnostic_states.json`,
+     `promotion_history.json`, `advised_run_state.json`,
+     `advised_run_control.json`.
+   - **Keep at repo-root `data/`:** future `selfplay_results.jsonl`
+     (Phase 3), `bot_ladder.json` (Phase 4). Nothing else.
+   - Update every API endpoint, every script, every frontend fetch to
+     resolve paths through the registry rather than hardcoding
+     `data/…`. The dashboard's `ProcessMonitor` state-file readers and
+     the advised-run bridge are the highest-churn touch points.
+9. **Finding #11 cleanup (promotion-gate bootstrap).** The current
+   `PromotionManager` short-circuits to "promote" when `manifest.best`
+   is null, which means the comparison code path was never exercised
+   in the soak runs. Pre-seed `bots/v0/manifest.json` with `best` and
+   `previous_best` set to the current best-known checkpoint during the
+   migration so that the first post-merge promotion goes through the
+   real comparison path. Add a `bootstrap_promotion` test that fails
+   if an unseeded manifest is passed to the gate.
 
 ### Contracts (frozen under `src/orchestrator/contracts.py`)
 
@@ -309,26 +404,32 @@ Breaking either contract requires a human PR.
 
 ### Risks
 
-- **Import graph churn.** ~46 modules to rename. Largest mechanical task
-  in the plan. 6–10h of careful refactor.
-- **Daemon/API pathing.** Anything hardcoding `data/` or `src/alpha4gate/`
-  must resolve relative to `bots/current/`.
+- **Import graph churn.** ~47 modules to rename. Largest mechanical task
+  in the plan.
+- **Daemon/API pathing.** The daemon, API endpoints, and frontend all
+  hardcode `data/…`. Each needs to resolve through the registry.
 - **Test imports.** `tests/` imports from `alpha4gate.*` — update to
   `bots.current.*` or a test-time alias.
+- **Frontend path churn.** File-based bridges (`advised_run_state.json`,
+  `advised_run_control.json`) move from `data/` to `bots/current/data/`.
 
 ### Tests
 
-Full existing suite runs green against the moved tree. No new tests.
+Full existing suite runs green against the moved tree. Add
+`tests/test_bootstrap_promotion.py` for Finding #11.
 
 ### Effort
 
-8–12 h.
+12–16 h (was 8–12 h; data migration + Finding #11 folded in).
 
 ### Gate
 
-- `uv run pytest` green (all 829 unit tests).
+- `uv run pytest` green (all 829 + new bootstrap test).
 - Full SC2 game runs via `python -m bots.current`.
-- Dashboard connects to `bots/current/` API and renders normally.
+- Dashboard connects to `bots/current/` API and renders normally across
+  all 9 tabs.
+- Daemon starts, triggers, completes a training cycle, promotes via the
+  non-bootstrap code path.
 
 ### Kill criterion
 
@@ -400,6 +501,14 @@ Absorbs AlphaStar Phase C's opponent-pool concept: PFSP-lite weights live
 inside `selfplay.py` as a sampler option; the opponent list comes from the
 registry rather than a standalone pool.
 
+**Structural note — resolves always-up Finding #12.** When the daemon is
+"idle" vs SC2 AI (no games in flight, `transitions_since_last=0`), the
+self-play runner can produce transitions against prior `bots/vN/`
+opponents. This removes the idle-deadlock hard cap at ~1 cycle/hour that
+soak run #1 hit. The daemon's trigger logic stays unchanged; the new
+transition supply comes from self-play subprocess runs that don't
+require the daemon to be "active."
+
 ### Scope
 
 1. `src/orchestrator/selfplay.py` + `scripts/selfplay.py`:
@@ -414,6 +523,10 @@ registry rather than a standalone pool.
 6. Sampling: plain `--p1 X --p2 Y` for head-to-head; optional
    `--sample pfsp --pool v0,v1,v2,v3 --games 40` uses PFSP-lite weights
    against a trainee.
+7. Transition hand-off: self-play games write their transitions into the
+   `p1` version's `bots/vN/data/training.db` (or both versions' DBs if
+   configured). This is what feeds the daemon during otherwise-idle
+   windows.
 
 ### Tests
 
@@ -421,6 +534,8 @@ registry rather than a standalone pool.
   crash of one side doesn't leak SC2, results line-valid JSONL.
 - `tests/test_pfsp_sampling.py` — PFSP-lite weights normalize, win-rate-0
   opponent gets zero weight, cold-start uniform.
+- `tests/test_selfplay_transition_hand_off.py` — self-play games produce
+  rows in the per-version training.db, resolving Finding #12.
 
 ### Effort
 
@@ -431,6 +546,8 @@ registry rather than a standalone pool.
 - 20-game self-play batch completes without hangs.
 - Results well-formed and seat-alternated.
 - One side crashes → other cleaned up; no orphan SC2.
+- Daemon "idle" state no longer blocks transition production when
+  self-play is running.
 
 ### Kill criterion
 
@@ -445,9 +562,14 @@ be truncated or deleted.
 
 ---
 
-## Phase 4 — Elo ladder
+## Phase 4 — Elo ladder + cross-version promotion
 
 **Track:** Versioning. **Prerequisites:** Phase 3.
+
+Introduces the **cross-version promotion signal**. The intra-version
+`PromotionManager` from always-up Phase 3 keeps running on WR delta
+inside `bots/current/`; this phase adds the Elo gate for promoting
+`bots/current/` → `bots/vN+1/`.
 
 ### Scope
 
@@ -457,24 +579,38 @@ be truncated or deleted.
    - `show` — standings.
    - `compare vA vB --games 20`.
 3. Standard Elo, K=32, new versions start at parent's Elo.
-4. Dashboard tab: ladder + head-to-head grid. Frontend reads
-   `data/bot_ladder.json` (shared data, schema-stable).
-5. Analytics: any downstream queries use `pd.read_json('data/selfplay_results.jsonl', lines=True)`.
+4. Dashboard: **Ladder becomes the 10th tab** (sibling to Training,
+   Improvements, etc.). Shows standings + head-to-head grid. Frontend
+   reads `data/bot_ladder.json` (shared data, schema-stable).
+5. Analytics: any downstream queries use
+   `pd.read_json('data/selfplay_results.jsonl', lines=True)`.
+6. **Cross-version promotion gate.** Snapshot `bots/current/` → `bots/vN+1/`
+   requires:
+   - Elo gain ≥ +10 vs parent `bots/vN/` over ≥ 20 self-play games, AND
+   - WR non-regression vs SC2 AI at the current curriculum difficulty
+     (sanity check — a 100-Elo gain that also drops WR 30% is suspect).
+   The intra-version `PromotionManager` continues to run independently
+   on WR delta inside `bots/current/`; cross-version is a second level.
 
 ### Tests
 
 - `tests/test_ladder.py` — Elo math correct, known-scenario reproducible,
   promotion threshold configurable.
+- `tests/test_cross_version_gate.py` — WR sanity check rejects
+  suspicious Elo gains.
 
 ### Effort
 
-3–4 h.
+3–4 h (was 3–4 h; 10th-tab scope is small — reuses existing dashboard
+patterns).
 
 ### Gate
 
 - Ladder updates reproducibly on a known scenario.
-- Dashboard tab renders.
+- Ladder tab renders alongside the existing 9.
 - Ladder JSON schema documented in `src/orchestrator/contracts.py`.
+- Cross-version promotion can be triggered end-to-end and respects both
+  Elo and WR gates.
 
 ### Kill criterion
 
@@ -507,8 +643,9 @@ gate shifts to win-rate-vs-SC2-AI as primary, Elo as secondary.
    - After a passing iteration: snapshot to `vN+1`, commit tagged
      `[advised-auto]`, push.
 3. **Validation rewire:** new `current` plays prior best via
-   `selfplay.py`. Promotion on Elo gain ≥ threshold (default +10 Elo
-   over 20 games, configurable in hyperparams).
+   `selfplay.py`. Cross-version promotion on Elo gain ≥ threshold
+   (default +10 Elo over 20 games, configurable in hyperparams) AND
+   intra-version WR non-regression.
 4. **Run-start banner:** skill prints at session start:
    > I can edit: bots/current/**.
    > I cannot edit: src/orchestrator/, pyproject.toml, tests/, frontend/, scripts/.
@@ -714,6 +851,11 @@ Delete promoted `vN`; prior versions unaffected by design.
 **Track:** Operational. **Prerequisites:** Phase 5 + at least one of
 {B, D, E} promoted (so there's a non-trivial starting point).
 
+This phase does not rebuild the intra-version loop — the existing
+`TrainingDaemon` / `PromotionManager` / `RollbackMonitor` (from always-up
+Phase 3) continues to run inside `bots/current/`. Phase 6 adds the
+**cross-version** self-play layer on top.
+
 ### Scope
 
 1. `/improve-bot-advised --self-improve-code --opponent v5` — curriculum
@@ -722,6 +864,9 @@ Delete promoted `vN`; prior versions unaffected by design.
    (AlphaStar-lite league at single-box scale) using PFSP-lite sampler.
 3. Operational mode — this is how B / D / E / F are driven autonomously
    once shipped. Not a one-shot phase; an ongoing regime.
+4. Dashboard surfacing: Ladder tab (from Phase 4) shows cross-version
+   progress; Improvements tab continues to show intra-version
+   promotions/rollbacks from the existing daemon.
 
 ### Tests
 
@@ -811,25 +956,32 @@ signal. GPU support explicitly out of scope.
 |-------|-----------|-----------|-------------|
 | A | 0.5 d | 1 d | 2 d (all configs regress) |
 | 0 | 1 h | 2 h | 0.5 d (API investigation) |
-| 1 | 6 h | 8–12 h | 2 d (hidden coupling) |
+| 1 | 10 h | 12–16 h | 3 d (hidden coupling + data migration edge cases) |
 | 2 | 2 h | 3–4 h | 6 h (serialization edge cases) |
 | 3 | 3 h | 4–6 h | 1 d (crash hygiene) |
-| 4 | 2 h | 3–4 h | 6 h (Elo noise tuning) |
+| 4 | 2 h | 3–4 h | 6 h (Elo noise tuning, 10th-tab integration) |
 | 5 | 2 h | 3–5 h | 1 d (Windows hook issues) |
 | B | 1 d | 1–2 d | 3 d (DB migration edges) |
 | D | 2 d | 3 d | 1 w (rule audit tangled) |
 | E | 1 w | 1 w | 2 w (SB3 override painful) |
 | 6 | 2 h code | open-ended soak | ongoing |
 | F | 1.5 w | 2 w | 3 w (training destabilizes) |
-| **Sub-total (A–E + 0–5 + 6 wire-up)** | **~3 w** | **~5–6 w** | **~9–10 w** |
-| **+ 20% integration buffer** | +0.6 w | +1.2 w | +2 w |
-| **Total (excl. F)** | **~3.5 w** | **~6–7 w** | **~11–12 w** |
+| **Sub-total (A–E + 0–5 + 6 wire-up)** | **~3.5 w** | **~5.5–6.5 w** | **~10–11 w** |
+| **+ 20% integration buffer** | +0.7 w | +1.3 w | +2.2 w |
+| **Total (excl. F)** | **~4 w** | **~7–8 w** | **~12–13 w** |
 | **+ F if chased** | +1.5 w | +2 w | +3 w |
 
 ## What's NOT in this plan (deliberately)
 
 - **Checkpoint-only opponent pools** (old AlphaStar Phase C). Subsumed
   by full-stack versioning; would regress as soon as Phase B ships.
+- **Domain interface abstraction / CartPole validation** (old always-up
+  Phase 5, issues #101–#103). Subsumed by `bots/vN/` physical
+  isolation. Each version is already its own stack with its own
+  observation / action / reward spec; a typed
+  `Environment` / `FeatureSpec` / `RewardSpec` layer would be
+  redundant. If a non-SC2 domain ever matters, a `bots/cartpole_v0/`
+  stack is the expression of it — no interface hoisting needed.
 - **League training** (AlphaStar's main-exploiter / league-exploiter
   split). PFSP-lite sampling over the registry captures ~30% at ~5% cost.
 - **V-trace / UPGO** off-policy corrections. PPO is fine at single-box scale.
@@ -844,6 +996,23 @@ signal. GPU support explicitly out of scope.
 - **Human-vs-bot interactive play.**
 - **Cross-version feature-spec or action-space invariants.** Each
   `bots/vN/` is an independent stack; no global append-only rule.
+- **WebSocket upgrade for training/loop/alerts.** Deferred from
+  always-up Phase 4; reconsider after Phase 6 operational soak.
+- **Disk rotation / compression for `reward_logs/`.** Deferred from
+  always-up Phase 2; still monitor manually.
+
+## Historical phases (from the archived always-up plan)
+
+One-line summary of work that shipped and became this plan's Baseline.
+Full detail in `documentation/archived/always-up-plan.md`.
+
+| Phase | Status | Deliverables |
+|-------|--------|--------------|
+| 1. Wiki & Documentation | DONE 2026-04-09 | 15 wiki pages covering system, evaluation, training, monitoring, domain coupling, frontend, testing, promotions, FAQ |
+| 2. Monitoring & Observability | DONE 2026-04-09 | Action-probability persistence, always-on reward JSONL, per-checkpoint WR, model-comparison + improvement-timeline dashboard cards |
+| 3. Autonomous Training Loop | DONE 2026-04-10 | `TrainingDaemon`, trigger logic, `ModelEvaluator`, `PromotionManager`, `RollbackMonitor`, curriculum auto-advance |
+| 4. Transparency Dashboard | DONE 2026-04-09 | 9-tab dashboard, Loop / Improvements / Alerts tabs, `RewardTrends`, client-side alert engine, trigger controls |
+| 4.5. First Real Soak Test | DONE 2026-04-11 | `soak-test.md` procedure, 4-hour soak run, 17 findings triaged, 5 blockers fixed (#66–#74), #11/#12 handed to this plan |
 
 ## Tracking
 
@@ -854,10 +1023,27 @@ for interrupt-resume context.
 Umbrella issue #105 (versioning big-box) and subprocess-spike issue #106
 already exist; re-scope them to this merged plan or close and re-cut.
 
+Issues **#101, #102, #103** (old always-up Phase 5 Domain Abstraction
+steps) are closed as subsumed by full-stack versioning; see this plan's
+"What's NOT in this plan" entry and plan history for rationale.
+
 ## Plan history
 
 Append-only — do not edit prior entries.
 
+- *2026-04-15* — merged `always-up-plan.md` into this plan. Always-up
+  Phases 1–4.5 collapsed into the Baseline + Historical phases table;
+  always-up Phase 5 (Domain interface / CartPole) dropped as subsumed
+  by `bots/vN/` physical isolation. Finding #11 (unconditional
+  bootstrap promotion) folded into Phase 1 as a cleanup line item;
+  Finding #12 (daemon idle deadlock) noted as structurally resolved by
+  Phase 3's subprocess self-play transition supply. Intra-version WR
+  promotion (existing daemon) and cross-version Elo promotion (new
+  Phase 4 gate) named as the two-tier promotion model. Phase 1 effort
+  raised 8–12 h → 12–16 h to cover the one-shot code + data migration.
+  Ladder named as the dashboard's 10th tab. Issues #101/#102/#103
+  closed as subsumed. `always-up-plan.md` archived under
+  `documentation/archived/`.
 - *2026-04-15* — merged from `alphastar-upgrade-plan.md` and
   `bot-versioning-selfplay-plan.md` (both archived). AlphaStar Phase C
   deleted; its goal subsumed by versioning Phases 0, 3, 4, 6. Cross-version

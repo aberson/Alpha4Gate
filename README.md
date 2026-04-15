@@ -189,7 +189,7 @@ Alpha4Gate/
 ├── frontend/                # React + TypeScript dashboard (Vite)
 ├── scripts/                 # Live test, training analysis, model evaluation
 ├── documentation/wiki/      # Project wiki (start with index.md)
-├── documentation/plans/     # Active plans (always-up-plan.md)
+├── documentation/plans/     # Active plans (alpha4gate-master-plan.md)
 ├── documentation/archived/  # Completed plans (Phase 1, Phase 2, improvement cycles)
 ├── data/                    # Cross-game stats, training DB, checkpoints (gitignored)
 ├── logs/                    # JSONL game logs (gitignored)
