@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -79,12 +80,19 @@ class PromotionManager:
         self,
         new_checkpoint: str,
         difficulty: int,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> PromotionDecision:
         """Evaluate a new checkpoint against the current best and promote if better.
 
         Args:
             new_checkpoint: Name of the newly trained checkpoint (e.g., "v5").
             difficulty: SC2 AI difficulty level for evaluation games.
+            cancel_check: Optional callable returning True to signal cancel.
+                Threaded through to each underlying ``evaluate()`` call so the
+                daemon's stop signal halts promotion evals between games. A
+                partial eval will fail the ``min_eval_games`` gate and the
+                promotion will be refused (no unsafe promotion from truncated
+                data).
 
         Returns:
             PromotionDecision with evaluation results and promotion outcome.
@@ -99,7 +107,12 @@ class PromotionManager:
         # reported win_rate is untrustworthy (Phase 4.5 blocker #67).
         if old_best is None:
             _log.info("No current best checkpoint -- promoting %s", new_checkpoint)
-            new_eval = self._evaluator.evaluate(new_checkpoint, self._config.eval_games, difficulty)
+            new_eval = self._evaluator.evaluate(
+                new_checkpoint,
+                self._config.eval_games,
+                difficulty,
+                cancel_check=cancel_check,
+            )
             if new_eval.crashed > self._config.max_crashed:
                 reason = (
                     f"too many crashed eval games: new={new_eval.crashed} "
@@ -140,8 +153,18 @@ class PromotionManager:
             self._config.eval_games,
             difficulty,
         )
-        new_eval = self._evaluator.evaluate(new_checkpoint, self._config.eval_games, difficulty)
-        old_eval = self._evaluator.evaluate(old_best, self._config.eval_games, difficulty)
+        new_eval = self._evaluator.evaluate(
+            new_checkpoint,
+            self._config.eval_games,
+            difficulty,
+            cancel_check=cancel_check,
+        )
+        old_eval = self._evaluator.evaluate(
+            old_best,
+            self._config.eval_games,
+            difficulty,
+            cancel_check=cancel_check,
+        )
 
         # Refuse to promote if either eval had too many crashes. Crashed
         # games used to be silently counted as losses (Phase 4.5 blocker

@@ -6,6 +6,7 @@ import logging
 import queue
 import sqlite3
 import threading
+import time
 import uuid
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -46,6 +47,20 @@ WARMUP_GAME_SECONDS: float = 0.0  # disabled — PPO learns faster without force
 # Max game time in seconds before forcing a timeout (prevents passive stalls)
 MAX_GAME_TIME_SECONDS: float = 18000.0  # 5 hours — let games end naturally so all reward rules fire
 
+# Per-game wall-clock watchdog (soak-2026-04-15 postmortem).
+# The SC2-side MAX_GAME_TIME_SECONDS is 5h of game-time, which an idle
+# passive game can burn in real wall time (observations keep flowing but
+# neither player pushes). One stuck eval game in the 04-15 soak ate 5h
+# of real wall time and blocked the whole orchestrator. Two gates:
+#   - soft: push the shutdown sentinel on the action queue so
+#     ``_sync_game``'s ``_resign_and_mark_done`` ends the game cleanly
+#     and training/eval moves to the next game.
+#   - hard: synthesize a terminal observation directly and abandon the
+#     game thread when the soft path didn't take (game thread wedged
+#     on burnysc2 I/O and not polling the action queue).
+WATCHDOG_SOFT_SECONDS: float = 1800.0  # 30 min — resign-via-sentinel
+WATCHDOG_HARD_SECONDS: float = 2700.0  # 45 min — synthesize terminal and move on
+
 # Single source of truth for the bridge observation tuple shape:
 # (obs_vector, info_dict, done_flag, result_string).
 # All queue annotations in this module reference this alias; see
@@ -85,6 +100,8 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         stats_path: Path | None = None,
         build_order_label: str = "4gate",
         advisor_bridge: Any | None = None,
+        watchdog_soft_seconds: float = WATCHDOG_SOFT_SECONDS,
+        watchdog_hard_seconds: float = WATCHDOG_HARD_SECONDS,
     ) -> None:
         super().__init__()
         self._map_name = map_name
@@ -148,6 +165,29 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         # loudly instead of silently dropping out of ``get_recent_win_rate``.
         # See Bug B in the soak-2026-04-11 cycle 5 postmortem.
         self._game_store_failed_count: int = 0
+
+        # Per-game wall-clock watchdog state (soak-2026-04-15).
+        # ``_game_wall_start`` is set in ``reset()`` right before the game
+        # thread spawns and read by ``step()`` on every iteration.
+        # ``_soft_cancel_sent`` ensures the shutdown sentinel is pushed
+        # at most once per game — PPO may call ``step()`` many times
+        # between soft-gate trigger and the game thread actually draining
+        # the action queue.
+        self._watchdog_soft_seconds: float = watchdog_soft_seconds
+        self._watchdog_hard_seconds: float = watchdog_hard_seconds
+        self._game_wall_start: float = 0.0
+        self._soft_cancel_sent: bool = False
+
+        # Thread-level hard watchdog (post-soak-2026-04-15 fix). The
+        # step()-level watchdog only fires when step() is called; if
+        # _sync_game itself wedges (burnysc2 websocket stall, hung SC2
+        # frame, SQLite-blocked store_game), step() never returns and the
+        # check is never evaluated. This timer thread runs independently
+        # and force-closes SC2 via KillSwitch.kill_all() when the hard
+        # gate elapses, unblocking _sync_game with a websocket error
+        # that its exception path handles cleanly.
+        self._hard_watchdog_cancel: threading.Event | None = None
+        self._hard_watchdog_thread: threading.Thread | None = None
 
     @property
     def game_store_failed_count(self) -> int:
@@ -239,6 +279,8 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         self._step_index = 0
         self._total_reward = 0.0
         self._last_snapshot = None
+        self._game_wall_start = time.monotonic()
+        self._soft_cancel_sent = False
 
         # Create FRESH queues for the new game. Issue #72: if the previous
         # game_thread was orphaned (for example because close() timed out
@@ -249,6 +291,12 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         self._obs_queue = queue.Queue[_ObsTuple]()
         self._action_queue = queue.Queue[int | None]()
 
+        # Cancel any prior hard-watchdog before starting a new game.
+        # If the prior game thread was abandoned but its SC2 still lives,
+        # the old watchdog is what will eventually reclaim it, so only
+        # cancel once we know a fresh watchdog is about to take over.
+        self._cancel_hard_watchdog()
+
         # Launch game in background thread
         self._game_thread = threading.Thread(
             target=self._run_game_thread,
@@ -256,6 +304,10 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
             daemon=True,
         )
         self._game_thread.start()
+
+        # Start thread-level hard watchdog (force-closes SC2 if the game
+        # thread is still alive after hard_seconds, independent of step()).
+        self._start_hard_watchdog(self._game_thread)
 
         # Wait for first observation
         obs, info, done, _ = self._obs_queue.get(timeout=300)
@@ -265,6 +317,35 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
         self, action: int
     ) -> tuple[NDArray[np.float32], float, bool, bool, dict[str, Any]]:
         """Apply action, advance 22 game steps, return new observation."""
+        # Per-game wall-clock watchdog (soak-2026-04-15). Checked BEFORE
+        # pushing an action so a wedged game can't burn another step's
+        # latency before being ended. Two gates:
+        #   - Hard gate: abandon the game thread outright and return a
+        #     synthetic terminal so PPO/eval moves to the next game. The
+        #     thread becomes a zombie; #72's queue-swap in ``reset()``
+        #     keeps its residual writes isolated.
+        #   - Soft gate: push the None sentinel to ``_action_queue`` so
+        #     ``_sync_game``'s ``_resign_and_mark_done`` fires and the
+        #     game ends cleanly. Fire at most once per game.
+        elapsed = time.monotonic() - self._game_wall_start
+        if elapsed > self._watchdog_hard_seconds:
+            _log.error(
+                "Watchdog HARD timeout: game %s ran %.0fs real-time "
+                "(>%.0fs); abandoning game thread and forcing terminal.",
+                self._game_id, elapsed, self._watchdog_hard_seconds,
+            )
+            self._game_store_failed_count += 1
+            obs = np.zeros(FEATURE_DIM, dtype=np.float32)
+            return obs, -10.0, True, False, {"error": "watchdog_hard_timeout"}
+        if elapsed > self._watchdog_soft_seconds and not self._soft_cancel_sent:
+            _log.error(
+                "Watchdog SOFT timeout: game %s ran %.0fs real-time "
+                "(>%.0fs); sending shutdown sentinel to game thread.",
+                self._game_id, elapsed, self._watchdog_soft_seconds,
+            )
+            self._action_queue.put(None)
+            self._soft_cancel_sent = True
+
         # Send action to game thread
         self._action_queue.put(action)
 
@@ -310,6 +391,7 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
 
     def close(self) -> None:
         """Shut down the game thread and kill SC2."""
+        self._cancel_hard_watchdog()
         if self._game_thread is not None and self._game_thread.is_alive():
             # Signal shutdown
             self._action_queue.put(None)
@@ -323,6 +405,135 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
                     q.get_nowait()
                 except queue.Empty:
                     break
+
+    def _start_hard_watchdog(self, watched_thread: threading.Thread) -> None:
+        """Arm a timer thread that force-closes SC2 if the game wedges.
+
+        The step()-level watchdog only fires when step() is called; this
+        guards against _sync_game wedging entirely. On expiry, terminates
+        the specific SC2 process(es) spawned by this env's game thread,
+        unblocking the burnysc2 websocket so _sync_game's exception path
+        can clean up.
+
+        Two deliberate differences from calling burnysc2's
+        ``KillSwitch.kill_all()`` directly:
+          1. ``KillSwitch._to_kill`` is process-global — naively calling
+             ``kill_all()`` would terminate SC2 binaries owned by other
+             concurrent envs/evaluators in the same Python process. We
+             snapshot ``_to_kill`` at arm-time and only touch entries
+             added AFTER that snapshot.
+          2. burnysc2's ``SC2Process._clean`` tries ``terminate()`` x3
+             with no fallback to ``kill()`` if terminate is ignored.
+             On a hung SC2 this can silently fail. We escalate
+             terminate → wait → kill → wait ourselves.
+        """
+        # __new__-constructed test envs skip __init__ and don't set the
+        # watchdog config; treat that as "no watchdog" so tests that
+        # exercise reset() without wiring the watchdog attrs still pass.
+        hard_seconds = getattr(self, "_watchdog_hard_seconds", None)
+        if hard_seconds is None:
+            return
+        cancel = threading.Event()
+        self._hard_watchdog_cancel = cancel
+
+        # Snapshot the process-global KillSwitch._to_kill by identity so
+        # we can tell which SC2Process instances are owned by THIS game.
+        try:
+            from sc2.sc2process import KillSwitch
+
+            preexisting_ids = {id(p) for p in KillSwitch._to_kill}
+        except Exception:  # pragma: no cover - defensive only
+            preexisting_ids = set()
+
+        def _worker() -> None:
+            # wait() returns True if cancelled, False on timeout.
+            if cancel.wait(timeout=hard_seconds):
+                return
+            # Race guard: the cancel event may have been set between the
+            # wait returning False and this check. Without this we'd
+            # still kill SC2 on a game that just finished cleanly.
+            if cancel.is_set():
+                return
+            if not watched_thread.is_alive():
+                return
+            _log.error(
+                "Thread watchdog: game %s still alive after %.0fs; "
+                "force-terminating SC2 process(es) owned by this game.",
+                self._game_id, hard_seconds,
+            )
+            self._force_terminate_sc2(preexisting_ids)
+
+        self._hard_watchdog_thread = threading.Thread(
+            target=_worker, daemon=True, name="a4g-hard-watchdog",
+        )
+        self._hard_watchdog_thread.start()
+
+    def _force_terminate_sc2(self, preexisting_ids: set[int]) -> None:
+        """Terminate SC2 Popen handles added during this game only.
+
+        Escalates terminate → wait(3s) → kill → wait(3s) so a hung
+        SC2 binary that ignores terminate still dies. ``preexisting_ids``
+        scopes the kill to SC2Process instances registered AFTER the
+        watchdog was armed, leaving sibling envs' SC2 processes intact.
+        """
+        try:
+            from sc2.sc2process import KillSwitch
+        except Exception:  # pragma: no cover - defensive only
+            _log.exception(
+                "Watchdog: cannot import KillSwitch; SC2 not terminated"
+            )
+            return
+
+        targets = [
+            p for p in KillSwitch._to_kill if id(p) not in preexisting_ids
+        ]
+        if not targets:
+            _log.warning(
+                "Watchdog fired but found no SC2 processes owned by this "
+                "game; SC2 may already be gone or was never registered."
+            )
+            return
+
+        for sc2_proc in targets:
+            popen = getattr(sc2_proc, "_process", None)
+            if popen is None:
+                continue
+            if popen.poll() is not None:
+                continue  # already exited
+            pid = getattr(popen, "pid", "?")
+            try:
+                popen.terminate()
+                try:
+                    popen.wait(timeout=3)
+                except Exception:  # pragma: no cover - timeout path
+                    pass
+                if popen.poll() is None:
+                    popen.kill()
+                    try:
+                        popen.wait(timeout=3)
+                    except Exception:  # pragma: no cover - timeout path
+                        pass
+                _log.info(
+                    "Watchdog terminated SC2 pid=%s (exit=%s)",
+                    pid, popen.poll(),
+                )
+            except Exception:  # pragma: no cover - defensive only
+                _log.exception(
+                    "Watchdog failed to terminate SC2 pid=%s", pid,
+                )
+
+    def _cancel_hard_watchdog(self) -> None:
+        """Signal the hard watchdog to stop without waiting for it.
+
+        Tolerates missing attributes because several tests construct
+        SC2Env via ``__new__`` without invoking ``__init__`` and this is
+        called unconditionally from ``close()`` and ``reset()``.
+        """
+        cancel = getattr(self, "_hard_watchdog_cancel", None)
+        if cancel is not None:
+            cancel.set()
+        self._hard_watchdog_cancel = None
+        self._hard_watchdog_thread = None
 
     def _run_game_thread(
         self,
@@ -375,6 +586,10 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
             obs_queue.put((obs, {}, True, "loss"))
         finally:
             signal.signal = _orig_signal
+            # Game thread finished (normally or via exception) — cancel the
+            # thread-level hard watchdog so it doesn't fire KillSwitch.kill_all()
+            # on the next game's SC2 process.
+            self._cancel_hard_watchdog()
             # Phase 4.7 Step 3 (#84): unconditional terminal sentinel on
             # ``_obs_queue`` so ``SC2Env.step()`` never stalls for the
             # full 300-second timeout after a normal game end.

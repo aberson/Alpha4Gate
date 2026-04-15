@@ -14,6 +14,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from alpha4gate.army_coherence import ArmyCoherenceManager
 from alpha4gate.bot import Alpha4GateBot
 from alpha4gate.build_backlog import BuildBacklog
+from alpha4gate.commands.dispatch_guard import DispatchGuard
 from alpha4gate.decision_engine import DecisionEngine, GameSnapshot
 from alpha4gate.fortification import FortificationManager
 
@@ -49,6 +50,8 @@ def _make_bot(seed: int = 42) -> MagicMock:
     # Coherence manager
     cm = ArmyCoherenceManager(seed=seed)
     bot.coherence_manager = cm
+
+    bot._dispatch_guard = DispatchGuard()
 
     # Decision engine
     bot.decision_engine = DecisionEngine(
@@ -101,6 +104,7 @@ def _make_bot(seed: int = 42) -> MagicMock:
     bot._cached_staging_point = None
     bot._staging_point_time = -999.0
     bot._cached_enemy_natural = None
+    bot.already_pending = MagicMock(return_value=0)
 
     # Mock structures() — return empty by default
     def _structures(uid: UnitTypeId) -> MagicMock:
@@ -140,6 +144,7 @@ class TestFortificationManagerWiring:
                 pylon.distance_to = MagicMock(return_value=5.0)
                 result.ready = MagicMock()
                 result.ready.__iter__ = MagicMock(return_value=iter([pylon]))
+                result.__iter__ = MagicMock(return_value=iter([pylon]))
             else:
                 result.ready = MagicMock()
                 result.ready.__len__ = MagicMock(return_value=0)

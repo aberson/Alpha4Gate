@@ -79,6 +79,8 @@ def _make_fake_thread_start(
     """
 
     def fake_start(thread: threading.Thread) -> None:
+        if not getattr(thread, "_args", ()):  # ignore hard-watchdog thread
+            return
         env = env_ref["env"]
         obs_q = thread._args[0]  # type: ignore[attr-defined]
 

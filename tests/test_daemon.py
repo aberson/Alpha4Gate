@@ -1080,7 +1080,12 @@ class TestCrashedCyclesSkipPromotion:
 
         # Promotion gate called against the SUCCESSFUL checkpoint, not the
         # crashed one (which has no checkpoint key at all)
-        mock_pm.evaluate_and_promote.assert_called_once_with("v7", 2)
+        assert mock_pm.evaluate_and_promote.call_count == 1
+        call = mock_pm.evaluate_and_promote.call_args
+        assert call.args == ("v7", 2)
+        # Daemon's stop_event.is_set is threaded through so POST
+        # /api/training/stop halts in-flight promotion evals too.
+        assert call.kwargs.get("cancel_check") == daemon._stop_event.is_set
 
 
 class TestAllCrashedTrainingRunIsFailure:
@@ -1944,7 +1949,9 @@ class TestWatchdogPerCycleCrashVisibility:
 
         observed_last_error: list[str | None] = []
 
-        def fake_evaluate_and_promote(_checkpoint: str, _difficulty: int) -> Any:
+        def fake_evaluate_and_promote(
+            _checkpoint: str, _difficulty: int, **_kw: Any
+        ) -> Any:
             # Emit enough eval-phase ERROR records to exceed the
             # watchdog threshold, then busy-wait until either the
             # watchdog fires or the safety cap expires.

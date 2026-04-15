@@ -649,7 +649,9 @@ class TrainingDaemon:
                 try:
                     pm = self._get_promotion_manager()
                     decision = pm.evaluate_and_promote(
-                        latest_checkpoint, current_difficulty
+                        latest_checkpoint,
+                        current_difficulty,
+                        cancel_check=self._stop_event.is_set,
                     )
                     _log.info(
                         "Promotion decision: %s (promoted=%s, reason=%s)",

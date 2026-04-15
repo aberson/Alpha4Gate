@@ -453,6 +453,141 @@ class TestJobManagement:
         assert "no checkpoint" in job.error
 
 
+class TestJobCancellation:
+    def test_cancel_nonexistent_job(self, evaluator: ModelEvaluator) -> None:
+        assert evaluator.cancel_job("nonexistent") == "not_found"
+
+    def test_cancel_pending_job_sets_flag(self, evaluator: ModelEvaluator) -> None:
+        job_id = evaluator.submit_job("v5", 10, 3)
+        assert evaluator.cancel_job(job_id) == "cancellation_requested"
+        job = evaluator.get_job(job_id)
+        assert job is not None
+        assert job.cancel_requested is True
+
+    def test_cancel_completed_job_rejected(
+        self, evaluator: ModelEvaluator
+    ) -> None:
+        model = MagicMock()
+        model.predict.return_value = (np.array(0), None)
+        env = _mock_env()
+
+        job_id = evaluator.submit_job("v1", 1, 1)
+        with (
+            patch.object(evaluator, "_load_model", return_value=model),
+            patch.object(evaluator, "_create_env", return_value=env),
+            patch.object(evaluator, "_get_game_result", return_value="win"),
+        ):
+            evaluator.run_job(job_id)
+
+        assert evaluator.cancel_job(job_id) == "already_completed"
+
+    def test_run_job_respects_pre_cancelled_flag(
+        self, evaluator: ModelEvaluator
+    ) -> None:
+        """Cancelling before run_job starts means zero games played."""
+        model = MagicMock()
+        env = _mock_env()
+
+        job_id = evaluator.submit_job("v1", 5, 1)
+        evaluator.cancel_job(job_id)
+
+        with (
+            patch.object(evaluator, "_load_model", return_value=model),
+            patch.object(evaluator, "_create_env", return_value=env),
+            patch.object(evaluator, "_get_game_result", return_value="win"),
+        ):
+            evaluator.run_job(job_id)
+
+        job = evaluator.get_job(job_id)
+        assert job is not None
+        assert job.status == "cancelled"
+        assert job.result is not None
+        assert job.result.games_played == 0
+
+    def test_evaluate_cancel_check_pre_loop(
+        self, evaluator: ModelEvaluator
+    ) -> None:
+        """cancel_check returning True from game 0 yields 0 games played."""
+        model = MagicMock()
+        env = _mock_env()
+
+        with (
+            patch.object(evaluator, "_load_model", return_value=model),
+            patch.object(evaluator, "_create_env", return_value=env),
+            patch.object(evaluator, "_get_game_result", return_value="win"),
+        ):
+            result = evaluator.evaluate(
+                "v1", 5, difficulty=1, cancel_check=lambda: True
+            )
+
+        assert result.games_played == 0
+        assert result.wins == 0
+        assert result.losses == 0
+
+    def test_evaluate_cancel_check_mid_loop(
+        self, evaluator: ModelEvaluator
+    ) -> None:
+        """cancel_check flipping after first game produces partial result."""
+        model = MagicMock()
+        model.predict.return_value = (np.array(0), None)
+        env = _mock_env()
+
+        calls = {"n": 0}
+
+        def cancel_after_first() -> bool:
+            calls["n"] += 1
+            return calls["n"] > 1  # False on first check, True after
+
+        with (
+            patch.object(evaluator, "_load_model", return_value=model),
+            patch.object(evaluator, "_create_env", return_value=env),
+            patch.object(evaluator, "_get_game_result", return_value="win"),
+        ):
+            result = evaluator.evaluate(
+                "v1", 10, difficulty=1, cancel_check=cancel_after_first
+            )
+
+        assert result.games_played == 1
+        assert result.wins == 1
+
+    def test_run_job_mid_run_cancellation(
+        self, evaluator: ModelEvaluator
+    ) -> None:
+        """Cancel after first game; second iteration exits before playing."""
+        model = MagicMock()
+        model.predict.return_value = (np.array(0), None)
+        env = _mock_env()
+
+        job_id = evaluator.submit_job("v1", 5, 1)
+
+        call_count = {"n": 0}
+
+        def game_result_then_cancel(_game_id: str) -> str:
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                evaluator.cancel_job(job_id)
+            return "win"
+
+        with (
+            patch.object(evaluator, "_load_model", return_value=model),
+            patch.object(evaluator, "_create_env", return_value=env),
+            patch.object(
+                evaluator,
+                "_get_game_result",
+                side_effect=game_result_then_cancel,
+            ),
+        ):
+            evaluator.run_job(job_id)
+
+        job = evaluator.get_job(job_id)
+        assert job is not None
+        assert job.status == "cancelled"
+        assert job.result is not None
+        assert job.result.games_played == 1
+        assert job.result.wins == 1
+        assert call_count["n"] == 1
+
+
 class TestGetGameResult:
     def test_existing_game(self, evaluator: ModelEvaluator, db: TrainingDB) -> None:
         db.store_game("eval_test_1", "Simple64", 1, "win", 300.0, 5.0, "v1")
@@ -813,3 +948,45 @@ class TestEvalAPIEndpoints:
         assert data["status"] == "completed"
         assert data["result"]["wins"] == 2
         assert data["result"]["win_rate"] == pytest.approx(0.667)
+
+    @patch("alpha4gate.api._get_evaluator")
+    def test_stop_running_job(
+        self,
+        mock_get_eval: MagicMock,
+        client: Any,
+    ) -> None:
+        mock_evaluator = MagicMock()
+        mock_evaluator.cancel_job.return_value = "cancellation_requested"
+        mock_get_eval.return_value = mock_evaluator
+
+        resp = client.post("/api/training/evaluate/job789/stop")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "cancellation_requested"
+        mock_evaluator.cancel_job.assert_called_once_with("job789")
+
+    @patch("alpha4gate.api._get_evaluator")
+    def test_stop_nonexistent_job(
+        self,
+        mock_get_eval: MagicMock,
+        client: Any,
+    ) -> None:
+        mock_evaluator = MagicMock()
+        mock_evaluator.cancel_job.return_value = "not_found"
+        mock_get_eval.return_value = mock_evaluator
+
+        resp = client.post("/api/training/evaluate/ghost/stop")
+        assert resp.status_code == 404
+
+    @patch("alpha4gate.api._get_evaluator")
+    def test_stop_already_completed_job(
+        self,
+        mock_get_eval: MagicMock,
+        client: Any,
+    ) -> None:
+        mock_evaluator = MagicMock()
+        mock_evaluator.cancel_job.return_value = "already_completed"
+        mock_get_eval.return_value = mock_evaluator
+
+        resp = client.post("/api/training/evaluate/done/stop")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "already_completed"

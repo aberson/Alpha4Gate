@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -53,13 +54,14 @@ class EvalJob:
     """Tracks an in-progress or completed evaluation job."""
 
     job_id: str
-    status: str  # "pending", "running", "completed", "failed"
+    status: str  # "pending", "running", "completed", "failed", "cancelled"
     checkpoint: str
     n_games: int
     difficulty: int
     result: EvalResult | None = None
     error: str | None = None
     games_completed: int = 0
+    cancel_requested: bool = False
 
 
 class ModelEvaluator:
@@ -80,6 +82,8 @@ class ModelEvaluator:
         checkpoint_name: str,
         n_games: int,
         difficulty: int,
+        job_id: str | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> EvalResult:
         """Run N evaluation games with inference only and return aggregated stats.
 
@@ -87,6 +91,14 @@ class ModelEvaluator:
             checkpoint_name: Name of the checkpoint to load (e.g., "v5").
             n_games: Number of games to play.
             difficulty: SC2 AI difficulty level (1-10).
+            job_id: Optional job id. When provided, the loop checks the job's
+                ``cancel_requested`` flag between games and returns a partial
+                EvalResult covering only games completed before the cancel.
+            cancel_check: Optional callable returning True to signal cancel.
+                Checked between games alongside the job_id flag; either signal
+                breaks the loop. The daemon passes ``self._stop_event.is_set``
+                so that ``POST /api/training/stop`` also halts in-flight
+                promotion evals, not just training runs.
 
         Returns:
             EvalResult with win rate and statistics.
@@ -101,6 +113,26 @@ class ModelEvaluator:
         all_action_probs: list[list[float]] = []
 
         for game_idx in range(n_games):
+            if job_id is not None:
+                job = self._jobs.get(job_id)
+                if job is not None and job.cancel_requested:
+                    _log.info(
+                        "Eval job %s cancelled before game %d/%d",
+                        job_id,
+                        game_idx + 1,
+                        n_games,
+                    )
+                    break
+            if cancel_check is not None and cancel_check():
+                _log.info(
+                    "Eval cancelled by cancel_check before game %d/%d "
+                    "(checkpoint=%s)",
+                    game_idx + 1,
+                    n_games,
+                    checkpoint_name,
+                )
+                break
+
             game_id = f"eval_{checkpoint_name}_{uuid.uuid4().hex[:8]}"
             _log.info(
                 "Eval game %d/%d (checkpoint=%s, difficulty=%d)",
@@ -237,14 +269,36 @@ class ModelEvaluator:
             return
         job.status = "running"
         try:
-            result = self.evaluate(job.checkpoint, job.n_games, job.difficulty)
+            result = self.evaluate(
+                job.checkpoint, job.n_games, job.difficulty, job_id=job_id
+            )
             job.result = result
             job.games_completed = result.games_played
-            job.status = "completed"
+            job.status = "cancelled" if job.cancel_requested else "completed"
         except Exception as exc:
             job.status = "failed"
             job.error = str(exc)
             _log.exception("Evaluation job %s failed", job_id)
+
+    def cancel_job(self, job_id: str) -> str:
+        """Request cancellation of an eval job.
+
+        The current in-flight game finishes (SC2 games can't be interrupted
+        safely), then the loop exits and ``run_job`` marks the job
+        ``cancelled``.
+
+        Returns:
+            One of: ``"cancellation_requested"`` (job was pending/running and
+            now has the flag set), ``"already_completed"`` (terminal status),
+            ``"not_found"`` (no such job).
+        """
+        job = self._jobs.get(job_id)
+        if job is None:
+            return "not_found"
+        if job.status in ("completed", "failed", "cancelled"):
+            return "already_completed"
+        job.cancel_requested = True
+        return "cancellation_requested"
 
     def get_job(self, job_id: str) -> EvalJob | None:
         """Get the status of an evaluation job."""

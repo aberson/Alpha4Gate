@@ -651,12 +651,15 @@ refactoring you want a known-good baseline to compare against.
 
 ### Step 1: Domain interface
 - **Problem:** Define abstract interfaces (Environment, FeatureSpec, RewardSpec) that the training loop depends on.
+- **Issue:** #101
 
 ### Step 2: Extract SC2-specific code
 - **Problem:** Move SC2-specific implementations behind the domain interface.
+- **Issue:** #102
 
 ### Step 3: Validate with toy domain
 - **Problem:** Prove generality by running the full loop with CartPole or similar simple environment.
+- **Issue:** #103
 
 ### Inputs from Phase 4.5 soak run #1 (2026-04-10)
 

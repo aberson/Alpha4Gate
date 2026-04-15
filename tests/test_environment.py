@@ -344,6 +344,8 @@ class TestResetFreshQueues:
         # 300s queue.get returns immediately.
         def fake_start(self: threading.Thread) -> None:
             # The obs queue the thread was told to write to is in args[0].
+            if not getattr(self, "_args", ()):  # ignore hard-watchdog thread
+                return
             new_obs_q = self._args[0]  # type: ignore[attr-defined]
             new_obs_q.put(
                 (
@@ -485,6 +487,8 @@ class TestGameIdUniquenessAcrossResets:
         env = self._bare_env(base="rl_cycle5")
 
         def fake_start(thread: threading.Thread) -> None:
+            if not getattr(thread, "_args", ()):  # ignore hard-watchdog thread
+                return
             new_obs_q = thread._args[0]  # type: ignore[attr-defined]
             new_obs_q.put(
                 (
@@ -544,6 +548,8 @@ class TestGameIdUniquenessAcrossResets:
         env._db = db
 
         def fake_start(thread: threading.Thread) -> None:
+            if not getattr(thread, "_args", ()):  # ignore hard-watchdog thread
+                return
             new_obs_q = thread._args[0]  # type: ignore[attr-defined]
             new_obs_q.put(
                 (
@@ -829,6 +835,8 @@ class TestPhase46ProducerWiring:
         )
 
         def fake_start(thread: threading.Thread) -> None:
+            if not getattr(thread, "_args", ()):  # ignore hard-watchdog thread
+                return
             new_obs_q = thread._args[0]  # type: ignore[attr-defined]
             new_obs_q.put(
                 (np.zeros(FEATURE_DIM, dtype=np.float32), {}, False, None)
@@ -874,6 +882,8 @@ class TestPhase46ProducerWiring:
         env._game_start_time = 0.0
 
         def fake_start(thread: threading.Thread) -> None:
+            if not getattr(thread, "_args", ()):  # ignore hard-watchdog thread
+                return
             new_obs_q = thread._args[0]  # type: ignore[attr-defined]
             new_obs_q.put(
                 (np.zeros(FEATURE_DIM, dtype=np.float32), {}, False, None)
@@ -898,6 +908,8 @@ class TestPhase46ProducerWiring:
         )
 
         def fake_start(thread: threading.Thread) -> None:
+            if not getattr(thread, "_args", ()):  # ignore hard-watchdog thread
+                return
             new_obs_q = thread._args[0]  # type: ignore[attr-defined]
             new_obs_q.put(
                 (np.zeros(FEATURE_DIM, dtype=np.float32), {}, False, None)
@@ -922,6 +934,8 @@ class TestPhase46ProducerWiring:
         env = self._bare_env_with_producers(tmp_path=tmp_path, replay_dir=None)
 
         def fake_start(thread: threading.Thread) -> None:
+            if not getattr(thread, "_args", ()):  # ignore hard-watchdog thread
+                return
             new_obs_q = thread._args[0]  # type: ignore[attr-defined]
             new_obs_q.put(
                 (np.zeros(FEATURE_DIM, dtype=np.float32), {}, False, None)
@@ -1167,6 +1181,8 @@ class TestPhase46ProducerWiring:
         # (we skip the thread/queue machinery and step() path because the
         # producer wiring is independent of the obs-queue pump).
         def fake_start(thread: threading.Thread) -> None:
+            if not getattr(thread, "_args", ()):  # ignore hard-watchdog thread
+                return
             new_obs_q = thread._args[0]  # type: ignore[attr-defined]
             new_obs_q.put(
                 (
@@ -1248,6 +1264,8 @@ class TestGameIdProperty:
         directly into the queue the thread was created with, so
         ``reset()`` returns immediately without launching SC2.
         """
+        if not getattr(thread, "_args", ()):  # ignore hard-watchdog thread
+            return
         new_obs_q = thread._args[0]  # type: ignore[attr-defined]
         new_obs_q.put(
             (
@@ -1335,3 +1353,237 @@ class TestTimeoutLeavesGameSc2Live:
             assert steps > 0
         finally:
             env.close()
+
+
+class TestPerGameWatchdog:
+    """Per-game wall-clock watchdog (soak-2026-04-15 postmortem).
+
+    A single SC2 game that runs for 5h of real time (observations still
+    flowing, neither player advancing) used to block the whole
+    orchestrator. ``SC2Env.step()`` now enforces a soft gate (shutdown
+    sentinel) and a hard gate (synthesize terminal, abandon thread).
+    """
+
+    def _bare_env(self, soft: float, hard: float) -> SC2Env:
+        env = SC2Env.__new__(SC2Env)
+        env._obs_queue = queue.Queue()
+        env._action_queue = queue.Queue()
+        env._game_thread = None
+        env._step_index = 0
+        env._last_snapshot = None
+        env._total_reward = 0.0
+        env._game_start_time = 0.0
+        env._game_id = "wd_test"
+        env._game_store_failed_count = 0
+        env._watchdog_soft_seconds = soft
+        env._watchdog_hard_seconds = hard
+        env._game_wall_start = time.monotonic()
+        env._soft_cancel_sent = False
+        return env
+
+    def test_hard_gate_returns_synthetic_terminal(self) -> None:
+        env = self._bare_env(soft=0.01, hard=0.02)
+        # Push game-wall-start far enough into the past that hard fires.
+        env._game_wall_start = time.monotonic() - 10.0
+
+        obs, reward, done, truncated, info = env.step(0)
+
+        assert done is True
+        assert truncated is False
+        assert info.get("error") == "watchdog_hard_timeout"
+        assert reward == -10.0
+        assert obs.shape == (FEATURE_DIM,)
+        assert env._game_store_failed_count == 1
+        # Action should NOT have been pushed to the queue — we bailed
+        # before the send to avoid feeding a dead thread.
+        assert env._action_queue.qsize() == 0
+
+    def test_soft_gate_sends_shutdown_sentinel_once(self) -> None:
+        env = self._bare_env(soft=0.01, hard=60.0)
+        env._game_wall_start = time.monotonic() - 5.0
+
+        # Pre-load an obs so step() can complete normally after the
+        # soft-gate push.
+        env._reward_calc = RewardCalculator()
+        env._db = None
+        env._obs_queue.put(
+            (
+                np.zeros(FEATURE_DIM, dtype=np.float32),
+                {"snapshot": GameSnapshot(), "strategic_state": "OPENING"},
+                False,
+                None,
+            )
+        )
+        env.step(0)
+        assert env._soft_cancel_sent is True
+        # Queue should hold: sentinel (None) + the real action (0).
+        sentinel = env._action_queue.get_nowait()
+        real = env._action_queue.get_nowait()
+        assert sentinel is None
+        assert real == 0
+
+        # Pre-load another obs; second step must NOT push another None.
+        env._obs_queue.put(
+            (
+                np.zeros(FEATURE_DIM, dtype=np.float32),
+                {"snapshot": GameSnapshot(), "strategic_state": "OPENING"},
+                False,
+                None,
+            )
+        )
+        env.step(1)
+        remaining = []
+        while not env._action_queue.empty():
+            remaining.append(env._action_queue.get_nowait())
+        # Only the real action this time — no second sentinel.
+        assert remaining == [1]
+
+    def test_below_soft_gate_is_no_op(self) -> None:
+        env = self._bare_env(soft=60.0, hard=120.0)
+        env._reward_calc = RewardCalculator()
+        env._db = None
+        env._obs_queue.put(
+            (
+                np.zeros(FEATURE_DIM, dtype=np.float32),
+                {"snapshot": GameSnapshot(), "strategic_state": "OPENING"},
+                False,
+                None,
+            )
+        )
+        env.step(0)
+        assert env._soft_cancel_sent is False
+        assert env._game_store_failed_count == 0
+
+    def test_hard_watchdog_terminates_owned_sc2_when_game_wedges(self) -> None:
+        """Thread-level watchdog terminates SC2 processes owned by THIS
+        game when the watched thread is still alive after hard_seconds."""
+        from unittest.mock import MagicMock, patch
+
+        from sc2.sc2process import KillSwitch
+
+        env = self._bare_env(soft=0.01, hard=0.05)
+        watched = threading.Thread(
+            target=lambda: time.sleep(5.0), daemon=True,
+        )
+        watched.start()
+
+        own_popen = MagicMock()
+        own_popen.poll.side_effect = [None, 0]  # alive, then dead after terminate
+        own_popen.pid = 99999
+        own_sc2 = MagicMock(_process=own_popen)
+
+        with patch.object(KillSwitch, "_to_kill", []):
+            # No preexisting entries — the one we add below is "ours".
+            env._start_hard_watchdog(watched)
+            KillSwitch._to_kill.append(own_sc2)
+            time.sleep(0.3)
+
+        own_popen.terminate.assert_called()
+
+    def test_hard_watchdog_leaves_sibling_sc2_alone(self) -> None:
+        """Watchdog must not touch SC2Processes that existed BEFORE this
+        game was armed (sibling envs in the same Python process)."""
+        from unittest.mock import MagicMock, patch
+
+        from sc2.sc2process import KillSwitch
+
+        env = self._bare_env(soft=0.01, hard=0.05)
+        watched = threading.Thread(
+            target=lambda: time.sleep(5.0), daemon=True,
+        )
+        watched.start()
+
+        sibling_popen = MagicMock()
+        sibling_popen.poll.return_value = None
+        sibling_sc2 = MagicMock(_process=sibling_popen)
+
+        with patch.object(KillSwitch, "_to_kill", [sibling_sc2]):
+            env._start_hard_watchdog(watched)
+            # No new entry added — nothing "ours" to kill.
+            time.sleep(0.3)
+
+        sibling_popen.terminate.assert_not_called()
+        sibling_popen.kill.assert_not_called()
+
+    def test_hard_watchdog_escalates_to_kill_if_terminate_ignored(self) -> None:
+        """burnysc2's _clean never escalates terminate → kill; our
+        watchdog must, or a hung SC2 binary survives."""
+        from unittest.mock import MagicMock, patch
+
+        from sc2.sc2process import KillSwitch
+
+        env = self._bare_env(soft=0.01, hard=0.05)
+        watched = threading.Thread(
+            target=lambda: time.sleep(5.0), daemon=True,
+        )
+        watched.start()
+
+        stubborn = MagicMock()
+        # Alive before terminate, still alive after, dead after kill.
+        stubborn.poll.side_effect = [None, None, None, 0]
+        stubborn.wait.side_effect = Exception("timeout")
+        stubborn.pid = 88888
+        stubborn_sc2 = MagicMock(_process=stubborn)
+
+        with patch.object(KillSwitch, "_to_kill", []):
+            env._start_hard_watchdog(watched)
+            KillSwitch._to_kill.append(stubborn_sc2)
+            time.sleep(0.3)
+
+        stubborn.terminate.assert_called()
+        stubborn.kill.assert_called()
+
+    def test_hard_watchdog_cancel_prevents_kill(self) -> None:
+        """If the game thread finishes before hard_seconds, cancelling
+        the watchdog must prevent any SC2 termination."""
+        from unittest.mock import MagicMock, patch
+
+        from sc2.sc2process import KillSwitch
+
+        env = self._bare_env(soft=0.01, hard=0.5)
+        watched = threading.Thread(target=lambda: None, daemon=True)
+        watched.start()
+        watched.join()
+
+        own_popen = MagicMock()
+        own_popen.poll.return_value = None
+        own_sc2 = MagicMock(_process=own_popen)
+
+        with patch.object(KillSwitch, "_to_kill", []):
+            env._start_hard_watchdog(watched)
+            KillSwitch._to_kill.append(own_sc2)
+            env._cancel_hard_watchdog()
+            time.sleep(0.7)
+
+        own_popen.terminate.assert_not_called()
+
+    def test_reset_clears_watchdog_state(self) -> None:
+        env = self._bare_env(soft=0.01, hard=60.0)
+        env._soft_cancel_sent = True
+        old_start = env._game_wall_start - 100.0
+        env._game_wall_start = old_start
+
+        def fake_start(self: threading.Thread) -> None:
+            if not getattr(self, "_args", ()):  # ignore hard-watchdog thread
+                return
+            new_obs_q = self._args[0]  # type: ignore[attr-defined]
+            new_obs_q.put(
+                (
+                    np.zeros(FEATURE_DIM, dtype=np.float32),
+                    {"strategic_state": "OPENING"},
+                    False,
+                    None,
+                )
+            )
+
+        # ``reset()`` touches several things our bare env didn't wire
+        # up; patch the heavy ones to no-ops.
+        env._base_game_id = "wd_test"
+        env._reward_calc = None  # reset() uses getattr fallback
+        env._replay_dir = None
+
+        with patch.object(threading.Thread, "start", fake_start):
+            env.reset()
+
+        assert env._soft_cancel_sent is False
+        assert env._game_wall_start > old_start

@@ -118,27 +118,6 @@ class TestBuildOrderEndpoints:
         assert resp.json()["deleted"] is False
 
 
-class TestReplayEndpoints:
-    def test_empty_replays(self, client: TestClient) -> None:
-        resp = client.get("/api/replays")
-        assert resp.status_code == 200
-        assert resp.json()["replays"] == []
-
-    def test_replay_listed(self, client: TestClient, tmp_path: Path) -> None:
-        (tmp_path / "replays" / "game_2026-03-29T14-30-00.SC2Replay").write_bytes(b"dummy")
-        resp = client.get("/api/replays")
-        replays = resp.json()["replays"]
-        assert len(replays) == 1
-        assert replays[0]["id"] == "2026-03-29T14-30-00"
-
-    def test_replay_detail_placeholder(self, client: TestClient) -> None:
-        resp = client.get("/api/replays/2026-03-29T14-30-00")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["id"] == "2026-03-29T14-30-00"
-        assert data["timeline"] == []
-
-
 class TestDecisionLogEndpoint:
     def test_empty_log(self, client: TestClient) -> None:
         resp = client.get("/api/decision-log")

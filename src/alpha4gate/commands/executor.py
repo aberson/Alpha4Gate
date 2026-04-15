@@ -66,6 +66,26 @@ _STRUCTURE_MAP: dict[str, UnitTypeId] = {
     "shield_battery": UnitTypeId.SHIELDBATTERY,
 }
 
+# Structures that should never be multi-built. Prevents a race where two
+# command sources emit "build X" in the tick gap before burnysc2's
+# already_pending registers the first order.
+# True singletons: only one ever makes sense (upgrade buildings).
+_STRUCTURE_SINGLETON: frozenset[UnitTypeId] = frozenset({
+    UnitTypeId.TWILIGHTCOUNCIL,
+    UnitTypeId.ROBOTICSBAY,
+    UnitTypeId.TEMPLARARCHIVE,
+    UnitTypeId.DARKSHRINE,
+    UnitTypeId.FLEETBEACON,
+})
+# Early-game cap: before this many seconds, allow only one. Late game, more
+# is legitimate (2 forges for parallel upgrades, 2 CCs for sky protoss).
+_EARLY_GAME_SECONDS: float = 360.0
+_STRUCTURE_EARLY_GAME_CAP: frozenset[UnitTypeId] = frozenset({
+    UnitTypeId.FORGE,
+    UnitTypeId.CYBERNETICSCORE,
+})
+
+
 # Production structures for unit types
 _PRODUCTION_MAP: dict[UnitTypeId, UnitTypeId] = {
     UnitTypeId.ZEALOT: UnitTypeId.GATEWAY,
@@ -218,6 +238,25 @@ class CommandExecutor:
     ) -> ExecutionResult:
         """Build a structure at the resolved location."""
         bot = self._bot
+        capped = (
+            structure_id in _STRUCTURE_SINGLETON
+            or (
+                structure_id in _STRUCTURE_EARLY_GAME_CAP
+                and bot.time < _EARLY_GAME_SECONDS
+            )
+        )
+        if capped:
+            existing = bot.structures(structure_id).amount
+            pending = bot.already_pending(structure_id)
+            if existing + pending >= 1:
+                return ExecutionResult(
+                    success=False,
+                    message=(
+                        f"Skipping {structure_id.name}: have {existing}"
+                        f" + {pending} pending"
+                    ),
+                    primitives_executed=0,
+                )
         if not bot.can_afford(structure_id):
             return ExecutionResult(
                 success=False,

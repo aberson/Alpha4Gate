@@ -58,7 +58,7 @@ class MicroCommand:
     """A single micro-level command for a unit."""
 
     unit_tag: int
-    action: str  # "attack", "move", "ability"
+    action: str  # "attack", "move", "kite", "ability"
     target_tag: int | None = None
     target_position: tuple[float, float] | None = None
     ability_id: str | None = None
@@ -200,7 +200,7 @@ class MicroController:
                     self._commands.append(
                         MicroCommand(
                             unit_tag=unit.tag,
-                            action="move",
+                            action="kite",
                             target_position=pos,
                         )
                     )

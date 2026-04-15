@@ -129,6 +129,24 @@ async def _lifespan(application: FastAPI) -> AsyncIterator[None]:
     # (Phase 4.5 #68). Idempotent — safe if a test or a prior --serve
     # invocation already installed it.
     install_error_log_handler()
+    # Auto-configure when the app is launched directly (e.g. via
+    # `uvicorn alpha4gate.api:app --reload` in dev mode). The normal
+    # --serve entrypoint calls configure() before uvicorn.run, so this
+    # guard is a no-op there.
+    if _daemon is None:
+        from alpha4gate.config import load_settings
+        from alpha4gate.learning.daemon import load_daemon_config
+        settings = load_settings()
+        daemon_config = load_daemon_config(
+            settings.data_dir / "daemon_config.json"
+        )
+        configure(
+            settings.data_dir,
+            settings.log_dir,
+            settings.replay_dir,
+            api_key=settings.anthropic_api_key,
+            daemon_config=daemon_config,
+        )
     task = asyncio.create_task(_game_state_broadcast_loop())
     yield
     task.cancel()
@@ -834,12 +852,31 @@ async def get_evaluation_status(job_id: str) -> JSONResponse | dict[str, Any]:
         "games_requested": job.n_games,
         "games_completed": job.games_completed,
         "difficulty": job.difficulty,
+        "cancel_requested": job.cancel_requested,
     }
     if job.result is not None:
         response["result"] = asdict(job.result)
     if job.error is not None:
         response["error"] = job.error
     return response
+
+
+@app.post("/api/training/evaluate/{job_id}/stop")
+async def stop_evaluation(job_id: str) -> JSONResponse:
+    """Request cancellation of an in-flight evaluation job.
+
+    The current game finishes (no safe way to interrupt an SC2 game mid-step),
+    then the loop exits. Poll GET /api/training/evaluate/{job_id} to observe
+    the transition to status ``cancelled``.
+    """
+    evaluator = _get_evaluator()
+    outcome = evaluator.cancel_job(job_id)
+    if outcome == "not_found":
+        return JSONResponse(status_code=404, content={"error": "Job not found"})
+    return JSONResponse(
+        status_code=200,
+        content={"job_id": job_id, "status": outcome},
+    )
 
 
 # --- Promotion Endpoints ---
