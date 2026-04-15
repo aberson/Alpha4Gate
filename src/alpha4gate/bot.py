@@ -105,6 +105,7 @@ class Alpha4GateBot(BotAI):
 
     # At this supply or above, attack the enemy main instead of the natural
     PUSH_MAIN_SUPPLY: int = 60
+    FINISHER_SUPPLY: int = 100
 
     # Maps StrategicState → action index (inverse of _ACTION_TO_STATE in environment.py)
     _STATE_TO_ACTION: dict[StrategicState, int] = {
@@ -611,12 +612,23 @@ class Alpha4GateBot(BotAI):
         forge_building = len(self.structures(UnitTypeId.FORGE).not_ready) > 0
         has_cyber = len(self.structures(UnitTypeId.CYBERNETICSCORE).ready) > 0
 
-        # Check for pylon near natural
+        # Check for pylon near natural. Count in-progress pylons too —
+        # otherwise fortification queues a new "build pylon" decision on
+        # every tick of the ~25 game-second window between placement and
+        # completion, producing a pile of duplicate pylon orders near the
+        # natural. (Observed 2026-04-15 mid-game screenshot.)
         natural_pos = self.main_base_ramp.bottom_center
         has_pylon_near_natural = any(
             p.distance_to(natural_pos) < 12
-            for p in self.structures(UnitTypeId.PYLON).ready
+            for p in self.structures(UnitTypeId.PYLON)
         )
+        # Tick-race guard: burnysc2 has a one-tick window between
+        # bot.build(PYLON) dispatch and the pylon appearing in structures().
+        # If any pylon is pending anywhere on the map, treat the natural
+        # check as satisfied for this tick — worst case we delay one real
+        # tick before re-emitting, which is fine.
+        if not has_pylon_near_natural and self.already_pending(UnitTypeId.PYLON) > 0:
+            has_pylon_near_natural = True
 
         existing_cannons = len(self.structures(UnitTypeId.PHOTONCANNON))
         existing_batteries = len(self.structures(UnitTypeId.SHIELDBATTERY))
@@ -838,6 +850,18 @@ class Alpha4GateBot(BotAI):
         cm = self.coherence_manager
 
         if state in (StrategicState.ATTACK, StrategicState.LATE_GAME):
+            # Finisher override: at overwhelming supply, commit the whole
+            # army to attack-move on the enemy main. Bypasses coherence,
+            # staging, and rally logic — we've won positionally and just
+            # need to close the game out.
+            if snapshot.army_supply >= self.FINISHER_SUPPLY:
+                target = self._enemy_main()
+                if target is not None:
+                    target_pt = Point2(target)
+                    for u in army:
+                        u.attack(target_pt)
+                    return
+
             rally = self._resolve_attack_rally(army, snapshot, cm)
 
             # Hard coherence gate: in ATTACK state, if army is not grouped,
@@ -886,6 +910,10 @@ class Alpha4GateBot(BotAI):
                     unit.attack(Point2(cmd.target_position))
                 else:
                     unit.move(Point2(cmd.target_position))
+            elif cmd.action == "kite" and cmd.target_position is not None:
+                # Kiting uses plain move so the unit disengages; attack-move
+                # would re-target and break the kite.
+                unit.move(Point2(cmd.target_position))
 
     async def _rally_idle_army(self) -> None:
         """Move idle army units to staging point (pre-stage) or defense rally."""

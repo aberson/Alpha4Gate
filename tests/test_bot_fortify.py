@@ -104,6 +104,7 @@ def _make_bot(seed: int = 42) -> MagicMock:
     bot._cached_staging_point = None
     bot._staging_point_time = -999.0
     bot._cached_enemy_natural = None
+    bot.already_pending = MagicMock(return_value=0)
 
     # Mock structures() — return empty by default
     def _structures(uid: UnitTypeId) -> MagicMock:
@@ -143,6 +144,7 @@ class TestFortificationManagerWiring:
                 pylon.distance_to = MagicMock(return_value=5.0)
                 result.ready = MagicMock()
                 result.ready.__iter__ = MagicMock(return_value=iter([pylon]))
+                result.__iter__ = MagicMock(return_value=iter([pylon]))
             else:
                 result.ready = MagicMock()
                 result.ready.__len__ = MagicMock(return_value=0)

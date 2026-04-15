@@ -144,7 +144,7 @@ class TestMicroController:
         ctrl = MicroController()
         cmds = ctrl.generate_commands([stalker], [zergling])
         assert len(cmds) == 1
-        assert cmds[0].action == "move"  # Kiting
+        assert cmds[0].action == "kite"
         assert cmds[0].target_position is not None
 
     def test_rally_when_no_enemies(self) -> None:
