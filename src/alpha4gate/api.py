@@ -129,6 +129,24 @@ async def _lifespan(application: FastAPI) -> AsyncIterator[None]:
     # (Phase 4.5 #68). Idempotent — safe if a test or a prior --serve
     # invocation already installed it.
     install_error_log_handler()
+    # Auto-configure when the app is launched directly (e.g. via
+    # `uvicorn alpha4gate.api:app --reload` in dev mode). The normal
+    # --serve entrypoint calls configure() before uvicorn.run, so this
+    # guard is a no-op there.
+    if _daemon is None:
+        from alpha4gate.config import load_settings
+        from alpha4gate.learning.daemon import load_daemon_config
+        settings = load_settings()
+        daemon_config = load_daemon_config(
+            settings.data_dir / "daemon_config.json"
+        )
+        configure(
+            settings.data_dir,
+            settings.log_dir,
+            settings.replay_dir,
+            api_key=settings.anthropic_api_key,
+            daemon_config=daemon_config,
+        )
     task = asyncio.create_task(_game_state_broadcast_loop())
     yield
     task.cancel()
