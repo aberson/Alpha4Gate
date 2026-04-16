@@ -49,6 +49,7 @@ replacement.
 - **Problem:** Set `use_imitation_init: true`, `kl_rules_coef: 0.1`, keep `policy_type: MlpLstmPolicy`. Run `uv run python -m alpha4gate.runner --train rl --cycles 3 --games-per-cycle 3 --difficulty 3 --ensure-pretrain`. Pass = 3 cycles complete without crash, imitation pretrain loads cleanly into LSTM policy, no NaN in KL pass. Report PASS with final win rate across 9 games, or BLOCKED.
 - **Type:** operator
 - **Issue:** #100
+- **Status:** DONE (2026-04-15) — 3 cycles completed, checkpoints v1/v2/v3 saved, failed_games=0, no NaN. Per-cycle WR: 0.0, 0.167, 0.167 (sliding 6-game window). `RecurrentPPOWithKL` loaded the `RecurrentPPO`-saved `v0_pretrain.zip` cleanly — the imitation+KL+LSTM class-compatibility concern did not materialize.
 
 ### Step 7: A.6 validation soak — 20 games at difficulty 3 hybrid
 - **Problem:** With flags from Step 6 (full stack on), run `uv run python -m alpha4gate.runner --batch 20 --difficulty 3 --decision-mode hybrid --model-path data/checkpoints/best.zip`. This is a ~2–4 hour SC2 wall-clock run. Capture final win rate. Gate: at least one of the configs from Steps 3–6 must hit win rate ≥ 75% baseline over 20 games at difficulty 3. Deliverable is the batch log + the comparison write-up in the issue comment when you resume.
