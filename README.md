@@ -8,7 +8,24 @@ It plays, watches itself fail, figures out why, writes a fix, proves the fix wor
 >
 > **50% → 83%** win rate at SC2 difficulty 4 — reached via 6 code changes the agent wrote and validated itself.
 
-![Advisor Control Panel showing a completed autonomous improvement run — 6 proposed fixes, each validated against a fresh game batch before commit](documentation/images/advisor-completed.png)
+<table>
+<tr>
+<td width="33%" valign="top" align="center">
+<a href="documentation/images/advisor-completed.png"><img src="documentation/images/advisor-completed.png" alt="Advisor Control Panel showing a completed autonomous improvement run" width="100%"></a>
+<br/><sub><b>Self-improvement loop</b><br/>6 fixes proposed, validated, committed</sub>
+</td>
+<td width="33%" valign="top" align="center">
+<a href="documentation/images/sc2-gameplay.gif"><img src="documentation/images/sc2-gameplay.gif" alt="SC2 gameplay — the bot mid-battle during the PLAY phase" width="100%"></a>
+<br/><sub><b>The task</b><br/>Bot mid-battle in a 4-gate engagement</sub>
+</td>
+<td width="33%" valign="top" align="center">
+<a href="documentation/images/reward-trends.png"><img src="documentation/images/reward-trends.png" alt="Reward Trends — per-rule reward contribution over recent games" width="100%"></a>
+<br/><sub><b>Monitoring</b><br/>Per-rule reward contribution over recent games</sub>
+</td>
+</tr>
+</table>
+
+<sub><em>Click any thumbnail to enlarge.</em></sub>
 
 ## What makes this different
 
@@ -48,10 +65,6 @@ The architecture is task-agnostic. SC2 is the concrete test case because it give
 
 The loop runs unattended for hours. Each cycle: play N games, Claude reads the results and proposes ranked fixes, apply one, re-run N games to validate, commit if it held, retrain the neural policy, repeat. Quality gates (pytest/mypy/ruff), auto-rollback, a wall-clock budget, and a 3-fail cap keep it safe.
 
-![SC2 gameplay — the bot mid-battle during the PLAY phase of the loop](documentation/images/sc2-gameplay.gif)
-
-*THE TASK in action — the bot executing its opening into a mid-game engagement. Each completed game becomes one data point the loop learns from.*
-
 **Read the full architecture:** [improve-bot-advised-architecture.md](documentation/wiki/improve-bot-advised-architecture.md)
 
 ---
@@ -75,10 +88,6 @@ The loop runs unattended for hours. Each cycle: play N games, Claude reads the r
 ```
 
 Two things are running: the **loop** and the **task** it's learning from. The dashboard has a tab tuned to each vantage point, plus `data/advised_run_state.json` as the single source of truth for which phase is executing right now. Stuck-loop detection, alert rules, and operator overrides all hang off these two views.
-
-![Reward Trends — per-rule reward contribution across recent games, with a legend of every active rule](documentation/images/reward-trends.png)
-
-*Reward Trends (Improvements tab) — each line is one reward rule's contribution to training over the last N games. Flat-zero rules are candidates for pruning; high-variance rules get flagged for condition review.*
 
 **Read the full monitoring guide:** [monitoring.md](documentation/wiki/monitoring.md)
 
