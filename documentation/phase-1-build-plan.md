@@ -116,6 +116,7 @@ Step 1.9 is a dedicated smoke-gate step (Type: operator) that runs a real 1-minu
 ## 7. Build steps
 
 ### Step 1.1: Scaffold `src/orchestrator/` with empty stubs
+- **Status:** DONE (2026-04-15)
 - **Problem:** Create `src/orchestrator/` as a new Python package with empty-but-documented stubs for `registry.py`, `contracts.py`, `snapshot.py`, `selfplay.py`, `ladder.py`. Add `src/orchestrator/__init__.py`. Update `pyproject.toml` so hatch packages, mypy, and ruff all see the new package. Do NOT implement any behavior; docstrings only. Expected outcome: `uv run pytest` still green (864 tests), `uv run mypy src` green, `uv run ruff check .` green. No new tests.
 - **Issue:** #107 (Phase 1 umbrella; this step posts a comment, not its own issue)
 - **Flags:** `--reviewers auto`
