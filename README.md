@@ -15,8 +15,8 @@ It plays, watches itself fail, figures out why, writes a fix, proves the fix wor
 <br/><sub><b>Self-improvement loop</b><br/>6 fixes proposed, validated, committed</sub>
 </td>
 <td width="33%" valign="top" align="center">
-<a href="documentation/images/sc2-gameplay.gif"><img src="documentation/images/sc2-gameplay.gif" alt="SC2 gameplay — the bot mid-battle during the PLAY phase" width="100%"></a>
-<br/><sub><b>The task</b><br/>Bot mid-battle in a 4-gate engagement</sub>
+<a href="documentation/images/sc2-gameplay.gif"><img src="documentation/images/sc2-gameplay.gif" alt="Live capture — SC2 gameplay, dashboard Decision Log, and backend logs side-by-side" width="100%"></a>
+<br/><sub><b>Live capture</b><br/>Game, advisor decisions, and backend logs streaming together</sub>
 </td>
 <td width="33%" valign="top" align="center">
 <a href="documentation/images/reward-trends.png"><img src="documentation/images/reward-trends.png" alt="Reward Trends — per-rule reward contribution over recent games" width="100%"></a>
