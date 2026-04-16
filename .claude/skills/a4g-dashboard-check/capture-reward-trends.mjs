@@ -13,7 +13,7 @@ const OUT = resolve(PROJECT_ROOT, "documentation/images/reward-trends.png");
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({
   viewport: { width: 1280, height: 900 },
-  deviceScaleFactor: 2,
+  deviceScaleFactor: 1.33,
 });
 
 await page.goto("http://localhost:3000", {
