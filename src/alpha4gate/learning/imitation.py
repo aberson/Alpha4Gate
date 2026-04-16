@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -42,7 +42,7 @@ def _bc_logits(
     if not is_recurrent:
         features = policy.extract_features(batch_states, policy.features_extractor)
         latent_pi, _ = policy.mlp_extractor(features)
-        return policy.action_net(latent_pi)
+        return cast(torch.Tensor, policy.action_net(latent_pi))
 
     # Recurrent path: replicate what RecurrentActorCriticPolicy does in
     # get_distribution but without constructing the Distribution object.
@@ -64,7 +64,7 @@ def _bc_logits(
         features, lstm_states.pi, episode_starts, policy.lstm_actor,
     )
     latent_pi = policy.mlp_extractor.forward_actor(latent_pi)
-    return policy.action_net(latent_pi)
+    return cast(torch.Tensor, policy.action_net(latent_pi))
 
 
 def run_imitation_training(
@@ -99,9 +99,9 @@ def run_imitation_training(
 
     from alpha4gate.learning.environment import SC2Env
     from alpha4gate.learning.features import (
+        _FEATURE_SPEC,
         BASE_GAME_FEATURE_DIM,
         FEATURE_DIM,
-        _FEATURE_SPEC,
     )
     from alpha4gate.learning.hyperparams import load_hyperparams, to_ppo_kwargs
 
