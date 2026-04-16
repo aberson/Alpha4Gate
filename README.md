@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.12-blue) ![pytest](https://img.shields.io/badge/pytest-829%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-126%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
 
-An AI agent that teaches itself to get better at a task — zero human input.
+An AI agent that teaches itself to get better at a task with <b>zero human input</b>.
 
 It plays, watches itself fail, figures out why, writes a fix, proves the fix works, and repeats. The task happens to be StarCraft II, but the loop is general. A live React dashboard streams every phase — every proposed fix, every rejection, every win-rate swing — while the agent runs unattended for hours. 
 
@@ -103,21 +103,21 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 
 # The Story So Far of Alpha4Gate
 
-- **Original Motivation** Beat my friend at a video game using AI.
-- **The basic bot.** A rule-based bot player that built units and hoped for the best. 
-- **Teaching it to think.** Added a neural network so it could learn.
-- **Learning to fight.** Targeted lessons: keep the army together, deny expansions, hold the line.
-- **Bringing in a coach.** Claude whispers strategy tips mid-match alongside human commands.
-- **The observation deck.** A live dashboard showing every decision, reward, and training run.
-- **The robot that trains itself.** A daemon that plays, scores, promotes winners, and rolls back duds overnight.
-- **The first soak test.** Left it alone — 17 things broke. Fixed them all.
-- **Claude as personal trainer.** Claude watches games, diagnoses problems, and writes the fixes itself.
-- **The breakthrough.** Self-improvement took win rate from 0% to 75% at difficulty 3.
-- **Reality check.** Harder opponents exposed that training scores lie — need honest exams.
-- **The big merge.** Three plans became one: every future bot is a snapshot that must beat its ancestors.
-- **Phase A.** Added memory (LSTM) and a gentler training recipe — 19/20 wins at difficulty 3.
-- **The arena works.** Two bot versions fighting each other in separate sandboxes, validated.
-- **Now.** Packaging the current bot as "v0" — the first official entry in the lineage.
+- **Original Motivation -** Beat my friend at a video game using AI.
+- **The basic bot -** A rule-based bot player that built units and hoped for the best. 
+- **Teaching it to think -** Added a neural network so it could learn.
+- **Learning to fight -** Targeted lessons: keep the army together, deny expansions, hold the line.
+- **Bringing in a coach -** Claude whispers strategy tips mid-match alongside human commands.
+- **The observation deck -** A live dashboard showing every decision, reward, and training run.
+- **The robot that trains itself -** A daemon that plays, scores, promotes winners, and rolls back duds overnight.
+- **The first soak test -** Left it alone — 17 things broke. Fixed them all.
+- **Claude as personal trainer -** Claude watches games, diagnoses problems, and writes the fixes itself.
+- **The breakthrough -** Self-improvement took win rate from 0% to 75% at difficulty 3.
+- **Reality check -** Harder opponents exposed that training scores lie — need honest exams.
+- **The big merge -** Three plans became one: every future bot is a snapshot that must beat its ancestors.
+- **Phase A -** Added memory (LSTM) and a gentler training recipe — 19/20 wins at difficulty 3.
+- **The arena works -** Two bot versions fighting each other in separate sandboxes, validated.
+- **Now -** Packaging the current bot as "v0" — the first official entry in the lineage.
 
 ---
 
