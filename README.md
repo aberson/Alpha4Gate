@@ -1,50 +1,74 @@
 # Alpha4Gate
 
-A StarCraft II Protoss bot combining rule-based decision-making, a PPO neural policy network, and Claude AI as strategic advisor. Uses a layered architecture (strategy, tactics, coherence, micro) with three command execution modes (AI-Assisted, Human Only, Hybrid). Includes a React dashboard for live game visualization, training metrics, build order editing, and strategic command input.
+A StarCraft II Protoss bot that **teaches itself to get better** — with zero human input. It plays, watches itself fail, figures out why, writes a fix, proves the fix works, and repeats. Built on rule-based strategy + PPO neural policy + Claude AI as advisor.
 
-## Vision
+**Design goals:** AI-vs-AI competition · autonomous self-improvement · transparent model introspection via live dashboard.
 
-- **AI-vs-AI competition** — build a bot that wins consistently at increasing difficulty levels and eventually competes against other SC2 bots
-- **Transparent model introspection** — live dashboard showing strategic state, decision reasoning, neural policy outputs, and Claude advisor suggestions
-- **Evaluation metrics** — structured reward shaping, win-rate tracking, training diagnostics, and cross-game statistics
-- **Autonomous self-improvement** — train-play-evaluate loop that runs 24/7, getting stronger with each cycle
+---
+
+## The autonomous learning loop
+
+```
+                    ┌──────────────────────────────────────────────────────┐
+                    │          /improve-bot-advised                        │
+                    │       autonomous learning loop (4+ hours)            │
+                    │                                                      │
+  ┌─────────┐      │   ┌─────────┐    ┌─────────┐    ┌─────────┐         │
+  │         │      │   │         │    │         │    │         │         │
+  │   THE   │◄────────►│  PLAY   │───►│  THINK  │───►│  FIX    │         │
+  │   TASK  │      │   │         │    │         │    │         │         │
+  │         │      │   └─────────┘    └─────────┘    └────┬────┘         │
+  │ (SC2)   │◄──┐  │                                      │              │
+  │         │   │  │   ┌─────────┐    ┌─────────┐    ┌────▼────┐         │
+  │         │   └─────►│  TRAIN  │◄───│ COMMIT  │◄───│  TEST   │         │
+  │         │      │   │         │    │         │    │         │         │
+  └─────────┘      │   └─────────┘    └─────────┘    └─────────┘         │
+                    │         │                                            │
+                    │         └──────── loop back to PLAY ──────────────►  │
+                    │                   (or stop if time's up / 3 fails)   │
+                    └──────────────────────────────────────────────────────┘
+```
+
+The loop runs unattended for hours. Each cycle: play N games, Claude reads the results and proposes ranked fixes, apply one, re-run N games to validate, commit if it held, retrain the neural policy, repeat. Quality gates (pytest/mypy/ruff), auto-rollback, a wall-clock budget, and a 3-fail cap keep it safe.
+
+**Read the full architecture:** [improve-bot-advised-architecture.md](documentation/wiki/improve-bot-advised-architecture.md)
+
+---
+
+## How we watch it run
+
+```
+      autonomous learning loop                  StarCraft II game
+      ─────────────────────────                  ─────────────────
+      PLAY → THINK → FIX →                       (THE TASK)
+      TEST → COMMIT → TRAIN
+               ▲                                        ▲
+               │                                        │
+        observe the loop                         observe the game
+               │                                        │
+      ┌────────┴────────┐                      ┌────────┴────────┐
+      │ Advisor tab     │                      │ Live tab        │
+      │ run log         │                      │ /ws/game        │
+      │ state.json      │                      │ JSONL logs      │
+      └─────────────────┘                      └─────────────────┘
+```
+
+Two things are running: the **loop** and the **task** it's learning from. The dashboard has a tab tuned to each vantage point, plus `data/advised_run_state.json` as the single source of truth for which phase is executing right now. Stuck-loop detection, alert rules, and operator overrides all hang off these two views.
+
+**Read the full monitoring guide:** [monitoring.md](documentation/wiki/monitoring.md)
+
+---
+
+## Current status
 
 **Advised improvement run 4 complete (2026-04-13)** — Second `--self-improve-code` run at difficulty 3: 3 iterations, 2 code improvements landed, 1 reverted as inert. Anti-float expansion override (`macro_manager.py`) allows expansion during DEFEND when workers saturated and ≥1500m banked, breaking the "die with a bank" death spiral. Warp-in forward pylon selection (`bot.py`) iterates pylons furthest-to-nearest from start so Stalkers stop getting trapped behind main-base buildings. Win rate 80% → 100% at difficulty 3. 829 Python tests, 0 type errors, 0 lint violations.
 
-## Stack
+---
 
-| Layer | Tool | Why |
-|---|---|---|
-| Language | Python 3.12 | SC2 libraries are Python-native |
-| SC2 interface | burnysc2 v7.1.3 | Async BotAI, actively maintained |
-| AI advisor | Claude CLI (OAuth or API key) | Strategic advice mid-game, async subprocess |
-| Build orders | Spawning Tool API | Community build order database |
-| Backend | FastAPI | WebSocket + REST for dashboard |
-| Frontend | React + TypeScript + Vite | Live dashboard with game state streaming |
-| Deep learning | PyTorch + Stable Baselines 3 | PPO policy network for strategic decisions |
-| Training data | SQLite | Structured (s,a,r,s') transition storage |
-| Charts | Recharts 3.8 | Per-rule reward trend visualization |
-| Testing (Python) | pytest | 829 unit tests, SC2 integration markers |
-| Testing (Frontend) | vitest + jsdom + @testing-library/react | 126 component / hook / lib tests |
-| Linting | ruff + mypy | Strict type checking, consistent style |
+<details>
+<summary><b>Setup</b></summary>
 
-## Dashboard tabs
-
-| Tab | Purpose |
-|---|---|
-| Live | Real-time game state stream (WebSocket) |
-| Stats | Cross-game win rates and aggregate stats from training.db |
-| Decisions | Live decision log with rule firings and Claude advice |
-| Training | Model comparison + improvement timeline + checkpoint list + reward rule editor |
-| Loop | Daemon state, trigger evaluation, full daemon control panel |
-| Advisor | Live advised-run status, loop controls, strategic hints, reward injection |
-| Improvements | Recent promotions/rollbacks + per-rule reward trend chart |
-| Processes | Live system process monitor, port status, state files, backend restart |
-| Alerts | Severity-filtered alert list with ack/dismiss + unread badge in nav |
-
-In-app `AlertToast` lives at the App root and shows new alerts as they fire, regardless of which tab is active.
-
-## Prerequisites
+### Prerequisites
 
 - Windows 11
 - StarCraft II installed at `C:\Program Files (x86)\StarCraft II\`
@@ -53,7 +77,7 @@ In-app `AlertToast` lives at the App root and shows new alerts as they fire, reg
 - Node.js 18+ (for React frontend)
 - SC2 maps from [Blizzard CDN](https://blzdistsc2-a.akamaihd.net/MapPacks/Melee.zip) (password: `iagreetotheeula`) — do NOT use GitHub map files (Git LFS pointers)
 
-## Setup
+### Install
 
 1. Install Python dependencies:
    ```bash
@@ -73,21 +97,6 @@ In-app `AlertToast` lives at the App root and shows new alerts as they fire, reg
    cd frontend && npm install && cd ..
    ```
 
-## Usage
-
-```bash
-# Run a single game vs Easy AI
-uv run python -m alpha4gate.runner --map Simple64
-
-# Options
---difficulty 3     # AI difficulty 1-10 (default: Easy)
---realtime         # Watch in realtime
---batch 5          # Run 5 games, aggregate stats
---build-order 4gate  # Select build order (default: 4gate)
---serve            # Start dashboard API server only
---no-claude        # Disable Claude advisor
-```
-
 ### Dashboard
 
 ```bash
@@ -101,6 +110,65 @@ uv run python -m alpha4gate.runner --serve
 # Terminal 2: frontend dev server
 cd frontend && npm run dev
 # Opens http://localhost:3000 proxying to :8765
+```
+
+</details>
+
+<details>
+<summary><b>Stack</b></summary>
+
+| Layer | Tool | Why |
+|---|---|---|
+| Language | Python 3.12 | SC2 libraries are Python-native |
+| SC2 interface | burnysc2 v7.1.3 | Async BotAI, actively maintained |
+| AI advisor | Claude CLI (OAuth or API key) | Strategic advice mid-game, async subprocess |
+| Build orders | Spawning Tool API | Community build order database |
+| Backend | FastAPI | WebSocket + REST for dashboard |
+| Frontend | React + TypeScript + Vite | Live dashboard with game state streaming |
+| Deep learning | PyTorch + Stable Baselines 3 | PPO policy network for strategic decisions |
+| Training data | SQLite | Structured (s,a,r,s') transition storage |
+| Charts | Recharts 3.8 | Per-rule reward trend visualization |
+| Testing (Python) | pytest | 829 unit tests, SC2 integration markers |
+| Testing (Frontend) | vitest + jsdom + @testing-library/react | 126 component / hook / lib tests |
+| Linting | ruff + mypy | Strict type checking, consistent style |
+
+</details>
+
+<details>
+<summary><b>Dashboard tabs</b></summary>
+
+| Tab | Purpose |
+|---|---|
+| Live | Real-time game state stream (WebSocket) |
+| Stats | Cross-game win rates and aggregate stats from training.db |
+| Decisions | Live decision log with rule firings and Claude advice |
+| Training | Model comparison + improvement timeline + checkpoint list + reward rule editor |
+| Loop | Daemon state, trigger evaluation, full daemon control panel |
+| Advisor | Live advised-run status, loop controls, strategic hints, reward injection |
+| Improvements | Recent promotions/rollbacks + per-rule reward trend chart |
+| Processes | Live system process monitor, port status, state files, backend restart |
+| Alerts | Severity-filtered alert list with ack/dismiss + unread badge in nav |
+
+In-app `AlertToast` lives at the App root and shows new alerts as they fire, regardless of which tab is active.
+
+</details>
+
+<details>
+<summary><b>Usage</b></summary>
+
+### Run a game
+
+```bash
+# Single game vs Easy AI
+uv run python -m alpha4gate.runner --map Simple64
+
+# Options
+--difficulty 3       # AI difficulty 1-10 (default: Easy)
+--realtime           # Watch in realtime
+--batch 5            # Run 5 games, aggregate stats
+--build-order 4gate  # Select build order (default: 4gate)
+--serve              # Start dashboard API server only
+--no-claude          # Disable Claude advisor
 ```
 
 ### Running without Claude
@@ -135,27 +203,12 @@ uv run python -m alpha4gate.runner --map Simple64 --difficulty 3 --no-claude --r
 bash scripts/start-dev.sh
 ```
 
-## Architecture
+</details>
 
-```
-Claude Advisor (async, non-blocking subprocess)
-        |
-Neural Engine — PPO policy network (optional, hybrid or pure RL mode)
-        |
-Strategy Layer — state machine: opening -> expand -> attack -> defend -> fortify -> late_game
-        |
-Command System — parser -> interpreter -> executor (AI-Assisted / Human Only / Hybrid)
-        |
-Tactics Layer — macro manager, scouting, production balance
-        |
-Coherence — army staging, grouping, engagement/retreat decisions
-        |
-Micro Layer — army movement, kiting, focus fire, ability usage
-```
+<details>
+<summary><b>Testing & project structure</b></summary>
 
-The bot follows a build order during the opening, then transitions to dynamic decision-making. Claude provides optional strategic advice via async subprocess calls (rate-limited to 1 per 30 game-seconds). The neural engine can override or supplement rule-based strategy decisions using a PPO-trained policy.
-
-## Testing
+### Testing
 
 ```bash
 uv run pytest              # 829 unit tests (no SC2 needed)
@@ -165,7 +218,7 @@ uv run mypy src            # Type check
 cd frontend && npx tsc --noEmit  # TypeScript check
 ```
 
-## Project Structure
+### Project layout
 
 ```
 Alpha4Gate/
@@ -196,7 +249,32 @@ Alpha4Gate/
 └── replays/                 # SC2 replays (gitignored)
 ```
 
-## Key Design Decisions
+</details>
+
+<details>
+<summary><b>Layered architecture & design decisions</b></summary>
+
+### Layered architecture
+
+```
+Claude Advisor (async, non-blocking subprocess)
+        |
+Neural Engine — PPO policy network (optional, hybrid or pure RL mode)
+        |
+Strategy Layer — state machine: opening -> expand -> attack -> defend -> fortify -> late_game
+        |
+Command System — parser -> interpreter -> executor (AI-Assisted / Human Only / Hybrid)
+        |
+Tactics Layer — macro manager, scouting, production balance
+        |
+Coherence — army staging, grouping, engagement/retreat decisions
+        |
+Micro Layer — army movement, kiting, focus fire, ability usage
+```
+
+The bot follows a build order during the opening, then transitions to dynamic decision-making. Claude provides optional strategic advice via async subprocess calls (rate-limited to 1 per 30 game-seconds). The neural engine can override or supplement rule-based strategy decisions using a PPO-trained policy.
+
+### Key design decisions
 
 - **Layered separation**: Strategy, tactics, coherence, and micro are independent modules with clear interfaces, testable in isolation
 - **Async Claude advisor**: Fire-and-forget subprocess call, bot never blocks waiting for AI advice
@@ -207,3 +285,10 @@ Alpha4Gate/
 - **JSONL logging**: Extended schema with `strategic_state`, `decision_queue`, and `claude_advice` for decision debugging
 - **Cross-game persistence**: JSON files in `data/` and SQLite for training transitions
 - **Build order system**: Named build orders importable from Spawning Tool API, sequenced by supply thresholds
+
+</details>
+
+---
+
+**Wiki:** [documentation/wiki/index.md](documentation/wiki/index.md) — system diagram + page map
+**Active plan:** [documentation/plans/alpha4gate-master-plan.md](documentation/plans/alpha4gate-master-plan.md)
