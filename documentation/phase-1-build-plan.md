@@ -125,6 +125,7 @@ Step 1.9 is a dedicated smoke-gate step (Type: operator) that runs a real 1-minu
 - **Depends on:** none.
 
 ### Step 1.2: Define frozen contracts in `src/orchestrator/contracts.py`
+- **Status:** DONE (2026-04-15)
 - **Problem:** Fill `contracts.py` with typed dataclasses that freeze the cross-version interfaces. `BotSpawnArgs` (role, map, sc2_connect, result_out, seed). `MatchResult` (version, match_id, outcome, duration_s, error). `Manifest` (version, best, previous_best, parent, git_sha, timestamp, elo, feature_dim, action_space). `VersionFingerprint` (feature_dim, action_space_size, obs_spec_hash). Include `to_json` / `from_json` roundtrip methods. Add `tests/test_contracts.py` verifying every field type, required-vs-optional, and roundtrip fidelity.
 - **Issue:** #107
 - **Flags:** `--reviewers auto`
