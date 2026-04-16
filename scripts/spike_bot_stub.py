@@ -29,7 +29,6 @@ from sc2.main import play_from_websocket
 from sc2.player import Bot
 from sc2.portconfig import Portconfig
 
-
 SURRENDER_STEP = {"p1": None, "p2": 200}
 
 

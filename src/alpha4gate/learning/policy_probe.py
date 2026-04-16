@@ -50,8 +50,8 @@ def get_action_probs(
             else:
                 dist = policy.get_distribution(obs_t)
 
-            probs = dist.distribution.probs[0].cpu().numpy()  # type: ignore[union-attr]
-        return probs.astype(np.float32)
+            probs = dist.distribution.probs[0].cpu().numpy()
+        return np.asarray(probs, dtype=np.float32)
     except Exception:
         return np.array([], dtype=np.float32)
 

@@ -70,7 +70,7 @@ class PPOWithKL(PPO):
             ce = torch.nn.functional.cross_entropy(logits, rule_t)
 
             self.policy.optimizer.zero_grad()
-            (self.kl_rules_coef * ce).backward()
+            (self.kl_rules_coef * ce).backward()  # type: ignore[no-untyped-call]
             torch.nn.utils.clip_grad_norm_(
                 self.policy.parameters(), self.max_grad_norm,
             )

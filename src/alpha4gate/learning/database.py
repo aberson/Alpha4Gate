@@ -129,7 +129,9 @@ def _coerce_action(v: Any) -> int:
     # little-endian int64; pass through regular ints unchanged.
     if isinstance(v, (bytes, memoryview)):
         b = bytes(v)
-        return struct.unpack("<q", b)[0] if len(b) == 8 else int.from_bytes(b, "little", signed=True)
+        if len(b) == 8:
+            return int(struct.unpack("<q", b)[0])
+        return int.from_bytes(b, "little", signed=True)
     return int(v)
 
 
