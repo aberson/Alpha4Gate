@@ -184,25 +184,78 @@ describe("buildChartData", () => {
     expect(buildChartData([])).toEqual([]);
   });
 
-  it("builds rows keyed by max points length and fills missing with null", () => {
+  it("joins rules on game_id with ascending timestamp order and nulls for non-firing games", () => {
     const rows = buildChartData([ruleAlpha, ruleBeta]);
-    // ruleAlpha has 5 points, ruleBeta has 3 -> max 5 rows
+    // Union of games {001..005} -> 5 rows, oldest (001) first.
     expect(rows).toHaveLength(5);
     expect(rows[0]).toEqual({
       game: 0,
+      gameId: "001",
       alpha_rule: 3.0,
       beta_rule: 10.0,
     });
+    // ruleBeta only fired in 001-003, so 004 and 005 are null for beta.
     expect(rows[3]).toEqual({
       game: 3,
+      gameId: "004",
       alpha_rule: 2.5,
       beta_rule: null,
     });
     expect(rows[4]).toEqual({
       game: 4,
+      gameId: "005",
       alpha_rule: 2.5,
       beta_rule: null,
     });
+  });
+
+  it("reverses newest-first backend points into oldest→newest chart order", () => {
+    // Backend returns points newest-first. Chart must flip to chronological.
+    const newestFirstAlpha: RewardTrendRule = {
+      ...ruleAlpha,
+      points: [...ruleAlpha.points].reverse(),
+    };
+    const newestFirstBeta: RewardTrendRule = {
+      ...ruleBeta,
+      points: [...ruleBeta.points].reverse(),
+    };
+    const rows = buildChartData([newestFirstAlpha, newestFirstBeta]);
+    expect(rows.map((r) => r.gameId)).toEqual([
+      "001",
+      "002",
+      "003",
+      "004",
+      "005",
+    ]);
+  });
+
+  it("aligns points on game_id even when rules fire in different subsets", () => {
+    // ruleA fires in games 001, 003; ruleB fires in 002, 003. Row for 002
+    // should have ruleA=null; row for 001 should have ruleB=null.
+    const ruleA: RewardTrendRule = {
+      rule_id: "a",
+      total_contribution: 0,
+      contribution_per_game: 0,
+      points: [
+        { game_id: "001", timestamp: "2026-04-09T09:00:00+00:00", contribution: 1.0 },
+        { game_id: "003", timestamp: "2026-04-09T09:20:00+00:00", contribution: 3.0 },
+      ],
+    };
+    const ruleB: RewardTrendRule = {
+      rule_id: "b",
+      total_contribution: 0,
+      contribution_per_game: 0,
+      points: [
+        { game_id: "002", timestamp: "2026-04-09T09:10:00+00:00", contribution: 2.0 },
+        { game_id: "003", timestamp: "2026-04-09T09:20:00+00:00", contribution: 30.0 },
+      ],
+    };
+    const rows = buildChartData([ruleA, ruleB]);
+    expect(rows).toEqual([
+      { game: 0, gameId: "001", a: 1.0, b: null },
+      { game: 1, gameId: "002", a: null, b: 2.0 },
+      { game: 2, gameId: "003", a: 3.0, b: 30.0 },
+    ]);
   });
 });
 
