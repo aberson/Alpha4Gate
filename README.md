@@ -1,8 +1,19 @@
 # Alpha4Gate
 
-A StarCraft II Protoss bot that **teaches itself to get better** — with zero human input. It plays, watches itself fail, figures out why, writes a fix, proves the fix works, and repeats. Built on rule-based strategy + PPO neural policy + Claude AI as advisor.
+An AI agent that **teaches itself to get better at a task — with zero human input.** It plays, watches itself fail, figures out why, writes a fix, proves the fix works, and repeats. The task happens to be StarCraft II, but the loop is general. A live React dashboard lets you watch the agent improve itself in real time — every phase, every proposed fix, every commit.
 
-**Design goals:** AI-vs-AI competition · autonomous self-improvement · transparent model introspection via live dashboard.
+Built on rule-based strategy + a PPO neural policy + Claude AI as strategic advisor and self-improvement agent.
+
+## Why should we care?
+
+Most self-improving ML systems need a human in the loop — to design reward functions, tune hyperparameters, or diagnose failure modes when training stalls. This one closes that loop:
+
+- **Claude reads replays like a coach would** — not just "reward went down" but "you over-committed to an attack at 8:30 while your third was unbuilt." It names the failure and proposes ranked fixes.
+- **Fixes are real code changes, not just config knobs.** With `--self-improve-code`, Claude writes to the bot's source, opens a feature branch, and must pass pytest / mypy / ruff before anything ships.
+- **Every fix is validated before commit.** If the new version doesn't hold up over N games, it's reverted automatically — no silent regressions.
+- **You can watch it happen.** The dashboard streams every phase, every proposal, every rejection, every win-rate swing — live, while the agent runs unattended for hours.
+
+The architecture is task-agnostic. SC2 is the concrete test case because it gives fast, measurable, machine-readable outcomes — any task with win/loss telemetry could drop into the same loop.
 
 ---
 
@@ -56,6 +67,23 @@ The loop runs unattended for hours. Each cycle: play N games, Claude reads the r
 Two things are running: the **loop** and the **task** it's learning from. The dashboard has a tab tuned to each vantage point, plus `data/advised_run_state.json` as the single source of truth for which phase is executing right now. Stuck-loop detection, alert rules, and operator overrides all hang off these two views.
 
 **Read the full monitoring guide:** [monitoring.md](documentation/wiki/monitoring.md)
+
+---
+
+## Why not just have Claude do everything?
+
+Claude is good at **thinking** and slow at **acting**; StarCraft II needs the reverse.
+
+- **Game cadence:** the bot reads game state every ~0.5 seconds and issues dozens of unit commands per second during fights — kiting, focus fire, ability timing. Strategy decisions happen at multi-Hz, not per-minute.
+- **Claude latency:** a single Claude CLI call takes seconds to respond, and each call costs tokens. You can't micro an army with a tool that takes 2–10 seconds per answer.
+
+So the tight loop belongs to **rule-based strategy + a PPO policy network** (both decide in milliseconds, both are deterministic enough to unit-test), and Claude is used only where latency doesn't touch the critical path:
+
+1. **Mid-game advice** — rate-limited to one call per 30 game-seconds, fire-and-forget. If the answer is late, it's ignored.
+2. **Post-hoc diagnosis** — once per iteration, Claude reads a whole batch of games at once and proposes what to fix next.
+3. **Writing the fix** — Claude edits code or config between batches, where "a few minutes to think" is fine and the output goes through quality gates before it ships.
+
+Fast-and-dumb does the playing. Slow-and-smart does the learning.
 
 ---
 
