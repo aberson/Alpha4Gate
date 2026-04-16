@@ -9,6 +9,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+# Command-line substrings that identify "one of our" processes during the
+# Phase 1 migration window:
+#   * "bots.v0"     — post-Step-1.5 versioned module path
+#   * "bots.current" — Step 1.6 version-pointer module path
+#   * "alpha4gate"  — legacy tree, still live until Step 1.10 deletes it
+# After Step 1.10 the "alpha4gate" entry can be dropped.
+_OUR_CMDLINE_TAGS: tuple[str, ...] = ("bots.v0", "bots.current", "alpha4gate")
+
+
+def _is_ours(cmdline: str) -> bool:
+    """Return True if ``cmdline`` (already lower-cased) matches any of our tags."""
+    return any(tag in cmdline for tag in _OUR_CMDLINE_TAGS)
+
 
 @dataclass
 class ProcessInfo:
@@ -125,7 +138,7 @@ def _classify_process(
         return "sc2"
     if name == "node":
         return "frontend"
-    if "alpha4gate" in lower and "--serve" in lower:
+    if _is_ours(lower) and "--serve" in lower:
         if name == "uv":
             return "backend-wrapper"
         # Check parent: if parent is python → this is uvicorn (server).
@@ -134,9 +147,9 @@ def _classify_process(
         if parent_name == "python":
             return "backend-server"
         return "backend-runner"
-    if "alpha4gate" in lower and "--batch" in lower:
+    if _is_ours(lower) and "--batch" in lower:
         return "game-runner"
-    if "alpha4gate" in lower:
+    if _is_ours(lower):
         return "runner"
     if name in ("python", "uv"):
         return "python"
@@ -148,12 +161,17 @@ def _summarize_cmdline(cmdline: str) -> str:
     if not cmdline:
         return ""
     # Truncate long paths, keep the meaningful parts
-    if "alpha4gate" in cmdline:
-        # Extract the key flags
+    lower = cmdline.lower()
+    if _is_ours(lower):
+        # Extract the key flags and label by whichever tag actually matched
+        # (so legacy `alpha4gate` processes stay recognisable during the
+        # migration window, and new `bots.v0` / `bots.current` processes
+        # get their real label instead of a misleading legacy one).
         parts = cmdline.split()
         flags = [p for p in parts if p.startswith("--")]
-        return "alpha4gate " + " ".join(flags)
-    if "node" in cmdline.lower() and "vite" in cmdline.lower():
+        label = next((tag for tag in _OUR_CMDLINE_TAGS if tag in lower), "bots.v0")
+        return label + " " + " ".join(flags)
+    if "node" in lower and "vite" in lower:
         return "vite dev server"
     if len(cmdline) > 120:
         return cmdline[:120] + "..."

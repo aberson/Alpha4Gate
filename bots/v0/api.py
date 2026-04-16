@@ -130,7 +130,7 @@ async def _lifespan(application: FastAPI) -> AsyncIterator[None]:
     # invocation already installed it.
     install_error_log_handler()
     # Auto-configure when the app is launched directly (e.g. via
-    # `uvicorn alpha4gate.api:app --reload` in dev mode). The normal
+    # `uvicorn bots.v0.api:app --reload` in dev mode). The normal
     # --serve entrypoint calls configure() before uvicorn.run, so this
     # guard is a no-op there.
     if _daemon is None:
@@ -589,7 +589,7 @@ async def debug_raise_error(
     message = "Synthetic alerts pre-flight test"
     if request is not None and isinstance(request.get("message"), str):
         message = request["message"]
-    debug_logger = logging.getLogger("alpha4gate.debug")
+    debug_logger = logging.getLogger("bots.v0.debug")
     debug_logger.error("synthetic error: %s", message)
     return {"status": "ok", "logged": message}
 
@@ -1289,8 +1289,10 @@ def _kill_spawned_processes() -> list[str]:
     my_pid = os.getpid()
 
     # Find and kill python/uv processes that are NOT this backend.
-    # We identify game runners by checking if they're alpha4gate processes
-    # that aren't our own PID or our parent (uv wrapper).
+    # We identify game runners by checking if they're one of "our" processes
+    # (bots.v0 / bots.current / legacy alpha4gate — see
+    # bots.v0.process_registry._OUR_CMDLINE_TAGS) that aren't our own PID
+    # or our parent (uv wrapper).
     try:
         ps_cmd = (
             "Get-Process -Name python,uv -ErrorAction SilentlyContinue | "
@@ -1430,7 +1432,7 @@ async def restart_server() -> dict[str, str]:
     # Build the command to start the new backend.
     # Never inherit --daemon — the improvement loop skill should be the
     # one that starts the daemon, not a UI restart button.
-    cmd = [sys.executable, "-m", "alpha4gate.runner", "--serve"]
+    cmd = [sys.executable, "-m", "bots.v0.runner", "--serve"]
     if _daemon is not None and _daemon.is_running():
         _daemon.stop()
         _log.info("Daemon stopped for restart (will NOT restart with --daemon)")

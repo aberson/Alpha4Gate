@@ -239,7 +239,7 @@ def _start_server(settings: Settings, daemon: bool = False) -> None:
             _log.info("Training daemon auto-started (--daemon flag)")
 
     uvicorn.run(
-        "alpha4gate.api:app",
+        "bots.v0.api:app",
         host="0.0.0.0",
         port=settings.web_ui_port,
         reload=False,
@@ -274,7 +274,7 @@ def _start_server_background(settings: Settings) -> None:
         api_key=settings.anthropic_api_key,
     )
     config = uvicorn.Config(
-        "alpha4gate.api:app",
+        "bots.v0.api:app",
         host="0.0.0.0",
         port=settings.web_ui_port,
         reload=False,
@@ -286,8 +286,22 @@ def _start_server_background(settings: Settings) -> None:
     print(f"API server started on http://localhost:{settings.web_ui_port}")
 
 
-def _run_single_game(settings: Settings, args: argparse.Namespace) -> None:
-    """Run a single game vs AI."""
+def _run_single_game(
+    settings: Settings,
+    args: argparse.Namespace,
+    *,
+    start_server: bool = True,
+) -> None:
+    """Run a single game vs AI.
+
+    ``start_server`` gates the in-process uvicorn background thread. The
+    default is ``True`` (the long-standing behavior for
+    ``python -m bots.v0.runner --map X``, which operators rely on to get
+    the dashboard for free when launching a one-off game). The ladder
+    entry point (``python -m bots.v0 --role solo``) passes ``False`` so
+    it does not duplicate a running backend — see
+    ``memory/feedback_backend_lifecycle.md``.
+    """
     import uuid
 
     from bots.v0.bot import Alpha4GateBot
@@ -296,7 +310,8 @@ def _run_single_game(settings: Settings, args: argparse.Namespace) -> None:
     from bots.v0.learning.rewards import RewardCalculator
     from bots.v0.logger import GameLogger
 
-    _start_server_background(settings)
+    if start_server:
+        _start_server_background(settings)
 
     build_order = _load_build_order(settings, args.build_order)
 
