@@ -37,6 +37,7 @@ replacement.
 - **Problem:** Revert `use_imitation_init` to false, set `kl_rules_coef: 0.1`, keep `policy_type: MlpPolicy`. Run `uv run python -m alpha4gate.runner --train rl --cycles 2 --games-per-cycle 3 --difficulty 3`. Pass = no NaN / crash AND cycle wall-clock ≤ 1.5× the Step 2 baseline (extra-pass overhead bounded). Optional bonus: check `data/training_diagnostics.json` probabilities on diagnostic states drift toward rule-engine choices across cycles. Report PASS with wall-clock ratio, or BLOCKED with symptom (NaN → drop coef to 0.05 per plan).
 - **Type:** operator
 - **Issue:** #100
+- **Status:** DONE (2026-04-15) — 2 cycles in 502 sec total (~251 sec/cycle), **0.85× the Step 2 baseline** of 295 sec/cycle. Gate ≤1.5× (442 sec) cleared. No NaN, both checkpoints saved (v1, v2), failed_games=0. `kl_rules_coef=0.1` adds no measurable overhead.
 
 ### Step 5: A.4 LSTM alone
 - **Problem:** Revert `kl_rules_coef` to 0.0, set `policy_type: MlpLstmPolicy`. LSTM checkpoints are incompatible with prior MlpPolicy checkpoints, so first `Move-Item data/checkpoints data/checkpoints.bak-pre-lstm`. Then run `uv run python -m alpha4gate.runner --train rl --cycles 2 --games-per-cycle 3 --difficulty 3`. Pass = env loop runs, hidden state threads through, cycles complete. Known failure: if `net_arch: [128, 128]` flat-list is invalid for MlpLstmPolicy, model construction crashes — fix is to change net_arch in hyperparams to `{"pi": [128], "vf": [128]}`. Log any net_arch fix in the plan's history section. Report PASS or BLOCKED with root cause.
