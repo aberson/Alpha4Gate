@@ -99,6 +99,10 @@ So the tight loop runs on rule-based strategy + a PPO policy network (both decid
 
 Fast-and-dumb does the playing. Slow-and-smart does the learning.
 
+---
+
+<details>
+
 ## Stack
 
 | Layer | Tool | Why |
@@ -116,9 +120,7 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 | Testing (Frontend) | vitest + jsdom + @testing-library/react | 126 component / hook / lib tests |
 | Linting | ruff + mypy | Strict type checking, consistent style |
 
----
 
-<details>
 <summary><b>Setup</b></summary>
 
 ### Prerequisites
