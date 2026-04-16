@@ -55,6 +55,7 @@ replacement.
 - **Problem:** With flags from Step 6 (full stack on), run `uv run python -m alpha4gate.runner --batch 20 --difficulty 3 --decision-mode hybrid --model-path data/checkpoints/best.zip`. This is a ~2–4 hour SC2 wall-clock run. Capture final win rate. Gate: at least one of the configs from Steps 3–6 must hit win rate ≥ 75% baseline over 20 games at difficulty 3. Deliverable is the batch log + the comparison write-up in the issue comment when you resume.
 - **Type:** wait
 - **Issue:** #100
+- **Status:** DONE (2026-04-15) — **19/20 wins = 95% WR at difficulty 3 hybrid**. Used `data/checkpoints/v3.zip` (full-stack LSTM+KL+imitation, 9-game training from Step 6). Added `--no-claude` to bypass a CancelledError in claude_advisor batch-mode path (separate bug, not Phase A). Final 18 of 20 games won consecutively. Gate ≥75%: **PASSED**.
 
 ### Step 8: Phase A gate decision + merge
 - **Problem:** Based on Step 7 soak results and Steps 2–6 outcomes, make the gate call per the plan: `(combo_passed & no_crashes & tests_green) → merge branch to master`. If gate passes: `git checkout master && git merge feat/lstm-kl-imitation`, tag `alphastar/A/final`, push tags, close issue #100. If gate fails: leave branch unmerged, append outcome to the plan's "Plan history" section (line 687+), and decide whether to investigate per the kill-criterion candidates (stateless rule-teacher lossiness, padding distribution shift). Report DONE when merged or when failure is logged.
