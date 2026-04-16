@@ -2,21 +2,13 @@
 
 ![Python](https://img.shields.io/badge/python-3.12-blue) ![pytest](https://img.shields.io/badge/pytest-829%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-126%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
 
+It plays, watches itself fail, figures out why, writes a fix, proves the fix works, and repeats. The task happens to be StarCraft II, but the loop is general. A live React dashboard streams every phase — every proposed fix, every rejection, every win-rate swing — while the agent runs unattended for hours.
+
 > An AI agent that **teaches itself to get better at a task — zero human input.**
 >
 > **50% → 83%** win rate at SC2 difficulty 4 — reached via 6 code changes the agent wrote and validated itself.
 
 ![Advisor Control Panel showing a completed autonomous improvement run — 6 proposed fixes, each validated against a fresh game batch before commit](documentation/images/advisor-completed.png)
-
-It plays, watches itself fail, figures out why, writes a fix, proves the fix works, and repeats. The task happens to be StarCraft II, but the loop is general. A live React dashboard streams every phase — every proposed fix, every rejection, every win-rate swing — while the agent runs unattended for hours.
-
-**Quick start** (requires [SC2](https://starcraft2.blizzard.com/), Python 3.12, [uv](https://docs.astral.sh/uv/)):
-
-```bash
-git clone https://github.com/aberson/Alpha4Gate.git && cd Alpha4Gate
-uv sync
-uv run python -m alpha4gate.runner --map Simple64 --no-claude --difficulty 3
-```
 
 ## What makes this different
 
