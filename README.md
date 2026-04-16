@@ -280,7 +280,7 @@ Alpha4Gate/
 </details>
 
 <details>
-<summary><b>Layered architecture & design decisions</b></summary>
+<summary><b>How the bot plays — layers & design decisions</b></summary>
 
 ### Layered architecture
 
