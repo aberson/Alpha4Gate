@@ -2,60 +2,72 @@
 
 How the bot learns from experience.
 
-> **At a glance:** Two training modes — imitation pre-training (behavior cloning from
-> rule-based play) and RL training (PPO via Stable Baselines 3). Both are CLI-triggered,
-> synchronous, and single-machine. Curriculum auto-advances difficulty when win rate
-> hits 80%. Checkpoints managed via manifest with best-tracking and pruning. The SC2 game
-> runs in a background thread bridged to a gymnasium.Env interface via queues.
+> **At a glance:** The inner self-improvement loop. `TrainingDaemon` triggers RL cycles in the background (no human input). Each cycle: `TrainingOrchestrator` runs PPO via Stable Baselines 3, then `PromotionManager` gates the new checkpoint and `RollbackMonitor` watches for regressions. Four PPO variants are dispatched by hyperparams: `PPO`, `PPOWithKL` (KL regularized to the rule-based policy), `RecurrentPPO` (LSTM memory), and `RecurrentPPOWithKL`. Imitation pre-training provides a warm-start via the `use_imitation_init` hyperparam. Curriculum auto-advances difficulty when win rate hits 80%. Checkpoints managed via manifest with best-tracking and pruning. The SC2 game runs in a background thread bridged to a gymnasium.Env interface via queues.
+
+This doc covers the **inner loop** of the autonomous system. For how it plugs into `/improve-bot-advised`'s outer loop (the TRAIN phase), see [improve-bot-advised-architecture.md](improve-bot-advised-architecture.md). For the promotion/rollback gate specifically, see [promotions.md](promotions.md).
 
 ## Purpose & Design
 
-The training pipeline turns game experience into a better policy. It has two stages:
+The training pipeline turns game experience into a better policy. Two stages, plus
+the autonomous daemon that drives them:
 
 | Stage | What it does | When to use |
 |-------|-------------|-------------|
 | **Imitation pre-training** | Clone the rule-based bot's decisions via supervised learning | Once, before RL, to give PPO a sensible starting policy |
 | **RL training** | PPO gradient updates on actual game outcomes | Repeatedly, to improve beyond rule-based play |
+| **Autonomous daemon** | Trigger RL cycles in the background based on transitions + time | Always-on; enables the outer loop's TRAIN phase |
 
-Both stages produce SB3 checkpoint files (`.zip`) stored in `data/checkpoints/` with
+All stages produce SB3 checkpoint files (`.zip`) stored in `data/checkpoints/` with
 a `manifest.json` tracking versions and the current "best" model.
 
 ### Training flow overview
 
 ```
-                    ┌──────────────────────────────────┐
-                    │         CLI Entry Point           │
-                    │  runner.py --train {imitation|rl} │
-                    └──────────────┬───────────────────┘
-                                   │
-              ┌────────────────────┴────────────────────┐
-              ▼                                         ▼
-   ┌─────────────────────┐               ┌──────────────────────────┐
-   │  Imitation Training  │               │    RL Training Loop       │
-   │                      │               │                          │
-   │  DB transitions      │               │  For each cycle:         │
-   │  → PyTorch CE loss   │               │    1. Create SC2Env      │
-   │  → v0_pretrain.zip   │               │    2. model.learn()      │
-   │                      │               │    3. Check win rate     │
-   │  Stop: agreement     │               │    4. Curriculum advance │
-   │  >= 95% or 100 epochs│               │    5. Save checkpoint    │
-   └─────────────────────┘               │    6. Prune old CPs      │
-                                          └──────────────────────────┘
+              ┌────────────────────────────────────────────────────┐
+              │  TrainingDaemon (background thread)                │
+              │                                                    │
+              │   Every check_interval (default 60s):              │
+              │     transitions-since-last >= min_transitions ?    │
+              │     OR hours-since-last >= min_hours_since_last ?  │
+              │     → fire training run                            │
+              └─────────────────────┬──────────────────────────────┘
+                                    │
+                                    ▼
+ ┌──────────────────────────────────────────────────────────────────┐
+ │  TrainingOrchestrator.run(cycles_per_run, games_per_cycle)       │
+ │                                                                  │
+ │   For each cycle (default 5 per run):                            │
+ │     1. Create SC2Env with current difficulty                     │
+ │     2. _init_or_resume_model() — dispatch PPO variant            │
+ │        - PPO / PPOWithKL / RecurrentPPO / RecurrentPPOWithKL     │
+ │        - Load v0_pretrain if use_imitation_init=true             │
+ │     3. model.learn(total_timesteps = games_per_cycle * 15)       │
+ │     4. Check win rate; curriculum-advance if >= 0.8              │
+ │     5. Save checkpoint; prune old ones                           │
+ │     6. Log diagnostics (action distribution on test states)      │
+ └─────────────────────┬────────────────────────────────────────────┘
+                       │
+                       ▼
+ ┌──────────────────────────────────────────────────────────────────┐
+ │  PromotionManager.evaluate_and_promote()                         │
+ │   Eval new checkpoint + current best, compare, promote or reject │
+ │   (see promotions.md for the full gate)                          │
+ └─────────────────────┬────────────────────────────────────────────┘
+                       │
+                       ▼
+ ┌──────────────────────────────────────────────────────────────────┐
+ │  RollbackMonitor.check_for_regression()                          │
+ │   If current WR < promotion WR by regression_threshold → revert  │
+ └──────────────────────────────────────────────────────────────────┘
 ```
 
-### Gaps
+### What's changed since this doc was originally written
 
-> These feed directly into [Phase 3 of the always-up plan](../plans/always-up-plan.md).
-
-- **No daemon or scheduler.** Training only runs when a human types `--train rl`.
-  There's no background process, no cron, no event-triggered training.
-- **No model promotion.** Checkpoints are saved with a "best" flag, but there's no
-  automated "evaluate new checkpoint against old, promote if better" flow.
-- **No parallel evaluation.** Training and evaluation share the same process. You can't
-  benchmark a checkpoint while another training cycle runs.
-- **No distributed training.** Single machine, single GPU, serial cycles.
-- **Single environment per cycle.** SB3's `model.learn()` runs one SC2 game at a time
-  (no vectorized environments).
+- **The daemon exists.** `TrainingDaemon` triggers RL cycles autonomously; no human `--train rl` needed.
+- **Promotion + rollback exist.** `PromotionManager` and `RollbackMonitor` gate every new checkpoint.
+- **Four PPO variants** are dispatched by hyperparams: `PPO`, `PPOWithKL`, `RecurrentPPO`, `RecurrentPPOWithKL`.
+- **Imitation-init path**: setting `use_imitation_init=true` in hyperparams warm-starts from `v0_pretrain.zip` (AlphaStar-style supervised init).
+- **Still single-machine, single-GPU, serial cycles.** No vectorized envs yet.
 
 ---
 
@@ -154,7 +166,7 @@ pre-trained weights with `reset_num_timesteps=False` to keep the cumulative step
 `SC2Env` wraps a full SC2 game as a `gymnasium.Env[NDArray[float32], int]`.
 
 **Spaces:**
-- Observation: `Box(0.0, 1.0, shape=(17,), dtype=float32)`
+- Observation: `Box(0.0, 1.0, shape=(24,), dtype=float32)` — 17 base game features + 7 advisor features
 - Action: `Discrete(6)` — maps to `[OPENING, EXPAND, ATTACK, DEFEND, LATE_GAME, FORTIFY]`
 
 **Threading model:**
@@ -336,6 +348,45 @@ and does NOT mutate any field other than `_last_error` and its own
 record per training run (one-shot) so a broken cycle cannot feed its own
 watchdog.
 
+### PPO variant dispatch
+
+`_init_or_resume_model()` picks one of four model classes based on hyperparams:
+
+| `policy_type` | `kl_rules_coef` | Class | Notes |
+|---|---|---|---|
+| `MlpPolicy` (default) | 0.0 | `PPO` | Stock SB3 PPO |
+| `MlpPolicy` | > 0.0 | `PPOWithKL` | Adds a KL penalty term to keep policy close to the rule-based reference |
+| `MlpLstmPolicy` | 0.0 | `RecurrentPPO` | LSTM memory via `sb3_contrib` |
+| `MlpLstmPolicy` | > 0.0 | `RecurrentPPOWithKL` | LSTM + KL-to-rules (AlphaStar-style) |
+
+The KL-to-rules penalty pulls the policy toward a frozen rule-based reference (`learning/rules_policy.py`) — prevents catastrophic forgetting of the bootstrapped behavior during RL.
+
+**Imitation-init path** (`use_imitation_init: true` in hyperparams):
+- If `data/checkpoints/v0_pretrain.zip` exists, load it as starting weights.
+- If missing and `--ensure-pretrain` not passed, log a warning and fall through to a fresh model.
+- `resume` takes priority: if a `best` checkpoint exists, resume wins over imitation.
+
+### TrainingDaemon
+
+Background thread that triggers training runs autonomously (`learning/daemon.py`).
+
+**Trigger logic** (OR):
+- `transitions-since-last-run >= min_transitions` (default 500)
+- `hours-since-last-run >= min_hours_since_last` (default 1.0)
+
+**Default config** (`DaemonConfig`):
+| Field | Default |
+|---|---|
+| `check_interval_seconds` | 60 |
+| `min_transitions` | 500 |
+| `min_hours_since_last` | 1.0 |
+| `cycles_per_run` | 5 |
+| `games_per_cycle` | 10 |
+| `watchdog_poll_seconds` | 5 |
+| `watchdog_error_threshold` | 5 |
+
+**API surface** — `/api/training/daemon` (status), `/api/training/triggers` (trigger evaluation). See [monitoring.md](monitoring.md) for the Loop tab and LoopStatus component.
+
 ### Curriculum system
 
 Automatic difficulty scaling within a training run:
@@ -472,10 +523,6 @@ Unknown keys are logged as warnings.
 | 4 | LATE_GAME | Macro for late game |
 | 5 | FORTIFY | Build static defense |
 
-**Note:** The gymnasium env declares `Discrete(6)` but imitation training creates
-`Discrete(5)` (excluding FORTIFY). This mismatch exists in the codebase — FORTIFY was
-added after imitation training was implemented.
-
 ### Diagnostics
 
 After each RL cycle, `_log_diagnostics()` evaluates the model on predefined test states:
@@ -524,7 +571,8 @@ written to disk (persistent) but not surfaced in the dashboard.
 | `STEPS_PER_ACTION` | 22 game ticks | environment.py |
 | `MAX_GAME_TIME_SECONDS` | 900.0 (15 min) | environment.py |
 | `DEFAULT_DISK_LIMIT_GB` | 200.0 | trainer.py |
-| `FEATURE_DIM` | 17 | features.py |
+| `FEATURE_DIM` | 24 (17 base + 7 advisor) | features.py |
+| `BASE_GAME_FEATURE_DIM` | 17 | features.py |
 | Default `win_rate_threshold` | 0.8 | trainer.py |
 | Default `max_epochs` (imitation) | 100 | imitation.py |
 | Default `agreement_threshold` | 0.95 | imitation.py |
@@ -533,14 +581,21 @@ written to disk (persistent) but not surfaced in the dashboard.
 
 | File | Purpose |
 |------|---------|
-| `src/alpha4gate/learning/trainer.py` | TrainingOrchestrator — cycle loop, curriculum, diagnostics |
+| `src/alpha4gate/learning/trainer.py` | TrainingOrchestrator — cycle loop, curriculum, diagnostics, variant dispatch |
+| `src/alpha4gate/learning/daemon.py` | TrainingDaemon — background triggers, watchdog |
 | `src/alpha4gate/learning/environment.py` | SC2Env — gymnasium wrapper, threading, queue bridge |
 | `src/alpha4gate/learning/imitation.py` | run_imitation_training — behavior cloning |
 | `src/alpha4gate/learning/neural_engine.py` | NeuralDecisionEngine — inference, hybrid override |
-| `src/alpha4gate/learning/checkpoints.py` | save/load/prune/list checkpoints, manifest management |
+| `src/alpha4gate/learning/checkpoints.py` | save/load/prune/list/promote checkpoints, manifest management |
 | `src/alpha4gate/learning/hyperparams.py` | Load/convert PPO hyperparameters |
-| `src/alpha4gate/runner.py` | CLI entry point — `--train`, `--decision-mode`, `--model-path` |
+| `src/alpha4gate/learning/rules_policy.py` | Rule-based policy reference for KL-to-rules target |
+| `src/alpha4gate/learning/ppo_kl.py` | PPOWithKL + RecurrentPPOWithKL variants |
+| `src/alpha4gate/learning/promotion.py` | PromotionManager — see [promotions.md](promotions.md) |
+| `src/alpha4gate/learning/rollback.py` | RollbackMonitor — see [promotions.md](promotions.md) |
+| `src/alpha4gate/learning/evaluator.py` | ModelEvaluator — deterministic inference eval |
+| `src/alpha4gate/learning/advisor_bridge.py` | Thread-safe Claude advisor queue for training |
+| `src/alpha4gate/runner.py` | CLI entry point — `--train`, `--decision-mode`, `--serve`, `--daemon` |
 | `data/checkpoints/` | Checkpoint files + manifest.json |
-| `data/hyperparams.json` | PPO hyperparameter defaults |
+| `data/hyperparams.json` | PPO hyperparameter defaults + `policy_type`, `kl_rules_coef`, `use_imitation_init` |
 | `data/diagnostic_states.json` | Hand-crafted test states for diagnostics |
 | `data/training_diagnostics.json` | Per-cycle action distributions on test states |

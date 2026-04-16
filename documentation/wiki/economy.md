@@ -8,6 +8,8 @@ How the bot manages workers, supply, production, and expansion.
 > retries failed builds with a 120s expiry. Constants like WORKERS_PER_BASE=16 and
 > MAX_WORKERS=44 are hardcoded. Warp Gate research is auto-queued at the Cybernetics Core.
 
+> **Framework position:** this doc covers internals of THE TASK — the SC2 bot itself. These subsystems run inside each game; the autonomous learning loop (PLAY/THINK/FIX/TEST/COMMIT/TRAIN) never modifies them at runtime, but the FIX phase can edit constants in this file via the `/improve-bot-advised` skill.
+
 ## Purpose & Design
 
 Three systems handle economy:
@@ -26,7 +28,7 @@ Three systems handle economy:
 | Production | gateways < base_count * 2 | Build gateway (robo after 2nd base) |
 | Gas | base has no assimilators | Build assimilator |
 
-**Ideal worker count:** `min(base_count * 16 + gas_count * 3, 70)`
+**Ideal worker count:** `min(base_count * 16 + gas_count * 3, MAX_WORKERS)` where `MAX_WORKERS=44` (`macro_manager.py:20`, capped at `_ideal_worker_count`).
 
 ### Build order sequencer
 

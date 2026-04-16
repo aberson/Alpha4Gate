@@ -1,85 +1,173 @@
-# Promotion History
+# Promotions & Rollback
 
-A record of every model promotion — when a new checkpoint became "best" and why.
+How the inner loop decides whether a new neural checkpoint is actually better, and what happens when it isn't.
 
-> **At a glance:** This page tracks model promotions: the moment a trained checkpoint is
-> evaluated, deemed better than the previous best, and promoted. Today promotions are
-> manual (human picks "best" during training). The always-up plan targets automated
-> promotion with rollback. This page will grow into a living log as the autonomous
-> loop matures.
+> **At a glance:** After every training cycle, `PromotionManager.evaluate_and_promote()` runs a deterministic inference-only eval on both the new checkpoint and the current best, compares win rates with a 5% threshold, and refuses to promote on any crashed eval game. `RollbackMonitor` watches the promoted checkpoint and reverts to the previous best if win rate drops 15% below its promotion-time rate. All decisions append to `data/promotion_history.json` with a stable `reason_code`, surfaced in the Improvements tab.
 
-## What is a promotion?
+See [training-pipeline.md](training-pipeline.md) for where this sits in the inner loop; [improve-bot-advised-architecture.md](improve-bot-advised-architecture.md) for how the outer loop's TRAIN phase invokes it.
 
-A promotion happens when a new model checkpoint replaces the current "best" model. The
-promoted model is what the bot uses during gameplay (when `--decision-mode neural` is
-active) and what the next training cycle resumes from.
+---
 
-### Current promotion flow (manual)
+## The Gate (one diagram)
 
 ```
-1. TrainingOrchestrator runs N cycles
-2. Each cycle saves a checkpoint with metadata {cycle, difficulty, win_rate}
-3. Orchestrator marks the last cycle as "best" in manifest.json
-4. Human reviews training_diagnostics.json and win rates
-5. Human may override by editing manifest.json or re-running with different params
+ new checkpoint saved by TrainingOrchestrator
+            │
+            ▼
+ ┌─────────────────────────────────────────────────┐
+ │  PromotionManager.evaluate_and_promote()        │
+ │                                                 │
+ │   1. ModelEvaluator.evaluate(new)   → EvalResult│
+ │   2. ModelEvaluator.evaluate(best)  → EvalResult│
+ │   3. Check max_crashed (default 0):             │
+ │         ANY crashed game on either side → REJECT│
+ │   4. Check min_eval_games (default 10):         │
+ │         fewer valid games → REJECT              │
+ │   5. Compare win rates:                         │
+ │         new_wr >= best_wr + threshold (5%) ?    │
+ │         YES → PROMOTE                           │
+ │         NO  → REJECT                            │
+ └─────────────────────────────────────────────────┘
+            │
+            ├── PROMOTE ──> promote_checkpoint() updates manifest.json
+            │               └──> (may trigger curriculum difficulty++)
+            │
+            └── REJECT  ──> new checkpoint stays on disk but isn't "best"
+                            (pruned eventually by checkpoint pruner)
+
+ Every decision appends one entry to data/promotion_history.json
 ```
 
-**Problem:** There's no evaluation gate. The last checkpoint becomes "best" even if it
-performs worse than the previous one. There's no comparison, no rollback, no record of
-*why* a promotion happened.
-
-### Target promotion flow (autonomous)
+And separately, on every daemon cycle:
 
 ```
-1. Training cycle completes → new checkpoint saved
-2. Evaluation: run N games with new checkpoint vs. current best
-3. Compare: win rate, reward trends, action distribution
-4. If better by threshold → PROMOTE (update manifest, log reason)
-5. If worse → REJECT (keep current best, log reason)
-6. Either way → record in promotion history
+ RollbackMonitor.check_for_regression(current_best)
+            │
+            ▼
+ Compare current win rate vs. win rate at promotion time
+     (needs min_games_before_check, default 10 games since promotion)
+            │
+            ▼
+ drop > regression_threshold (default 15%) ?
+     YES → execute_rollback(): manifest best ← previous_best
+            Append entry with reason_code="rollback"
+     NO  → no-op
 ```
 
 ---
 
-## Promotion Log
+## Decision Outcomes
 
-> This table will be populated as promotions happen. Each entry records what changed,
-> the evidence, and the outcome.
+Every evaluation appends one `PromotionDecision` to `data/promotion_history.json`. The `reason_code` field is the stable classifier:
 
-| Date | From | To | Win Rate (Old→New) | Games | Difficulty | Reason | Outcome |
-|------|------|----|-------------------|-------|------------|--------|---------|
-| *2026-04-xx* | *v0_pretrain* | *v1* | *---→65%* | *20* | *1* | *First RL cycle, baseline* | *promoted* |
+| `reason_code` | Meaning | Promoted? |
+|---|---|---|
+| `first_baseline` | No prior best existed — promoted unconditionally (unless eval crashed) | Yes |
+| `win_rate_gate` | New WR exceeded old by ≥5% over ≥10 valid games | Yes |
+| `rejected_not_better` | New WR did not exceed old by the threshold | No |
+| `rejected_insufficient_games` | Eval produced fewer than `min_eval_games` valid games | No |
+| `rejected_crashed` | Either eval had ≥1 crashed game (`max_crashed=0`) | No |
+| `manual` | Operator promoted via `POST /api/training/promote` | Yes |
+| `rollback` | `RollbackMonitor` reverted to `previous_best` after regression | No (rollback) |
 
-*(Entries will be added as the autonomous loop runs promotions.)*
+**Why `max_crashed=0`?** Phase 4.5 blocker #67 — crashed eval games used to be silently counted as losses, which made a broken run look like a regression. The gate now refuses to decide if any game crashed, forcing a re-eval.
 
 ---
 
-## What to record per promotion
+## Configuration
 
-Each promotion entry should capture:
+### Promotion gate — `PromotionConfig` (`learning/promotion.py:19`)
 
-1. **Timestamp** — when the promotion decision was made
-2. **Previous best** — checkpoint name and its known win rate
-3. **New candidate** — checkpoint name, training cycle, difficulty level
-4. **Evidence** — win rate comparison, number of eval games, confidence
-5. **Action distribution shift** — did the model's behavior change meaningfully?
-   (from training_diagnostics.json)
-6. **Decision** — promoted or rejected
-7. **Reason** — human-readable summary of why
+| Field | Default | What it gates |
+|---|---|---|
+| `eval_games` | 20 | Games played per checkpoint per evaluation |
+| `win_rate_threshold` | 0.05 | Minimum WR delta (new − old) required to promote |
+| `min_eval_games` | 10 | Minimum non-crashed games to trust the WR |
+| `max_crashed` | 0 | Refuse if more than this many eval games crashed |
 
-### Gaps (feeds into [Phase 3](../plans/always-up-plan.md))
+### Rollback monitor — `RollbackConfig` (`learning/rollback.py:19`)
 
-- **No automated evaluation gate** — last checkpoint auto-becomes best
-- **No comparison infrastructure** — can't run "new vs old" benchmark
-- **No promotion logging** — manifest.json tracks "best" but not history
-- **No rollback** — if promoted model is worse, manual intervention needed
-- **training_diagnostics.json exists** but isn't used for promotion decisions
+| Field | Default | What it gates |
+|---|---|---|
+| `regression_threshold` | 0.15 | WR must drop this far below promotion-time WR to revert |
+| `min_games_before_check` | 10 | Games since promotion before rollback can fire |
 
-### Key file locations
+---
 
-| File | Role |
-|------|------|
-| `data/checkpoints/manifest.json` | Current "best" model and checkpoint list |
-| `data/training_diagnostics.json` | Per-cycle action distributions (could inform promotions) |
-| `src/alpha4gate/learning/checkpoints.py` | save/load/prune/get_best_name |
-| `src/alpha4gate/learning/trainer.py` | Where promotions currently happen (implicit) |
+## The Log — `data/promotion_history.json`
+
+Append-only JSON array. Each entry:
+
+```json
+{
+  "timestamp": "2026-04-14T08:32:11+00:00",
+  "new_checkpoint": "v37",
+  "old_best": "v35",
+  "new_win_rate": 0.72,
+  "old_win_rate": 0.65,
+  "delta": 0.07,
+  "eval_games_played": 20,
+  "promoted": true,
+  "reason": "win rate delta 0.07 >= 0.05 threshold",
+  "reason_code": "win_rate_gate",
+  "difficulty": 3,
+  "action_distribution_shift": 0.14
+}
+```
+
+Rollback entries use the same schema with `promoted=false` and `reason` prefixed `"rollback:"`.
+
+Self-healing: `PromotionLogger` tolerates a corrupt history file (renames it to `.corrupt` and starts fresh) so a malformed entry can't lock the gate out.
+
+---
+
+## API Endpoints
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/api/training/promotions` | GET | Summary: total promotions, rollbacks, latest entry |
+| `/api/training/promotions/history` | GET | Full history (consumed by Improvements → Recent Improvements) |
+| `/api/training/promotions/latest` | GET | Most recent entry only |
+| `/api/training/promote` | POST | Manual promotion (uses `reason_code="manual"`) |
+| `/api/training/rollback` | POST | Manual rollback |
+
+---
+
+## Dashboard Surfaces
+
+| Component | File | What it shows |
+|---|---|---|
+| Recent Improvements | `frontend/src/components/RecentImprovements.tsx` | Classifies each history entry as `promotion \| rollback \| rejected` via `classifyEntry()`; timestamp, delta, reason_code, difficulty |
+| Reward Trends | `frontend/src/components/RewardTrends.tsx` | Per-rule reward contribution over last N games |
+| Checkpoint List | `frontend/src/components/CheckpointList.tsx` | All checkpoints with `best` indicator from `manifest.json` |
+| Loop tab | `frontend/src/components/LoopStatus.tsx` | Current daemon cycle; `last_result` contains `win_rate` and `final_difficulty` post-promotion |
+
+Alert rule `ruleRollbackFired` (warning severity) fires when the latest history entry has `promoted=false` and `reason` starts with `"rollback:"`. See [monitoring.md](monitoring.md) for the full alert table.
+
+---
+
+## Relationship to the Outer Loop
+
+The outer loop (`/improve-bot-advised`) never directly promotes. Its TRAIN phase kicks off a short daemon soak, and the inner loop's promotion gate decides what counts as "better." This means:
+
+- An outer-loop iteration that changes reward rules or code can indirectly affect the next promotion by changing what the PPO policy learns.
+- An outer-loop iteration is considered successful (PASS in TEST phase) based on validation win rate vs. baseline — independently of whether the inner loop promoted anything.
+- Rollbacks can happen without the outer loop's involvement (daemon detects regression between advised-run iterations).
+
+See [improve-bot-advised-architecture.md](improve-bot-advised-architecture.md) for how TRAIN slots into the outer loop.
+
+---
+
+## Key File Locations
+
+| File | Purpose |
+|---|---|
+| `src/alpha4gate/learning/promotion.py` | `PromotionManager`, `PromotionConfig`, `PromotionDecision`, `PromotionLogger` |
+| `src/alpha4gate/learning/rollback.py` | `RollbackMonitor`, `RollbackConfig`, `RollbackDecision` |
+| `src/alpha4gate/learning/evaluator.py` | `ModelEvaluator` — inference-only eval used by both |
+| `src/alpha4gate/learning/checkpoints.py` | `get_best_name`, `promote_checkpoint` — manifest manipulation |
+| `data/promotion_history.json` | Append-only decision log |
+| `data/checkpoints/manifest.json` | Source of truth for current best + `previous_best` |
+| `tests/test_promotion.py` | Gate logic tests |
+| `tests/test_rollback.py` | Rollback monitor tests |
+| `tests/test_evaluator.py` | Evaluator tests including crash-handling |

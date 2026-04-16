@@ -8,6 +8,8 @@ Coherence, staging, engagement, retreat, and micro.
 > kiting for ranged units. Staging point computed as a fixed distance from the nearest
 > enemy structure along the approach line.
 
+> **Framework position:** internals of THE TASK. The autonomous learning loop's FIX phase can edit the randomization ranges and thresholds in this file — they have surfaced as outer-loop iteration targets (e.g., forward-pylon warp-in, close-out finisher).
+
 ## Purpose & Design
 
 Two systems work together:

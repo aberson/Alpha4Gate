@@ -1,313 +1,296 @@
 # Monitoring & Observability
 
-What the system makes visible, and how.
+How to watch the autonomous learning loop from the outside.
 
-> **At a glance:** Three WebSocket channels stream live game state, decisions, and
-> command events. JSONL files persist per-game logs. A React dashboard shows live view,
-> training metrics (5s poll), stats, checkpoints, and command history. Decision logs and
-> action probabilities are **ephemeral** — not persisted to disk. Reward logging is
-> opt-in. The dashboard observes gameplay well but has almost no visibility into training
-> or improvement over time.
+> **At a glance:** This system has two layers — an **autonomous learning loop**
+> (PLAY → THINK → FIX → TEST → COMMIT → TRAIN) and the **task** it's learning
+> (an SC2 game). Monitoring answers two questions: *"Is the loop making
+> progress?"* and *"Is the task actually running?"* The dashboard has a tab
+> tuned to each phase of the loop, plus the single source of truth —
+> `data/advised_run_state.json` — that tells you where the loop is right now.
 
-## Purpose & Design
-
-Monitoring answers: "What is the system doing right now, and how has it been doing?"
-
-Three data paths exist today:
-
-```
-Game Loop (bot.py on_step)
-  │
-  ├──[every 11 steps]──> observer.py ──> GameLogger thread
-  │                                          │
-  │                                   ┌──────┴──────┐
-  │                                   ▼              ▼
-  │                            JSONL file       WebSocket broadcast
-  │                          (persistent)         (ephemeral)
-  │                         logs/game_*.jsonl       │
-  │                                          ┌──────┴──────┐
-  │                                          ▼              ▼
-  │                                     /ws/game      /ws/commands
-  │                                          │              │
-  │                                          ▼              ▼
-  │                                     LiveView     CommandPanel
-  │
-  ├──[per game end]──> TrainingDB (SQLite) ──> /api/training/* ──> TrainingDashboard
-  │
-  └──[per batch run]──> stats.json ──> /api/stats ──> Stats view
-```
-
-### What's persistent vs ephemeral
-
-| Data | Storage | Lifetime | Gap |
-|------|---------|----------|-----|
-| Game state snapshots | `logs/game_*.jsonl` | Permanent (one file per game) | No reward data, no action probabilities |
-| Game results | `data/training.db` games table | Permanent | No per-step detail |
-| Transitions (s,a,r,s') | `data/training.db` transitions table | Permanent | Only during training, not regular play. No action probabilities or reward breakdown columns — stores scalar `action` (int) and `reward` (float) only. |
-| Batch stats | `data/stats.json` | Permanent | Separate from training DB (not synced) |
-| Decision log | In-memory + `data/decision_audit.json` | Session / file | Only state transitions, not every step |
-| Live game state | WebSocket `/ws/game` | Ephemeral (lost on disconnect) | Not archived |
-| Command events | WebSocket `/ws/commands` | Ephemeral | In-memory history only |
-| Action probabilities | `NeuralDecisionEngine._last_probabilities` | Ephemeral (memory) | Never persisted anywhere |
-| Reward breakdown | `data/reward_log.jsonl` | Permanent **if** `--reward-log` flag used | Off by default; only works in `--batch` mode (ignored in `--train rl`) |
-| Training diagnostics | `data/training_diagnostics.json` | Permanent | Not surfaced in dashboard |
-
-### Gaps
-
-> These feed directly into [Phase 2 of the always-up plan](../plans/always-up-plan.md).
-
-- **Decision data is ephemeral.** Action probabilities from the neural engine exist only
-  in memory (`_last_probabilities`). WebSocket consumers see them briefly; nothing
-  persists them. A future session can't analyze how the model's decisions evolved.
-- **Reward logging is opt-in and batch-only.** Must pass `--reward-log` flag, and it
-  only takes effect in `--batch` mode. The `--train rl` path (`TrainingOrchestrator`)
-  creates its own `RewardCalculator` without a `log_path`, so the flag is silently
-  ignored during RL training. Without logging, `analyze_rewards.py` has nothing to read.
-  Should be default and work in all modes.
-- **Training diagnostics aren't in the dashboard.** `training_diagnostics.json` has
-  per-cycle action distributions on test states — valuable for tracking improvement —
-  but no frontend component renders it.
-- **No improvement timeline.** The dashboard shows current win rates but not how they
-  changed over time. No charts, no trend lines, no "model v3 vs v4" comparison.
-- **No alerting.** Nothing detects performance regression, training failure, or disk
-  pressure. A human has to check manually.
-
-### Disk usage note
-
-When reward JSONL logging becomes always-on (Phase 2, step 3), disk usage increases
-proportionally to games played. Each game generates a per-game JSONL file in
-`data/reward_logs/`. The training DB already has a 200 GB disk guard, but reward logs
-do not. Disk management (log rotation, compression, max file age, cleanup scripts) is
-deferred to a later phase. Monitor `data/reward_logs/` size manually for now.
+See [improve-bot-advised-architecture.md](improve-bot-advised-architecture.md) for the loop itself. This doc explains how to watch it run.
 
 ---
 
-## Key Interfaces
-
-> **At a glance:** Observer extracts game state every 11 steps. GameLogger writes JSONL
-> in a background thread and feeds the WebSocket broadcast queue. FastAPI drains both
-> queues every 500ms. Three WS endpoints, 46 REST endpoints. Frontend has 21 components.
-
-### Data collection: Observer
-
-Entry point: `observe(bot: BotAI, actions_taken: list[dict])` → `dict`
-
-Called every 11 game steps (~0.5 real seconds at 1x speed) from `bot.py.on_step()`.
-Extracts a snapshot dict:
-
-```python
-{
-    "timestamp": "2026-04-09T10:30:45.123456+00:00",  # UTC ISO 8601
-    "game_step": 1250,
-    "game_time_seconds": 87.5,
-    "minerals": 450,
-    "vespene": 120,
-    "supply_used": 45,
-    "supply_cap": 60,
-    "units": [{"type": "Stalker", "count": 8}, ...],       # descending by count
-    "structures": [{"type": "Gateway", "count": 2}, ...],   # descending by count
-    "actions_taken": [{"action": "Build", "target": "Stalker"}],
-    "score": 2840,
-    "strategic_state": "attack",
-    "coherence_params": {...},       # first snapshot only
-    "claude_advice": "Build 2 more gateways"  # if advice pending, else null
-}
-```
-
-### Logging: GameLogger
-
-Background thread that drains a queue and writes JSONL.
-
-**Lifecycle:**
-1. `start()` — creates thread, opens `logs/game_<TIMESTAMP>.jsonl`
-2. `put(entry)` — thread-safe enqueue (called from observer)
-3. Thread loop: `queue.get(timeout=0.1)` → deduplicate by `game_step` → write JSON line → flush → broadcast to WebSocket queue
-4. `stop()` — sends sentinel, joins thread (5s timeout)
-
-**Deduplication:** Tracks `_last_step`. If incoming `game_step <= _last_step`, the entry
-is silently dropped. Prevents duplicate writes if the game loop re-enters.
-
-**Two output paths from the same entry:**
-1. File write → `logs/game_<TIMESTAMP>.jsonl` (permanent)
-2. Callback → `queue_broadcast(entry)` → WebSocket broadcast queue (ephemeral)
-
-### WebSocket: broadcast loop
-
-`_game_state_broadcast_loop()` in `api.py` — runs as a FastAPI background task:
-
-```python
-while True:
-    # Drain game state entries
-    entries = drain_broadcast_queue()       # non-blocking, returns list
-    for entry in entries:
-        await ws_manager.broadcast_game_state(entry)
-    
-    # Drain command events
-    cmd_events = drain_command_event_queue()
-    for event in cmd_events:
-        await ws_manager.broadcast_command_event(event)
-        # Update in-memory _command_history by matching event ID
-    
-    await asyncio.sleep(0.5)  # 500ms polling interval
-```
-
-**Queue architecture:** Two `queue.Queue` instances in `web_socket.py`:
-- `_broadcast_queue` — game state entries from logger thread
-- `_command_event_queue` — command execution results from bot.on_step()
-
-Both are drained via `get_nowait()` in a loop (non-blocking). This bridges the
-synchronous game thread to the async FastAPI event loop.
-
-### WebSocket endpoints
-
-**`/ws/game`** — Live game state
-- Broadcasts observer snapshots every ~500ms
-- Message format: the full observer dict (see above)
-- Frontend: `useGameState()` hook → `LiveView` component
-
-**`/ws/commands`** — Command execution events
-- Event types: `queued`, `executed`, `failed`, `rejected`, `cleared`
-- Message format varies by type:
-  ```json
-  {"type": "queued",   "id": "uuid", "parsed": [...], "source": "human"}
-  {"type": "executed", "id": "uuid", "reason": "built 1 Stalker"}
-  {"type": "failed",   "id": "uuid", "reason": "not enough minerals"}
-  {"type": "rejected", "id": "uuid", "reason": "could not parse input"}
-  ```
-- Frontend: `CommandPanel` updates history entries by matching `id`
-
-**`/ws/decisions`** — Decision log events
-- **Currently unused.** The endpoint exists and accepts connections, but no code
-  actively broadcasts to it. Decisions are served via REST (`/api/decision-log`)
-  instead. This is a gap — live decision streaming is wired up but not connected.
-
-### ConnectionManager
-
-Three separate connection lists (`web_socket.py`):
-```python
-_game_connections: list[WebSocket]
-_decision_connections: list[WebSocket]
-_command_connections: list[WebSocket]
-```
-
-Each has `connect_*()`, `disconnect_*()`, and `broadcast_*()` methods. Broadcasts
-serialize to compact JSON and silently remove disconnected clients.
-
-### REST endpoints
-
-**Game:**
-| Endpoint | Method | Returns |
-|----------|--------|---------|
-| `/api/status` | GET | Current game state (placeholder — returns nulls) |
-| `/api/stats` | GET | `data/stats.json` — game records + aggregates |
-| `/api/decision-log` | GET | Decision state transitions from `data/decision_audit.json` |
-
-**Training:**
-| Endpoint | Method | Returns |
-|----------|--------|---------|
-| `/api/training/status` | GET | Checkpoint count, game/transition count, DB size |
-| `/api/training/history` | GET | Win rates: last 10/50/100/overall |
-| `/api/training/checkpoints` | GET | Checkpoint list from manifest.json |
-| `/api/training/start` | POST | **Not implemented** (placeholder) |
-
-**Commands:**
-| Endpoint | Method | Returns |
-|----------|--------|---------|
-| `/api/commands` | POST | Submit command text → parse → queue |
-| `/api/commands/history` | GET | In-memory command history |
-| `/api/commands/mode` | GET/PUT | AI-assisted / human-only / hybrid |
-| `/api/commands/settings` | GET/PUT | Claude interval, lockout duration, muted |
-| `/api/commands/primitives` | GET | Available actions, targets, locations (vocabulary) |
-
-**Other:**
-| Endpoint | Method | Returns |
-|----------|--------|---------|
-| `/api/build-orders` | GET/POST | Build order CRUD |
-| `/api/replays` | GET | Replay file listing |
-| `/api/reward-rules` | GET/PUT | Reward rules from `data/reward_rules.json` |
-
-### Command flow (end to end)
+## The Framework
 
 ```
-User types "build stalkers" in CommandPanel
-  │
-  ├─ POST /api/commands {"text": "build stalkers"}
-  │   ├─ Fast path: regex parser succeeds
-  │   │   └─ Broadcast "queued" event + add to _command_history
-  │   └─ Slow path: regex fails → background task → Claude Haiku interpreter
-  │
-  ├─ Command pushed to global command queue
-  │
-  ├─ bot.on_step() drains queue, executes command
-  │   └─ Result queued to _command_event_queue
-  │
-  ├─ Broadcast loop drains _command_event_queue
-  │   └─ Broadcasts "executed" or "failed" event to /ws/commands
-  │
-  └─ Frontend CommandPanel updates history entry status
+          ┌──────────────────────────────────────────────────┐
+          │          autonomous learning loop                │
+          │                                                  │
+  ┌─────┐ │  ┌──────┐   ┌───────┐   ┌──────┐                │
+  │     │◄───┤ PLAY │──►│ THINK │──►│ FIX  │                │
+  │ THE │ │  └──────┘   └───────┘   └──┬───┘                │
+  │TASK │ │                            │                    │
+  │     │◄───┬───────┬───◄───┬──◄──────┘                    │
+  │(SC2)│ │  │ TRAIN │◄──┤COMMIT│◄───┤TEST │                │
+  │     │ │  └───────┘   └──────┘    └─────┘                │
+  └─────┘ └──────────────────────────────────────────────────┘
+
+         ▲                                   ▲
+         │ observe the game                  │ observe the loop
+         │                                   │
+   ┌─────┴─────┐                       ┌─────┴─────┐
+   │ Live tab  │                       │ Advisor   │
+   │ WebSocket │                       │ tab +     │
+   │ JSONL     │                       │ run log   │
+   └───────────┘                       └───────────┘
 ```
+
+Two vantage points:
+- **Task-level** — what's happening inside the current SC2 game (Live tab, WebSocket `/ws/game`).
+- **Loop-level** — which phase the loop is in, whether it's making progress (Advisor tab, run log, state file).
 
 ---
 
-## Implementation Notes
+## The Single Source of Truth
 
-> **At a glance:** 9 React components, 3 WebSocket hooks, 5s training poll, 3s WS
-> reconnect. Observer runs in game thread, logger in its own thread, broadcast loop
-> in async FastAPI. Three separate threads touching two queues.
+`data/advised_run_state.json` is rewritten by `/improve-bot-advised` after every phase boundary. Everything else in this doc is a view onto parts of it, or evidence that one of its claims is still true.
+
+| Field | What it tells you |
+|---|---|
+| `status` | `idle \| running \| paused \| stopped \| completed \| resetting` |
+| `phase` (0–8) + `phase_name` | Which loop step is currently executing |
+| `iteration` / `max_iterations` / `fail_streak` | Loop progress + consecutive-failure counter |
+| `mode` / `games_per_cycle` / `difficulty` | Active run parameters |
+| `baseline_win_rate` → `current_win_rate` | Headline metric |
+| `hours_budget` / `elapsed_seconds` | Wall-clock budget remaining |
+| `current_improvement` | What's being tried this iteration (set in FIX, cleared after COMMIT) |
+| `iterations[]` | History: `{num, title, result (pass/marginal/fail), delta}` |
+| `updated_at` | **If this is older than ~2 min during a "running" status, the loop is stuck.** |
+
+**Control counterpart:** `data/advised_run_control.json` is the write-to-the-loop file. The dashboard (`PUT /api/advised/control`) sets fields here; the skill reads them at the start of the next PLAY, THINK, and loop-decision phase. Fields: `games_per_cycle`, `difficulty`, `fail_threshold`, `user_hint`, `stop_run`, `reset_loop`, `reward_rule_add`.
+
+---
+
+## Monitoring by Phase
+
+Each loop phase has a primary dashboard tab, a persistent evidence file, and characteristic signatures in the run log.
+
+### Phase overview
+
+| Phase | Primary tab | Persistent evidence | Run-log marker |
+|---|---|---|---|
+| **THE TASK** (SC2) | Live | `logs/game_*.jsonl`, `replays/*.SC2Replay` | `Game X: Result.Victory (Xs)` |
+| **PLAY** | Stats, Decisions | `data/training.db`, `data/stats.json`, `data/decision_audit.json` | `=== ITERATION N BATCH START/COMPLETE ===` |
+| **THINK** | Advisor (`current_improvement`) | `data/decision_audit.json`, skill-scoped prompt in log | "## Iteration N Summary — selected improvement" |
+| **FIX** | Advisor | `data/reward_rules.pre-advised-<RUN_TS>.json` backup, feature branch | "applying change: <title>" |
+| **TEST** | Stats (validation rows) | validation games in `training.db` | `=== ITER N VALIDATION START/COMPLETE ===` |
+| **COMMIT** | Improvements | `data/improvement_log.json`, git master, GitHub issue | `improve-bot-advised: <title> (iteration N)` commit |
+| **TRAIN** | Training, Loop, Improvements | `data/promotion_history.json`, `data/checkpoints/manifest.json` | "daemon cycle N complete" |
+
+### THE TASK — "is the game actually running?"
+
+```
+SC2 engine
+  ├──> on_step() every 11 game steps
+  │      └──> observer.observe() ──> GameLogger thread
+  │                                    ├──> logs/game_<TS>.jsonl   (permanent)
+  │                                    └──> /ws/game broadcast     (ephemeral)
+  └──> game end ──> training.db row + replays/<ID>.SC2Replay
+```
+
+- **Live tab** (`LiveView.tsx`) — minerals, supply, army composition, strategic state, Claude advice. Driven by `/ws/game` over the broadcast loop (500ms drain cadence).
+- **Processes tab** — confirms `SC2_x64` is alive. If it's not and the loop says `status=running`, something has crashed.
+- **Per-game files** — one JSONL per game (`logs/game_<timestamp>.jsonl`), one SC2 replay (`replays/<ID>.SC2Replay`), one DB row.
+
+### PLAY — "what happened in the batch?"
+
+```
+N games ──> training.db (games + transitions)
+         ├─> stats.json (per-difficulty aggregates)
+         ├─> reward_logs/game_*.jsonl (per-step reward firing)
+         └─> decision_audit.json (live mode only)
+```
+
+- **Stats tab** (`Stats.tsx`) — per-difficulty W/L, recent games table, click a row for the per-game reward timeline (`/api/games/{id}`).
+- **Decisions tab** (`DecisionQueue.tsx`) — state transitions and advisor suggestions captured during live-mode PLAY.
+- **Run log** — every batch writes `=== ITERATION N BATCH START/COMPLETE ===` bookends with per-game results between them.
+
+### THINK — "what did Claude conclude?"
+
+- **Advisor tab** — `current_improvement` field in the state JSON reflects the output of THINK.
+- **Run log** — the "## Iteration N Summary" block names the selected improvement, its rank among candidates, type (training/dev), and principles addressed.
+- **User steering** — set `user_hint` via the Advisor tab's text input; the skill injects it into the next THINK prompt.
+
+### FIX — "what's being changed?"
+
+- **Advisor tab** — `current_improvement` set, `phase=4`.
+- **Config changes** (training mode) — before editing, the skill writes backups to `data/reward_rules.pre-advised-<RUN_TS>.json` and `data/hyperparams.pre-advised-<RUN_TS>.json`. Diff these against the current file to see what FIX changed.
+- **Code changes** (dev mode, `--self-improve-code`) — `/improve-bot` creates a feature branch and GitHub issue. `gh issue list --label self-improve-run` shows the active branch.
+
+### TEST — "did the fix hold up?"
+
+- **Run log** — `=== ITER N VALIDATION START/COMPLETE: W / L (N timeouts) ===`.
+- **Advisor tab** — iteration appears in the history table with `result: pass | marginal | fail` and win-rate `delta`.
+- **fail_streak counter** — visible in the Advisor tab. At 3 consecutive fails the loop exits to Phase 8.
+- **Threshold** — `fail_threshold` (default 30%) is adjustable via the control file during the run.
+
+### COMMIT — "what got locked in?"
+
+```
+PASS ──> git commit to master
+      ├─> data/improvement_log.json append
+      ├─> per-iteration GitHub issue updated
+      └─> Improvements tab refreshes
+```
+
+- **Improvements tab** (`AdvisedImprovements.tsx`) — persistent per-iteration log. Fields: `id, run_id, iteration, title, type, description, principles[], result, metrics {observation_wins, validation_wins, duration_delta_pct}, files_changed[]`. Endpoint: `/api/improvements`.
+- **Git history** — `git log --grep="improve-bot-advised"` on master.
+- **Run tags** — `advised/run/<RUN_TS>/baseline` and `advised/run/<RUN_TS>/final` bracket the session. Diff with `git log <baseline>..<final> --oneline`.
+- **GitHub umbrella issue** — label `advised-improvement-run`, titled with `$RUN_TS`, created in Phase 8.
+
+### TRAIN — "is the neural net getting better?"
+
+```
+new games ──> PPO gradient update ──> new checkpoint
+                                         │
+                                         ▼
+                              PromotionManager.evaluate
+                              ├─> better? promote + maybe difficulty++
+                              └─> worse? rollback to previous best
+                                         │
+                                         ▼
+                              promotion_history.json append
+```
+
+- **Training tab** (`TrainingDashboard.tsx`, 5s poll) — current checkpoint, total games, total transitions, DB size, rolling win rates (last-10/50/100/overall).
+- **Loop tab** (`LoopStatus.tsx`) — daemon state (`idle | checking | training | evaluating`), `runs_completed`, `last_run`, `next_check`, `last_error`, `last_result`.
+- **Improvements → Recent Improvements** (`RecentImprovements.tsx`) — reads `data/promotion_history.json` and classifies each entry as `promotion | rollback | rejected`. Fields per entry: `new_checkpoint, old_best, new_win_rate, old_win_rate, delta, reason, reason_code, difficulty`.
+- **Improvements → Reward Trends** (`RewardTrends.tsx`) — per-rule contribution over the last N games, sourced from `data/reward_logs/game_*.jsonl` via `/api/training/reward-trends`.
+- **Checkpoint list** (`CheckpointList.tsx`) — table of all saved checkpoints from `data/checkpoints/manifest.json`, with `best` indicator.
+
+---
+
+## Is Anything Happening? (stuck-loop detection)
+
+The loop is a long-running autonomous process. Four signatures say "something is wrong."
+
+### 1. State file is stale
+
+`data/advised_run_state.json` has `status="running"` but `updated_at` is older than ~2 minutes.
+
+- Check **Processes tab**: is `SC2_x64` running? is the backend (port 8765) still bound? is the Python daemon alive?
+- The `StaleDataBanner` component renders on every tab when the poll fails, so dashboard staleness is loud.
+
+### 2. Alert rule fires
+
+Client-side rule engine in `frontend/src/lib/alertRules.ts`, polled by `useAlerts()`. All alerts are dashboard-only — no email/push.
+
+| Rule | Severity | Fires when | Maps to |
+|---|---|---|---|
+| `ruleWinRateDropped` | warning | last-10 WR is 15%+ below last-50 (suppressed during advised runs, since WR swings are expected) | TRAIN |
+| `ruleTrainingFailed` | error | daemon `last_error != null` | TRAIN |
+| `ruleDaemonStoppedUnexpectedly` | error | daemon was `training/checking/evaluating`, now `idle` with error | TRAIN |
+| `ruleRollbackFired` | warning | latest promotion entry is a rollback | TRAIN |
+| `ruleNoTrainingInHours` | info | daemon running but `hours_since_last > 24` | TRAIN liveness |
+| `ruleDiskUsageHigh` | warning | DB + reward logs > 50 GB | storage |
+| `ruleBackendErrors` | error | `error_count_since_start > 0`; hashed on latest ts so new errors re-fire | cross-cutting |
+
+Backed by `ErrorLogBuffer` (50-entry ring in `src/alpha4gate/error_log.py`), surfaced via `/api/training/status → recent_errors[]`. Synthetic test: `POST /api/debug/raise_error` (gated by `DEBUG_ENDPOINTS=1`) — use before a multi-hour run to confirm the alerts pipe works end-to-end.
+
+### 3. Fail streak
+
+`fail_streak >= 3` in the state file → the loop exits Phase 7 straight to Phase 8. Check the run log for the last 3 iterations to see why the fixes kept failing.
+
+### 4. Wall-clock budget exhausted
+
+`elapsed_seconds >= hours_budget × 3600` → no new iteration starts. Progress bar in the Advisor tab turns red above 90%.
+
+---
+
+## Operator Controls (writing back to the loop)
+
+| Action | How | Effect |
+|---|---|---|
+| Stop the run | Advisor tab "Stop Run" button → `POST /api/cleanup/stop-run` | Sets `stop_run=true`; next phase boundary exits to Phase 8 + morning report |
+| Reset to baseline | Advisor tab "Reset Loop" → `POST /api/cleanup/reset-loop` | Reverts to `advised/run/<RUN_TS>/baseline` tag, clears iteration history |
+| Change games/cycle | Advisor tab numeric input → `PUT /api/advised/control` | Applied at next PLAY |
+| Change difficulty | Advisor tab → control file | Applied at next PLAY |
+| Inject a hint | Advisor tab text input → control file `user_hint` | Appended to the next THINK prompt |
+| Add a reward rule | Advisor tab → control file `reward_rule_add` | Appended to `data/reward_rules.json` before next PLAY |
+| Force-kill daemon | Processes tab → `POST /api/kill-daemons` | Targeted daemon shutdown |
+| Restart backend | Processes tab → `POST /api/restart` | Backend lifecycle bounce |
+
+---
+
+## Persistence Map — what's saved vs ephemeral
+
+| Data | Storage | Lifetime | Phase |
+|------|---------|----------|-------|
+| Loop state | `data/advised_run_state.json` | Current run (overwritten each phase boundary) | All |
+| Loop control | `data/advised_run_control.json` | Until consumed by the skill | Operator → loop |
+| Run narrative | `documentation/soak-test-runs/advised-YYYY-MM-DD.md` | Permanent | All |
+| Per-iteration record | `data/improvement_log.json` | Permanent | COMMIT |
+| Per-game snapshots | `logs/game_*.jsonl` | Permanent (one file per game) | THE TASK |
+| Per-game rewards | `data/reward_logs/game_*.jsonl` | Permanent | PLAY, TEST, TRAIN |
+| Game results + transitions | `data/training.db` | Permanent | PLAY, TEST, TRAIN |
+| Batch aggregates | `data/stats.json` | Permanent | PLAY, TEST |
+| Decision log | `data/decision_audit.json` | Current session; cleared between iterations | THINK |
+| Promotion/rollback events | `data/promotion_history.json` | Permanent | TRAIN |
+| Checkpoint manifest | `data/checkpoints/manifest.json` | Permanent | TRAIN |
+| Config backups | `data/{reward_rules,hyperparams,daemon_config}.pre-advised-<RUN_TS>.json` | Per run (restore points) | FIX |
+| Git tags | `advised/run/<RUN_TS>/{baseline,final}` | Permanent | Bootstrap + Phase 8 |
+| GitHub issues | Umbrella + per-iteration, labeled | Permanent | COMMIT, Phase 8 |
+| Live game state | WebSocket `/ws/game` | Ephemeral (lost on disconnect) | THE TASK |
+| Command events | WebSocket `/ws/commands` | Ephemeral | THE TASK |
+| Action probabilities | `NeuralDecisionEngine._last_probabilities` | Ephemeral (memory) | THE TASK |
+
+---
+
+## Dashboard Tab Reference
+
+Tabs defined in `frontend/src/App.tsx`. Each tab consumes the endpoints or WebSockets listed, polls at the stated cadence, and maps to one or more loop phases.
+
+| Tab | Component | Feeds | Cadence | Phase |
+|---|---|---|---|---|
+| Live | `LiveView.tsx` | `/ws/game` | Real-time | THE TASK |
+| Stats | `Stats.tsx` | `/api/stats`, `/api/games`, `/api/games/{id}` | 10s | PLAY, TEST |
+| Decisions | `DecisionQueue.tsx` | `/api/decision-log`, `/ws/decisions` | Initial + live | THINK, THE TASK |
+| Training | `TrainingDashboard.tsx` + `ModelComparison` + `CheckpointList` + `RewardRuleEditor` | `/api/training/{status,history,models,checkpoints}`, `/api/reward-rules` | 5s | TRAIN |
+| Loop | `LoopStatus.tsx` + `TriggerControls.tsx` | `/api/training/daemon`, `/api/training/triggers` | 5s | TRAIN |
+| Advisor | `AdvisedControlPanel.tsx` | `/api/advised/state`, `/api/advised/control` | 3s state / 10s control | All 6 loop phases |
+| Improvements | `RecentImprovements.tsx` + `RewardTrends.tsx` + `AdvisedImprovements.tsx` | `/api/training/promotions/history`, `/api/training/reward-trends`, `/api/improvements` | 10s | COMMIT, TRAIN |
+| Processes | `ProcessMonitor.tsx` | `/api/processes`, cleanup endpoints | 5s | Cross-cutting (liveness) |
+| Alerts | `AlertsPanel.tsx` + `AlertToast.tsx` | client rules over poll data | — | Cross-cutting |
+
+A green dot appears in the nav bar when `advised_run_state.status ∈ {running, paused}` (`App.tsx:86–99`).
+
+---
+
+## Technical Reference — how the data flows
 
 > Verify against code before relying on exact signatures.
 
-### Frontend components
+### Observer → Logger → WebSocket pipeline (for THE TASK)
 
-| Component | Data Source | Refresh | What it shows |
-|-----------|-----------|---------|---------------|
-| **LiveView** | `/ws/game` | Real-time | Game time, minerals, gas, supply, score, strategic state, units, structures, Claude advice |
-| **CommandPanel** | `/ws/commands` + REST | Real-time + initial fetch | Text input with autocomplete, command history (last 20), mode selector, mute toggle, settings |
-| **TrainingDashboard** | `/api/training/*` | 5s poll | Current checkpoint, total games, transitions, DB size, win rates (10/50/100/overall) |
-| **CheckpointList** | `/api/training/checkpoints` | One-time fetch | Table: name, type, metadata details, best indicator |
-| **DecisionQueue** | `/api/decision-log` + `/ws/decisions` | Initial fetch + live | Last 20 state transitions: step, from, to, reason, Claude advice |
-| **Stats** | `/api/stats` + `/api/games` | 10s poll | Per-difficulty win rates + expandable browsable game list from training.db with per-game reward breakdown |
-| **RewardRuleEditor** | `/api/reward-rules` | One-time fetch + manual save | Table: rule ID, description, reward value (editable), active toggle |
+```
+Game Thread (bot.py)          Logger Thread (logger.py)     Async Loop (api.py)
+  │                                │                             │
+  ├─ observer.observe()             │                             │
+  │   └─ logger.put(entry) ─────> queue.get()                    │
+  │                                 ├─ write JSONL                │
+  │                                 └─ queue_broadcast() ─────> drain_broadcast_queue()
+  │                                                               ├─ ws_manager.broadcast()
+  │                                                               │
+  ├─ queue_command_event() ─────────────────────────────────> drain_command_event_queue()
+  │                                                               └─ broadcast command event
+```
+
+Three threads, two queues. All cross-thread communication uses `queue.Queue` (thread-safe). The async broadcast loop uses `get_nowait()` to avoid blocking the event loop and drains at 500ms.
 
 ### Timing constants
 
 | What | Interval | Where |
 |------|----------|-------|
-| Observer snapshot | Every 11 game steps (~0.5s at 1x) | bot.py |
-| Logger write | As fast as queue drains | logger.py thread |
-| Broadcast loop drain | 500ms | api.py |
-| Training dashboard poll | 5000ms | TrainingDashboard.tsx |
-| WebSocket reconnect | 3000ms | useWebSocket.ts |
-| Command error toast | 5000ms display | CommandPanel.tsx |
-
-### Thread safety model
-
-Three threads interact via two queues:
-
-```
-Game Thread (bot.py)          Logger Thread (logger.py)        Async Loop (api.py)
-  │                                │                               │
-  ├─ observer.observe()            │                               │
-  │   └─ logger.put(entry) ──>  queue.get()                       │
-  │                                ├─ write JSONL                  │
-  │                                └─ queue_broadcast() ──>  drain_broadcast_queue()
-  │                                                                ├─ ws_manager.broadcast()
-  │                                                                │
-  ├─ queue_command_event() ─────────────────────────────>  drain_command_event_queue()
-  │                                                                └─ broadcast command event
-```
-
-All cross-thread communication uses `queue.Queue` (thread-safe). The async broadcast
-loop uses `get_nowait()` to avoid blocking the event loop.
-
-### JSONL format
-
-One line per snapshot in `logs/game_<TIMESTAMP>.jsonl`:
-```json
-{"timestamp":"2026-04-09T10:30:45.123Z","game_step":1250,"game_time_seconds":87.5,"minerals":450,"vespene":120,"supply_used":45,"supply_cap":60,"units":[{"type":"Stalker","count":8}],"structures":[{"type":"Gateway","count":2}],"actions_taken":[],"score":2840,"strategic_state":"attack"}
-```
-
-Compact JSON (no spaces). One file per game session. Deduplicated by `game_step`.
+| Observer snapshot | Every 11 game steps (~0.5s at 1x) | `bot.py` |
+| Broadcast loop drain | 500ms | `api.py` |
+| Training dashboard poll | 5000ms | `TrainingDashboard.tsx` |
+| Advisor tab poll | 3000ms state, 10000ms control | `useAdvisedRun.ts` |
+| Processes tab poll | 5000ms | `ProcessMonitor.tsx` |
+| Alerts recheck | 5000ms | `useAlerts.ts` |
+| WebSocket reconnect | 3000ms | `useWebSocket.ts` |
 
 ### Key file locations
 
@@ -317,14 +300,17 @@ Compact JSON (no spaces). One file per game session. Deduplicated by `game_step`
 | `src/alpha4gate/logger.py` | GameLogger — background thread JSONL writer |
 | `src/alpha4gate/web_socket.py` | ConnectionManager + broadcast/command queues |
 | `src/alpha4gate/api.py` | FastAPI app — REST endpoints, WS handlers, broadcast loop |
-| `frontend/src/components/LiveView.tsx` | Real-time game state display |
-| `frontend/src/components/CommandPanel.tsx` | Command input, history, mode/settings |
-| `frontend/src/components/TrainingDashboard.tsx` | Training metrics (5s poll) |
-| `frontend/src/components/CheckpointList.tsx` | Checkpoint table |
-| `frontend/src/components/DecisionQueue.tsx` | Decision state transition log |
-| `frontend/src/components/Stats.tsx` | Per-difficulty win rates + expandable game history with reward timeline |
-| `frontend/src/components/ProcessMonitor.tsx` | Live process inventory and health |
-| `frontend/src/components/RewardRuleEditor.tsx` | Reward rule editing |
-| `logs/` | JSONL game logs (gitignored) |
-| `data/decision_audit.json` | Persisted decision log |
-| `data/stats.json` | Cross-game aggregates |
+| `src/alpha4gate/process_registry.py` | Process/port/state-file inventory for Processes tab |
+| `src/alpha4gate/error_log.py` | 50-entry error ring buffer surfaced via `/api/training/status` |
+| `src/alpha4gate/learning/promotion.py` | PromotionLogger writes `promotion_history.json` |
+| `src/alpha4gate/learning/rollback.py` | RollbackMonitor appends to same log |
+| `.claude/skills/improve-bot-advised/SKILL.md` | Writes state file at each phase boundary |
+| `frontend/src/lib/alertRules.ts` | Alert rule definitions |
+| `frontend/src/hooks/useAdvisedRun.ts` | Advisor tab state + control hook |
+
+### Known gaps
+
+- **Decision data is ephemeral across sessions.** Action probabilities from the neural engine exist only in memory (`_last_probabilities`); no persistence.
+- **No email/push alerting.** All alerts are dashboard-only; a run failing overnight is visible on the GitHub umbrella issue only after Phase 8 completes.
+- **`/ws/decisions` is unused.** The endpoint accepts connections but no code broadcasts to it; decisions are served via REST instead.
+- **`reward-log` flag is batch-only.** `--train rl` creates its own RewardCalculator without a log path — silently ignored. `data/reward_logs/` is populated by the advised loop directly, not the flag.

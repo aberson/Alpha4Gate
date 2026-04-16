@@ -7,6 +7,8 @@ The strategic state machine that decides what the bot should be doing.
 > overrides from human/AI temporarily force a state. Thresholds are tunable constants.
 > No SC2 imports — operates on the generic GameSnapshot dataclass.
 
+> **Framework position:** internals of THE TASK. Runs inside each game; its action space (6 strategic states) is what the PPO policy predicts during training. See [training-pipeline.md](training-pipeline.md) for how states map to neural action indices.
+
 ## Purpose & Design
 
 The decision engine evaluates the current game state every step and returns a

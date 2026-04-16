@@ -7,6 +7,8 @@ How human and AI input becomes bot actions.
 > control who can issue commands. Tech recipes auto-expand high-level requests into
 > prerequisite build chains. All modules except executor.py are domain-agnostic.
 
+> **Framework position:** internals of THE TASK. Commands are the operator/advisor input channel to a live game — they flow through `/ws/commands` (ephemeral) and `/api/commands/history` (in-memory). The autonomous learning loop does not inject commands; it modifies code and config between games instead.
+
 ## Purpose & Design
 
 The command system lets humans and Claude issue strategic instructions mid-game. It's

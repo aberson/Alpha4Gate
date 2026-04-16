@@ -1,11 +1,19 @@
 # Claude Advisor
 
-Async AI strategic advice during gameplay.
+Async AI strategic advice **during gameplay** (inside THE TASK, not the outer learning loop).
 
 > **At a glance:** Claude runs as an async subprocess (fire-and-forget), rate-limited to
 > 1 request per 30 game-seconds. Advice includes a text suggestion + optional structured
 > commands that flow into the command queue. Non-blocking — the bot never waits for a
 > response. In HYBRID mode, human commands trigger an AI lockout period.
+
+> **Three different roles for Claude in Alpha4Gate — don't conflate them:**
+>
+> 1. **In-game advisor** (this page) — async subprocess during a live SC2 game, gives the bot strategic nudges mid-match.
+> 2. **Outer-loop strategist** — the `/improve-bot-advised` skill uses Claude to diagnose played games and write code/config fixes (THINK + FIX phases). See [improve-bot-advised-architecture.md](improve-bot-advised-architecture.md).
+> 3. **Command interpreter** — Claude Haiku parses free-text commands the regex parser can't handle. See [command-system.md](command-system.md).
+>
+> This page covers only role #1. A thread-safe variant of this advisor (`learning/advisor_bridge.py`) is used during RL training — see [training-pipeline.md](training-pipeline.md).
 
 ## Purpose & Design
 

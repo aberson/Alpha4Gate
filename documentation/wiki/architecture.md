@@ -1,6 +1,6 @@
 # Architecture Overview
 
-How the layers fit together.
+How the layers fit together — inside THE TASK.
 
 > **At a glance:** Six layers (Claude Advisor → Neural Engine → Strategy → Commands →
 > Tactics → Coherence → Micro) orchestrated by `bot.py.on_step()` in a 14-step pipeline.
@@ -8,6 +8,8 @@ How the layers fit together.
 > up (observer → logger → WebSocket → dashboard) while decisions flow down (strategy →
 > commands → macro → micro → SC2 API). See [domain-coupling.md](domain-coupling.md) for
 > which layers are SC2-specific vs generic.
+
+> **Framework position:** this doc describes the internal architecture of the SC2 bot itself — "THE TASK" in [improve-bot-advised-architecture.md](improve-bot-advised-architecture.md). The autonomous learning loop treats everything below as an opaque box: code + config go in, win/loss + stats come out. See [index.md](index.md) for the two-loop big picture.
 
 ## Purpose & Design
 

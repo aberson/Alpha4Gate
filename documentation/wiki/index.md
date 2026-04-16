@@ -1,47 +1,50 @@
 # Alpha4Gate Wiki
 
-## System Diagram — The Autonomous Improvement Loop
+An autonomous AI agent that teaches itself to get better at a task. The task happens to be StarCraft II, but the loop is general.
+
+## Two Loops, Nested
+
+Alpha4Gate runs two self-improvement loops at different timescales. They're both
+here because they operate on different things.
 
 ```
-                         ┌─────────────────────────────────────────────┐
-                         │           TRANSPARENCY DASHBOARD            │
-                         │  Live game state | Training metrics | Logs  │
-                         │  Improvement timeline | Model comparison    │
-                         └──────────┬──────────────────┬───────────────┘
-                                    │ observes          │ observes
-           ┌────────────────────────┼──────────────────────────────────────────┐
-           │                        │                   │                      │
-           ▼                        ▼                   ▼                      ▼
-   ┌──────────────┐       ┌──────────────┐     ┌──────────────┐      ┌──────────────┐
-   │     PLAY     │──────>│   EVALUATE   │────>│    TRAIN     │─────>│   PROMOTE    │
-   │              │       │              │     │              │      │              │
-   │ Run games    │       │ Win rates    │     │ PPO cycles   │      │ If better:   │
-   │ Log state    │       │ Reward rules │     │ Curriculum   │      │  new "best"  │
-   │ Stream WS    │       │ Stats        │     │ Checkpoints  │      │ If worse:    │
-   │              │       │              │     │              │      │  rollback    │
-   └──────────────┘       └──────────────┘     └──────────────┘      └──────┬───────┘
-           ▲                                                                │
-           │                                                                │
-           └────────────────────────────────────────────────────────────────┘
-                                    loops continuously
+┌───────────────────────────────────────────────────────────────────────────────┐
+│  OUTER LOOP — /improve-bot-advised (hours)                                    │
+│  Improves the bot's CODE and CONFIG                                            │
+│                                                                                │
+│    PLAY ──> THINK ──> FIX ──> TEST ──> COMMIT ──> TRAIN ──> loop              │
+│     ▲                 (edit config                  │                          │
+│     │                  or write code)               │                          │
+│     │                                               ▼                          │
+│     │     ┌──────────────────────────────────────────────────┐                │
+│     │     │  INNER LOOP — TrainingDaemon (minutes)           │                │
+│     │     │  Improves the NEURAL POLICY                      │                │
+│     │     │                                                  │                │
+│     │     │  PLAY ──> EVALUATE ──> TRAIN ──> PROMOTE ──> loop│                │
+│     │     │                                    │             │                │
+│     │     │  (rollback if worse ◄──────────────┘)           │                │
+│     │     └──────────────────────────────────────────────────┘                │
+│     │                                                                          │
+│     └──────────────── run new games to see if the fix held ─────────────────  │
+│                                                                                │
+└───────────────────────────────────────────────────────────────────────────────┘
 
-   ┌──────────────────────────────────────────────────────────────────────────┐
-   │                        DOMAIN LAYER (pluggable)                         │
-   │                                                                         │
-   │  SC2 Bot: Strategy → Commands → Tactics → Coherence → Micro            │
-   │  (Could be any agent: game bot, trading bot, robotics controller...)    │
-   └──────────────────────────────────────────────────────────────────────────┘
+                              observed by
+                                   │
+                                   ▼
+                   ┌───────────────────────────────┐
+                   │   Transparency Dashboard      │
+                   │                               │
+                   │  9 tabs: Live, Stats,         │
+                   │  Decisions, Training, Loop,   │
+                   │  Advisor, Improvements,       │
+                   │  Processes, Alerts            │
+                   └───────────────────────────────┘
 ```
 
-**Today:** All four stages exist and run autonomously. PLAY runs games and streams state,
-EVALUATE compares checkpoints via `ModelEvaluator`, TRAIN runs PPO cycles via the
-`TrainingDaemon` background thread, PROMOTE/ROLLBACK gate model changes via
-`PromotionManager` + `RollbackMonitor`. The dashboard observes all four through the
-Live, Stats, Decisions, Training, Loop, Improvements, and Alerts tabs (Phases 3 + 4).
-
-**Validation gap:** The autonomous loop has been built and unit-tested but never observed
-running unattended for hours against a real SC2 client. Phase 4.5 (the "First Real Soak
-Test") closes that gap before Phase 5 (domain abstraction) begins.
+- **Outer loop** ([improve-bot-advised-architecture.md](improve-bot-advised-architecture.md)) — Claude observes games, diagnoses weaknesses, writes code or config changes, validates them, commits. Hours-long autonomous sessions.
+- **Inner loop** ([training-pipeline.md](training-pipeline.md), [promotions.md](promotions.md)) — `TrainingDaemon` background thread runs PPO cycles, `PromotionManager` gates new checkpoints, `RollbackMonitor` reverts regressions.
+- **THE TASK** — an SC2 1v1 game. The loops treat it as a black box: code + config in, win/loss + stats out. See [domain-coupling.md](domain-coupling.md) for the abstraction boundary.
 
 ---
 
@@ -49,53 +52,51 @@ Test") closes that gap before Phase 5 (domain abstraction) begins.
 
 | Page | Best for |
 |------|----------|
-| [FAQ](faq.md) | First-time visitors — answers "what is this?", "what's happening?", "what's next?" |
-| [Promotion History](promotions.md) | Model promotion log — when, why, and what changed |
+| [FAQ](faq.md) | First-time visitors — "what is this?", "what's happening?", "what's next?" |
+| [improve-bot-advised-architecture](improve-bot-advised-architecture.md) | How the outer loop teaches itself |
+| [Monitoring & Observability](monitoring.md) | How to watch the loop run |
 
 ---
 
 ## Wiki Pages
 
-### Core Systems (autonomous loop)
-
-| Page | Description | Status |
-|------|-------------|--------|
-| [Evaluation Pipeline](evaluation-pipeline.md) | How the bot knows if it's improving — metrics, win rates, reward analysis, `ModelEvaluator` | Yes |
-| [Training Pipeline](training-pipeline.md) | PPO training, imitation learning, curriculum auto-advancement, checkpoints, `TrainingDaemon` background thread | Yes (autonomous) |
-| [Monitoring & Observability](monitoring.md) | WebSocket streams, per-game JSONL reward logs, what's persisted vs ephemeral, `reward_aggregator` | Yes |
-| [Promotion History](promotions.md) | Model promotion log — `PromotionManager` + `RollbackMonitor` decisions, auto-updated table | Yes |
-
-### Domain Layer (SC2 bot)
+### The Autonomous Loop
 
 | Page | Description |
 |------|-------------|
-| [Architecture Overview](architecture.md) | Six-layer architecture, module map, how layers interact |
+| [improve-bot-advised architecture](improve-bot-advised-architecture.md) | Outer loop — PLAY / THINK / FIX / TEST / COMMIT / TRAIN, with SC2 as an opaque task |
+| [Monitoring & Observability](monitoring.md) | What's visible at each phase, the state-file single source of truth, 7 alert rules |
+| [Training Pipeline](training-pipeline.md) | Inner loop — PPO, imitation pre-training, LSTM, KL-to-rules, curriculum, `TrainingDaemon` |
+| [Evaluation Pipeline](evaluation-pipeline.md) | Win rates, reward rules (63 active), `ModelEvaluator` (deterministic inference-only eval) |
+| [Promotion History](promotions.md) | `PromotionManager` + `RollbackMonitor` — live gate, auto-updated log |
+
+### The Task (SC2 bot internals)
+
+| Page | Description |
+|------|-------------|
+| [Architecture Overview](architecture.md) | Six-layer bot architecture, on_step() pipeline, inter-layer data flow |
 | [Decision Engine](decision-engine.md) | Strategic state machine — states, transitions, triggers |
 | [Command System](command-system.md) | Three command modes, parser, interpreter, executor, queue |
 | [Army & Combat](army-combat.md) | Coherence, staging, engagement, retreat, micro |
 | [Economy & Production](economy.md) | Macro manager, build orders, expansion, production |
-| [Claude Advisor](claude-advisor.md) | Async subprocess integration, rate limiting, prompt design |
+| [Claude Advisor](claude-advisor.md) | Live in-game advisor — async subprocess, rate limiting |
 
 ### Infrastructure
 
 | Page | Description |
 |------|-------------|
-| [Frontend Dashboard](frontend.md) | React components, WebSocket protocol, API endpoints |
-| [Domain Coupling](domain-coupling.md) | What's SC2-specific vs domain-agnostic, abstraction boundaries |
-| [Testing](testing.md) | Test structure, SC2 integration tests, coverage |
+| [Frontend Dashboard](frontend.md) | 9 tabs, React components, WebSocket protocol, poll cadences |
+| [Domain Coupling](domain-coupling.md) | What's SC2-specific vs domain-agnostic |
+| [Testing](testing.md) | 864 unit tests, SC2 integration tests, coverage map |
 
 ---
 
 ## How to Use This Wiki
 
-**For Claude sessions:** Start with this index. Read the system diagram to understand the
-overall architecture. Then read the specific page(s) relevant to your task. Each page
-follows this structure:
+**For Claude sessions:** Start with this index, then read the page for the system you're touching. Each page follows the structure:
 
-1. **Purpose & Design** — stable overview, changes rarely
-2. **Key Interfaces** — public API, data flow, entry points
-3. **Implementation Notes** — internal details, key functions, data structures
-   (marked "verify against code" since these can drift)
+1. **Purpose & Design** — stable overview
+2. **Key Interfaces** — public API, data flow
+3. **Implementation Notes** — internal details (marked "verify against code" — these can drift)
 
-**For the plan:** See [always-up-plan.md](../plans/always-up-plan.md) for the roadmap
-toward full autonomous operation.
+**For the active plan:** See [alpha4gate-master-plan.md](../plans/alpha4gate-master-plan.md) for the current roadmap. The always-up loop (Phases 1–4.5) is now the baseline.

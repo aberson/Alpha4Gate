@@ -5,30 +5,30 @@ loop transparency.
 
 > **At a glance:** 9-tab SPA (Live, Stats, Decisions, Training, Loop,
 > Advisor, Improvements, Processes, Alerts) built with React + TypeScript + Vite. Live game data via
-> WebSocket (real-time). Training and loop metrics via REST polling (5s). Seven custom
+> WebSocket (real-time). Training and loop metrics via REST polling (5s, with exceptions below). Seven custom
 > hooks handle WebSocket connections, API calls, and client-side alerting. All frontend
 > code is domain-agnostic — it renders whatever JSON the backend sends. Unit tests run
 > under vitest + jsdom.
 
 ## Purpose & Design
 
-The dashboard provides transparency into what the bot is doing and how it's performing.
-Today it's strongest at live game observation and weakest at training visibility (see
-[monitoring.md](monitoring.md) for gaps).
+The dashboard provides transparency into what the bot is doing and how it's performing. The tab layout maps directly onto the autonomous loop phases from [improve-bot-advised-architecture.md](improve-bot-advised-architecture.md) + [monitoring.md](monitoring.md).
 
 ### Tab layout
 
-| Tab | Component(s) | Data source | Refresh |
-|-----|-------------|-------------|---------|
-| **Live** | LiveView + CommandPanel | `/ws/game` + `/ws/commands` | Real-time WebSocket |
-| **Stats** | Stats | `/api/stats` + `/api/games` (training.db) | 10s poll |
-| **Decisions** | DecisionQueue | `/api/decision-log` + `/ws/decisions` | Initial fetch + live |
-| **Training** | TrainingDashboard + ModelComparison + ImprovementTimeline + CheckpointList + RewardRuleEditor | `/api/training/*` + `/api/reward-rules` | 5s poll + one-time |
-| **Loop** | LoopStatus + TriggerControls | `/api/training/daemon` + `/api/training/status` + `/api/training/start`/`stop` | 5s poll + on-demand |
-| **Advisor** | AdvisedControlPanel | `/api/advised/state` + `/api/advised/control` | 3s poll + on-demand |
-| **Improvements** | AdvisedImprovements + RecentImprovements + RewardTrends | `/api/improvements` + `/api/training/promotions/history` + `/api/training/reward-trends` | 5-10s poll |
-| **Processes** | ProcessMonitor | `/api/processes` | 5s poll |
-| **Alerts** | AlertsPanel (+ AlertToast overlay) | `useAlerts` hook (derives from `/api/training/*` polls) | 5s poll |
+| Tab | Component(s) | Data source | Refresh | Loop phase |
+|-----|-------------|-------------|---------|---|
+| **Live** | LiveView + CommandPanel | `/ws/game` + `/ws/commands` | Real-time WebSocket | THE TASK |
+| **Stats** | Stats | `/api/stats` + `/api/games` (training.db) | 10s poll | PLAY + TEST |
+| **Decisions** | DecisionQueue | `/api/decision-log` + `/ws/decisions` | Initial fetch + live | THINK + THE TASK |
+| **Training** | TrainingDashboard + ModelComparison + CheckpointList + RewardRuleEditor | `/api/training/*` + `/api/reward-rules` | 5s poll + one-time | TRAIN |
+| **Loop** | LoopStatus + TriggerControls | `/api/training/daemon` + `/api/training/status` + `/api/training/start`/`stop` | 5s poll + on-demand | TRAIN |
+| **Advisor** | AdvisedControlPanel | `/api/advised/state` + `/api/advised/control` | 3s / 10s poll + on-demand | All 6 outer-loop phases |
+| **Improvements** | AdvisedImprovements + RecentImprovements + RewardTrends | `/api/improvements` + `/api/training/promotions/history` + `/api/training/reward-trends` | 5-10s poll | COMMIT + TRAIN |
+| **Processes** | ProcessMonitor | `/api/processes` | 5s poll | Cross-cutting (liveness) |
+| **Alerts** | AlertsPanel (+ AlertToast overlay) | `useAlerts` hook (derives from `/api/training/*` polls) | 5s poll | Cross-cutting |
+
+The Advisor tab is the single source of truth for outer-loop state — it reads `data/advised_run_state.json` via `/api/advised/state` and writes `data/advised_run_control.json` via `/api/advised/control`.
 
 ### What each component shows
 
@@ -54,9 +54,9 @@ difficulty). Best checkpoint marked with indicator.
 **DecisionQueue:** Last 20 state transitions: game step, from/to state, reason, Claude
 advice.
 
-**ModelComparison:** Per-checkpoint win rate table (Phase 2). Pulls `/api/training/models`.
+**ModelComparison:** Per-checkpoint win rate table. Pulls `/api/training/models`.
 
-**ImprovementTimeline:** Chronological model-version table with win-rate delta arrows (Phase 2).
+**ImprovementTimeline:** Chronological model-version table with win-rate delta arrows — component exists at `frontend/src/components/ImprovementTimeline.tsx` but is not currently wired into a tab; `RecentImprovements` on the Improvements tab supersedes it.
 
 **LoopStatus:** Daemon state (idle/checking/training), last run, next check, runs
 completed, trigger preview, transitions-since-last counter, reward-log disk usage
@@ -101,10 +101,14 @@ auto-dismissing after a timeout. Clicking it jumps to the Alerts tab.
 |-----------|----------|--------|
 | LiveView | Real-time | WebSocket |
 | CommandPanel | Real-time | WebSocket + initial REST |
+| AdvisedControlPanel (state) | 3000ms | `useAdvisedRun` / `useApi` poll |
+| AdvisedControlPanel (control) | 10000ms | `useAdvisedRun` / `useApi` poll |
 | TrainingDashboard | 5000ms | setInterval + fetch |
-| ModelComparison / ImprovementTimeline | 5000ms | setInterval + fetch |
+| ModelComparison | 5000ms | setInterval + fetch |
 | LoopStatus (via `useDaemonStatus`) | 5000ms | setInterval + fetch |
 | RecentImprovements / RewardTrends | 5000ms | setInterval + fetch |
+| Stats | 10000ms | setInterval + fetch |
+| ProcessMonitor | 5000ms | setInterval + fetch |
 | AlertToast / AlertsPanel (via `useAlerts`) | 5000ms | setInterval + fetch, rules evaluated client-side |
 | Everything else | One-time | useEffect fetch on mount |
 | WebSocket reconnect | 3000ms | useWebSocket hook |
