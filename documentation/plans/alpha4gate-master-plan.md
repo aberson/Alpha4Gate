@@ -177,9 +177,12 @@ Phase A (validate PR) ── gate: ≥ baseline WR → merge
 - **Action:** `Discrete(6)` strategic states
 - **Training:** vs built-in AI only, no self-play
 - **Win rate:** 75%+ at difficulty 3, struggles at 4–5
-- **Pending PR:** `feat/lstm-kl-imitation` branch (commit 498f405) adds
-  LSTM (`MlpLstmPolicy`), KL-to-rules auxiliary loss, imitation-init.
-  **Not yet validated.** See Phase A.
+- **Phase A MERGED 2026-04-15** (tag `alphastar/A/final` on `cfeeb99`):
+  `feat/lstm-kl-imitation` validated and fast-forwarded to master. Full
+  stack (LSTM + KL-to-rules + imitation-init) scored **19/20 = 95% WR**
+  at difficulty 3 hybrid in the A.6 soak. Shipped defaults on master are
+  still MlpPolicy/kl=0/imitation=false; the winning full-stack
+  hyperparams are in `git stash` awaiting Phase 1 reactivation.
 
 **Autonomous platform (from completed always-up Phases 1–4.5):**
 
@@ -201,7 +204,7 @@ Phase A (validate PR) ── gate: ≥ baseline WR → merge
   curriculum/advised-run control.
 - 48 reward rules in `data/reward_rules.json` (only affect PPO under
   `--decision-mode hybrid`, not rule-based default play).
-- **829 Python unit tests + 126 frontend vitest tests passing.**
+- **864 Python unit tests + 126 frontend vitest tests passing.**
 - Four `/improve-bot-advised` runs completed; run-4 code improvements
   landed (anti-float expansion override, warp-in forward pylon
   selection, bot wins 100% at difficulty 3).
