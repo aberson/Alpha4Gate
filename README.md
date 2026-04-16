@@ -72,6 +72,10 @@ The loop runs unattended for hours. Each cycle: play N games, Claude reads the r
 
 Two things are running: the **loop** and the **task** it's learning from. The dashboard has a tab tuned to each vantage point, plus `data/advised_run_state.json` as the single source of truth for which phase is executing right now. Stuck-loop detection, alert rules, and operator overrides all hang off these two views.
 
+![Reward Trends — per-rule reward contribution across recent games, with a legend of every active rule](documentation/images/reward-trends.png)
+
+*Reward Trends (Improvements tab) — each line is one reward rule's contribution to training over the last N games. Flat-zero rules are candidates for pruning; high-variance rules get flagged for condition review.*
+
 **Read the full monitoring guide:** [monitoring.md](documentation/wiki/monitoring.md)
 
 ---
