@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sqlite3
+import struct
 import threading
 from pathlib import Path
 from typing import Any
@@ -122,6 +123,16 @@ _LATER_ADDED_COLS: list[tuple[str, str]] = [
 ]
 
 
+def _coerce_action(v: Any) -> int:
+    # Historical rows stored action as np.int64.tobytes() (sqlite3 default
+    # adapter for numpy scalars writes BLOB via buffer protocol). Decode
+    # little-endian int64; pass through regular ints unchanged.
+    if isinstance(v, (bytes, memoryview)):
+        b = bytes(v)
+        return struct.unpack("<q", b)[0] if len(b) == 8 else int.from_bytes(b, "little", signed=True)
+    return int(v)
+
+
 class TrainingDB:
     """SQLite database for storing training game data and transitions."""
 
@@ -228,8 +239,8 @@ class TrainingDB:
         """
         values: list[Any] = [game_id, step_index, game_time]
         values.extend(int(v) for v in state)
-        values.append(action)
-        values.append(reward)
+        values.append(int(action))
+        values.append(float(reward))
         if next_state is not None:
             values.extend(int(v) for v in next_state)
         else:
@@ -276,7 +287,7 @@ class TrainingDB:
                 np.zeros(0, dtype=np.float32),
             )
         states = np.array([r[:BASE_GAME_FEATURE_DIM] for r in rows], dtype=np.float32)
-        actions = np.array([r[BASE_GAME_FEATURE_DIM] for r in rows], dtype=np.int64)
+        actions = np.array([_coerce_action(r[BASE_GAME_FEATURE_DIM]) for r in rows], dtype=np.int64)
         rewards = np.array([r[BASE_GAME_FEATURE_DIM + 1] for r in rows], dtype=np.float32)
         return states, actions, rewards
 
