@@ -27,14 +27,14 @@ It plays, watches itself fail, figures out why, writes a fix, proves the fix wor
 
 ## What makes this different
 
-Most self-improving ML systems need a human in the loop — to design reward functions, tune hyperparameters, or diagnose failure modes when training stalls. This one closes that loop:
+Most self-improving ML systems need a human in the loop for reward design, tuning, or debugging. This one closes that loop:
 
-- **Claude reads telemetry like a reviewer would** — naming the specific failure ("you committed to an attack before your economy caught up") instead of reducing a game to a scalar reward. It proposes ranked fixes with reasoning, not just gradient directions.
-- **Fixes are real code changes, not just config knobs.** With `--self-improve-code`, Claude writes to the bot's source, opens a feature branch, and must pass pytest / mypy / ruff before anything ships.
-- **Every fix is validated before commit.** If the new version doesn't hold up over N games, it's reverted automatically — no silent regressions.
-- **You can watch it happen.** The dashboard streams every phase, every proposal, every rejection, every win-rate swing — live, while the agent runs unattended for hours.
+- **Claude reads telemetry like a reviewer** — names the specific failure ("attacked before the economy caught up"), not just a scalar reward. Ranked fixes with reasoning.
+- **Fixes are real code changes.** With `--self-improve-code`, Claude edits the bot's source on a feature branch and must pass pytest / mypy / ruff before anything ships.
+- **Every fix is validated before commit.** A change that doesn't hold up over N games is auto-reverted — no silent regressions.
+- **You can watch it happen.** The dashboard streams every phase, proposal, rejection, and win-rate swing live while the agent runs unattended for hours.
 
-The architecture is task-agnostic. SC2 is the concrete test case because it gives fast, measurable, machine-readable outcomes — any task with win/loss telemetry could drop into the same loop.
+The architecture is task-agnostic — SC2 is the test case because it gives fast, machine-readable outcomes.
 
 ---
 
