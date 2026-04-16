@@ -25,8 +25,6 @@ It plays, watches itself fail, figures out why, writes a fix, proves the fix wor
 </tr>
 </table>
 
-<sub><em>Click any thumbnail to enlarge.</em></sub>
-
 ## What makes this different
 
 Most self-improving ML systems need a human in the loop — to design reward functions, tune hyperparameters, or diagnose failure modes when training stalls. This one closes that loop:
