@@ -1,8 +1,22 @@
 # Alpha4Gate
 
-An AI agent that **teaches itself to get better at a task — with zero human input.** It plays, watches itself fail, figures out why, writes a fix, proves the fix works, and repeats. The task happens to be StarCraft II, but the loop is general. A live React dashboard lets you watch the agent improve itself in real time — every phase, every proposed fix, every commit.
+![Python](https://img.shields.io/badge/python-3.12-blue) ![pytest](https://img.shields.io/badge/pytest-829%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-126%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
 
-## Why should we care?
+> An AI agent that **teaches itself to get better at a task — zero human input.**
+>
+> **0% → 100%** win rate at SC2 difficulty 3 — reached via code changes the agent wrote and validated itself.
+
+It plays, watches itself fail, figures out why, writes a fix, proves the fix works, and repeats. The task happens to be StarCraft II, but the loop is general. A live React dashboard streams every phase — every proposed fix, every rejection, every win-rate swing — while the agent runs unattended for hours.
+
+**Quick start** (requires [SC2](https://starcraft2.blizzard.com/), Python 3.12, [uv](https://docs.astral.sh/uv/)):
+
+```bash
+git clone https://github.com/aberson/Alpha4Gate.git && cd Alpha4Gate
+uv sync
+uv run python -m alpha4gate.runner --map Simple64 --no-claude --difficulty 3
+```
+
+## What makes this different
 
 Most self-improving ML systems need a human in the loop — to design reward functions, tune hyperparameters, or diagnose failure modes when training stalls. This one closes that loop:
 
