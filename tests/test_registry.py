@@ -120,6 +120,35 @@ class TestResolveDataPath:
         assert result == tmp_path / "bots" / "v0" / "data" / "foo.json"
 
 
+class TestGetDataDir:
+    def test_get_data_dir_prefers_per_version_when_exists(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(registry, "_repo_root", lambda: tmp_path)
+        per_version = tmp_path / "bots" / "v0" / "data"
+        per_version.mkdir(parents=True)
+        # Legacy also exists — per-version should still win.
+        (tmp_path / "data").mkdir()
+        assert registry.get_data_dir("v0") == per_version
+
+    def test_get_data_dir_falls_back_to_legacy_when_per_version_absent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(registry, "_repo_root", lambda: tmp_path)
+        # Neither directory exists, but the fallback branch is returned so
+        # Settings.ensure_dirs() can create it lazily.
+        assert registry.get_data_dir("v0") == tmp_path / "data"
+
+    def test_get_data_dir_uses_current_version_when_omitted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(registry, "_repo_root", lambda: tmp_path)
+        _seed_pointer(tmp_path, "v0")
+        per_version = tmp_path / "bots" / "v0" / "data"
+        per_version.mkdir(parents=True)
+        assert registry.get_data_dir() == per_version
+
+
 class TestGetManifest:
     def test_get_manifest_happy_path(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

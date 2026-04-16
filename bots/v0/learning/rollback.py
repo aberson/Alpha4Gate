@@ -55,7 +55,12 @@ class RollbackMonitor:
         self._db = db
         self._config = config
         self._checkpoint_dir = checkpoint_dir
-        self._history_path = history_path or Path("data/promotion_history.json")
+        if history_path is not None:
+            self._history_path = history_path
+        else:
+            from orchestrator.registry import resolve_data_path
+
+            self._history_path = resolve_data_path("promotion_history.json")
 
     def check_for_regression(self, current_best: str) -> RollbackDecision | None:
         """Check if the current best model is regressing.

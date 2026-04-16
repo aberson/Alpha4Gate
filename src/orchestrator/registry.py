@@ -30,6 +30,7 @@ from orchestrator.contracts import Manifest
 
 __all__ = [
     "current_version",
+    "get_data_dir",
     "get_manifest",
     "get_version_dir",
     "resolve_data_path",
@@ -100,6 +101,30 @@ def resolve_data_path(filename: str, version: str | None = None) -> Path:
     if fallback.exists():
         return fallback
     return per_version
+
+
+def get_data_dir(version: str | None = None) -> Path:
+    """Return the data directory for ``version`` with legacy fallback.
+
+    Priority:
+
+    1. ``<repo_root>/bots/<v>/data/`` if that directory already exists.
+    2. ``<repo_root>/data/`` otherwise (legacy location).
+
+    Unlike :func:`resolve_data_path`, this returns a *directory* that callers
+    typically pass wholesale to code that joins its own filenames inside
+    (e.g. ``config.Settings.data_dir``). The legacy-first fallback lets Step 1.8
+    migrate ``src/alpha4gate/config.py``'s default before any files physically
+    move — production reads from ``data/`` until the per-version directory is
+    seeded, then flips transparently.
+
+    ``version`` defaults to :func:`current_version` when omitted.
+    """
+    v = current_version() if version is None else version
+    per_version = _repo_root() / "bots" / v / "data"
+    if per_version.is_dir():
+        return per_version
+    return _repo_root() / "data"
 
 
 def get_manifest(version: str) -> Manifest:

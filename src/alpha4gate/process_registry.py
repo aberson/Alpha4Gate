@@ -230,39 +230,43 @@ def get_port_status() -> list[dict[str, Any]]:
 
 def get_state_files() -> list[dict[str, Any]]:
     """Check state files for stale status."""
+    from orchestrator.registry import resolve_data_path
+
     files = []
-    for path, key in [
-        ("data/advised_run_state.json", "status"),
-        ("data/advised_run_control.json", "stop_run"),
+    for filename, key in [
+        ("advised_run_state.json", "status"),
+        ("advised_run_control.json", "stop_run"),
     ]:
-        p = Path(path)
+        p = resolve_data_path(filename)
+        display = str(p)
         if p.exists():
             try:
                 data = json.loads(p.read_text())
                 files.append({
-                    "file": path,
+                    "file": display,
                     "exists": True,
                     "key_field": key,
                     "value": data.get(key),
                     "updated_at": data.get("updated_at"),
                 })
             except (json.JSONDecodeError, OSError):
-                files.append({"file": path, "exists": True, "error": True})
+                files.append({"file": display, "exists": True, "error": True})
         else:
-            files.append({"file": path, "exists": False})
+            files.append({"file": display, "exists": False})
     return files
 
 
 def get_temp_file_counts() -> dict[str, int]:
     """Count accumulated temp files."""
+    from orchestrator.registry import resolve_data_path
+
+    reward_logs_dir = resolve_data_path("reward_logs")
     counts: dict[str, int] = {}
-    for pattern, label in [
-        ("logs/*.jsonl", "game_logs"),
-        ("data/reward_logs/*.jsonl", "reward_logs"),
-        ("replays/*.SC2Replay", "replays"),
+    for directory, suffix, label in [
+        (Path("logs"), ".jsonl", "game_logs"),
+        (reward_logs_dir, ".jsonl", "reward_logs"),
+        (Path("replays"), ".SC2Replay", "replays"),
     ]:
-        directory = Path(pattern).parent
-        suffix = Path(pattern).name.split("*")[-1]
         if directory.exists():
             counts[label] = sum(
                 1 for f in directory.iterdir() if f.name.endswith(suffix)

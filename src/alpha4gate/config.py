@@ -55,7 +55,22 @@ def load_settings(env_file: Path | None = None) -> Settings:
 
     log_dir = Path(os.getenv("LOG_DIR", "logs"))
     replay_dir = Path(os.getenv("REPLAY_DIR", "replays"))
-    data_dir = Path(os.getenv("DATA_DIR", "data"))
+    # Default routes through orchestrator.registry so production flips from
+    # legacy ``data/`` to ``bots/<current>/data/`` once Step 1.8 seeds the
+    # per-version directory. Explicit DATA_DIR env override still wins — tests
+    # and ad-hoc runs can pin the directory as before.
+    env_data_dir = os.getenv("DATA_DIR")
+    if env_data_dir is not None:
+        data_dir = Path(env_data_dir)
+    else:
+        from orchestrator.registry import get_data_dir
+
+        try:
+            data_dir = get_data_dir()
+        except (FileNotFoundError, ValueError):
+            # No ``bots/current/current.txt`` pointer (e.g. running from a
+            # checkout predating Phase 1); fall back to the legacy default.
+            data_dir = Path("data")
 
     port_str = os.getenv("WEB_UI_PORT", "8765")
     try:

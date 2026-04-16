@@ -335,8 +335,19 @@ def compute_action_distribution_shift(
 
 
 # Default paths (relative to project root; overridable in constructor)
-_DEFAULT_HISTORY_PATH = Path("data/promotion_history.json")
 _DEFAULT_WIKI_PATH = Path("documentation/wiki/promotions.md")
+
+
+def _default_history_path() -> Path:
+    """Resolve the default promotion-history path via the registry.
+
+    Lazy to avoid importing orchestrator at module load (which would chain
+    through ``bots.current``'s MetaPathFinder for any ``bots.<v>``-hosted
+    caller and make import-time failures harder to diagnose).
+    """
+    from orchestrator.registry import resolve_data_path
+
+    return resolve_data_path("promotion_history.json")
 
 
 class PromotionLogger:
@@ -347,7 +358,7 @@ class PromotionLogger:
         history_path: Path | None = None,
         wiki_path: Path | None = None,
     ) -> None:
-        self._history_path = history_path or _DEFAULT_HISTORY_PATH
+        self._history_path = history_path or _default_history_path()
         self._wiki_path = wiki_path or _DEFAULT_WIKI_PATH
 
     def _read_history(self) -> list[dict[str, Any]]:
