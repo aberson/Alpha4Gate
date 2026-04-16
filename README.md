@@ -103,7 +103,8 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 
 <details>
 
-## Stack
+
+<summary><b>Stack</b></summary>
 
 | Layer | Tool | Why |
 |---|---|---|
@@ -120,6 +121,9 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 | Testing (Frontend) | vitest + jsdom + @testing-library/react | 126 component / hook / lib tests |
 | Linting | ruff + mypy | Strict type checking, consistent style |
 
+</details>
+
+<details>
 
 <summary><b>Setup</b></summary>
 
