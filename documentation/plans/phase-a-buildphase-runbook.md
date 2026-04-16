@@ -61,3 +61,4 @@ replacement.
 - **Problem:** Based on Step 7 soak results and Steps 2–6 outcomes, make the gate call per the plan: `(combo_passed & no_crashes & tests_green) → merge branch to master`. If gate passes: `git checkout master && git merge feat/lstm-kl-imitation`, tag `alphastar/A/final`, push tags, close issue #100. If gate fails: leave branch unmerged, append outcome to the plan's "Plan history" section (line 687+), and decide whether to investigate per the kill-criterion candidates (stateless rule-teacher lossiness, padding distribution shift). Report DONE when merged or when failure is logged.
 - **Type:** operator
 - **Issue:** #100
+- **Status:** DONE (2026-04-15) — Gate PASSED. Merged to master (fast-forward `567f542..cfeeb99`), tagged `alphastar/A/final`, pushed, issue #100 closed. Full-stack hyperparams stashed for future use.
