@@ -43,6 +43,7 @@ replacement.
 - **Problem:** Revert `kl_rules_coef` to 0.0, set `policy_type: MlpLstmPolicy`. LSTM checkpoints are incompatible with prior MlpPolicy checkpoints, so first `Move-Item data/checkpoints data/checkpoints.bak-pre-lstm`. Then run `uv run python -m alpha4gate.runner --train rl --cycles 2 --games-per-cycle 3 --difficulty 3`. Pass = env loop runs, hidden state threads through, cycles complete. Known failure: if `net_arch: [128, 128]` flat-list is invalid for MlpLstmPolicy, model construction crashes — fix is to change net_arch in hyperparams to `{"pi": [128], "vf": [128]}`. Log any net_arch fix in the plan's history section. Report PASS or BLOCKED with root cause.
 - **Type:** operator
 - **Issue:** #100
+- **Status:** DONE (2026-04-15) — 2 cycles in 543 sec (~271 sec/cycle). Both checkpoints saved, failed_games=0, no NaN. **Unexpected result:** `RecurrentPPO` accepted `net_arch: [128, 128]` flat list without crash — the predicted failure mode did not materialize; no dict-form rewrite needed.
 
 ### Step 6: A.5 all three together
 - **Problem:** Set `use_imitation_init: true`, `kl_rules_coef: 0.1`, keep `policy_type: MlpLstmPolicy`. Run `uv run python -m alpha4gate.runner --train rl --cycles 3 --games-per-cycle 3 --difficulty 3 --ensure-pretrain`. Pass = 3 cycles complete without crash, imitation pretrain loads cleanly into LSTM policy, no NaN in KL pass. Report PASS with final win rate across 9 games, or BLOCKED.
