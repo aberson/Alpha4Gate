@@ -72,37 +72,55 @@ function colorForIndex(index: number): string {
 }
 
 /**
- * Build the x-axis chart series. Each row is { game: <index>, <rule_id>: number | null }.
+ * Build the x-axis chart series. Each row is
+ * { game: <index>, gameId: <id>, <rule_id>: number | null }.
  *
- * The backend returns one `points` list per rule, but rules may have different
- * numbers of points (a rule only has a point for games where it fired). We
- * build a row-major table keyed by a shared game index 0..n-1 where n is the
- * max length across all rules' points arrays. For rules with fewer points we
- * write `null` so recharts breaks the line rather than zero-filling.
- *
- * NOTE: game index is NOT a stable identifier across rules (rule A's game 0
- * may be a different game than rule B's game 0 since their points lists are
- * independent). This is an acceptable simplification for a trend view — we
- * only need rough per-rule shapes. Tooltip shows the raw contribution value.
+ * The backend returns one `points` list per rule, newest-first, and rules fire
+ * in different subsets of games. We take the union of all game_ids across
+ * rules, sort ascending by timestamp (oldest on the left, newest on the
+ * right), and emit one row per game. Each rule column carries that rule's
+ * contribution for that specific game, or `null` if the rule didn't fire —
+ * recharts breaks the line on null rather than zero-filling. This means x
+ * values are real games shared across rules, not per-rule point indices.
  */
 export function buildChartData(
   rules: RewardTrendRule[],
 ): Array<Record<string, number | string | null>> {
   if (rules.length === 0) return [];
-  const maxLen = rules.reduce((max, r) => Math.max(max, r.points.length), 0);
-  const rows: Array<Record<string, number | string | null>> = [];
-  for (let i = 0; i < maxLen; i += 1) {
-    const row: Record<string, number | string | null> = { game: i };
-    for (const rule of rules) {
-      const point = rule.points[i];
-      row[rule.rule_id] =
-        point && typeof point.contribution === "number"
-          ? point.contribution
-          : null;
+
+  const timestampByGameId = new Map<string, string>();
+  for (const rule of rules) {
+    for (const point of rule.points) {
+      if (!timestampByGameId.has(point.game_id)) {
+        timestampByGameId.set(point.game_id, point.timestamp);
+      }
     }
-    rows.push(row);
   }
-  return rows;
+
+  const orderedGameIds = Array.from(timestampByGameId.keys()).sort((a, b) => {
+    const ta = new Date(timestampByGameId.get(a)!).getTime();
+    const tb = new Date(timestampByGameId.get(b)!).getTime();
+    if (Number.isNaN(ta) || Number.isNaN(tb)) return 0;
+    return ta - tb;
+  });
+
+  const ruleLookups = rules.map((rule) => {
+    const lookup = new Map<string, number>();
+    for (const p of rule.points) {
+      if (typeof p.contribution === "number") {
+        lookup.set(p.game_id, p.contribution);
+      }
+    }
+    return { rule_id: rule.rule_id, lookup };
+  });
+
+  return orderedGameIds.map((gameId, i) => {
+    const row: Record<string, number | string | null> = { game: i, gameId };
+    for (const { rule_id, lookup } of ruleLookups) {
+      row[rule_id] = lookup.has(gameId) ? lookup.get(gameId)! : null;
+    }
+    return row;
+  });
 }
 
 /**
@@ -236,7 +254,7 @@ export function RewardTrends({
       {isStale ? <StaleDataBanner lastSuccess={lastSuccess} label="Reward Trends" /> : null}
       <h2>Reward Trends</h2>
       <p style={{ color: "#888", fontSize: "0.85em", margin: "0 0 16px" }}>
-        Per-rule reward contribution over recent games, shown as a summary table (total and per-game averages) and a line chart. Rules with flat or zero contribution may be misfiring or redundant; high-variance rules are worth inspecting for condition correctness.
+        Each line is one reward rule's contribution per game; games flow left (oldest) → right (newest), and gaps mean the rule didn't fire that game. Flat or zero lines may indicate misfiring or redundant rules; high-variance lines are worth inspecting.
       </p>
 
       <div
@@ -374,11 +392,25 @@ export function RewardTrends({
             </ResponsiveContainer>
           </div>
 
+          <details className="reward-trends-details" style={{ marginTop: "8px" }}>
+            <summary
+              style={{
+                cursor: "pointer",
+                padding: "6px 0",
+                color: "#aaa",
+                fontSize: "0.9em",
+                userSelect: "none",
+              }}
+            >
+              Show rule totals table ({sortedRules.length} rule
+              {sortedRules.length === 1 ? "" : "s"})
+            </summary>
           <table
             className="reward-trends-table"
             style={{
               width: "100%",
               borderCollapse: "collapse",
+              marginTop: "8px",
             }}
           >
             <thead>
@@ -453,6 +485,7 @@ export function RewardTrends({
               ))}
             </tbody>
           </table>
+          </details>
         </>
       )}
     </div>

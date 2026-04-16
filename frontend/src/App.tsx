@@ -147,8 +147,8 @@ function App() {
         {tab === "advisor" && <AdvisedControlPanel />}
         {tab === "improvements" && (
           <>
-            <RecentImprovements />
             <RewardTrends />
+            <RecentImprovements />
             <AdvisedImprovements />
           </>
         )}
