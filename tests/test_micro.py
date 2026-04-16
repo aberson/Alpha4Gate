@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from sc2.ids.unit_typeid import UnitTypeId
-
-from alpha4gate.micro import (
+from bots.v0.micro import (
     KITE_DISTANCE,
     MicroCommand,
     MicroController,
@@ -14,6 +12,7 @@ from alpha4gate.micro import (
     select_target,
     should_kite,
 )
+from sc2.ids.unit_typeid import UnitTypeId
 
 
 def _mock_unit(

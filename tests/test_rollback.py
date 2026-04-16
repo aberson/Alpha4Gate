@@ -6,14 +6,13 @@ import json
 from pathlib import Path
 
 import pytest
-
-from alpha4gate.learning.checkpoints import (
+from bots.v0.learning.checkpoints import (
     _load_manifest,
     get_best_name,
     promote_checkpoint,
 )
-from alpha4gate.learning.database import TrainingDB
-from alpha4gate.learning.rollback import RollbackConfig, RollbackDecision, RollbackMonitor
+from bots.v0.learning.database import TrainingDB
+from bots.v0.learning.rollback import RollbackConfig, RollbackDecision, RollbackMonitor
 
 
 @pytest.fixture()
@@ -351,9 +350,8 @@ class TestPromoteTracksPreviousBest:
 
 class TestRollbackApiEndpoint:
     def test_manual_rollback_success(self, tmp_path: Path) -> None:
+        from bots.v0.api import app, configure
         from fastapi.testclient import TestClient
-
-        from alpha4gate.api import app, configure
 
         data_dir = tmp_path / "data"
         data_dir.mkdir()
@@ -384,9 +382,8 @@ class TestRollbackApiEndpoint:
         assert get_best_name(cp_dir) == "v4"
 
     def test_manual_rollback_no_checkpoint(self, tmp_path: Path) -> None:
+        from bots.v0.api import app, configure
         from fastapi.testclient import TestClient
-
-        from alpha4gate.api import app, configure
 
         configure(
             data_dir=tmp_path / "data",
@@ -399,9 +396,8 @@ class TestRollbackApiEndpoint:
         assert resp.status_code == 400
 
     def test_manual_rollback_same_checkpoint(self, tmp_path: Path) -> None:
+        from bots.v0.api import app, configure
         from fastapi.testclient import TestClient
-
-        from alpha4gate.api import app, configure
 
         data_dir = tmp_path / "data"
         data_dir.mkdir()
@@ -420,9 +416,8 @@ class TestRollbackApiEndpoint:
         assert resp.status_code == 400
 
     def test_daemon_status_includes_rollback(self, tmp_path: Path) -> None:
+        from bots.v0.api import app, configure
         from fastapi.testclient import TestClient
-
-        from alpha4gate.api import app, configure
 
         configure(
             data_dir=tmp_path / "data",

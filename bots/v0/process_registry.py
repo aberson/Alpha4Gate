@@ -9,13 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-# Command-line substrings that identify "one of our" processes during the
-# Phase 1 migration window:
-#   * "bots.v0"     — post-Step-1.5 versioned module path
-#   * "bots.current" — Step 1.6 version-pointer module path
-#   * "alpha4gate"  — legacy tree, still live until Step 1.10 deletes it
-# After Step 1.10 the "alpha4gate" entry can be dropped.
-_OUR_CMDLINE_TAGS: tuple[str, ...] = ("bots.v0", "bots.current", "alpha4gate")
+# Command-line substrings that identify "one of our" processes.
+_OUR_CMDLINE_TAGS: tuple[str, ...] = ("bots.v0", "bots.current")
 
 
 def _is_ours(cmdline: str) -> bool:
@@ -164,9 +159,7 @@ def _summarize_cmdline(cmdline: str) -> str:
     lower = cmdline.lower()
     if _is_ours(lower):
         # Extract the key flags and label by whichever tag actually matched
-        # (so legacy `alpha4gate` processes stay recognisable during the
-        # migration window, and new `bots.v0` / `bots.current` processes
-        # get their real label instead of a misleading legacy one).
+        # Label by whichever tag matched (bots.v0 or bots.current).
         parts = cmdline.split()
         flags = [p for p in parts if p.startswith("--")]
         label = next((tag for tag in _OUR_CMDLINE_TAGS if tag in lower), "bots.v0")

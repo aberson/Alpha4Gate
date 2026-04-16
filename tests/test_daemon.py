@@ -13,16 +13,15 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-from fastapi.testclient import TestClient
-
-from alpha4gate.api import app, configure
-from alpha4gate.config import Settings
-from alpha4gate.learning.daemon import (
+from bots.v0.api import app, configure
+from bots.v0.config import Settings
+from bots.v0.learning.daemon import (
     DaemonConfig,
     TrainingDaemon,
     load_daemon_config,
     save_daemon_config,
 )
+from fastapi.testclient import TestClient
 
 # ------------------------------------------------------------------
 # Helpers
@@ -150,7 +149,7 @@ class TestTrainingDaemon:
             return call_count == 1
 
         with patch(
-            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            "bots.v0.learning.trainer.TrainingOrchestrator",
             return_value=mock_orchestrator,
         ):
             daemon._should_train = should_train_once  # type: ignore[assignment]
@@ -179,7 +178,7 @@ class TestTrainingDaemon:
             return call_count == 1
 
         with patch(
-            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            "bots.v0.learning.trainer.TrainingOrchestrator",
             side_effect=RuntimeError("SC2 not found"),
         ):
             daemon._should_train = should_train_once  # type: ignore[assignment]
@@ -258,7 +257,7 @@ class TestDaemonEndpoints:
 
 def _seed_transitions(db_path: Path, count: int) -> None:
     """Create a DB with *count* transitions and 1 game."""
-    from alpha4gate.learning.database import TrainingDB
+    from bots.v0.learning.database import TrainingDB
 
     db = TrainingDB(db_path)
     db.store_game("g0", "Simple64", 1, "win", 300.0, 5.0, "v1")
@@ -280,7 +279,7 @@ class TestTriggerLogic:
 
     def test_zero_transitions(self, tmp_path: Path) -> None:
         """DB exists but has 0 transitions -> never trigger."""
-        from alpha4gate.learning.database import TrainingDB
+        from bots.v0.learning.database import TrainingDB
 
         settings = _make_settings(tmp_path)
         db_path = settings.data_dir / "training.db"
@@ -482,14 +481,14 @@ class TestDaemonConfigEndpoint:
 
 class TestRunnerDaemonFlag:
     def test_daemon_flag_exists(self) -> None:
-        from alpha4gate.runner import build_parser
+        from bots.v0.runner import build_parser
 
         parser = build_parser()
         args = parser.parse_args(["--serve", "--daemon"])
         assert args.daemon is True
 
     def test_daemon_flag_default_false(self) -> None:
-        from alpha4gate.runner import build_parser
+        from bots.v0.runner import build_parser
 
         parser = build_parser()
         args = parser.parse_args(["--serve"])
@@ -538,7 +537,7 @@ class TestCurriculumPersistenceAcrossRestarts:
         }
 
         with patch(
-            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            "bots.v0.learning.trainer.TrainingOrchestrator",
             return_value=mock_orchestrator,
         ):
             daemon._run_training()
@@ -593,7 +592,7 @@ class TestCurriculumPersistenceAcrossRestarts:
                 }
 
         with patch(
-            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            "bots.v0.learning.trainer.TrainingOrchestrator",
             FakeOrchestrator,
         ):
             daemon._run_training()
@@ -628,7 +627,7 @@ class TestCurriculumAwarePromotion:
             "stop_reason": "",
         }
 
-        from alpha4gate.learning.evaluator import EvalResult
+        from bots.v0.learning.evaluator import EvalResult
 
         mock_decision = MagicMock()
         mock_decision.promoted = True
@@ -651,7 +650,7 @@ class TestCurriculumAwarePromotion:
         daemon._promotion_manager = mock_pm
 
         with patch(
-            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            "bots.v0.learning.trainer.TrainingOrchestrator",
             return_value=mock_orchestrator,
         ):
             daemon._run_training()
@@ -692,7 +691,7 @@ class TestCurriculumAwarePromotion:
             "stop_reason": "",
         }
 
-        from alpha4gate.learning.evaluator import EvalResult
+        from bots.v0.learning.evaluator import EvalResult
 
         mock_decision = MagicMock()
         mock_decision.promoted = True
@@ -715,7 +714,7 @@ class TestCurriculumAwarePromotion:
         daemon._promotion_manager = mock_pm
 
         with patch(
-            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            "bots.v0.learning.trainer.TrainingOrchestrator",
             return_value=mock_orchestrator,
         ):
             daemon._run_training()
@@ -747,7 +746,7 @@ class TestCurriculumAwarePromotion:
             "stop_reason": "",
         }
 
-        from alpha4gate.learning.evaluator import EvalResult
+        from bots.v0.learning.evaluator import EvalResult
 
         mock_decision = MagicMock()
         mock_decision.promoted = True
@@ -770,7 +769,7 @@ class TestCurriculumAwarePromotion:
         daemon._promotion_manager = mock_pm
 
         with patch(
-            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            "bots.v0.learning.trainer.TrainingOrchestrator",
             return_value=mock_orchestrator,
         ):
             daemon._run_training()
@@ -833,7 +832,7 @@ class TestDifficultyRevertOnRollback:
             "stop_reason": "",
         }
 
-        from alpha4gate.learning.rollback import RollbackDecision
+        from bots.v0.learning.rollback import RollbackDecision
 
         mock_rollback_decision = RollbackDecision(
             current_model="v5",
@@ -849,7 +848,7 @@ class TestDifficultyRevertOnRollback:
         daemon._rollback_monitor = mock_monitor
 
         with patch(
-            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            "bots.v0.learning.trainer.TrainingOrchestrator",
             return_value=mock_orchestrator,
         ):
             daemon._run_training()
@@ -894,7 +893,7 @@ class TestDifficultyRevertOnRollback:
             "stop_reason": "",
         }
 
-        from alpha4gate.learning.rollback import RollbackDecision
+        from bots.v0.learning.rollback import RollbackDecision
 
         mock_monitor = MagicMock()
         mock_monitor.check_for_regression.return_value = RollbackDecision(
@@ -908,7 +907,7 @@ class TestDifficultyRevertOnRollback:
         daemon._rollback_monitor = mock_monitor
 
         with patch(
-            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            "bots.v0.learning.trainer.TrainingOrchestrator",
             return_value=mock_orchestrator,
         ):
             daemon._run_training()
@@ -1012,7 +1011,7 @@ class TestCrashedCyclesSkipPromotion:
         daemon._promotion_manager = mock_pm
 
         with patch(
-            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            "bots.v0.learning.trainer.TrainingOrchestrator",
             return_value=mock_orchestrator,
         ):
             daemon._run_training()
@@ -1051,7 +1050,7 @@ class TestCrashedCyclesSkipPromotion:
             "stop_reason": "",
         }
 
-        from alpha4gate.learning.evaluator import EvalResult
+        from bots.v0.learning.evaluator import EvalResult
 
         mock_decision = MagicMock()
         mock_decision.promoted = False
@@ -1073,7 +1072,7 @@ class TestCrashedCyclesSkipPromotion:
         daemon._promotion_manager = mock_pm
 
         with patch(
-            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            "bots.v0.learning.trainer.TrainingOrchestrator",
             return_value=mock_orchestrator,
         ):
             daemon._run_training()
@@ -1108,7 +1107,7 @@ class TestAllCrashedTrainingRunIsFailure:
         tests, so we attach a local handler bound to a *new* buffer
         instance to avoid cross-test contamination.
         """
-        from alpha4gate.error_log import ErrorLogBuffer, _ErrorBufferHandler
+        from bots.v0.error_log import ErrorLogBuffer, _ErrorBufferHandler
 
         buffer = ErrorLogBuffer()
         handler = _ErrorBufferHandler(buffer)
@@ -1148,7 +1147,7 @@ class TestAllCrashedTrainingRunIsFailure:
         buffer, handler = self._install_buffer()
         try:
             with patch(
-                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                "bots.v0.learning.trainer.TrainingOrchestrator",
                 return_value=mock_orchestrator,
             ):
                 daemon._run_training()
@@ -1169,7 +1168,7 @@ class TestAllCrashedTrainingRunIsFailure:
         # same message (not merely the per-cycle trainer.py exceptions).
         total, records = buffer.snapshot()
         assert total >= 1
-        daemon_errors = [r for r in records if r["logger"] == "alpha4gate.learning.daemon"]
+        daemon_errors = [r for r in records if r["logger"] == "bots.v0.learning.daemon"]
         assert len(daemon_errors) == 1, f"expected one daemon-level ERROR; got {daemon_errors}"
         assert daemon_errors[0]["level"] == "ERROR"
         assert "Observation spaces do not match" in daemon_errors[0]["message"]
@@ -1203,7 +1202,7 @@ class TestAllCrashedTrainingRunIsFailure:
         buffer, handler = self._install_buffer()
         try:
             with patch(
-                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                "bots.v0.learning.trainer.TrainingOrchestrator",
                 return_value=mock_orchestrator,
             ):
                 daemon._run_training()
@@ -1236,7 +1235,7 @@ class TestAllCrashedTrainingRunIsFailure:
             ],
         }
 
-        from alpha4gate.learning.evaluator import EvalResult
+        from bots.v0.learning.evaluator import EvalResult
 
         mock_decision = MagicMock()
         mock_decision.promoted = False
@@ -1258,7 +1257,7 @@ class TestAllCrashedTrainingRunIsFailure:
         daemon._promotion_manager = mock_pm
 
         with patch(
-            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            "bots.v0.learning.trainer.TrainingOrchestrator",
             return_value=mock_orchestrator,
         ):
             daemon._run_training()
@@ -1292,7 +1291,7 @@ class TestAllCrashedTrainingRunIsFailure:
         buffer, handler = self._install_buffer()
         try:
             with patch(
-                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                "bots.v0.learning.trainer.TrainingOrchestrator",
                 return_value=mock_orchestrator,
             ):
                 daemon._run_training()
@@ -1303,7 +1302,7 @@ class TestAllCrashedTrainingRunIsFailure:
         assert daemon._last_error is not None
 
         _, records = buffer.snapshot()
-        daemon_errors = [r for r in records if r["logger"] == "alpha4gate.learning.daemon"]
+        daemon_errors = [r for r in records if r["logger"] == "bots.v0.learning.daemon"]
         assert len(daemon_errors) == 1
         assert daemon_errors[0]["level"] == "ERROR"
 
@@ -1329,7 +1328,7 @@ class TestWatchdogPerCycleCrashVisibility:
         ``buffer.reset()`` is safe because the singleton is isolated
         to this test process and we restore state in ``finally``.
         """
-        from alpha4gate.error_log import _ErrorBufferHandler, get_error_log_buffer
+        from bots.v0.error_log import _ErrorBufferHandler, get_error_log_buffer
 
         buffer = get_error_log_buffer()
         buffer.reset()
@@ -1356,7 +1355,7 @@ class TestWatchdogPerCycleCrashVisibility:
         )
         daemon = TrainingDaemon(settings, cfg)
 
-        per_cycle_log = logging.getLogger("alpha4gate.learning.environment")
+        per_cycle_log = logging.getLogger("bots.v0.learning.environment")
 
         observed_last_error: list[str | None] = []
 
@@ -1405,7 +1404,7 @@ class TestWatchdogPerCycleCrashVisibility:
         mock_decision = MagicMock()
         mock_decision.promoted = False
         mock_decision.reason = "not better"
-        from alpha4gate.learning.evaluator import EvalResult
+        from bots.v0.learning.evaluator import EvalResult
 
         mock_decision.new_eval = EvalResult(
             checkpoint="v9",
@@ -1426,7 +1425,7 @@ class TestWatchdogPerCycleCrashVisibility:
         buffer, handler = self._install_buffer()
         try:
             with patch(
-                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                "bots.v0.learning.trainer.TrainingOrchestrator",
                 return_value=mock_orchestrator,
             ):
                 daemon._run_training()
@@ -1454,7 +1453,7 @@ class TestWatchdogPerCycleCrashVisibility:
         )
         daemon = TrainingDaemon(settings, cfg)
 
-        per_cycle_log = logging.getLogger("alpha4gate.learning.environment")
+        per_cycle_log = logging.getLogger("bots.v0.learning.environment")
 
         def fake_run(**_kwargs: Any) -> dict[str, Any]:
             # Only emit 2 errors — well below the threshold of 10.
@@ -1484,7 +1483,7 @@ class TestWatchdogPerCycleCrashVisibility:
         mock_decision = MagicMock()
         mock_decision.promoted = False
         mock_decision.reason = "not better"
-        from alpha4gate.learning.evaluator import EvalResult
+        from bots.v0.learning.evaluator import EvalResult
 
         mock_decision.new_eval = EvalResult(
             checkpoint="v9",
@@ -1505,7 +1504,7 @@ class TestWatchdogPerCycleCrashVisibility:
         buffer, handler = self._install_buffer()
         try:
             with patch(
-                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                "bots.v0.learning.trainer.TrainingOrchestrator",
                 return_value=mock_orchestrator,
             ):
                 daemon._run_training()
@@ -1533,7 +1532,7 @@ class TestWatchdogPerCycleCrashVisibility:
         )
         daemon = TrainingDaemon(settings, cfg)
 
-        per_cycle_log = logging.getLogger("alpha4gate.learning.environment")
+        per_cycle_log = logging.getLogger("bots.v0.learning.environment")
 
         def fake_run(**_kwargs: Any) -> dict[str, Any]:
             per_cycle_log.error("Game thread crashed")
@@ -1569,7 +1568,7 @@ class TestWatchdogPerCycleCrashVisibility:
         buffer, handler = self._install_buffer()
         try:
             with patch(
-                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                "bots.v0.learning.trainer.TrainingOrchestrator",
                 return_value=mock_orchestrator,
             ):
                 daemon._run_training()
@@ -1615,7 +1614,7 @@ class TestWatchdogPerCycleCrashVisibility:
         mock_decision = MagicMock()
         mock_decision.promoted = False
         mock_decision.reason = "not better"
-        from alpha4gate.learning.evaluator import EvalResult
+        from bots.v0.learning.evaluator import EvalResult
 
         mock_decision.new_eval = EvalResult(
             checkpoint="v9",
@@ -1636,7 +1635,7 @@ class TestWatchdogPerCycleCrashVisibility:
         buffer, handler = self._install_buffer()
         try:
             with patch(
-                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                "bots.v0.learning.trainer.TrainingOrchestrator",
                 return_value=mock_orchestrator,
             ):
                 daemon._run_training()
@@ -1676,7 +1675,7 @@ class TestWatchdogPerCycleCrashVisibility:
         # Pre-seed a stale error string as if a prior run had failed.
         daemon._last_error = "stale error from prior run"
 
-        per_cycle_log = logging.getLogger("alpha4gate.learning.environment")
+        per_cycle_log = logging.getLogger("bots.v0.learning.environment")
 
         observed_last_error: list[str | None] = []
 
@@ -1715,7 +1714,7 @@ class TestWatchdogPerCycleCrashVisibility:
         mock_decision = MagicMock()
         mock_decision.promoted = False
         mock_decision.reason = "not better"
-        from alpha4gate.learning.evaluator import EvalResult
+        from bots.v0.learning.evaluator import EvalResult
 
         mock_decision.new_eval = EvalResult(
             checkpoint="v9",
@@ -1736,7 +1735,7 @@ class TestWatchdogPerCycleCrashVisibility:
         buffer, handler = self._install_buffer()
         try:
             with patch(
-                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                "bots.v0.learning.trainer.TrainingOrchestrator",
                 return_value=mock_orchestrator,
             ):
                 daemon._run_training()
@@ -1768,7 +1767,7 @@ class TestWatchdogPerCycleCrashVisibility:
         )
         daemon = TrainingDaemon(settings, cfg)
 
-        per_cycle_log = logging.getLogger("alpha4gate.learning.environment")
+        per_cycle_log = logging.getLogger("bots.v0.learning.environment")
 
         def fake_run(**_kwargs: Any) -> dict[str, Any]:
             # Emit well above threshold, then pause long enough for
@@ -1799,7 +1798,7 @@ class TestWatchdogPerCycleCrashVisibility:
         mock_decision = MagicMock()
         mock_decision.promoted = False
         mock_decision.reason = "not better"
-        from alpha4gate.learning.evaluator import EvalResult
+        from bots.v0.learning.evaluator import EvalResult
 
         mock_decision.new_eval = EvalResult(
             checkpoint="v9",
@@ -1819,7 +1818,7 @@ class TestWatchdogPerCycleCrashVisibility:
 
         # Install a capturing handler on the daemon logger so we can
         # count how many watchdog-level ERROR records were emitted.
-        daemon_log = logging.getLogger("alpha4gate.learning.daemon")
+        daemon_log = logging.getLogger("bots.v0.learning.daemon")
 
         class _CaptureHandler(logging.Handler):
             def __init__(self) -> None:
@@ -1835,7 +1834,7 @@ class TestWatchdogPerCycleCrashVisibility:
         buffer, handler = self._install_buffer()
         try:
             with patch(
-                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                "bots.v0.learning.trainer.TrainingOrchestrator",
                 return_value=mock_orchestrator,
             ):
                 daemon._run_training()
@@ -1917,8 +1916,8 @@ class TestWatchdogPerCycleCrashVisibility:
         that emits ERRORs via the real Python logging API (not
         ``buffer.emit`` — Phase 4.5 #68 iter-2 lesson).
         """
-        from alpha4gate.learning.evaluator import EvalResult
-        from alpha4gate.learning.promotion import PromotionDecision
+        from bots.v0.learning.evaluator import EvalResult
+        from bots.v0.learning.promotion import PromotionDecision
 
         settings = _make_settings(tmp_path)
         cfg = DaemonConfig(
@@ -1928,7 +1927,7 @@ class TestWatchdogPerCycleCrashVisibility:
         )
         daemon = TrainingDaemon(settings, cfg)
 
-        promotion_log = logging.getLogger("alpha4gate.learning.promotion")
+        promotion_log = logging.getLogger("bots.v0.learning.promotion")
 
         mock_orchestrator = MagicMock()
         mock_orchestrator.run.return_value = {
@@ -2002,7 +2001,7 @@ class TestWatchdogPerCycleCrashVisibility:
         buffer, handler = self._install_buffer()
         try:
             with patch(
-                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                "bots.v0.learning.trainer.TrainingOrchestrator",
                 return_value=mock_orchestrator,
             ):
                 daemon._run_training()
@@ -2066,8 +2065,8 @@ class TestWatchdogPerCycleCrashVisibility:
             ],
         }
 
-        from alpha4gate.learning.evaluator import EvalResult
-        from alpha4gate.learning.promotion import PromotionDecision
+        from bots.v0.learning.evaluator import EvalResult
+        from bots.v0.learning.promotion import PromotionDecision
 
         happy_decision = PromotionDecision(
             new_checkpoint="v9",
@@ -2097,7 +2096,7 @@ class TestWatchdogPerCycleCrashVisibility:
         buffer, handler = self._install_buffer()
         try:
             with patch(
-                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                "bots.v0.learning.trainer.TrainingOrchestrator",
                 return_value=mock_orchestrator,
             ):
                 daemon._run_training()

@@ -1,4 +1,4 @@
-"""Unit tests for alpha4gate.learning.reward_aggregator."""
+"""Unit tests for bots.v0.learning.reward_aggregator."""
 
 from __future__ import annotations
 
@@ -8,8 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-from alpha4gate.learning.reward_aggregator import aggregate_reward_trends
+from bots.v0.learning.reward_aggregator import aggregate_reward_trends
 
 
 def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:

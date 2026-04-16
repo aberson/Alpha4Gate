@@ -8,10 +8,9 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from bots.v0.api import app, configure
+from bots.v0.error_log import get_error_log_buffer
 from fastapi.testclient import TestClient
-
-from alpha4gate.api import app, configure
-from alpha4gate.error_log import get_error_log_buffer
 
 
 @pytest.fixture()
@@ -302,7 +301,7 @@ class TestTrainingEndpoints:
         assert resp.json()["models"] == []
 
     def test_training_models_with_data(self, client: TestClient, tmp_path: Path) -> None:
-        from alpha4gate.learning.database import TrainingDB
+        from bots.v0.learning.database import TrainingDB
 
         db = TrainingDB(tmp_path / "data" / "training.db")
         db.store_game("g0", "Simple64", 1, "win", 300.0, 5.0, "v1")
@@ -345,7 +344,7 @@ class TestErrorLogStatusFields:
 
         # Emit via the real logging API, not buffer.emit() — exercises
         # the full handler chain and the %d substitution in getMessage().
-        test_logger = logging.getLogger("alpha4gate.test_api")
+        test_logger = logging.getLogger("bots.v0.test_api")
         test_logger.error("synthetic test error %d", 42)
 
         resp_after = client.get("/api/training/status")
@@ -355,7 +354,7 @@ class TestErrorLogStatusFields:
         assert len(body["recent_errors"]) == 1
         record = body["recent_errors"][0]
         assert record["level"] == "ERROR"
-        assert "alpha4gate.test_api" in record["logger"]
+        assert "bots.v0.test_api" in record["logger"]
         assert "synthetic test error 42" in record["message"]
 
 

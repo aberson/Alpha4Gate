@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from alpha4gate.console import format_status
+from bots.v0.console import format_status
 
 
 def _sample_entry(

@@ -6,8 +6,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
-
-from alpha4gate.learning.advisor_bridge import (
+from bots.v0.learning.advisor_bridge import (
     PrinciplesLookup,
     TrainingAdvisorBridge,
     build_training_prompt,

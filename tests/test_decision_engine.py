@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from alpha4gate.build_orders import BuildOrder, BuildStep
-from alpha4gate.decision_engine import DecisionEngine, GameSnapshot, StrategicState
+from bots.v0.build_orders import BuildOrder, BuildStep
+from bots.v0.decision_engine import DecisionEngine, GameSnapshot, StrategicState
 
 
 def _simple_build_order(num_steps: int = 3) -> BuildOrder:
@@ -270,22 +270,22 @@ class TestActionToStateSourceOfTruth:
     """
 
     def test_action_to_state_has_six_entries(self) -> None:
-        from alpha4gate.decision_engine import ACTION_TO_STATE, NUM_ACTIONS
+        from bots.v0.decision_engine import ACTION_TO_STATE, NUM_ACTIONS
 
         assert len(ACTION_TO_STATE) == NUM_ACTIONS
         assert NUM_ACTIONS == 6
         assert StrategicState.FORTIFY in ACTION_TO_STATE
 
     def test_sc2env_action_space_matches_num_actions(self) -> None:
-        from alpha4gate.decision_engine import NUM_ACTIONS
-        from alpha4gate.learning.environment import SC2Env
+        from bots.v0.decision_engine import NUM_ACTIONS
+        from bots.v0.learning.environment import SC2Env
 
         assert SC2Env.action_space.n == NUM_ACTIONS
 
     def test_neural_engine_uses_shared_action_list(self) -> None:
         """neural_engine must import the canonical list, not redefine it."""
-        from alpha4gate.decision_engine import ACTION_TO_STATE
-        from alpha4gate.learning.neural_engine import (
+        from bots.v0.decision_engine import ACTION_TO_STATE
+        from bots.v0.learning.neural_engine import (
             _ACTION_TO_STATE as ne_action_to_state,
         )
 
@@ -294,8 +294,8 @@ class TestActionToStateSourceOfTruth:
 
     def test_environment_uses_shared_action_list(self) -> None:
         """environment must import the canonical list, not redefine it."""
-        from alpha4gate.decision_engine import ACTION_TO_STATE
-        from alpha4gate.learning.environment import (
+        from bots.v0.decision_engine import ACTION_TO_STATE
+        from bots.v0.learning.environment import (
             _ACTION_TO_STATE as env_action_to_state,
         )
 

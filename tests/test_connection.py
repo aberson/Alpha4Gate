@@ -11,7 +11,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from alpha4gate.connection import build_replay_path
+from bots.v0.connection import build_replay_path
 
 
 def test_build_replay_path_format_matches_expected_pattern(tmp_path: Path) -> None:

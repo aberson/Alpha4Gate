@@ -1,9 +1,8 @@
 """Tests for feature encoding and decoding."""
 
 import numpy as np
-
-from alpha4gate.decision_engine import GameSnapshot
-from alpha4gate.learning.features import FEATURE_DIM, decode, encode
+from bots.v0.decision_engine import GameSnapshot
+from bots.v0.learning.features import FEATURE_DIM, decode, encode
 
 
 class TestEncode:

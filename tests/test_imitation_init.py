@@ -12,11 +12,10 @@ import json
 from pathlib import Path
 
 import pytest
+from bots.v0.learning.ppo_kl import PPOWithKL, RecurrentPPOWithKL
+from bots.v0.learning.trainer import TrainingOrchestrator
 from sb3_contrib import RecurrentPPO
 from stable_baselines3 import PPO
-
-from alpha4gate.learning.ppo_kl import PPOWithKL, RecurrentPPOWithKL
-from alpha4gate.learning.trainer import TrainingOrchestrator
 
 
 def test_pick_class_vanilla_ppo() -> None:
@@ -40,7 +39,7 @@ def test_pick_class_recurrent_with_kl() -> None:
 
 def test_ensure_pretrain_skips_when_file_exists(tmp_path: Path) -> None:
     """--ensure-pretrain should log and return without calling imitation."""
-    from alpha4gate.runner import _ensure_pretrain_checkpoint
+    from bots.v0.runner import _ensure_pretrain_checkpoint
 
     class _Settings:
         data_dir = tmp_path
@@ -57,8 +56,8 @@ def test_ensure_pretrain_skips_when_file_exists(tmp_path: Path) -> None:
 
 def test_ensure_pretrain_runs_when_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """When v0_pretrain is missing, imitation training should be invoked."""
-    from alpha4gate import runner
-    from alpha4gate.learning import imitation
+    from bots.v0 import runner
+    from bots.v0.learning import imitation
 
     called: dict[str, bool] = {"ran": False}
 
@@ -74,7 +73,7 @@ def test_ensure_pretrain_runs_when_missing(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setattr(imitation, "run_imitation_training", fake_imitation)
     monkeypatch.setattr(runner, "TrainingDB", _FakeDB, raising=False)
     # Also patch the name that _ensure_pretrain_checkpoint imports locally
-    import alpha4gate.learning.database as db_mod
+    import bots.v0.learning.database as db_mod
     monkeypatch.setattr(db_mod, "TrainingDB", _FakeDB)
 
     class _Settings:

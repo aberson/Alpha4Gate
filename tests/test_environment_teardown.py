@@ -31,9 +31,8 @@ from typing import Any
 from unittest.mock import patch
 
 import numpy as np
-
-from alpha4gate.learning.environment import FEATURE_DIM, SC2Env
-from alpha4gate.learning.rewards import RewardCalculator
+from bots.v0.learning.environment import FEATURE_DIM, SC2Env
+from bots.v0.learning.rewards import RewardCalculator
 
 # All consumer-side tests must complete in well under the real 300-second
 # ``_obs_queue.get`` timeout. Five seconds is generous but still catches

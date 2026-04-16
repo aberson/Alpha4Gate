@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from alpha4gate.build_orders import (
+from bots.v0.build_orders import (
     BuildOrder,
     BuildSequencer,
     BuildStep,

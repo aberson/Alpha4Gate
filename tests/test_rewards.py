@@ -6,13 +6,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-from alpha4gate.learning.rewards import (
+from bots.v0.learning.rewards import (
     BASE_LOSS_REWARD,
     BASE_STEP_REWARD,
     BASE_WIN_REWARD,
     RewardCalculator,
 )
+
 from orchestrator.registry import resolve_data_path
 
 # Resolve via registry so the test follows the hot-data move from

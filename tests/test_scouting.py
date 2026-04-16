@@ -4,15 +4,14 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from sc2.ids.unit_typeid import UnitTypeId
-
-from alpha4gate.scouting import (
+from bots.v0.scouting import (
     EnemyComposition,
     ScoutManager,
     assess_enemy,
     compute_threat_score,
     threat_level_from_score,
 )
+from sc2.ids.unit_typeid import UnitTypeId
 
 
 def _mock_unit(type_id: UnitTypeId, name: str = "Unit") -> MagicMock:

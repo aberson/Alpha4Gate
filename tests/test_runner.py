@@ -8,9 +8,8 @@ from pathlib import Path
 
 import httpx
 import pytest
-
-from alpha4gate.config import Settings
-from alpha4gate.runner import _start_server_background
+from bots.v0.config import Settings
+from bots.v0.runner import _start_server_background
 
 
 def _free_port() -> int:
@@ -38,7 +37,7 @@ def _make_settings(tmp_path: Path, port: int) -> Settings:
 class TestBuildParser:
     def test_no_reward_log_flag_default(self) -> None:
         """--no-reward-log defaults to False (logging is on by default)."""
-        from alpha4gate.runner import build_parser
+        from bots.v0.runner import build_parser
 
         parser = build_parser()
         args = parser.parse_args([])
@@ -46,7 +45,7 @@ class TestBuildParser:
 
     def test_no_reward_log_flag_set(self) -> None:
         """--no-reward-log can be set to disable logging."""
-        from alpha4gate.runner import build_parser
+        from bots.v0.runner import build_parser
 
         parser = build_parser()
         args = parser.parse_args(["--no-reward-log"])
@@ -54,7 +53,7 @@ class TestBuildParser:
 
     def test_old_reward_log_flag_removed(self) -> None:
         """Old --reward-log flag should no longer be accepted."""
-        from alpha4gate.runner import build_parser
+        from bots.v0.runner import build_parser
 
         parser = build_parser()
         with pytest.raises(SystemExit):

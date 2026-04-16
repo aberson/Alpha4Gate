@@ -5,9 +5,9 @@ shapes as "ours":
 
 * ``python -m bots.v0 --serve``          — post-Step-1.5 versioned module
 * ``python -m bots.current --serve``     — post-Step-1.6 version-pointer
-* ``python -m alpha4gate.runner --serve`` — legacy, alive until Step 1.10
+* ``python -m bots.v0.runner --serve`` — legacy, alive until Step 1.10
 
-After Step 1.10 the ``alpha4gate`` entry in ``_OUR_CMDLINE_TAGS`` is meant
+After Step 1.10 the ``bots.v0`` entry in ``_OUR_CMDLINE_TAGS`` is meant
 to be retired. These tests pin the current behavior so that retirement is
 a visible, deliberate change.
 """
@@ -19,7 +19,7 @@ from bots.v0.process_registry import _classify_process, _is_ours
 
 _CASES: tuple[tuple[str, bool], ...] = (
     ("python -m bots.v0 --serve", True),
-    ("python -m alpha4gate.runner --serve", True),
+    ("python -m bots.v0.runner --serve", True),
     ("python -m bots.current --serve", True),
     ("node vite", False),
     ("uv run mypy", False),

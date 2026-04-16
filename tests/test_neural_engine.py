@@ -6,10 +6,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+from bots.v0.decision_engine import GameSnapshot, StrategicState
+from bots.v0.learning.hyperparams import load_hyperparams, save_hyperparams, to_ppo_kwargs
+from bots.v0.learning.neural_engine import DecisionMode, NeuralDecisionEngine
 
-from alpha4gate.decision_engine import GameSnapshot, StrategicState
-from alpha4gate.learning.hyperparams import load_hyperparams, save_hyperparams, to_ppo_kwargs
-from alpha4gate.learning.neural_engine import DecisionMode, NeuralDecisionEngine
 from orchestrator.registry import resolve_data_path
 
 # Resolve via registry so the test follows the hot-data move from
@@ -100,7 +100,7 @@ class TestNeuralDecisionEngine:
         # Probability vector should be one-hot on DEFEND, sized to the
         # canonical action list (Phase 4.5 F9 fix: was hardcoded to 5
         # elements, now derived from ACTION_TO_STATE)
-        from alpha4gate.decision_engine import ACTION_TO_STATE
+        from bots.v0.decision_engine import ACTION_TO_STATE
 
         assert len(engine.last_probabilities) == len(ACTION_TO_STATE)
         defend_idx = ACTION_TO_STATE.index(StrategicState.DEFEND)

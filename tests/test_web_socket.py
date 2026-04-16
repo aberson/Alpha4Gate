@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from alpha4gate.web_socket import drain_broadcast_queue, queue_broadcast
+from bots.v0.web_socket import drain_broadcast_queue, queue_broadcast
 
 
 class TestQueueBroadcast:
@@ -64,7 +64,7 @@ class TestLifespanRegistered:
     """Verify the lifespan handler is registered on the FastAPI app."""
 
     def test_lifespan_context_is_set(self) -> None:
-        from alpha4gate.api import app
+        from bots.v0.api import app
 
         assert app.router.lifespan_context is not None
 
@@ -76,9 +76,8 @@ class TestWSGameEndpointBroadcast:
         import asyncio
         from pathlib import Path
 
+        from bots.v0.api import _drain_and_broadcast_once, app, configure
         from fastapi.testclient import TestClient
-
-        from alpha4gate.api import _drain_and_broadcast_once, app, configure
 
         # Configure with temp dirs so app doesn't complain
         configure(Path("data"), Path("logs"), Path("replays"))

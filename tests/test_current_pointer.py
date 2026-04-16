@@ -106,7 +106,7 @@ def test_invalid_version_in_current_txt_raises(tmp_path: Path) -> None:
     sandbox = tmp_path / "sandbox"
     sandbox.mkdir()
     # Copy just what we need: the bots/ tree (so bots.v0 still resolves when
-    # referenced by name) and the src/ tree (for alpha4gate/orchestrator
+    # referenced by name) and the src/ tree (for bots.v0/orchestrator
     # packages that ``bots.v0.__init__`` might transitively import).
     shutil.copytree(repo_root / "bots", sandbox / "bots")
     shutil.copytree(repo_root / "src", sandbox / "src")

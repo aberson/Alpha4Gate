@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from alpha4gate.observer import observe
+from bots.v0.observer import observe
 
 
 def _make_mock_bot(

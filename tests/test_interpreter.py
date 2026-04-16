@@ -7,13 +7,13 @@ import json
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-from alpha4gate.claude_advisor import (
+from bots.v0.claude_advisor import (
     AdvisorResponse,
     RateLimiter,
     parse_response,
 )
-from alpha4gate.commands.interpreter import CommandInterpreter
-from alpha4gate.commands.primitives import (
+from bots.v0.commands.interpreter import CommandInterpreter
+from bots.v0.commands.primitives import (
     CommandAction,
     CommandPrimitive,
     CommandSettings,
@@ -282,7 +282,7 @@ class TestLockoutLogic:
 
     def _make_bot_with_lockout(self) -> Any:
         """Create a mock bot with lockout methods wired in."""
-        from alpha4gate.bot import Alpha4GateBot
+        from bots.v0.bot import Alpha4GateBot
 
         # We test the lockout methods directly using a minimal approach:
         # use object.__new__ to avoid sc2 __init__ dependency.
@@ -298,7 +298,7 @@ class TestLockoutLogic:
     def test_lockout_active_within_duration(self) -> None:
         bot = self._make_bot_with_lockout()
         with patch(
-            "alpha4gate.bot.get_command_settings",
+            "bots.v0.bot.get_command_settings",
             return_value=CommandSettings(lockout_duration=5.0),
         ):
             bot.set_ai_lockout(10.0)
@@ -308,7 +308,7 @@ class TestLockoutLogic:
     def test_lockout_expired(self) -> None:
         bot = self._make_bot_with_lockout()
         with patch(
-            "alpha4gate.bot.get_command_settings",
+            "bots.v0.bot.get_command_settings",
             return_value=CommandSettings(lockout_duration=5.0),
         ):
             bot.set_ai_lockout(10.0)
@@ -318,14 +318,14 @@ class TestLockoutLogic:
     def test_lockout_resets_on_new_command(self) -> None:
         bot = self._make_bot_with_lockout()
         with patch(
-            "alpha4gate.bot.get_command_settings",
+            "bots.v0.bot.get_command_settings",
             return_value=CommandSettings(lockout_duration=5.0),
         ):
             bot.set_ai_lockout(10.0)
         assert bot._is_ai_locked_out(14.0)
 
         with patch(
-            "alpha4gate.bot.get_command_settings",
+            "bots.v0.bot.get_command_settings",
             return_value=CommandSettings(lockout_duration=5.0),
         ):
             bot.set_ai_lockout(14.0)
