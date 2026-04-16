@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -13,8 +12,11 @@ from alpha4gate.learning.rewards import (
     BASE_WIN_REWARD,
     RewardCalculator,
 )
+from orchestrator.registry import resolve_data_path
 
-RULES_PATH = Path(__file__).resolve().parent.parent / "data" / "reward_rules.json"
+# Resolve via registry so the test follows the hot-data move from
+# ``data/`` -> ``bots/v0/data/`` without knowing which location is active.
+RULES_PATH = resolve_data_path("reward_rules.json")
 
 
 @pytest.fixture()

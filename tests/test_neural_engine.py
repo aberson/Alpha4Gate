@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -10,8 +9,11 @@ import numpy as np
 from alpha4gate.decision_engine import GameSnapshot, StrategicState
 from alpha4gate.learning.hyperparams import load_hyperparams, save_hyperparams, to_ppo_kwargs
 from alpha4gate.learning.neural_engine import DecisionMode, NeuralDecisionEngine
+from orchestrator.registry import resolve_data_path
 
-HYPERPARAMS_PATH = Path(__file__).resolve().parent.parent / "data" / "hyperparams.json"
+# Resolve via registry so the test follows the hot-data move from
+# ``data/`` -> ``bots/v0/data/`` without knowing which location is active.
+HYPERPARAMS_PATH = resolve_data_path("hyperparams.json")
 
 
 # ---------- Hyperparams tests ----------
