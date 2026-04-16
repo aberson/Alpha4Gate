@@ -116,7 +116,7 @@ Step 1.9 is a dedicated smoke-gate step (Type: operator) that runs a real 1-minu
 ## 7. Build steps
 
 ### Step 1.1: Scaffold `src/orchestrator/` with empty stubs
-- **Status:** DONE (2026-04-15)
+- **Status:** DONE (2026-04-15) — commit `5c788c9`
 - **Problem:** Create `src/orchestrator/` as a new Python package with empty-but-documented stubs for `registry.py`, `contracts.py`, `snapshot.py`, `selfplay.py`, `ladder.py`. Add `src/orchestrator/__init__.py`. Update `pyproject.toml` so hatch packages, mypy, and ruff all see the new package. Do NOT implement any behavior; docstrings only. Expected outcome: `uv run pytest` still green (864 tests), `uv run mypy src` green, `uv run ruff check .` green. No new tests.
 - **Issue:** #107 (Phase 1 umbrella; this step posts a comment, not its own issue)
 - **Flags:** `--reviewers auto`
@@ -125,7 +125,7 @@ Step 1.9 is a dedicated smoke-gate step (Type: operator) that runs a real 1-minu
 - **Depends on:** none.
 
 ### Step 1.2: Define frozen contracts in `src/orchestrator/contracts.py`
-- **Status:** DONE (2026-04-15)
+- **Status:** DONE (2026-04-15) — commit `fc17441` (9 new tests, 864→873)
 - **Problem:** Fill `contracts.py` with typed dataclasses that freeze the cross-version interfaces. `BotSpawnArgs` (role, map, sc2_connect, result_out, seed). `MatchResult` (version, match_id, outcome, duration_s, error). `Manifest` (version, best, previous_best, parent, git_sha, timestamp, elo, feature_dim, action_space). `VersionFingerprint` (feature_dim, action_space_size, obs_spec_hash). Include `to_json` / `from_json` roundtrip methods. Add `tests/test_contracts.py` verifying every field type, required-vs-optional, and roundtrip fidelity.
 - **Issue:** #107
 - **Flags:** `--reviewers auto`
@@ -134,6 +134,7 @@ Step 1.9 is a dedicated smoke-gate step (Type: operator) that runs a real 1-minu
 - **Depends on:** 1.1.
 
 ### Step 1.3: Finding #11 — PromotionManager rejects null-manifest bootstrap (TDD)
+- **Status:** DONE (2026-04-15) — implemented as `allow_bootstrap: bool = True` param on `evaluate_and_promote`; default preserves legacy first-promotion behavior, `allow_bootstrap=False` raises `ValueError("manifest not seeded ...")`. Callers flip to `False` in Phase 1.8 once `bots/v0/manifest.json` is seeded.
 - **Problem:** Fix always-up Finding #11. First write `tests/test_bootstrap_promotion.py` with two cases: (a) `PromotionManager` receives a manifest with `best=None` and raises `ValueError("manifest not seeded — refusing to bootstrap-promote")`; (b) receives a seeded manifest and runs the real WR-delta comparison path end-to-end on a temp SQLite. The test MUST fail against current code. Then edit `src/alpha4gate/learning/promotion.py` to enforce the seeded-manifest invariant. Do NOT pre-seed `bots/v0/manifest.json` in this step (that happens in 1.8 when v0 exists) — the test creates its own fixture manifests.
 - **Issue:** #107
 - **Flags:** `--tdd`

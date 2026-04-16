@@ -81,6 +81,7 @@ class PromotionManager:
         new_checkpoint: str,
         difficulty: int,
         cancel_check: Callable[[], bool] | None = None,
+        allow_bootstrap: bool = True,
     ) -> PromotionDecision:
         """Evaluate a new checkpoint against the current best and promote if better.
 
@@ -93,14 +94,33 @@ class PromotionManager:
                 partial eval will fail the ``min_eval_games`` gate and the
                 promotion will be refused (no unsafe promotion from truncated
                 data).
+            allow_bootstrap: If True (default, legacy behavior), promote
+                unconditionally when there is no current best checkpoint.
+                If False, raise ``ValueError`` instead -- forces the caller
+                to pre-seed the manifest so the WR-delta comparison path
+                is actually exercised. Flipped to False by callers once
+                Phase 1.8 seeds ``bots/v0/manifest.json`` (always-up
+                Finding #11).
 
         Returns:
             PromotionDecision with evaluation results and promotion outcome.
+
+        Raises:
+            ValueError: if ``allow_bootstrap=False`` and no current best
+                checkpoint exists -- the manifest is unseeded and the gate
+                refuses to bootstrap-promote.
         """
         from alpha4gate.learning.checkpoints import get_best_name, promote_checkpoint
 
         checkpoint_dir = self._evaluator._checkpoint_dir
         old_best = get_best_name(checkpoint_dir)
+
+        if old_best is None and not allow_bootstrap:
+            raise ValueError(
+                "manifest not seeded -- refusing to bootstrap-promote "
+                f"{new_checkpoint!r} (set allow_bootstrap=True if this is "
+                "a fresh training run with no prior best)"
+            )
 
         # If there's no current best, promote unconditionally -- UNLESS
         # the eval run itself had too many crashes, in which case the
