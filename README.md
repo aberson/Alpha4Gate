@@ -8,7 +8,7 @@ Built on rule-based strategy + a PPO neural policy + Claude AI as strategic advi
 
 Most self-improving ML systems need a human in the loop — to design reward functions, tune hyperparameters, or diagnose failure modes when training stalls. This one closes that loop:
 
-- **Claude reads replays like a coach would** — not just "reward went down" but "you over-committed to an attack at 8:30 while your third was unbuilt." It names the failure and proposes ranked fixes.
+- **Claude reads telemetry like a reviewer would** — naming the specific failure ("you committed to an attack before your economy caught up") instead of reducing a game to a scalar reward. It proposes ranked fixes with reasoning, not just gradient directions.
 - **Fixes are real code changes, not just config knobs.** With `--self-improve-code`, Claude writes to the bot's source, opens a feature branch, and must pass pytest / mypy / ruff before anything ships.
 - **Every fix is validated before commit.** If the new version doesn't hold up over N games, it's reverted automatically — no silent regressions.
 - **You can watch it happen.** The dashboard streams every phase, every proposal, every rejection, every win-rate swing — live, while the agent runs unattended for hours.
@@ -72,9 +72,9 @@ Two things are running: the **loop** and the **task** it's learning from. The da
 
 ## Why not just have Claude do everything?
 
-Claude is good at **thinking** and slow at **acting**; StarCraft II needs the reverse.
+Claude is good at **thinking** and slow at **acting**; real-time games need the reverse.
 
-- **Game cadence:** the bot reads game state every ~0.5 seconds and issues dozens of unit commands per second during fights — kiting, focus fire, ability timing. Strategy decisions happen at multi-Hz, not per-minute.
+- **Task cadence:** the agent observes the environment every ~0.5 seconds and issues dozens of actions per second during high-pressure moments — positioning, targeting, timing. Decisions fire at multi-Hz, not per-minute.
 - **Claude latency:** a single Claude CLI call takes seconds to respond, and each call costs tokens. You can't micro an army with a tool that takes 2–10 seconds per answer.
 
 So the tight loop belongs to **rule-based strategy + a PPO policy network** (both decide in milliseconds, both are deterministic enough to unit-test), and Claude is used only where latency doesn't touch the critical path:
