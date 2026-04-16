@@ -2,8 +2,6 @@
 
 An AI agent that **teaches itself to get better at a task — with zero human input.** It plays, watches itself fail, figures out why, writes a fix, proves the fix works, and repeats. The task happens to be StarCraft II, but the loop is general. A live React dashboard lets you watch the agent improve itself in real time — every phase, every proposed fix, every commit.
 
-Built on rule-based strategy + a PPO neural policy + Claude AI as strategic advisor and self-improvement agent.
-
 ## Why should we care?
 
 Most self-improving ML systems need a human in the loop — to design reward functions, tune hyperparameters, or diagnose failure modes when training stalls. This one closes that loop:
@@ -84,12 +82,6 @@ So the tight loop belongs to **rule-based strategy + a PPO policy network** (bot
 3. **Writing the fix** — Claude edits code or config between batches, where "a few minutes to think" is fine and the output goes through quality gates before it ships.
 
 Fast-and-dumb does the playing. Slow-and-smart does the learning.
-
----
-
-## Current status
-
-**Advised improvement run 4 complete (2026-04-13)** — Second `--self-improve-code` run at difficulty 3: 3 iterations, 2 code improvements landed, 1 reverted as inert. Anti-float expansion override (`macro_manager.py`) allows expansion during DEFEND when workers saturated and ≥1500m banked, breaking the "die with a bank" death spiral. Warp-in forward pylon selection (`bot.py`) iterates pylons furthest-to-nearest from start so Stalkers stop getting trapped behind main-base buildings. Win rate 80% → 100% at difficulty 3. 829 Python tests, 0 type errors, 0 lint violations.
 
 ---
 
