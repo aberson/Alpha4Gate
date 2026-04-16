@@ -70,18 +70,28 @@ Two things are running: the **loop** and the **task** it's learning from. The da
 
 ## Why not just have Claude do everything?
 
-Claude is good at **thinking** and slow at **acting**; real-time games need the reverse.
+Claude is good at **thinking** and slow at **acting**; real-time games need the reverse. A Claude CLI call takes seconds to respond, but the bot observes the game every ~0.5s and issues dozens of actions per second during fights.
 
-- **Task cadence:** the agent observes the environment every ~0.5 seconds and issues dozens of actions per second during high-pressure moments — positioning, targeting, timing. Decisions fire at multi-Hz, not per-minute.
-- **Claude latency:** a single Claude CLI call takes seconds to respond, and each call costs tokens. You can't micro an army with a tool that takes 2–10 seconds per answer.
-
-So the tight loop belongs to **rule-based strategy + a PPO policy network** (both decide in milliseconds, both are deterministic enough to unit-test), and Claude is used only where latency doesn't touch the critical path:
-
-1. **Mid-game advice** — rate-limited to one call per 30 game-seconds, fire-and-forget. If the answer is late, it's ignored.
-2. **Post-hoc diagnosis** — once per iteration, Claude reads a whole batch of games at once and proposes what to fix next.
-3. **Writing the fix** — Claude edits code or config between batches, where "a few minutes to think" is fine and the output goes through quality gates before it ships.
+So the tight loop runs on rule-based strategy + a PPO policy network (both decide in milliseconds). Claude is used only where latency doesn't matter: mid-game advice (fire-and-forget, rate-limited), post-hoc diagnosis between batches, and writing the fix itself.
 
 Fast-and-dumb does the playing. Slow-and-smart does the learning.
+
+## Stack
+
+| Layer | Tool | Why |
+|---|---|---|
+| Language | Python 3.12 | SC2 libraries are Python-native |
+| SC2 interface | burnysc2 v7.1.3 | Async BotAI, actively maintained |
+| AI advisor | Claude CLI (OAuth or API key) | Strategic advice mid-game, async subprocess |
+| Build orders | Spawning Tool API | Community build order database |
+| Backend | FastAPI | WebSocket + REST for dashboard |
+| Frontend | React + TypeScript + Vite | Live dashboard with game state streaming |
+| Deep learning | PyTorch + Stable Baselines 3 | PPO policy network for strategic decisions |
+| Training data | SQLite | Structured (s,a,r,s') transition storage |
+| Charts | Recharts 3.8 | Per-rule reward trend visualization |
+| Testing (Python) | pytest | 829 unit tests, SC2 integration markers |
+| Testing (Frontend) | vitest + jsdom + @testing-library/react | 126 component / hook / lib tests |
+| Linting | ruff + mypy | Strict type checking, consistent style |
 
 ---
 
@@ -131,26 +141,6 @@ uv run python -m alpha4gate.runner --serve
 cd frontend && npm run dev
 # Opens http://localhost:3000 proxying to :8765
 ```
-
-</details>
-
-<details>
-<summary><b>Stack</b></summary>
-
-| Layer | Tool | Why |
-|---|---|---|
-| Language | Python 3.12 | SC2 libraries are Python-native |
-| SC2 interface | burnysc2 v7.1.3 | Async BotAI, actively maintained |
-| AI advisor | Claude CLI (OAuth or API key) | Strategic advice mid-game, async subprocess |
-| Build orders | Spawning Tool API | Community build order database |
-| Backend | FastAPI | WebSocket + REST for dashboard |
-| Frontend | React + TypeScript + Vite | Live dashboard with game state streaming |
-| Deep learning | PyTorch + Stable Baselines 3 | PPO policy network for strategic decisions |
-| Training data | SQLite | Structured (s,a,r,s') transition storage |
-| Charts | Recharts 3.8 | Per-rule reward trend visualization |
-| Testing (Python) | pytest | 829 unit tests, SC2 integration markers |
-| Testing (Frontend) | vitest + jsdom + @testing-library/react | 126 component / hook / lib tests |
-| Linting | ruff + mypy | Strict type checking, consistent style |
 
 </details>
 
