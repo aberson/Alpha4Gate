@@ -100,7 +100,8 @@ So the tight loop runs on rule-based strategy + a PPO policy network (both decid
 Fast-and-dumb does the playing. Slow-and-smart does the learning.
 
 ---
-# Alpha4Gate — The Story So Far
+
+# The Story So Far of Alpha4Gate
 
 - **Original Motivation** Beat my friend at a video game using AI.
 - **The basic bot.** A rule-based bot player that built units and hoped for the best. 
