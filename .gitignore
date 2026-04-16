@@ -45,3 +45,7 @@ frontend/build/
 .ruff_cache/
 .ui-review-evidence/
 .ui-dashboard-evidence/
+
+# Raw capture files — only cropped/optimized GIFs should be committed in documentation/images/
+documentation/images/*.mp4
+documentation/images/*.mov

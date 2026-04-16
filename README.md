@@ -48,6 +48,10 @@ The architecture is task-agnostic. SC2 is the concrete test case because it give
 
 The loop runs unattended for hours. Each cycle: play N games, Claude reads the results and proposes ranked fixes, apply one, re-run N games to validate, commit if it held, retrain the neural policy, repeat. Quality gates (pytest/mypy/ruff), auto-rollback, a wall-clock budget, and a 3-fail cap keep it safe.
 
+![SC2 gameplay — the bot mid-battle during the PLAY phase of the loop](documentation/images/sc2-gameplay.gif)
+
+*THE TASK in action — the bot executing its opening into a mid-game engagement. Each completed game becomes one data point the loop learns from.*
+
 **Read the full architecture:** [improve-bot-advised-architecture.md](documentation/wiki/improve-bot-advised-architecture.md)
 
 ---
