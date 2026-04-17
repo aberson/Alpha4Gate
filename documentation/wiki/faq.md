@@ -41,14 +41,14 @@ See [index.md](index.md) for the system diagram, [improve-bot-advised-architectu
 | Phase 2 | Deep learning pipeline (PPO + imitation) — hybrid mode |
 | Phase 3 | Always-up autonomous training loop — daemon, promotion gate, rollback |
 | Phase 4 | Transparency dashboard — 10 tabs (incl. Ladder), alerts |
-| Phase A | Imitation-init + LSTM + KL-to-rules (on branch `feat/lstm-kl-imitation`) |
-| 2026-04 | `/improve-bot-advised` skill — hours-long autonomous sessions that write code |
-
-First diff-5 hybrid win landed mid-April after a curriculum retrain.
+| Phase A | Imitation-init + LSTM + KL-to-rules — 19/20 wins at difficulty 3 |
+| Phases 0–4 | Full-stack versioning: registry, snapshots, self-play runner, Elo ladder, promotion gate |
+| Phase 5 | Sandbox enforcement — pre-commit hook locks autonomous commits to `bots/current/` |
+| 2026-04 | `/improve-bot-advised` skill — hours-long autonomous sessions that write code. First diff-5 win. |
 
 ## What's being worked on now?
 
-The active plan is [alpha4gate-master-plan.md](../plans/alpha4gate-master-plan.md). Current focus: AlphaStar-style PPO upgrades (LSTM memory, KL regularization to rule-based policy, imitation initialization) via branch `feat/lstm-kl-imitation`. The always-up baseline (Phases 1–4.5) is done.
+The active plan is [alpha4gate-master-plan.md](../plans/alpha4gate-master-plan.md). Phases A, 0–5 all complete. The versioning substrate is fully built: bot code in `bots/v0/`, registry, snapshots, self-play batch runner, Elo ladder + promotion gate, and sandbox enforcement. Next up: Phase B (observation expansion), then capability phases (D, E, F), Phase 6 (autonomous self-play loop), and Phase G (multi-race: Zerg then Terran).
 
 ## How does the bot decide what to do?
 

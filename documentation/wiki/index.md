@@ -99,4 +99,4 @@ here because they operate on different things.
 2. **Key Interfaces** — public API, data flow
 3. **Implementation Notes** — internal details (marked "verify against code" — these can drift)
 
-**For the active plan:** See [alpha4gate-master-plan.md](../plans/alpha4gate-master-plan.md) for the current roadmap. The always-up loop (Phases 1–4.5) is now the baseline.
+**For the active plan:** See [alpha4gate-master-plan.md](../plans/alpha4gate-master-plan.md) for the current roadmap. Phases A, 0–5 complete. Next: Phase B (observation), capability phases (D, E, F), Phase 6 (autonomous self-play), Phase G (multi-race: Zerg then Terran).

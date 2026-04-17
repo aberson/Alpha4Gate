@@ -119,6 +119,7 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 - **The arena works -** Two bot versions fighting each other in separate sandboxes, validated.
 - **The arena -** Bot versions fight each other in sandboxed self-play. Elo ladder + promotion gate decides who ships.
 - **Now -** Sandbox enforcement locks autonomous commits to `bots/current/` only — the self-improvement loop can't corrupt the platform.
+- **Next -** Multi-race support: Zerg first, then Terran. Each race gets its own bot lineage competing on the Elo ladder.
 
 ---
 
