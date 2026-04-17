@@ -7,14 +7,15 @@ from numpy.typing import NDArray
 
 from bots.v0.decision_engine import GameSnapshot
 
-# 17 base game-state features + 7 advisor features = 24 total.
+# 32 base game-state features + 7 advisor features = 39 total.
 # Phase 4.8: added advisor features so PPO can see "what Claude recommends"
 # and learn to follow when it correlates with winning (Approach B from #89).
-FEATURE_DIM: int = 24
+# Phase B: added 15 own-army unit-type count features (histogram expansion).
+FEATURE_DIM: int = 39
 
 # Number of base game-state features (without advisor). Exported for tests
 # and for _snapshot_to_raw which stores only game-state features in the DB.
-BASE_GAME_FEATURE_DIM: int = 17
+BASE_GAME_FEATURE_DIM: int = 32
 
 # Advisor command action types we track as binary features.
 _ADVISOR_ACTIONS: tuple[str, ...] = (
@@ -48,6 +49,22 @@ _FEATURE_SPEC: list[tuple[str, float]] = [
     ("enemy_structure_count", 50.0),
     ("cannon_count", 10.0),
     ("battery_count", 10.0),
+    # Own-army unit-type counts (Phase B histogram expansion)
+    ("zealot_count", 20.0),
+    ("stalker_count", 20.0),
+    ("sentry_count", 20.0),
+    ("immortal_count", 20.0),
+    ("colossus_count", 10.0),
+    ("archon_count", 20.0),
+    ("high_templar_count", 20.0),
+    ("dark_templar_count", 20.0),
+    ("phoenix_count", 20.0),
+    ("void_ray_count", 20.0),
+    ("carrier_count", 10.0),
+    ("tempest_count", 10.0),
+    ("disruptor_count", 10.0),
+    ("warp_prism_count", 5.0),
+    ("observer_count", 5.0),
 ]
 
 
@@ -70,7 +87,7 @@ def encode(
             / ``"high"`` / ``"critical"``). ``None`` → 0.0.
 
     Returns:
-        Float32 vector of length FEATURE_DIM (24).
+        Float32 vector of length FEATURE_DIM (39).
     """
     raw: list[float] = []
     for field, divisor in _FEATURE_SPEC:

@@ -7,7 +7,7 @@ Verifies:
 - _apply_kl_to_rules can be invoked directly on a tiny rollout buffer
   and mutates policy parameters (proves the gradient path runs).
 
-A full end-to-end rollout test is deferred — it requires a real 24-dim
+A full end-to-end rollout test is deferred — it requires a real FEATURE_DIM-dim
 env, not the dummy-env trick, which only works for model construction.
 """
 from __future__ import annotations
@@ -16,6 +16,7 @@ import gymnasium
 import numpy as np
 import torch
 from bots.v0.learning.environment import SC2Env
+from bots.v0.learning.features import FEATURE_DIM
 from bots.v0.learning.ppo_kl import PPOWithKL
 
 
@@ -56,11 +57,11 @@ def test_apply_kl_mutates_policy_params() -> None:
         policy_kwargs={"net_arch": [16, 16]},
     )
 
-    # Populate rollout buffer with synthetic 24-dim observations.
+    # Populate rollout buffer with synthetic FEATURE_DIM-dim observations.
     buf = model.rollout_buffer
     buf.reset()
     for i in range(buf.buffer_size):
-        obs = np.random.rand(24).astype(np.float32)
+        obs = np.random.rand(FEATURE_DIM).astype(np.float32)
         action = np.array([i % 6])
         reward = np.array([0.0], dtype=np.float32)
         episode_start = np.array([i == 0])

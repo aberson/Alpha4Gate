@@ -135,6 +135,7 @@ to work without modification. Only `bot.py` actively populates them.
 - **Produces:** Modified `decision_engine.py`, `features.py`, `database.py`; new `tests/test_features_v2.py`
 - **Done when:** All existing tests pass + new test_features_v2 tests pass, mypy strict clean, ruff clean
 - **Depends on:** none
+- **Status:** DONE (2026-04-17)
 
 #### Step 2: Enemy threat-class feature slots
 - **Problem:** Add 8 enemy threat-class count fields to `GameSnapshot`, append 8 entries to `_FEATURE_SPEC`, bump `BASE_GAME_FEATURE_DIM` from 32 to 40 and `FEATURE_DIM` from 39 to 47, add 16 DB columns + migration, add enemy-bucket test cases to `test_features_v2.py`, and verify `imitation.py` padding handles old 17-width DB rows → new 40-width (update the FEATURE_DIM=24 comment). Add a unit-type-to-threat-class mapping module or dict that maps SC2 unit type IDs to the 8 buckets.

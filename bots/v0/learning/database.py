@@ -52,6 +52,21 @@ CREATE TABLE IF NOT EXISTS transitions (
     enemy_structure_count INTEGER NOT NULL DEFAULT 0,
     cannon_count      INTEGER NOT NULL DEFAULT 0,
     battery_count     INTEGER NOT NULL DEFAULT 0,
+    zealot_count      INTEGER NOT NULL DEFAULT 0,
+    stalker_count     INTEGER NOT NULL DEFAULT 0,
+    sentry_count      INTEGER NOT NULL DEFAULT 0,
+    immortal_count    INTEGER NOT NULL DEFAULT 0,
+    colossus_count    INTEGER NOT NULL DEFAULT 0,
+    archon_count      INTEGER NOT NULL DEFAULT 0,
+    high_templar_count INTEGER NOT NULL DEFAULT 0,
+    dark_templar_count INTEGER NOT NULL DEFAULT 0,
+    phoenix_count     INTEGER NOT NULL DEFAULT 0,
+    void_ray_count    INTEGER NOT NULL DEFAULT 0,
+    carrier_count     INTEGER NOT NULL DEFAULT 0,
+    tempest_count     INTEGER NOT NULL DEFAULT 0,
+    disruptor_count   INTEGER NOT NULL DEFAULT 0,
+    warp_prism_count  INTEGER NOT NULL DEFAULT 0,
+    observer_count    INTEGER NOT NULL DEFAULT 0,
     action        INTEGER NOT NULL,
     reward        REAL NOT NULL,
     next_supply_used   INTEGER,
@@ -71,6 +86,21 @@ CREATE TABLE IF NOT EXISTS transitions (
     next_enemy_structure_count INTEGER DEFAULT 0,
     next_cannon_count     INTEGER DEFAULT 0,
     next_battery_count    INTEGER DEFAULT 0,
+    next_zealot_count     INTEGER DEFAULT 0,
+    next_stalker_count    INTEGER DEFAULT 0,
+    next_sentry_count     INTEGER DEFAULT 0,
+    next_immortal_count   INTEGER DEFAULT 0,
+    next_colossus_count   INTEGER DEFAULT 0,
+    next_archon_count     INTEGER DEFAULT 0,
+    next_high_templar_count INTEGER DEFAULT 0,
+    next_dark_templar_count INTEGER DEFAULT 0,
+    next_phoenix_count    INTEGER DEFAULT 0,
+    next_void_ray_count   INTEGER DEFAULT 0,
+    next_carrier_count    INTEGER DEFAULT 0,
+    next_tempest_count    INTEGER DEFAULT 0,
+    next_disruptor_count  INTEGER DEFAULT 0,
+    next_warp_prism_count INTEGER DEFAULT 0,
+    next_observer_count   INTEGER DEFAULT 0,
     done          INTEGER NOT NULL DEFAULT 0
 );
 
@@ -80,12 +110,16 @@ CREATE INDEX IF NOT EXISTS idx_games_result ON games(result);
 CREATE INDEX IF NOT EXISTS idx_games_model ON games(model_version);
 """
 
-# Column names for the 17 state features in transitions table (matches feature vector order)
+# Column names for the 32 state features in transitions table (matches feature vector order)
 _STATE_COLS = [
     "supply_used", "supply_cap", "minerals", "vespene", "army_supply",
     "worker_count", "base_count", "enemy_near", "enemy_supply",
     "game_time_secs", "gateway_count", "robo_count", "forge_count",
     "upgrade_count", "enemy_structure_count", "cannon_count", "battery_count",
+    "zealot_count", "stalker_count", "sentry_count", "immortal_count",
+    "colossus_count", "archon_count", "high_templar_count", "dark_templar_count",
+    "phoenix_count", "void_ray_count", "carrier_count", "tempest_count",
+    "disruptor_count", "warp_prism_count", "observer_count",
 ]
 
 _NEXT_STATE_COLS = [f"next_{c}" for c in _STATE_COLS]
@@ -119,6 +153,36 @@ _LATER_ADDED_COLS: list[tuple[str, str]] = [
     ("next_enemy_structure_count", "INTEGER DEFAULT 0"),
     ("next_cannon_count", "INTEGER DEFAULT 0"),
     ("next_battery_count", "INTEGER DEFAULT 0"),
+    ("zealot_count", "INTEGER DEFAULT 0"),
+    ("stalker_count", "INTEGER DEFAULT 0"),
+    ("sentry_count", "INTEGER DEFAULT 0"),
+    ("immortal_count", "INTEGER DEFAULT 0"),
+    ("colossus_count", "INTEGER DEFAULT 0"),
+    ("archon_count", "INTEGER DEFAULT 0"),
+    ("high_templar_count", "INTEGER DEFAULT 0"),
+    ("dark_templar_count", "INTEGER DEFAULT 0"),
+    ("phoenix_count", "INTEGER DEFAULT 0"),
+    ("void_ray_count", "INTEGER DEFAULT 0"),
+    ("carrier_count", "INTEGER DEFAULT 0"),
+    ("tempest_count", "INTEGER DEFAULT 0"),
+    ("disruptor_count", "INTEGER DEFAULT 0"),
+    ("warp_prism_count", "INTEGER DEFAULT 0"),
+    ("observer_count", "INTEGER DEFAULT 0"),
+    ("next_zealot_count", "INTEGER DEFAULT 0"),
+    ("next_stalker_count", "INTEGER DEFAULT 0"),
+    ("next_sentry_count", "INTEGER DEFAULT 0"),
+    ("next_immortal_count", "INTEGER DEFAULT 0"),
+    ("next_colossus_count", "INTEGER DEFAULT 0"),
+    ("next_archon_count", "INTEGER DEFAULT 0"),
+    ("next_high_templar_count", "INTEGER DEFAULT 0"),
+    ("next_dark_templar_count", "INTEGER DEFAULT 0"),
+    ("next_phoenix_count", "INTEGER DEFAULT 0"),
+    ("next_void_ray_count", "INTEGER DEFAULT 0"),
+    ("next_carrier_count", "INTEGER DEFAULT 0"),
+    ("next_tempest_count", "INTEGER DEFAULT 0"),
+    ("next_disruptor_count", "INTEGER DEFAULT 0"),
+    ("next_warp_prism_count", "INTEGER DEFAULT 0"),
+    ("next_observer_count", "INTEGER DEFAULT 0"),
     ("action_probs", "TEXT DEFAULT NULL"),
 ]
 
@@ -234,7 +298,7 @@ class TrainingDB:
         """Insert a single (s, a, r, s') transition.
 
         state and next_state are raw (un-normalized) integer feature vectors
-        matching the 17-column order in _STATE_COLS.
+        matching the 32-column order in _STATE_COLS.
 
         action_probs: optional list of action probabilities from the neural
         engine, stored as JSON text.

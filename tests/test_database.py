@@ -28,9 +28,9 @@ class TestStoreAndRetrieve:
 
     def test_store_transition(self, db: TrainingDB) -> None:
         db.store_game("g1", "Simple64", 1, "win", 300.0, 5.5, "v0")
-        vals = [50, 100, 800, 400, 30, 22, 2, 1, 15, 60.0, 300, 3, 1, 1, 2, 0, 0]
+        vals = [50, 100, 800, 400, 30, 22, 2, 1, 15, 60.0, 300, 3, 1, 1, 2, 0, 0] + [0] * 15
         state = np.array(vals, dtype=np.float32)
-        next_vals = [55, 100, 700, 350, 35, 23, 2, 0, 10, 82.0, 322, 3, 1, 1, 2, 0, 0]
+        next_vals = [55, 100, 700, 350, 35, 23, 2, 0, 10, 82.0, 322, 3, 1, 1, 2, 0, 0] + [0] * 15
         next_s = np.array(next_vals, dtype=np.float32)
         db.store_transition("g1", 0, 60.0, state, action=2, reward=0.1, next_state=next_s)
         assert db.get_transition_count() == 1
@@ -393,14 +393,14 @@ class TestLegacySchemaMigration:
     def test_legacy_db_can_store_new_transition_after_migration(
         self, tmp_path: Path
     ) -> None:
-        """The migrated legacy DB must accept the full 17-feature transition."""
+        """The migrated legacy DB must accept the full 32-feature transition."""
         legacy_path = tmp_path / "legacy.db"
         self._create_legacy_db(legacy_path)
 
         db = TrainingDB(legacy_path)
         try:
             db.store_game("g1", "Simple64", 1, "win", 60.0, 1.0, "v0")
-            vals = [50, 100, 800, 400, 30, 22, 2, 1, 15, 60.0, 3, 1, 1, 2, 0, 5, 2]
+            vals = [50, 100, 800, 400, 30, 22, 2, 1, 15, 60.0, 3, 1, 1, 2, 0, 5, 2] + [0] * 15
             assert len(vals) == FEATURE_DIM
             state = np.array(vals, dtype=np.float32)
             db.store_transition("g1", 0, 60.0, state, action=2, reward=0.1)

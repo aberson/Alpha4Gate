@@ -261,7 +261,7 @@ def _seed_transitions(db_path: Path, count: int) -> None:
 
     db = TrainingDB(db_path)
     db.store_game("g0", "Simple64", 1, "win", 300.0, 5.0, "v1")
-    state = np.zeros(17, dtype=np.float32)
+    state = np.zeros(32, dtype=np.float32)
     for i in range(count):
         db.store_transition("g0", i, float(i), state, 0, 0.1)
     db.close()

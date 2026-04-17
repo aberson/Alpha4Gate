@@ -62,6 +62,21 @@ class GameSnapshot:
     enemy_structure_count: int = 0
     cannon_count: int = 0
     battery_count: int = 0
+    zealot_count: int = 0
+    stalker_count: int = 0
+    sentry_count: int = 0
+    immortal_count: int = 0
+    colossus_count: int = 0
+    archon_count: int = 0
+    high_templar_count: int = 0
+    dark_templar_count: int = 0
+    phoenix_count: int = 0
+    void_ray_count: int = 0
+    carrier_count: int = 0
+    tempest_count: int = 0
+    disruptor_count: int = 0
+    warp_prism_count: int = 0
+    observer_count: int = 0
 
 
 @dataclass

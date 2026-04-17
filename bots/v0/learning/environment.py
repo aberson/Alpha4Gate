@@ -844,6 +844,11 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
             "enemy_army_supply_visible", "game_time_seconds",
             "gateway_count", "robo_count", "forge_count", "upgrade_count",
             "enemy_structure_count", "cannon_count", "battery_count",
+            "zealot_count", "stalker_count", "sentry_count", "immortal_count",
+            "colossus_count", "archon_count", "high_templar_count",
+            "dark_templar_count", "phoenix_count", "void_ray_count",
+            "carrier_count", "tempest_count", "disruptor_count",
+            "warp_prism_count", "observer_count",
         ]
         values = []
         for f in fields:
