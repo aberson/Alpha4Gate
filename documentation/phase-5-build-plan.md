@@ -143,6 +143,8 @@ version snapshot.
 ## 6. Build steps
 
 ### Step 5.1: Sandbox hook script
+- **Issue:** #118
+- **Status:** DONE (2026-04-17)
 - **Problem:** Create `scripts/check_sandbox.py` that enforces the sandbox for
   `[advised-auto]` commits. When `ADVISED_AUTO=1` env var is set, inspect staged
   files via `git diff --cached --name-only`. Allow only files under
@@ -161,6 +163,7 @@ version snapshot.
 - **Depends on:** none
 
 ### Step 5.2: Sandbox hook tests
+- **Issue:** #119
 - **Problem:** Create `tests/test_sandbox_hook.py` with comprehensive tests for
   `scripts/check_sandbox.py`. Test cases: (a) env var unset → passthrough (exit 0),
   (b) env var set + only `bots/current/foo.py` staged → allowed (exit 0),
@@ -182,6 +185,7 @@ version snapshot.
 - **Depends on:** 5.1
 
 ### Step 5.3: Pre-commit wiring
+- **Issue:** #120
 - **Problem:** Add `pre-commit` as a dev dependency in `pyproject.toml`
   under `[project.optional-dependencies]` `dev` extra (matching existing
   pattern — pytest, ruff, mypy, httpx are already there). Create
@@ -200,6 +204,7 @@ version snapshot.
 - **Depends on:** 5.1
 
 ### Step 5.4: Skill updates — banner + promotion wiring
+- **Issue:** #121
 - **Problem:** Update `.claude/skills/improve-bot-advised/SKILL.md`:
   (a) In Phase 0 (bootstrap), add a run-start banner that prints:
   "I can edit: bots/current/**. I cannot edit: src/orchestrator/,
@@ -220,6 +225,7 @@ version snapshot.
 - **Depends on:** none (can run in parallel with 5.1–5.3)
 
 ### Step 5.5: Gate verification
+- **Issue:** #122
 - **Type:** operator
 - **Problem:** Verify the two gate criteria from the master plan:
   (a) Stage `pyproject.toml` for commit, set `ADVISED_AUTO=1`, run
