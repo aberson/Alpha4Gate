@@ -164,6 +164,7 @@ version snapshot.
 
 ### Step 5.2: Sandbox hook tests
 - **Issue:** #119
+- **Status:** DONE (2026-04-17)
 - **Problem:** Create `tests/test_sandbox_hook.py` with comprehensive tests for
   `scripts/check_sandbox.py`. Test cases: (a) env var unset → passthrough (exit 0),
   (b) env var set + only `bots/current/foo.py` staged → allowed (exit 0),
