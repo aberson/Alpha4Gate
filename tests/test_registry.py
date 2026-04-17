@@ -39,6 +39,68 @@ def _seed_pointer(root: Path, version: str = "v0") -> None:
     pointer.write_text(f"{version}\n", encoding="utf-8")
 
 
+def _seed_version(root: Path, name: str) -> None:
+    """Create a minimal ``bots/<name>/`` directory with a ``VERSION`` file."""
+    version_dir = root / "bots" / name
+    version_dir.mkdir(parents=True, exist_ok=True)
+    (version_dir / "VERSION").write_text(name, encoding="utf-8")
+
+
+class TestListVersions:
+    def test_list_versions_single(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(registry, "_repo_root", lambda: tmp_path)
+        _seed_version(tmp_path, "v0")
+        assert registry.list_versions() == ["v0"]
+
+    def test_list_versions_multiple_sorted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(registry, "_repo_root", lambda: tmp_path)
+        for name in ("v2", "v0", "v1"):
+            _seed_version(tmp_path, name)
+        assert registry.list_versions() == ["v0", "v1", "v2"]
+
+    def test_list_versions_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(registry, "_repo_root", lambda: tmp_path)
+        (tmp_path / "bots").mkdir()
+        assert registry.list_versions() == []
+
+    def test_list_versions_no_bots_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(registry, "_repo_root", lambda: tmp_path)
+        assert registry.list_versions() == []
+
+    def test_list_versions_ignores_current(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(registry, "_repo_root", lambda: tmp_path)
+        _seed_version(tmp_path, "v0")
+        # current/ has a VERSION-like file but should be excluded
+        current_dir = tmp_path / "bots" / "current"
+        current_dir.mkdir(parents=True)
+        (current_dir / "VERSION").write_text("v0", encoding="utf-8")
+        assert registry.list_versions() == ["v0"]
+
+    def test_list_versions_ignores_dirs_without_version_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(registry, "_repo_root", lambda: tmp_path)
+        _seed_version(tmp_path, "v0")
+        # stray dir without VERSION
+        (tmp_path / "bots" / "stray_dir").mkdir(parents=True)
+        assert registry.list_versions() == ["v0"]
+
+    def test_list_versions_on_real_repo(self) -> None:
+        """The committed repo has at least v0."""
+        versions = registry.list_versions()
+        assert "v0" in versions
+
+
 class TestCurrentVersion:
     def test_current_version_reads_committed_pointer(self) -> None:
         """The committed pointer in the real worktree resolves to ``v0``."""
