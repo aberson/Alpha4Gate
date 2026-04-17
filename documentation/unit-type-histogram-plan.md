@@ -153,6 +153,7 @@ to work without modification. Only `bot.py` actively populates them.
 - **Produces:** Modified `bot.py`, new/extended test coverage for snapshot population
 - **Done when:** All tests pass, snapshot correctly populated for synthetic unit lists
 - **Depends on:** Step 2
+- **Status:** DONE (2026-04-17)
 
 #### Step 4: Diagnostic states + migration smoke gate
 - **Problem:** Add diagnostic state fixtures in `test_features_v2.py` covering typical mid-game compositions (e.g., 4-gate rush, robo-colossus timing, late-game deathball). Smoke-gate: write a test that opens a real `training.db`, inserts 1 row with the new 40-column schema, reads it back, and verifies migration of a simulated old-format (17-column) row via `_LATER_ADDED_COLS` defaults. This is the pipeline integration check before training.

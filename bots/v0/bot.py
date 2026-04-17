@@ -32,6 +32,7 @@ from bots.v0.fortification import FortificationManager
 from bots.v0.learning.features import _FEATURE_SPEC
 from bots.v0.learning.neural_engine import DecisionMode, NeuralDecisionEngine
 from bots.v0.learning.rewards import RewardCalculator
+from bots.v0.learning.threat_classes import THREAT_CLASS_MAP
 from bots.v0.logger import GameLogger
 from bots.v0.macro_manager import MacroDecision, MacroManager
 from bots.v0.micro import MicroController
@@ -56,6 +57,26 @@ _SUPPLY_COST: dict[UnitTypeId, int] = {
     UnitTypeId.ZERGLING: 1, UnitTypeId.BANELING: 1, UnitTypeId.ROACH: 2,
     UnitTypeId.HYDRALISK: 2, UnitTypeId.MUTALISK: 2, UnitTypeId.ULTRALISK: 6,
     UnitTypeId.BROODLORD: 4, UnitTypeId.QUEEN: 2,
+}
+
+# Maps own Protoss combat unit types to GameSnapshot field names
+_OWN_UNIT_MAP: dict[UnitTypeId, str] = {
+    UnitTypeId.ZEALOT: "zealot_count",
+    UnitTypeId.STALKER: "stalker_count",
+    UnitTypeId.SENTRY: "sentry_count",
+    UnitTypeId.IMMORTAL: "immortal_count",
+    UnitTypeId.COLOSSUS: "colossus_count",
+    UnitTypeId.ARCHON: "archon_count",
+    UnitTypeId.HIGHTEMPLAR: "high_templar_count",
+    UnitTypeId.DARKTEMPLAR: "dark_templar_count",
+    UnitTypeId.PHOENIX: "phoenix_count",
+    UnitTypeId.VOIDRAY: "void_ray_count",
+    UnitTypeId.CARRIER: "carrier_count",
+    UnitTypeId.TEMPEST: "tempest_count",
+    UnitTypeId.DISRUPTOR: "disruptor_count",
+    UnitTypeId.WARPPRISM: "warp_prism_count",
+    UnitTypeId.WARPPRISMPHASING: "warp_prism_count",
+    UnitTypeId.OBSERVER: "observer_count",
 }
 
 # Maps build-order / macro target strings → UnitTypeId
@@ -184,11 +205,15 @@ class Alpha4GateBot(BotAI):
         """Build a GameSnapshot from current bot state."""
         army_supply = 0
         worker_count = 0
+        own_counts: dict[str, int] = {}
         for unit in self.units:
             if unit.type_id == UnitTypeId.PROBE:
                 worker_count += 1
             elif not unit.is_structure:
                 army_supply += _SUPPLY_COST.get(unit.type_id, 2)
+            field = _OWN_UNIT_MAP.get(unit.type_id)
+            if field is not None:
+                own_counts[field] = own_counts.get(field, 0) + 1
 
         enemy_near = False
         for enemy in self.enemy_units:
@@ -197,8 +222,12 @@ class Alpha4GateBot(BotAI):
                 break
 
         enemy_supply = 0
+        enemy_counts: dict[str, int] = {}
         for u in self.enemy_units:
             enemy_supply += _SUPPLY_COST.get(u.type_id, 2)
+            bucket = THREAT_CLASS_MAP.get(u.type_id.value)
+            if bucket is not None:
+                enemy_counts[bucket] = enemy_counts.get(bucket, 0) + 1
 
         return GameSnapshot(
             supply_used=int(self.supply_used),
@@ -218,6 +247,8 @@ class Alpha4GateBot(BotAI):
             enemy_structure_count=len(self.enemy_structures),
             cannon_count=len(self.structures(UnitTypeId.PHOTONCANNON)),
             battery_count=len(self.structures(UnitTypeId.SHIELDBATTERY)),
+            **own_counts,
+            **enemy_counts,
         )
 
     async def on_step(self, iteration: int) -> None:
