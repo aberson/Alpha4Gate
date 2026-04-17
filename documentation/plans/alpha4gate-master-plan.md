@@ -1059,6 +1059,22 @@ Issues **#101, #102, #103** (old always-up Phase 5 Domain Abstraction
 steps) are closed as subsumed by full-stack versioning; see this plan's
 "What's NOT in this plan" entry and plan history for rationale.
 
+## Auxiliary features
+
+Features outside the versioning spine. Each has its own plan doc; they
+can be built in any order and don't block numbered phases.
+
+### Self-play viewer — windowed container
+
+Embed the two SC2 windows spawned during self-play into a single themed
+container window (side-by-side, 1024×768 each, 200px buffer). Uses Win32
+`SetParent` reparenting after `a_run_multiple_games` spawns the
+processes. Background image from `img_backgrounds/`. Local developer
+experience only (no dashboard integration). Plan:
+`documentation/plans/selfplay-viewer-plan.md`.
+
+---
+
 ## Plan history
 
 Append-only — do not edit prior entries.
