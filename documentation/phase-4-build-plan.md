@@ -431,7 +431,7 @@ The CLI exposes this as `python scripts/ladder.py replay [--jsonl <path>]`.
 - **Depends on:** 4.5.
 
 ### Step 4.7: Gate verification
-- **Status:** pending
+- **Status:** DONE (2026-04-17)
 - **Type:** operator
 - **Problem:** Human-run end-to-end verification. Checklist:
   (a) `uv run pytest --tb=short -q` — all tests pass (target: ~990+).
