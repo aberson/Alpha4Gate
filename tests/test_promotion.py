@@ -8,13 +8,13 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from alpha4gate.learning.checkpoints import (
+from bots.v0.learning.checkpoints import (
     get_best_name,
     promote_checkpoint,
     save_checkpoint,
 )
-from alpha4gate.learning.evaluator import EvalResult
-from alpha4gate.learning.promotion import (
+from bots.v0.learning.evaluator import EvalResult
+from bots.v0.learning.promotion import (
     PromotionConfig,
     PromotionDecision,
     PromotionLogger,
@@ -418,13 +418,13 @@ class TestPromotionHistory:
 class TestTrainerNoLongerMarksBest:
     """Verify that trainer.py saves with is_best=False."""
 
-    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._make_env")
-    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._init_or_resume_model")
+    @patch("bots.v0.learning.trainer.TrainingOrchestrator._make_env")
+    @patch("bots.v0.learning.trainer.TrainingOrchestrator._init_or_resume_model")
     def test_trainer_saves_is_best_false(
         self, mock_init: MagicMock, mock_env: MagicMock, tmp_path: Path
     ) -> None:
-        from alpha4gate.learning.database import TrainingDB
-        from alpha4gate.learning.trainer import TrainingOrchestrator
+        from bots.v0.learning.database import TrainingDB
+        from bots.v0.learning.trainer import TrainingOrchestrator
 
         mock_init.return_value = _mock_model()
         mock_env.return_value = MagicMock()
@@ -447,9 +447,8 @@ class TestTrainerNoLongerMarksBest:
 
 class TestPromotionApiEndpoints:
     def test_get_promotions_empty(self, tmp_path: Path) -> None:
+        from bots.v0.api import app, configure
         from fastapi.testclient import TestClient
-
-        from alpha4gate.api import app, configure
 
         data_dir = tmp_path / "data"
         log_dir = tmp_path / "logs"
@@ -460,7 +459,7 @@ class TestPromotionApiEndpoints:
         configure(data_dir, log_dir, replay_dir)
 
         # Reset the module-level promotion manager to avoid state leaks
-        import alpha4gate.api as api_mod
+        import bots.v0.api as api_mod
 
         api_mod._promotion_manager = None
 
@@ -470,9 +469,8 @@ class TestPromotionApiEndpoints:
         assert resp.json()["promotions"] == []
 
     def test_manual_promote_requires_checkpoint(self, tmp_path: Path) -> None:
+        from bots.v0.api import app, configure
         from fastapi.testclient import TestClient
-
-        from alpha4gate.api import app, configure
 
         data_dir = tmp_path / "data"
         log_dir = tmp_path / "logs"
@@ -482,7 +480,7 @@ class TestPromotionApiEndpoints:
         replay_dir.mkdir()
         configure(data_dir, log_dir, replay_dir)
 
-        import alpha4gate.api as api_mod
+        import bots.v0.api as api_mod
 
         api_mod._promotion_manager = None
 
@@ -492,9 +490,8 @@ class TestPromotionApiEndpoints:
         assert "checkpoint is required" in resp.json()["error"]
 
     def test_manual_promote_success(self, tmp_path: Path) -> None:
+        from bots.v0.api import app, configure
         from fastapi.testclient import TestClient
-
-        from alpha4gate.api import app, configure
 
         data_dir = tmp_path / "data"
         log_dir = tmp_path / "logs"
@@ -504,7 +501,7 @@ class TestPromotionApiEndpoints:
         replay_dir.mkdir()
         configure(data_dir, log_dir, replay_dir)
 
-        import alpha4gate.api as api_mod
+        import bots.v0.api as api_mod
 
         api_mod._promotion_manager = None
         api_mod._evaluator = None
@@ -768,9 +765,8 @@ class TestPromotionLogger:
 
 class TestPromotionHistoryApiEndpoints:
     def _setup_api(self, tmp_path: Path) -> Any:  # noqa: ANN401
+        from bots.v0.api import app, configure
         from fastapi.testclient import TestClient
-
-        from alpha4gate.api import app, configure
 
         data_dir = tmp_path / "data"
         log_dir = tmp_path / "logs"
@@ -780,7 +776,7 @@ class TestPromotionHistoryApiEndpoints:
         replay_dir.mkdir()
         configure(data_dir, log_dir, replay_dir)
 
-        import alpha4gate.api as api_mod
+        import bots.v0.api as api_mod
 
         api_mod._promotion_manager = None
         api_mod._promotion_logger = None
@@ -1016,7 +1012,7 @@ class TestDaemonPersistsPromotionDecisions:
     """
 
     def _make_daemon_settings(self, tmp_path: Path) -> Any:  # noqa: ANN401
-        from alpha4gate.config import Settings
+        from bots.v0.config import Settings
 
         for d in ("data", "logs", "replays"):
             (tmp_path / d).mkdir(exist_ok=True)
@@ -1034,10 +1030,9 @@ class TestDaemonPersistsPromotionDecisions:
         self, tmp_path: Path
     ) -> None:
         """soak-2026-04-11 regression: first-ever auto-promote shows in the API."""
+        from bots.v0.api import app, configure
+        from bots.v0.learning.daemon import DaemonConfig, TrainingDaemon
         from fastapi.testclient import TestClient
-
-        from alpha4gate.api import app, configure
-        from alpha4gate.learning.daemon import DaemonConfig, TrainingDaemon
 
         settings = self._make_daemon_settings(tmp_path)
         daemon = TrainingDaemon(
@@ -1080,7 +1075,7 @@ class TestDaemonPersistsPromotionDecisions:
         daemon._promotion_manager = mock_pm
 
         with patch(
-            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            "bots.v0.learning.trainer.TrainingOrchestrator",
             return_value=mock_orchestrator,
         ):
             daemon._run_training()
@@ -1096,7 +1091,7 @@ class TestDaemonPersistsPromotionDecisions:
 
         # 2. The API actually returns it via /api/training/promotions/history.
         configure(settings.data_dir, settings.log_dir, settings.replay_dir)
-        import alpha4gate.api as api_mod
+        import bots.v0.api as api_mod
 
         api_mod._promotion_manager = None
         api_mod._promotion_logger = None
@@ -1110,7 +1105,7 @@ class TestDaemonPersistsPromotionDecisions:
 
     def test_win_rate_gate_promotion_is_persisted(self, tmp_path: Path) -> None:
         """Standard win-rate-gate promotion also lands in promotion_history.json."""
-        from alpha4gate.learning.daemon import DaemonConfig, TrainingDaemon
+        from bots.v0.learning.daemon import DaemonConfig, TrainingDaemon
 
         settings = self._make_daemon_settings(tmp_path)
         daemon = TrainingDaemon(
@@ -1150,7 +1145,7 @@ class TestDaemonPersistsPromotionDecisions:
         daemon._promotion_manager = mock_pm
 
         with patch(
-            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            "bots.v0.learning.trainer.TrainingOrchestrator",
             return_value=mock_orchestrator,
         ):
             daemon._run_training()
@@ -1164,7 +1159,7 @@ class TestDaemonPersistsPromotionDecisions:
 
     def test_rejected_promotion_is_still_persisted(self, tmp_path: Path) -> None:
         """Rejected attempts also persist so the dashboard can show them as rejected."""
-        from alpha4gate.learning.daemon import DaemonConfig, TrainingDaemon
+        from bots.v0.learning.daemon import DaemonConfig, TrainingDaemon
 
         settings = self._make_daemon_settings(tmp_path)
         daemon = TrainingDaemon(
@@ -1204,7 +1199,7 @@ class TestDaemonPersistsPromotionDecisions:
         daemon._promotion_manager = mock_pm
 
         with patch(
-            "alpha4gate.learning.trainer.TrainingOrchestrator",
+            "bots.v0.learning.trainer.TrainingOrchestrator",
             return_value=mock_orchestrator,
         ):
             daemon._run_training()
@@ -1251,7 +1246,7 @@ class TestPromotionLoggerCorruptJsonSelfHeal:
             reason_code="first_baseline",
         )
 
-        with caplog.at_level(logging.WARNING, logger="alpha4gate.learning.promotion"):
+        with caplog.at_level(logging.WARNING, logger="bots.v0.learning.promotion"):
             logger.log_decision(decision)
 
         # 1. The corrupt file was rotated out of the way.
@@ -1285,7 +1280,7 @@ class TestDaemonLoggerFailureFallthrough:
     """
 
     def _make_daemon_settings(self, tmp_path: Path) -> Any:  # noqa: ANN401
-        from alpha4gate.config import Settings
+        from bots.v0.config import Settings
 
         for d in ("data", "logs", "replays"):
             (tmp_path / d).mkdir(exist_ok=True)
@@ -1302,7 +1297,7 @@ class TestDaemonLoggerFailureFallthrough:
     def test_logger_exception_does_not_break_curriculum_advance(
         self, tmp_path: Path, caplog: Any
     ) -> None:
-        from alpha4gate.learning.daemon import DaemonConfig, TrainingDaemon
+        from bots.v0.learning.daemon import DaemonConfig, TrainingDaemon
 
         settings = self._make_daemon_settings(tmp_path)
         starting_difficulty = 1
@@ -1350,9 +1345,9 @@ class TestDaemonLoggerFailureFallthrough:
         daemon._promotion_logger = exploding_logger
 
         with (
-            caplog.at_level(logging.ERROR, logger="alpha4gate.learning.daemon"),
+            caplog.at_level(logging.ERROR, logger="bots.v0.learning.daemon"),
             patch(
-                "alpha4gate.learning.trainer.TrainingOrchestrator",
+                "bots.v0.learning.trainer.TrainingOrchestrator",
                 return_value=mock_orchestrator,
             ),
         ):
@@ -1393,8 +1388,8 @@ class TestPromotionHistoryWriterCompat:
     def test_rollback_then_promotion_both_visible_and_valid(
         self, tmp_path: Path
     ) -> None:
-        from alpha4gate.learning.database import TrainingDB
-        from alpha4gate.learning.rollback import (
+        from bots.v0.learning.database import TrainingDB
+        from bots.v0.learning.rollback import (
             RollbackConfig,
             RollbackDecision,
             RollbackMonitor,

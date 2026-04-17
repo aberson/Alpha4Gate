@@ -152,10 +152,17 @@ Step 1.9 is a dedicated smoke-gate step (Type: operator) that runs a real 1-minu
 
 ### Step 1.5: Add `bots/v0/__main__.py` ladder entry point
 - **Problem:** Implement `python -m bots.v0 --role {p1|p2|solo} --map NAME --GamePort N --LadderServer H --StartPort N --result-out PATH --seed N` matching the contract Phase 0 proved out. For `--role solo`, it runs the current `runner.py --map X --difficulty N` behavior. For `--role p1` or `--role p2`, it connects to an already-hosted match via `play_from_websocket` using the Phase 0 portconfig reconstruction logic. Keep the full Alpha4GateBot stack (not a stub). Add `tests/test_bots_v0_main.py` with argparse-level tests (happy paths + required-arg validation) and one `@pytest.mark.sc2` smoke test.
+- **Self-containment cleanup (deferred from Step 1.4 per its mechanical-imports-only spec):** Step 1.4 deliberately rewrote only `import` / `from ... import` statements and left the following `"alpha4gate"` string-literal references in `bots/v0/` unchanged. They MUST be flipped to `bots.v0.*` here so `python -m bots.v0` is genuinely self-contained — otherwise the v0 entry point will silently delegate to the alpha4gate tree at runtime:
+  - `bots/v0/runner.py:242` — `uvicorn.run("alpha4gate.api:app", ...)` → `"bots.v0.api:app"`. Without this, `bots.v0`'s `configure()` populates `bots.v0.api`'s globals but uvicorn imports a different `alpha4gate.api` module object (uninitialized globals → 500s on every endpoint).
+  - `bots/v0/runner.py:277` — `uvicorn.Config("alpha4gate.api:app", ...)` → `"bots.v0.api:app"` (same root cause).
+  - `bots/v0/api.py:1433` (the `/restart` endpoint) — subprocess `[..., "-m", "alpha4gate.runner", ...]` → `"-m", "bots.v0.runner"` so a self-restart relaunches the same tree.
+  - `bots/v0/api.py:592` — `logging.getLogger("alpha4gate.debug")` → `"bots.v0.debug"` so the two trees do not share a debug-logger namespace if both are ever loaded together (e.g., during a migration window).
+  - `bots/v0/process_registry.py:128, 137, 139, 151, 155` — replace the literal `"alpha4gate"` substring matches with version-aware logic that recognizes `"bots.v0"` cmdlines (or, if the dashboard's process-classifier needs both to coexist, accept either pattern). Without this, the dashboard's Processes tab will silently stop recognizing v0 backend/game-runner processes after Step 1.5 ships.
+  - Verify with `grep -rn "alpha4gate" bots/v0/` — ideally zero hits after this step (modulo any docstring/comment that legitimately references the historical name; treat each remaining hit as a deliberate decision).
 - **Issue:** #107
 - **Flags:** `--reviewers auto`
-- **Produces:** `bots/v0/__main__.py`, `tests/test_bots_v0_main.py`.
-- **Done when:** argparse tests pass, 864+previous tests still pass, `python -m bots.v0 --help` exits 0.
+- **Produces:** `bots/v0/__main__.py`, `tests/test_bots_v0_main.py`, plus the string-literal cleanup above to `bots/v0/{runner.py, api.py, process_registry.py}`.
+- **Done when:** argparse tests pass, 864+previous tests still pass, `python -m bots.v0 --help` exits 0, `grep -rn "alpha4gate" bots/v0/` returns zero hits (or a documented allowlist).
 - **Depends on:** 1.4.
 
 ### Step 1.6: Add `bots/current/` thin pointer package

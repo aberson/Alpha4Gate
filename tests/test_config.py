@@ -5,8 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-from alpha4gate.config import load_settings
+from bots.v0.config import load_settings
 
 
 class TestLoadSettings:

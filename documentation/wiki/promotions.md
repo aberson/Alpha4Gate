@@ -2,7 +2,7 @@
 
 How the inner loop decides whether a new neural checkpoint is actually better, and what happens when it isn't.
 
-> **At a glance:** After every training cycle, `PromotionManager.evaluate_and_promote()` runs a deterministic inference-only eval on both the new checkpoint and the current best, compares win rates with a 5% threshold, and refuses to promote on any crashed eval game. `RollbackMonitor` watches the promoted checkpoint and reverts to the previous best if win rate drops 15% below its promotion-time rate. All decisions append to `data/promotion_history.json` with a stable `reason_code`, surfaced in the Improvements tab.
+> **At a glance:** After every training cycle, `PromotionManager.evaluate_and_promote()` runs a deterministic inference-only eval on both the new checkpoint and the current best, compares win rates with a 5% threshold, and refuses to promote on any crashed eval game. `RollbackMonitor` watches the promoted checkpoint and reverts to the previous best if win rate drops 15% below its promotion-time rate. All decisions append to `bots/v0/data/promotion_history.json` with a stable `reason_code`, surfaced in the Improvements tab.
 
 See [training-pipeline.md](training-pipeline.md) for where this sits in the inner loop; [improve-bot-advised-architecture.md](improve-bot-advised-architecture.md) for how the outer loop's TRAIN phase invokes it.
 
@@ -35,7 +35,7 @@ See [training-pipeline.md](training-pipeline.md) for where this sits in the inne
             └── REJECT  ──> new checkpoint stays on disk but isn't "best"
                             (pruned eventually by checkpoint pruner)
 
- Every decision appends one entry to data/promotion_history.json
+ Every decision appends one entry to bots/v0/data/promotion_history.json
 ```
 
 And separately, on every daemon cycle:
@@ -58,7 +58,7 @@ And separately, on every daemon cycle:
 
 ## Decision Outcomes
 
-Every evaluation appends one `PromotionDecision` to `data/promotion_history.json`. The `reason_code` field is the stable classifier:
+Every evaluation appends one `PromotionDecision` to `bots/v0/data/promotion_history.json`. The `reason_code` field is the stable classifier:
 
 | `reason_code` | Meaning | Promoted? |
 |---|---|---|
@@ -94,7 +94,7 @@ Every evaluation appends one `PromotionDecision` to `data/promotion_history.json
 
 ---
 
-## The Log — `data/promotion_history.json`
+## The Log — `bots/v0/data/promotion_history.json`
 
 Append-only JSON array. Each entry:
 
@@ -162,12 +162,12 @@ See [improve-bot-advised-architecture.md](improve-bot-advised-architecture.md) f
 
 | File | Purpose |
 |---|---|
-| `src/alpha4gate/learning/promotion.py` | `PromotionManager`, `PromotionConfig`, `PromotionDecision`, `PromotionLogger` |
-| `src/alpha4gate/learning/rollback.py` | `RollbackMonitor`, `RollbackConfig`, `RollbackDecision` |
-| `src/alpha4gate/learning/evaluator.py` | `ModelEvaluator` — inference-only eval used by both |
-| `src/alpha4gate/learning/checkpoints.py` | `get_best_name`, `promote_checkpoint` — manifest manipulation |
-| `data/promotion_history.json` | Append-only decision log |
-| `data/checkpoints/manifest.json` | Source of truth for current best + `previous_best` |
+| `bots/v0/learning/promotion.py` | `PromotionManager`, `PromotionConfig`, `PromotionDecision`, `PromotionLogger` |
+| `bots/v0/learning/rollback.py` | `RollbackMonitor`, `RollbackConfig`, `RollbackDecision` |
+| `bots/v0/learning/evaluator.py` | `ModelEvaluator` — inference-only eval used by both |
+| `bots/v0/learning/checkpoints.py` | `get_best_name`, `promote_checkpoint` — manifest manipulation |
+| `bots/v0/data/promotion_history.json` | Append-only decision log |
+| `bots/v0/data/checkpoints/manifest.json` | Source of truth for current best + `previous_best` |
 | `tests/test_promotion.py` | Gate logic tests |
 | `tests/test_rollback.py` | Rollback monitor tests |
 | `tests/test_evaluator.py` | Evaluator tests including crash-handling |

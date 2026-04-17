@@ -15,9 +15,8 @@ from __future__ import annotations
 import gymnasium
 import numpy as np
 import torch
-
-from alpha4gate.learning.environment import SC2Env
-from alpha4gate.learning.ppo_kl import PPOWithKL
+from bots.v0.learning.environment import SC2Env
+from bots.v0.learning.ppo_kl import PPOWithKL
 
 
 def _dummy_env() -> gymnasium.Env:

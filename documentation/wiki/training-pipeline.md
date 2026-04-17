@@ -17,7 +17,7 @@ the autonomous daemon that drives them:
 | **RL training** | PPO gradient updates on actual game outcomes | Repeatedly, to improve beyond rule-based play |
 | **Autonomous daemon** | Trigger RL cycles in the background based on transitions + time | Always-on; enables the outer loop's TRAIN phase |
 
-All stages produce SB3 checkpoint files (`.zip`) stored in `data/checkpoints/` with
+All stages produce SB3 checkpoint files (`.zip`) stored in `bots/v0/data/checkpoints/` with
 a `manifest.json` tracking versions and the current "best" model.
 
 ### Training flow overview
@@ -362,7 +362,7 @@ watchdog.
 The KL-to-rules penalty pulls the policy toward a frozen rule-based reference (`learning/rules_policy.py`) — prevents catastrophic forgetting of the bootstrapped behavior during RL.
 
 **Imitation-init path** (`use_imitation_init: true` in hyperparams):
-- If `data/checkpoints/v0_pretrain.zip` exists, load it as starting weights.
+- If `bots/v0/data/checkpoints/v0_pretrain.zip` exists, load it as starting weights.
 - If missing and `--ensure-pretrain` not passed, log a warning and fall through to a fresh model.
 - `resume` takes priority: if a `best` checkpoint exists, resume wins over imitation.
 
@@ -407,7 +407,7 @@ Difficulty maps to SC2's built-in AI levels (1=Easy through 10=CheatInsane).
 
 ### Disk guard
 
-Training stops if `data/training.db` exceeds 200 GB:
+Training stops if `bots/v0/data/training.db` exceeds 200 GB:
 
 ```python
 def check_disk_guard(self) -> bool:
@@ -433,11 +433,11 @@ def check_disk_guard(self) -> bool:
 
 ### Checkpoint system
 
-**Directory:** `data/checkpoints/`
+**Directory:** `bots/v0/data/checkpoints/`
 
 **Files:**
 ```
-data/checkpoints/
+bots/v0/data/checkpoints/
 ├── manifest.json       # Index: list of checkpoints + best name
 ├── v0_pretrain.zip     # Imitation pre-training
 ├── v1.zip              # RL cycle 1
@@ -489,7 +489,7 @@ from disk and updates the manifest.
 
 ### PPO hyperparameters
 
-**Default values** (`data/hyperparams.json`):
+**Default values** (`bots/v0/data/hyperparams.json`):
 ```json
 {
   "learning_rate": 3e-4,
@@ -527,7 +527,7 @@ Unknown keys are logged as warnings.
 
 After each RL cycle, `_log_diagnostics()` evaluates the model on predefined test states:
 
-**Input:** `data/diagnostic_states.json` — hand-crafted scenarios:
+**Input:** `bots/v0/data/diagnostic_states.json` — hand-crafted scenarios:
 ```json
 [
   {"name": "Early game minerals low", "features": [30, 50, 100, 0, 10, 12, 1, 0, 0, 30, 1, 0, 0, 0, 5, 0, 0]},
@@ -535,7 +535,7 @@ After each RL cycle, `_log_diagnostics()` evaluates the model on predefined test
 ]
 ```
 
-**Output:** `data/training_diagnostics.json` — per-cycle action distributions:
+**Output:** `bots/v0/data/training_diagnostics.json` — per-cycle action distributions:
 ```json
 [
   {
@@ -581,21 +581,21 @@ written to disk (persistent) but not surfaced in the dashboard.
 
 | File | Purpose |
 |------|---------|
-| `src/alpha4gate/learning/trainer.py` | TrainingOrchestrator — cycle loop, curriculum, diagnostics, variant dispatch |
-| `src/alpha4gate/learning/daemon.py` | TrainingDaemon — background triggers, watchdog |
-| `src/alpha4gate/learning/environment.py` | SC2Env — gymnasium wrapper, threading, queue bridge |
-| `src/alpha4gate/learning/imitation.py` | run_imitation_training — behavior cloning |
-| `src/alpha4gate/learning/neural_engine.py` | NeuralDecisionEngine — inference, hybrid override |
-| `src/alpha4gate/learning/checkpoints.py` | save/load/prune/list/promote checkpoints, manifest management |
-| `src/alpha4gate/learning/hyperparams.py` | Load/convert PPO hyperparameters |
-| `src/alpha4gate/learning/rules_policy.py` | Rule-based policy reference for KL-to-rules target |
-| `src/alpha4gate/learning/ppo_kl.py` | PPOWithKL + RecurrentPPOWithKL variants |
-| `src/alpha4gate/learning/promotion.py` | PromotionManager — see [promotions.md](promotions.md) |
-| `src/alpha4gate/learning/rollback.py` | RollbackMonitor — see [promotions.md](promotions.md) |
-| `src/alpha4gate/learning/evaluator.py` | ModelEvaluator — deterministic inference eval |
-| `src/alpha4gate/learning/advisor_bridge.py` | Thread-safe Claude advisor queue for training |
-| `src/alpha4gate/runner.py` | CLI entry point — `--train`, `--decision-mode`, `--serve`, `--daemon` |
-| `data/checkpoints/` | Checkpoint files + manifest.json |
-| `data/hyperparams.json` | PPO hyperparameter defaults + `policy_type`, `kl_rules_coef`, `use_imitation_init` |
-| `data/diagnostic_states.json` | Hand-crafted test states for diagnostics |
-| `data/training_diagnostics.json` | Per-cycle action distributions on test states |
+| `bots/v0/learning/trainer.py` | TrainingOrchestrator — cycle loop, curriculum, diagnostics, variant dispatch |
+| `bots/v0/learning/daemon.py` | TrainingDaemon — background triggers, watchdog |
+| `bots/v0/learning/environment.py` | SC2Env — gymnasium wrapper, threading, queue bridge |
+| `bots/v0/learning/imitation.py` | run_imitation_training — behavior cloning |
+| `bots/v0/learning/neural_engine.py` | NeuralDecisionEngine — inference, hybrid override |
+| `bots/v0/learning/checkpoints.py` | save/load/prune/list/promote checkpoints, manifest management |
+| `bots/v0/learning/hyperparams.py` | Load/convert PPO hyperparameters |
+| `bots/v0/learning/rules_policy.py` | Rule-based policy reference for KL-to-rules target |
+| `bots/v0/learning/ppo_kl.py` | PPOWithKL + RecurrentPPOWithKL variants |
+| `bots/v0/learning/promotion.py` | PromotionManager — see [promotions.md](promotions.md) |
+| `bots/v0/learning/rollback.py` | RollbackMonitor — see [promotions.md](promotions.md) |
+| `bots/v0/learning/evaluator.py` | ModelEvaluator — deterministic inference eval |
+| `bots/v0/learning/advisor_bridge.py` | Thread-safe Claude advisor queue for training |
+| `bots/v0/runner.py` | CLI entry point — `--train`, `--decision-mode`, `--serve`, `--daemon` |
+| `bots/v0/data/checkpoints/` | Checkpoint files + manifest.json |
+| `bots/v0/data/hyperparams.json` | PPO hyperparameter defaults + `policy_type`, `kl_rules_coef`, `use_imitation_init` |
+| `bots/v0/data/diagnostic_states.json` | Hand-crafted test states for diagnostics |
+| `bots/v0/data/training_diagnostics.json` | Per-cycle action distributions on test states |

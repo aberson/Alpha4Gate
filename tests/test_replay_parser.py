@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from alpha4gate.replay_parser import (
+from bots.v0.replay_parser import (
     ParsedReplay,
     ReplayStats,
     TimelineEvent,

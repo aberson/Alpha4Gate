@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from alpha4gate.build_backlog import BuildBacklog
+from bots.v0.build_backlog import BuildBacklog
 
 
 class TestBuildBacklogAdd:

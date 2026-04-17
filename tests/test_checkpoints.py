@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from alpha4gate.learning.checkpoints import (
+from bots.v0.learning.checkpoints import (
     get_best_name,
     list_checkpoints,
     prune_checkpoints,

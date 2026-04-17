@@ -9,16 +9,15 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-
-from alpha4gate.config import Settings
-from alpha4gate.learning.database import TrainingDB
-from alpha4gate.learning.evaluator import (
+from bots.v0.config import Settings
+from bots.v0.learning.database import TrainingDB
+from bots.v0.learning.evaluator import (
     ComparisonResult,
     EvalJob,
     EvalResult,
     ModelEvaluator,
 )
-from alpha4gate.learning.features import FEATURE_DIM
+from bots.v0.learning.features import FEATURE_DIM
 
 
 def _make_settings(tmp_path: Path) -> Settings:
@@ -868,9 +867,8 @@ class TestEvalAPIEndpoints:
 
     @pytest.fixture()
     def client(self, tmp_path: Path) -> Any:
+        from bots.v0.api import app, configure
         from fastapi.testclient import TestClient
-
-        from alpha4gate.api import app, configure
 
         data_dir = tmp_path / "data"
         log_dir = tmp_path / "logs"
@@ -890,7 +888,7 @@ class TestEvalAPIEndpoints:
         resp = client.get("/api/training/evaluate/nonexistent")
         assert resp.status_code == 404
 
-    @patch("alpha4gate.api._get_evaluator")
+    @patch("bots.v0.api._get_evaluator")
     def test_start_and_poll_evaluation(
         self,
         mock_get_eval: MagicMock,
@@ -910,7 +908,7 @@ class TestEvalAPIEndpoints:
         assert data["job_id"] == "job123"
         assert data["status"] == "pending"
 
-    @patch("alpha4gate.api._get_evaluator")
+    @patch("bots.v0.api._get_evaluator")
     def test_poll_completed_job(
         self,
         mock_get_eval: MagicMock,
@@ -949,7 +947,7 @@ class TestEvalAPIEndpoints:
         assert data["result"]["wins"] == 2
         assert data["result"]["win_rate"] == pytest.approx(0.667)
 
-    @patch("alpha4gate.api._get_evaluator")
+    @patch("bots.v0.api._get_evaluator")
     def test_stop_running_job(
         self,
         mock_get_eval: MagicMock,
@@ -964,7 +962,7 @@ class TestEvalAPIEndpoints:
         assert resp.json()["status"] == "cancellation_requested"
         mock_evaluator.cancel_job.assert_called_once_with("job789")
 
-    @patch("alpha4gate.api._get_evaluator")
+    @patch("bots.v0.api._get_evaluator")
     def test_stop_nonexistent_job(
         self,
         mock_get_eval: MagicMock,
@@ -977,7 +975,7 @@ class TestEvalAPIEndpoints:
         resp = client.post("/api/training/evaluate/ghost/stop")
         assert resp.status_code == 404
 
-    @patch("alpha4gate.api._get_evaluator")
+    @patch("bots.v0.api._get_evaluator")
     def test_stop_already_completed_job(
         self,
         mock_get_eval: MagicMock,

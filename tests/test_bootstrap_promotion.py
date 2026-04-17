@@ -25,9 +25,8 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
-
-from alpha4gate.learning.evaluator import EvalResult
-from alpha4gate.learning.promotion import PromotionConfig, PromotionManager
+from bots.v0.learning.evaluator import EvalResult
+from bots.v0.learning.promotion import PromotionConfig, PromotionManager
 
 if TYPE_CHECKING:
     pass
@@ -85,11 +84,11 @@ class TestFindingEleven:
         # Simulate a seeded checkpoint state.
         (tmp_path / "best.zip").write_bytes(b"fake")
         monkeypatch.setattr(
-            "alpha4gate.learning.checkpoints.get_best_name",
+            "bots.v0.learning.checkpoints.get_best_name",
             lambda _d: "best",
         )
         monkeypatch.setattr(
-            "alpha4gate.learning.checkpoints.promote_checkpoint",
+            "bots.v0.learning.checkpoints.promote_checkpoint",
             lambda _d, _n: None,
         )
 
@@ -114,11 +113,11 @@ class TestFindingEleven:
     ) -> None:
         """allow_bootstrap default is True: no prior best -> unconditional promote."""
         monkeypatch.setattr(
-            "alpha4gate.learning.checkpoints.get_best_name",
+            "bots.v0.learning.checkpoints.get_best_name",
             lambda _d: None,
         )
         monkeypatch.setattr(
-            "alpha4gate.learning.checkpoints.promote_checkpoint",
+            "bots.v0.learning.checkpoints.promote_checkpoint",
             lambda _d, _n: None,
         )
 

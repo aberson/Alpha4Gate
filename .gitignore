@@ -28,7 +28,15 @@ Desktop.ini
 # Project data (local only)
 logs/
 replays/
-data/
+# Legacy root-level data/ — leave fully ignored (audit snapshots, backups).
+# Scoped to the root so `bots/*/data/` below can use negation for tracked
+# config files.
+/data/
+
+# Versioned bot data (Step 1.8+) — runtime state ignored, config tracked.
+/bots/*/data/**
+!/bots/*/data/hyperparams.json
+!/bots/*/data/reward_rules.json
 
 # Node / Frontend
 frontend/node_modules/

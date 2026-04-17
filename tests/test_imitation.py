@@ -6,10 +6,9 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
-from alpha4gate.learning.database import TrainingDB
-from alpha4gate.learning.features import BASE_GAME_FEATURE_DIM, FEATURE_DIM
-from alpha4gate.learning.imitation import run_imitation_training
+from bots.v0.learning.database import TrainingDB
+from bots.v0.learning.features import BASE_GAME_FEATURE_DIM, FEATURE_DIM
+from bots.v0.learning.imitation import run_imitation_training
 
 
 @pytest.fixture()
@@ -118,5 +117,5 @@ class TestImitationTraining:
             low=0.0, high=1.0, shape=(FEATURE_DIM,), dtype=np.float32,
         )
         assert model.observation_space == expected_space
-        from alpha4gate.learning.environment import SC2Env
+        from bots.v0.learning.environment import SC2Env
         assert model.action_space == SC2Env.action_space

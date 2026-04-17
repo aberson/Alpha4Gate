@@ -4,16 +4,15 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from sc2.ids.unit_typeid import UnitTypeId
-
-from alpha4gate.decision_engine import StrategicState
-from alpha4gate.macro_manager import (
+from bots.v0.decision_engine import StrategicState
+from bots.v0.macro_manager import (
     MAX_WORKERS,
     WORKERS_PER_BASE_MINERALS,
     WORKERS_PER_GAS,
     MacroDecision,
     MacroManager,
 )
+from sc2.ids.unit_typeid import UnitTypeId
 
 
 def _mock_bot(

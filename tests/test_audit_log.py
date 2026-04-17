@@ -10,9 +10,8 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-from alpha4gate import audit_log
-from alpha4gate.audit_log import DECISION_AUDIT_FILENAME, record_decision
+from bots.v0 import audit_log
+from bots.v0.audit_log import DECISION_AUDIT_FILENAME, record_decision
 
 
 def _make_ws_manager() -> MagicMock:
@@ -161,7 +160,7 @@ class TestRecordDecisionCorruptJson:
         ws = _make_ws_manager()
         decision = _sample_decision()
 
-        with caplog.at_level(logging.WARNING, logger="alpha4gate.audit_log"):
+        with caplog.at_level(logging.WARNING, logger="bots.v0.audit_log"):
             async def run() -> None:
                 record_decision(tmp_path, ws, decision)
 
@@ -290,7 +289,7 @@ class TestBroadcastTaskLifecycle:
             await asyncio.sleep(0)
             assert len(fresh) == 0
 
-        with caplog.at_level(logging.ERROR, logger="alpha4gate.audit_log"):
+        with caplog.at_level(logging.ERROR, logger="bots.v0.audit_log"):
             loop = asyncio.new_event_loop()
             try:
                 loop.run_until_complete(run())

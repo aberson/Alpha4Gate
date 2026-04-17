@@ -5,9 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from alpha4gate.bot import Alpha4GateBot
-from alpha4gate.decision_engine import GameSnapshot, StrategicState
-from alpha4gate.learning.database import TrainingDB
+from bots.v0.bot import Alpha4GateBot
+from bots.v0.decision_engine import GameSnapshot, StrategicState
+from bots.v0.learning.database import TrainingDB
 
 
 def _make_bot_with_db(tmp_path: Path) -> tuple[Alpha4GateBot, TrainingDB]:

@@ -17,9 +17,8 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-
-from alpha4gate.decision_engine import GameSnapshot, StrategicState
-from alpha4gate.learning.environment import (
+from bots.v0.decision_engine import GameSnapshot, StrategicState
+from bots.v0.learning.environment import (
     _ACTION_TO_STATE,
     FEATURE_DIM,
     MAX_GAME_TIME_SECONDS,
@@ -28,8 +27,8 @@ from alpha4gate.learning.environment import (
     _GymStateProxy,
     _make_training_bot,
 )
-from alpha4gate.learning.features import BASE_GAME_FEATURE_DIM, encode
-from alpha4gate.learning.rewards import RewardCalculator
+from bots.v0.learning.features import BASE_GAME_FEATURE_DIM, encode
+from bots.v0.learning.rewards import RewardCalculator
 
 
 def _default_snapshot(**overrides: Any) -> GameSnapshot:
@@ -541,7 +540,7 @@ class TestGameIdUniquenessAcrossResets:
         constructor-supplied id. With the fix, each ``reset()``
         regenerates the id so both stores succeed.
         """
-        from alpha4gate.learning.database import TrainingDB
+        from bots.v0.learning.database import TrainingDB
 
         db = TrainingDB(tmp_path / "train.db")
         env = self._bare_env(base="rl_integration")
@@ -635,12 +634,12 @@ class TestSyncGameStoreFailureObservable:
         import sc2.maps
         import sc2.player
 
-        # ``_make_training_bot`` pulls in ``alpha4gate.bot`` which itself
+        # ``_make_training_bot`` pulls in ``bots.v0.bot`` which itself
         # reaches deep into burnysc2 internals. Swap it for a lightweight
         # fake whose ``time`` attribute is all ``_sync_game`` needs.
         fake_bot = MagicMock()
         fake_bot.time = 123.4
-        import alpha4gate.learning.environment as env_mod
+        import bots.v0.learning.environment as env_mod
 
         monkeypatch.setattr(
             env_mod, "_make_training_bot", lambda *a, **kw: fake_bot
@@ -968,7 +967,7 @@ class TestPhase46ProducerWiring:
         monkeypatch.setattr(sc2.player, "Computer", lambda *a, **kw: MagicMock())
         monkeypatch.setattr(sc2.maps, "get", lambda *a, **kw: MagicMock())
 
-        import alpha4gate.learning.environment as env_mod
+        import bots.v0.learning.environment as env_mod
 
         fake_bot = MagicMock()
         fake_bot.time = 100.0
@@ -1004,7 +1003,7 @@ class TestPhase46ProducerWiring:
         monkeypatch.setattr(sc2.player, "Computer", lambda *a, **kw: MagicMock())
         monkeypatch.setattr(sc2.maps, "get", lambda *a, **kw: MagicMock())
 
-        import alpha4gate.learning.environment as env_mod
+        import bots.v0.learning.environment as env_mod
 
         fake_bot = MagicMock()
         fake_bot.time = 123.4
@@ -1090,7 +1089,7 @@ class TestPhase46ProducerWiring:
 
         mock_db = MagicMock()  # store_game succeeds
 
-        import alpha4gate.batch_runner as batch_runner_mod
+        import bots.v0.batch_runner as batch_runner_mod
 
         def _boom(*_a: Any, **_kw: Any) -> None:
             raise OSError("disk full")
@@ -1136,8 +1135,7 @@ class TestPhase46ProducerWiring:
         import sc2.main
         import sc2.maps
         import sc2.player
-
-        from alpha4gate.learning.database import TrainingDB
+        from bots.v0.learning.database import TrainingDB
 
         monkeypatch.setattr(
             sc2.main, "run_game", lambda *a, **kw: "Result.Victory"
@@ -1146,7 +1144,7 @@ class TestPhase46ProducerWiring:
         monkeypatch.setattr(sc2.player, "Computer", lambda *a, **kw: MagicMock())
         monkeypatch.setattr(sc2.maps, "get", lambda *a, **kw: MagicMock())
 
-        import alpha4gate.learning.environment as env_mod
+        import bots.v0.learning.environment as env_mod
 
         fake_bot = MagicMock()
         fake_bot.time = 250.0
@@ -1336,7 +1334,7 @@ class TestTimeoutLeavesGameSc2Live:
     """
 
     def test_training_env_single_episode_timeout_surrenders(self) -> None:
-        from alpha4gate.learning.environment import SC2Env
+        from bots.v0.learning.environment import SC2Env
 
         env = SC2Env(map_name="Simple64", difficulty=1, realtime=False)
         try:

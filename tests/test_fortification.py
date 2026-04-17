@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from alpha4gate.fortification import FortificationManager
+from bots.v0.fortification import FortificationManager
 
 
 class TestScalingFormula:

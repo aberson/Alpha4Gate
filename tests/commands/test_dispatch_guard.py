@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from alpha4gate.commands.dispatch_guard import DispatchGuard
+from bots.v0.commands.dispatch_guard import DispatchGuard
 
 
 def test_first_dispatch_allowed() -> None:

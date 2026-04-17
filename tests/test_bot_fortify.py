@@ -9,14 +9,13 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
+from bots.v0.army_coherence import ArmyCoherenceManager
+from bots.v0.bot import Alpha4GateBot
+from bots.v0.build_backlog import BuildBacklog
+from bots.v0.commands.dispatch_guard import DispatchGuard
+from bots.v0.decision_engine import DecisionEngine, GameSnapshot
+from bots.v0.fortification import FortificationManager
 from sc2.ids.unit_typeid import UnitTypeId
-
-from alpha4gate.army_coherence import ArmyCoherenceManager
-from alpha4gate.bot import Alpha4GateBot
-from alpha4gate.build_backlog import BuildBacklog
-from alpha4gate.commands.dispatch_guard import DispatchGuard
-from alpha4gate.decision_engine import DecisionEngine, GameSnapshot
-from alpha4gate.fortification import FortificationManager
 
 
 def _mock_unit(x: float = 0.0, y: float = 0.0) -> MagicMock:

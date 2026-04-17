@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from alpha4gate.commands.parser import StructuredParser
-from alpha4gate.commands.primitives import (
+from bots.v0.commands.parser import StructuredParser
+from bots.v0.commands.primitives import (
     CommandAction,
     CommandMode,
     CommandPrimitive,
@@ -9,8 +9,8 @@ from alpha4gate.commands.primitives import (
     filter_executable,
     get_command_settings,
 )
-from alpha4gate.commands.queue import CommandQueue
-from alpha4gate.commands.recipes import TECH_RECIPES, expand_tech
+from bots.v0.commands.queue import CommandQueue
+from bots.v0.commands.recipes import TECH_RECIPES, expand_tech
 
 # --- CommandPrimitive defaults ---
 

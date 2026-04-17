@@ -5,15 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
-
-from alpha4gate import api as api_module
-from alpha4gate.api import app, configure
-from alpha4gate.commands import (
+from bots.v0 import api as api_module
+from bots.v0.api import app, configure
+from bots.v0.commands import (
     CommandMode,
     get_command_queue,
     get_command_settings,
 )
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture()

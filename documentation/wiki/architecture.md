@@ -186,7 +186,7 @@ Staging timeout: 60 seconds max wait before forcing attack.
 ### Module map
 
 ```
-src/alpha4gate/
+bots/v0/
 ├── bot.py                 # Orchestrator — on_step() pipeline (869 lines)
 ├── decision_engine.py     # StrategicState state machine + GameSnapshot
 ├── macro_manager.py       # Economy: workers, supply, production, expansion
@@ -231,9 +231,9 @@ src/alpha4gate/
 
 | File | Purpose |
 |------|---------|
-| `src/alpha4gate/bot.py` | Main orchestrator — start here to understand game flow |
-| `src/alpha4gate/decision_engine.py` | Strategic state machine — state transitions |
-| `src/alpha4gate/commands/executor.py` | Where commands become SC2 API calls |
-| `src/alpha4gate/army_coherence.py` | Attack/retreat decisions with randomized params |
-| `src/alpha4gate/macro_manager.py` | Economy automation |
-| `src/alpha4gate/micro.py` | Per-unit combat commands |
+| `bots/v0/bot.py` | Main orchestrator — start here to understand game flow |
+| `bots/v0/decision_engine.py` | Strategic state machine — state transitions |
+| `bots/v0/commands/executor.py` | Where commands become SC2 API calls |
+| `bots/v0/army_coherence.py` | Attack/retreat decisions with randomized params |
+| `bots/v0/macro_manager.py` | Economy automation |
+| `bots/v0/micro.py` | Per-unit combat commands |

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from alpha4gate.army_coherence import ArmyCoherenceManager
+from bots.v0.army_coherence import ArmyCoherenceManager
 
 
 def _mock_unit(x: float = 0.0, y: float = 0.0) -> MagicMock:

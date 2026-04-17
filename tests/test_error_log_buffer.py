@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 
-from alpha4gate.error_log import ErrorLogBuffer
+from bots.v0.error_log import ErrorLogBuffer
 
 
 def _make_record(

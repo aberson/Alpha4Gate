@@ -6,15 +6,18 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-from alpha4gate.learning.rewards import (
+from bots.v0.learning.rewards import (
     BASE_LOSS_REWARD,
     BASE_STEP_REWARD,
     BASE_WIN_REWARD,
     RewardCalculator,
 )
 
-RULES_PATH = Path(__file__).resolve().parent.parent / "data" / "reward_rules.json"
+from orchestrator.registry import resolve_data_path
+
+# Resolve via registry so the test follows the hot-data move from
+# ``data/`` -> ``bots/v0/data/`` without knowing which location is active.
+RULES_PATH = resolve_data_path("reward_rules.json")
 
 
 @pytest.fixture()

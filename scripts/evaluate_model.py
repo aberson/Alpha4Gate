@@ -12,14 +12,13 @@ from __future__ import annotations
 import argparse
 import sys
 
+from bots.v0.bot import Alpha4GateBot
+from bots.v0.build_orders import default_4gate
+from bots.v0.config import load_settings
+from bots.v0.connection import run_bot
+from bots.v0.learning.neural_engine import DecisionMode
+from bots.v0.logger import GameLogger
 from sc2.data import Result
-
-from alpha4gate.bot import Alpha4GateBot
-from alpha4gate.build_orders import default_4gate
-from alpha4gate.config import load_settings
-from alpha4gate.connection import run_bot
-from alpha4gate.learning.neural_engine import DecisionMode
-from alpha4gate.logger import GameLogger
 
 
 def main() -> None:

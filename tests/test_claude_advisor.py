@@ -7,7 +7,7 @@ import json
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from alpha4gate.claude_advisor import (
+from bots.v0.claude_advisor import (
     AdvisorResponse,
     ClaudeAdvisor,
     RateLimiter,
@@ -199,7 +199,7 @@ class TestClaudeAdvisorAsync:
                     await advisor._pending_task
                 return advisor.collect_response()
 
-            with caplog.at_level(logging.DEBUG, logger="alpha4gate.claude_advisor"):
+            with caplog.at_level(logging.DEBUG, logger="bots.v0.claude_advisor"):
                 result = loop.run_until_complete(run())
 
             assert result is None
@@ -229,7 +229,7 @@ class TestClaudeAdvisorAsync:
             except RuntimeError:
                 pass
 
-            with caplog.at_level(logging.DEBUG, logger="alpha4gate.claude_advisor"):
+            with caplog.at_level(logging.DEBUG, logger="bots.v0.claude_advisor"):
                 result = advisor.collect_response()
 
             assert result is None
@@ -408,7 +408,7 @@ class TestClaudeAdvisorAsync:
                 ):
                     return await advisor._call_api("test prompt")
 
-            with caplog.at_level(logging.ERROR, logger="alpha4gate.claude_advisor"):
+            with caplog.at_level(logging.ERROR, logger="bots.v0.claude_advisor"):
                 result = loop.run_until_complete(run())
 
             assert result is None

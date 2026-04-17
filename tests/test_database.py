@@ -5,9 +5,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
-from alpha4gate.learning.database import TrainingDB
-from alpha4gate.learning.features import (
+from bots.v0.learning.database import TrainingDB
+from bots.v0.learning.features import (
     BASE_GAME_FEATURE_DIM as FEATURE_DIM,  # DB uses game-state dims only
 )
 
@@ -364,7 +363,7 @@ class TestLegacySchemaMigration:
         conn.close()
 
     def test_legacy_db_gets_all_later_columns_added(self, tmp_path: Path) -> None:
-        from alpha4gate.learning.database import _LATER_ADDED_COLS
+        from bots.v0.learning.database import _LATER_ADDED_COLS
 
         legacy_path = tmp_path / "legacy.db"
         self._create_legacy_db(legacy_path)

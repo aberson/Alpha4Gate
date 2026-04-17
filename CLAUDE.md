@@ -9,32 +9,35 @@ Goal: AI-vs-AI competition with transparent model introspection and autonomous s
 
 - Python 3.12, uv, burnysc2 v7.1.3, FastAPI, React+TypeScript+Vite
 - Deep learning: PyTorch, Stable Baselines 3 (PPO), SQLite for training data
-- Testing: pytest (829 unit tests) + vitest (126 frontend tests), ruff, mypy strict mode
+- Testing: pytest (916 unit tests) + vitest (126 frontend tests), ruff, mypy strict mode
 
 ## Commands
 
 ```bash
 uv sync                                    # Install deps
-uv run python -m alpha4gate.runner --map Simple64  # Run game
+uv run python -m bots.v0 --role solo --map Simple64  # Run game
 uv run python -m alpha4gate.runner --serve         # Dashboard API only
-uv run pytest                              # 682 unit tests
+uv run pytest                              # 916 unit tests
 uv run pytest -m sc2                       # SC2 integration tests (SC2 must be running)
 uv run ruff check .                        # Lint
-uv run mypy src                            # Type check
+uv run mypy src bots --strict              # Type check
 cd frontend && npm run dev                 # Frontend dev server (:3000 -> :8765)
 bash scripts/start-dev.sh                  # Start backend + frontend together (used by build-step --ui)
 ```
 
 ## Directory layout
 
-- `src/alpha4gate/` — 46 Python modules (bot, decision engine, commands/, learning/)
-- `tests/` — 45 test files
+- `bots/v0/` — 46 Python modules (bot, decision engine, commands/, learning/). The production bot code.
+- `bots/current/` — thin pointer package (MetaPathFinder alias to `bots/v0/`)
+- `src/orchestrator/` — version registry, contracts, subprocess self-play stubs
+- `tests/` — 50 test files (all import from `bots.v0.*`)
 - `frontend/` — React dashboard (LiveView, CommandPanel, TrainingDashboard, etc.)
 - `scripts/` — live-test.sh, analyze_rewards.py, evaluate_model.py, etc.
 - `documentation/wiki/` — project wiki (start with `index.md` for system diagram + page map)
 - `documentation/plans/` — active plans (alpha4gate-master-plan.md)
 - `documentation/archived/` — completed plans (Phase 1, Phase 2, improvement cycles)
-- `data/` — stats, training.db, checkpoints (gitignored)
+- `bots/v0/data/` — per-version state: training.db, checkpoints/, reward_rules.json, hyperparams.json
+- `data/` — legacy shared state: decision_audit.json, improvement_log.json, phase0_spike/ (gitignored)
 - `logs/` — JSONL game logs (gitignored)
 
 ## Architecture
@@ -45,11 +48,14 @@ WebSocket endpoints: /ws/game, /ws/decisions, /ws/commands.
 
 ## Current state
 
+All production code lives in `bots/v0/` (Phase 1 bots-v0-migration complete). `src/alpha4gate/` no longer exists.
 All Phase 1 (rule-based) and Phase 2 (deep learning) features complete.
 Five improvement cycles done: army coherence, natural denial, neural training, strategic commands, defensive fortification.
 Wins reliably at difficulty 1-3, struggles at 4-5.
 Active plan: `documentation/plans/alpha4gate-master-plan.md` — platform + full-stack versioning + AlphaStar-style PPO upgrades. Always-up Phases 1–4.5 (daemon, evaluator, promotion gate, rollback, 9-tab dashboard) are the Baseline; full history in `documentation/archived/always-up-plan.md`.
 Wiki: `documentation/wiki/index.md` — system diagram and deep-dive pages.
+
+**Important:** Do NOT import `bots.current` or `bots.<version>` from `src/orchestrator/` — triggers MetaPathFinder loop. Registry reads paths via pathlib.
 
 ## SC2 requirements
 

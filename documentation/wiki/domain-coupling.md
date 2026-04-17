@@ -2,7 +2,7 @@
 
 What's SC2-specific vs what could work with any domain.
 
-> **At a glance:** 51 Python modules in `src/alpha4gate/`. The entire `learning/` pipeline (17 modules — trainer, daemon, evaluator, promotion, rollback, rewards, features, checkpoints, imitation, advisor_bridge, etc.) has **zero SC2 imports** and is domain-agnostic. SC2 coupling concentrates in 8 modules: `bot`, `connection`, `observer`, `macro_manager`, `micro`, `scouting`, `commands/executor`, plus the hybrid `learning/environment` bridge. The `/improve-bot-advised` loop reinforces this: it treats SC2 as an opaque task — code + config go in, win/loss + stats come out. See [improve-bot-advised-architecture.md](improve-bot-advised-architecture.md).
+> **At a glance:** 51 Python modules in `bots/v0/`. The entire `learning/` pipeline (17 modules — trainer, daemon, evaluator, promotion, rollback, rewards, features, checkpoints, imitation, advisor_bridge, etc.) has **zero SC2 imports** and is domain-agnostic. SC2 coupling concentrates in 8 modules: `bot`, `connection`, `observer`, `macro_manager`, `micro`, `scouting`, `commands/executor`, plus the hybrid `learning/environment` bridge. The `/improve-bot-advised` loop reinforces this: it treats SC2 as an opaque task — code + config go in, win/loss + stats come out. See [improve-bot-advised-architecture.md](improve-bot-advised-architecture.md).
 
 ## Purpose & Design
 
@@ -149,7 +149,7 @@ The cleanest boundary. Trainer, SB3, evaluator, promotion gate, rollback monitor
 
 **To swap:** Change `_FEATURE_SPEC` list and the two dim constants. The encode/decode functions and PPO policy adapt automatically; the database would need a schema migration.
 
-### 3. Reward rules (data/reward_rules.json)
+### 3. Reward rules (bots/v0/data/reward_rules.json)
 
 The `RewardCalculator` is a generic rule engine. 63 rules currently active. Rules reference field names from the state dict.
 
@@ -187,13 +187,13 @@ Direct `BotAI` API access.
 
 | File | Role in abstraction |
 |---|---|
-| `src/alpha4gate/learning/environment.py` | The bridge — domain-specific internals, generic interface |
-| `src/alpha4gate/learning/features.py` | Feature definition — change spec for new domain |
-| `src/alpha4gate/learning/rewards.py` | Rule engine — domain-agnostic, swap rules JSON |
-| `src/alpha4gate/observer.py` | State extraction — needs GameState protocol |
-| `src/alpha4gate/commands/executor.py` | Unit mapping — needs registry injection |
-| `src/alpha4gate/macro_manager.py` | Production — needs registry injection |
-| `src/alpha4gate/micro.py` | Target priority — needs registry injection |
-| `src/alpha4gate/scouting.py` | Threat assessment — needs registry injection |
-| `data/reward_rules.json` | Domain-specific reward definitions |
-| `data/hyperparams.json` | PPO config — may need tuning per domain |
+| `bots/v0/learning/environment.py` | The bridge — domain-specific internals, generic interface |
+| `bots/v0/learning/features.py` | Feature definition — change spec for new domain |
+| `bots/v0/learning/rewards.py` | Rule engine — domain-agnostic, swap rules JSON |
+| `bots/v0/observer.py` | State extraction — needs GameState protocol |
+| `bots/v0/commands/executor.py` | Unit mapping — needs registry injection |
+| `bots/v0/macro_manager.py` | Production — needs registry injection |
+| `bots/v0/micro.py` | Target priority — needs registry injection |
+| `bots/v0/scouting.py` | Threat assessment — needs registry injection |
+| `bots/v0/data/reward_rules.json` | Domain-specific reward definitions |
+| `bots/v0/data/hyperparams.json` | PPO config — may need tuning per domain |

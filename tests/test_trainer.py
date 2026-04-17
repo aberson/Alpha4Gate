@@ -7,10 +7,9 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-
-from alpha4gate.learning.database import TrainingDB
-from alpha4gate.learning.features import BASE_GAME_FEATURE_DIM
-from alpha4gate.learning.trainer import (
+from bots.v0.learning.database import TrainingDB
+from bots.v0.learning.features import BASE_GAME_FEATURE_DIM
+from bots.v0.learning.trainer import (
     TrainingOrchestrator,
     compute_adjusted_win_rate,
 )
@@ -120,8 +119,8 @@ class TestCycleTracking:
         assert orch.total_games == 0
         assert not orch.stopped
 
-    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._make_env")
-    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._init_or_resume_model")
+    @patch("bots.v0.learning.trainer.TrainingOrchestrator._make_env")
+    @patch("bots.v0.learning.trainer.TrainingOrchestrator._init_or_resume_model")
     def test_run_cycles(
         self, mock_init: MagicMock, mock_env: MagicMock, tmp_path: Path
     ) -> None:
@@ -150,8 +149,8 @@ class TestCycleTracking:
         for cr in result["cycle_results"]:
             assert cr["failed_games"] == 0
 
-    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._make_env")
-    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._init_or_resume_model")
+    @patch("bots.v0.learning.trainer.TrainingOrchestrator._make_env")
+    @patch("bots.v0.learning.trainer.TrainingOrchestrator._init_or_resume_model")
     def test_disk_guard_stops_run(
         self, mock_init: MagicMock, mock_env: MagicMock, tmp_path: Path
     ) -> None:
@@ -177,8 +176,8 @@ class TestCycleTracking:
 
 
 class TestBestCheckpoint:
-    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._make_env")
-    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._init_or_resume_model")
+    @patch("bots.v0.learning.trainer.TrainingOrchestrator._make_env")
+    @patch("bots.v0.learning.trainer.TrainingOrchestrator._init_or_resume_model")
     def test_trainer_never_marks_best(
         self, mock_init: MagicMock, mock_env: MagicMock, tmp_path: Path
     ) -> None:
@@ -194,14 +193,14 @@ class TestBestCheckpoint:
         )
         orch.run(n_cycles=3, games_per_cycle=1)
 
-        from alpha4gate.learning.checkpoints import get_best_name
+        from bots.v0.learning.checkpoints import get_best_name
 
         # Trainer no longer marks any checkpoint as best —
         # the promotion gate is responsible for that.
         assert get_best_name(tmp_path / "cp") is None
 
-    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._make_env")
-    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._init_or_resume_model")
+    @patch("bots.v0.learning.trainer.TrainingOrchestrator._make_env")
+    @patch("bots.v0.learning.trainer.TrainingOrchestrator._init_or_resume_model")
     def test_checkpoints_saved_without_best(
         self, mock_init: MagicMock, mock_env: MagicMock, tmp_path: Path
     ) -> None:
@@ -220,7 +219,7 @@ class TestBestCheckpoint:
         )
         orch.run(n_cycles=1, games_per_cycle=1)
 
-        from alpha4gate.learning.checkpoints import get_best_name, list_checkpoints
+        from bots.v0.learning.checkpoints import get_best_name, list_checkpoints
 
         # Checkpoint is saved but not marked as best
         assert get_best_name(tmp_path / "cp") is None
@@ -230,8 +229,8 @@ class TestBestCheckpoint:
 
 
 class TestCrashRecovery:
-    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._make_env")
-    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._init_or_resume_model")
+    @patch("bots.v0.learning.trainer.TrainingOrchestrator._make_env")
+    @patch("bots.v0.learning.trainer.TrainingOrchestrator._init_or_resume_model")
     def test_resume_flag(
         self, mock_init: MagicMock, mock_env: MagicMock, tmp_path: Path
     ) -> None:
@@ -258,7 +257,7 @@ class TestModelInitMatchesEnv:
     """
 
     def test_fresh_model_uses_sc2env_spaces(self, tmp_path: Path) -> None:
-        from alpha4gate.learning.environment import SC2Env
+        from bots.v0.learning.environment import SC2Env
 
         orch = TrainingOrchestrator(
             checkpoint_dir=str(tmp_path / "cp"),
@@ -281,8 +280,8 @@ class TestCrashedCycleHandling:
     model. The trainer reported the cycle as successful.
     """
 
-    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._make_env")
-    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._init_or_resume_model")
+    @patch("bots.v0.learning.trainer.TrainingOrchestrator._make_env")
+    @patch("bots.v0.learning.trainer.TrainingOrchestrator._init_or_resume_model")
     def test_crashed_cycle_records_status_and_skips_post_training(
         self, mock_init: MagicMock, mock_env: MagicMock, tmp_path: Path
     ) -> None:
@@ -320,7 +319,7 @@ class TestCrashedCycleHandling:
         assert orch.total_games == 0, "crashed cycles must not credit games"
 
         # No checkpoints written to disk
-        from alpha4gate.learning.checkpoints import list_checkpoints
+        from bots.v0.learning.checkpoints import list_checkpoints
 
         cps = list_checkpoints(tmp_path / "cp")
         assert cps == [], "crashed cycles must not save phantom checkpoints"
@@ -329,8 +328,8 @@ class TestCrashedCycleHandling:
         assert model.set_env.call_count == 2
         assert model.learn.call_count == 0
 
-    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._make_env")
-    @patch("alpha4gate.learning.trainer.TrainingOrchestrator._init_or_resume_model")
+    @patch("bots.v0.learning.trainer.TrainingOrchestrator._make_env")
+    @patch("bots.v0.learning.trainer.TrainingOrchestrator._init_or_resume_model")
     def test_mixed_success_and_crash_cycles(
         self, mock_init: MagicMock, mock_env: MagicMock, tmp_path: Path
     ) -> None:
@@ -362,7 +361,7 @@ class TestCrashedCycleHandling:
         assert "checkpoint" not in cycle_results[1]
 
         # Only one checkpoint written (from cycle 1)
-        from alpha4gate.learning.checkpoints import list_checkpoints
+        from bots.v0.learning.checkpoints import list_checkpoints
 
         cps = list_checkpoints(tmp_path / "cp")
         assert len(cps) == 1
@@ -451,18 +450,18 @@ class TestAdjustedWinRate:
 
         with (
             patch(
-                "alpha4gate.learning.trainer.TrainingOrchestrator._make_env",
+                "bots.v0.learning.trainer.TrainingOrchestrator._make_env",
                 return_value=fake_env,
             ),
             patch(
-                "alpha4gate.learning.trainer.TrainingOrchestrator._init_or_resume_model",
+                "bots.v0.learning.trainer.TrainingOrchestrator._init_or_resume_model",
                 return_value=_mock_model(),
             ),
             patch(
-                "alpha4gate.learning.database.TrainingDB",
+                "bots.v0.learning.database.TrainingDB",
                 return_value=fake_db,
             ),
-            caplog.at_level("ERROR", logger="alpha4gate.learning.trainer"),
+            caplog.at_level("ERROR", logger="bots.v0.learning.trainer"),
         ):
             orch = TrainingOrchestrator(
                 checkpoint_dir=str(tmp_path / "cp"),

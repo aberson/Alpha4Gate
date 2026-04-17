@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from alpha4gate.batch_runner import (
+from bots.v0.batch_runner import (
     GameRecord,
     StatsAggregates,
     append_stats_game,

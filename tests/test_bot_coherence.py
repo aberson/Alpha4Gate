@@ -8,11 +8,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from bots.v0.army_coherence import ArmyCoherenceManager
+from bots.v0.bot import Alpha4GateBot
+from bots.v0.decision_engine import GameSnapshot
 from sc2.ids.unit_typeid import UnitTypeId
-
-from alpha4gate.army_coherence import ArmyCoherenceManager
-from alpha4gate.bot import Alpha4GateBot
-from alpha4gate.decision_engine import GameSnapshot
 
 
 def _mock_unit(x: float = 0.0, y: float = 0.0) -> MagicMock:

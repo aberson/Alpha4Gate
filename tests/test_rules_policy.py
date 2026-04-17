@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 import numpy as np
-
-from alpha4gate.decision_engine import ACTION_TO_STATE, GameSnapshot, StrategicState
-from alpha4gate.learning.features import encode
-from alpha4gate.learning.rules_policy import rule_actions_for_batch
+from bots.v0.decision_engine import ACTION_TO_STATE, GameSnapshot, StrategicState
+from bots.v0.learning.features import encode
+from bots.v0.learning.rules_policy import rule_actions_for_batch
 
 
 def _obs(**overrides: object) -> np.ndarray:

@@ -21,12 +21,11 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-
-from alpha4gate.config import Settings
-from alpha4gate.learning.database import TrainingDB
-from alpha4gate.learning.environment import SC2Env
-from alpha4gate.learning.evaluator import ModelEvaluator
-from alpha4gate.learning.features import FEATURE_DIM
+from bots.v0.config import Settings
+from bots.v0.learning.database import TrainingDB
+from bots.v0.learning.environment import SC2Env
+from bots.v0.learning.evaluator import ModelEvaluator
+from bots.v0.learning.features import FEATURE_DIM
 
 
 def _make_settings(tmp_path: Path) -> Settings:

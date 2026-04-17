@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from alpha4gate.logger import GameLogger
+from bots.v0.logger import GameLogger
 
 
 def _sample_entry(game_step: int = 100, minerals: int = 350) -> dict:

@@ -5,14 +5,13 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
+from bots.v0.build_orders import BuildOrder, BuildStep
+from bots.v0.commands.executor import CommandExecutor, ExecutionResult
+from bots.v0.commands.primitives import CommandAction, CommandPrimitive, CommandSource
+from bots.v0.decision_engine import DecisionEngine, GameSnapshot, StrategicState
+from bots.v0.scouting import ScoutManager
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
-
-from alpha4gate.build_orders import BuildOrder, BuildStep
-from alpha4gate.commands.executor import CommandExecutor, ExecutionResult
-from alpha4gate.commands.primitives import CommandAction, CommandPrimitive, CommandSource
-from alpha4gate.decision_engine import DecisionEngine, GameSnapshot, StrategicState
-from alpha4gate.scouting import ScoutManager
 
 # ---------------------------------------------------------------------------
 # Helpers
