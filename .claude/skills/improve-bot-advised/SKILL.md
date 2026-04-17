@@ -61,6 +61,17 @@ After the batch completes, feed both the game logs AND the advisor's decision lo
 
 ## Phase 0: Bootstrap
 
+### 0.0 Run-start banner
+
+Print this banner at the start of every run (before any other output):
+
+```
+🔒 Sandbox active
+  I can edit:   bots/current/**
+  I cannot edit: src/orchestrator/, pyproject.toml, tests/, frontend/, scripts/
+  SC2 required for check_promotion() Elo validation
+```
+
 ### 0.1 Parse flags
 
 Parse all flags from the argument. Apply the flag resolution rules from the table above — never ask the user, always resolve automatically. Log any auto-downgrades or flag adjustments to `$LOGFILE`.
@@ -350,6 +361,27 @@ Use `--fail-threshold` (default 30%) as the primary gate:
 
 **Hard fail (always, regardless of threshold):** Quality gates broken, degenerate behavior, or crashes. These bypass the percentage threshold entirely.
 
+### 5.4 Cross-version Elo promotion gate
+
+Before committing, run cross-version Elo promotion gate:
+
+1. Resolve the current version name BEFORE any mutation:
+   ```bash
+   python -c "from pathlib import Path; print(Path('bots/current/current.txt').read_text().strip())"
+   ```
+2. Run promotion check (requires SC2):
+   ```bash
+   uv run python -c "
+   from src.orchestrator.ladder import check_promotion
+   result = check_promotion(candidate='current', parent='<prior_version>', games=20, elo_threshold=10.0)
+   print(f'Promoted: {result.promoted}, Reason: {result.reason}')
+   "
+   ```
+3. If `result.promoted` is True: `snapshot_current()` was already called by `check_promotion()`.
+   Proceed to commit with `ADVISED_AUTO=1`.
+4. If `result.promoted` is False: DO NOT commit. Log "iteration passed WR validation but
+   failed Elo gate: <result.reason>". Skip to next iteration.
+
 ### 5.3 On failure
 
 - **Training:** revert config files to pre-iteration state
@@ -378,10 +410,22 @@ Append to `$LOGFILE`:
 ### 6.2 Repo update
 
 If the iteration passed and produced changes:
+
+Before committing, set the sandbox enforcement env var:
+```bash
+export ADVISED_AUTO=1
+```
+
+Include `[advised-auto]` in the commit message to mark it as an autonomous commit:
 ```bash
 git add -A
-git commit -m "improve-bot-advised: <improvement title> (iteration N)"
+git commit -m "[advised-auto] improve-bot-advised: <improvement title> (iteration N)"
 git push origin master
+```
+
+After committing, unset the env var:
+```bash
+unset ADVISED_AUTO
 ```
 
 For significant milestones, run `/repo-update` to update README and docs.
@@ -739,6 +783,7 @@ All safety rails from `/improve-bot` apply here. Additionally:
 - **Config backups.** Before modifying `reward_rules.json` or `hyperparams.json`, copy to `*.pre-advised-$RUN_TS.json`. Revert from these on failure.
 - **No advisor during fast games.** In `--observe replay` mode, the advisor is OFF during gameplay. The rate limiter's 30-game-second interval would fire every few wall-clock seconds at max speed, overwhelming the Claude CLI subprocess.
 - **`--self-improve-code` gates all code changes.** Without this flag, only training-type improvements (config/reward changes) are attempted. The skill will not create branches, merge, or push code without explicit authorization.
+- **`--self-improve-code` path restriction.** When `--self-improve-code` is active, only files under `bots/current/` may be edited. Do not modify `src/orchestrator/`, `pyproject.toml`, `tests/`, `frontend/`, or `scripts/`. The pre-commit hook enforces this at commit time, but respect the boundary during editing as well — never open or write files outside `bots/current/` in dev-type improvements.
 - **Iteration context is advisory, not authoritative.** If the context says "scouting was fixed in iteration 2" but the current game data still shows no scouting, trust the data.
 - **Never kill SC2_x64.exe.** Only restart the Python daemon process if needed.
 - **Wall-clock discipline.** Check `ELAPSED` vs `BUDGET_SECONDS` at every phase boundary, not just Phase 7. If the budget is exceeded mid-phase, finish the current atomic operation (e.g., complete a running game) then stop cleanly.
