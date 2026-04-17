@@ -328,7 +328,7 @@ The CLI exposes this as `python scripts/ladder.py replay [--jsonl <path>]`.
 - **Depends on:** 4.1.
 
 ### Step 4.3: Cross-version promotion gate
-- **Status:** pending
+- **Status:** DONE (2026-04-17)
 - **Type:** code
 - **Problem:** Add to `src/orchestrator/ladder.py`:
   (a) `check_promotion(candidate: str, parent: str, games: int,

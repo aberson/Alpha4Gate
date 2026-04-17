@@ -23,7 +23,7 @@ from itertools import combinations
 from pathlib import Path
 from typing import Any
 
-from orchestrator.contracts import LadderEntry, SelfPlayRecord
+from orchestrator.contracts import LadderEntry, PromotionResult, SelfPlayRecord
 from orchestrator.registry import _repo_root, get_manifest
 
 _log = logging.getLogger(__name__)
@@ -34,6 +34,7 @@ DEFAULT_ELO = 1000.0
 __all__ = [
     "DEFAULT_ELO",
     "DEFAULT_K",
+    "check_promotion",
     "elo_expected",
     "elo_update",
     "get_top_n",
@@ -360,3 +361,94 @@ def ladder_replay(
 
     save_ladder(standings, h2h, ladder_path)
     return standings
+
+
+# ---------------------------------------------------------------------------
+# Cross-version promotion gate (Step 4.3)
+# ---------------------------------------------------------------------------
+
+
+def check_promotion(
+    candidate: str,
+    parent: str,
+    games: int,
+    map_name: str = "Simple64",
+    *,
+    elo_threshold: float = 10.0,
+    ladder_path: Path | None = None,
+) -> PromotionResult:
+    """Run a head-to-head evaluation and decide whether to promote.
+
+    Plays *games* self-play matches between *candidate* and *parent*,
+    computes Elo delta from a fresh (isolated) standing, and promotes
+    if ``elo_delta >= elo_threshold``.
+
+    When promoted, :func:`orchestrator.snapshot.snapshot_current` is called
+    to snapshot the current bot as a new version.
+
+    Parameters
+    ----------
+    candidate:
+        Version string for the candidate bot.
+    parent:
+        Version string for the parent bot.
+    games:
+        Number of self-play games to run.
+    map_name:
+        SC2 map name.
+    elo_threshold:
+        Minimum Elo gain required for promotion.
+    ladder_path:
+        Unused — reserved for future integration with the persistent
+        ladder file.
+
+    Returns
+    -------
+    A :class:`PromotionResult` summarising the gate outcome.
+    """
+    from orchestrator import selfplay
+
+    records = selfplay.run_batch(candidate, parent, games, map_name)
+
+    # Fresh isolated standings for just these two versions.
+    standings: dict[str, LadderEntry] = {}
+    h2h: dict[str, dict[str, dict[str, int]]] = {}
+
+    for rec in records:
+        update_elo(standings, h2h, rec)
+
+    candidate_elo = (
+        standings[candidate].elo if candidate in standings else DEFAULT_ELO
+    )
+    parent_elo = standings[parent].elo if parent in standings else DEFAULT_ELO
+    elo_delta = candidate_elo - parent_elo
+
+    promoted = elo_delta >= elo_threshold
+
+    if promoted:
+        reason = (
+            f"promoted: elo_delta={elo_delta:+.1f} >= "
+            f"threshold={elo_threshold:.1f} over {games} games"
+        )
+    else:
+        reason = (
+            f"not promoted: elo_delta={elo_delta:+.1f} < "
+            f"threshold={elo_threshold:.1f} over {games} games"
+        )
+
+    if promoted:
+        from orchestrator import snapshot
+
+        snapshot.snapshot_current()
+
+    _log.info("check_promotion: %s", reason)
+
+    return PromotionResult(
+        candidate=candidate,
+        parent=parent,
+        elo_delta=elo_delta,
+        games_played=games,
+        wr_vs_sc2=None,
+        promoted=promoted,
+        reason=reason,
+    )
