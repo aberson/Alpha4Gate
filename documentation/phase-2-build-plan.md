@@ -114,6 +114,7 @@ Disk cost is acceptable at our scale (single bot, single machine).
 - **Done when:** new tests pass, 916 existing tests still pass, mypy strict green, ruff green.
 
 ### Step 2.2: Implement `snapshot.py` — full-stack snapshot tool
+- **Status:** DONE (2026-04-16)
 - **Problem:** Fill `src/orchestrator/snapshot.py` with a `snapshot_current(name: str | None = None) -> Path` function. Reads `current.txt` to find the source version. Copies the source version dir (`bots/<source>/`) to `bots/<new_name>/` via `shutil.copytree`. If `name` is None, auto-increments from the highest existing `vN` to `vN+1`. Writes a new `VERSION` file with the new name. Creates a fresh `manifest.json`: `version` = new name, `parent` = source version, `git_sha` = current `git rev-parse HEAD`, `timestamp` = UTC ISO 8601, `elo` = parent's elo, `fingerprint` = parent's fingerprint, `best` = parent's best, `previous_best` = parent's previous_best. Updates `bots/current/current.txt` to point at the new version. Add `tests/test_snapshot.py` verifying: (a) snapshot produces a self-contained tree with correct VERSION, (b) manifest has correct parent + fingerprint, (c) current.txt updated to new version, (d) auto-increment naming works, (e) explicit name override works, (f) source version dir unchanged after snapshot, (g) error if current.txt points to nonexistent version.
 - **Issue:** #108
 - **Flags:** `--reviewers auto`
