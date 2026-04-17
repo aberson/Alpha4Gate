@@ -188,6 +188,12 @@ Phase A (validate PR) ── gate: ≥ baseline WR → merge
   data dir at `bots/v0/data/`. `bots/current/` MetaPathFinder alias.
   `src/orchestrator/` scaffolded with registry, contracts, stubs. 916
   tests import from `bots.v0.*`. `src/alpha4gate/` deleted.
+- **Phase 2 COMPLETE 2026-04-16** (tag `master-plan/2/final`):
+  `list_versions()` added to registry. Full-stack snapshot tool
+  (`snapshot_current()`) copies `bots/vN/` → `bots/vN+1/` with manifest
+  lineage, git SHA, fingerprints. CLI: `python -m orchestrator list/show`,
+  `scripts/snapshot_bot.py`. Gate verified: snapshot → boot → SC2 game.
+  943 tests, mypy strict (62 files).
 
 **Autonomous platform (from completed always-up Phases 1–4.5):**
 
@@ -454,7 +460,9 @@ this phase is merged.
 
 ---
 
-## Phase 2 — Registry + full-stack snapshot tool
+## Phase 2 — Registry + full-stack snapshot tool ✅
+
+**Status: COMPLETE** (tag `master-plan/2/final`, 2026-04-16). See `documentation/phase-2-build-plan.md` for step-by-step details.
 
 **Track:** Versioning. **Prerequisites:** Phase 1.
 
