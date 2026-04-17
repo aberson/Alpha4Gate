@@ -123,6 +123,7 @@ Disk cost is acceptable at our scale (single bot, single machine).
 - **Depends on:** 2.1.
 
 ### Step 2.3: Add registry CLI (`python -m orchestrator.registry`)
+- **Status:** DONE (2026-04-16)
 - **Problem:** Create `src/orchestrator/__main__.py` with argparse supporting two subcommands: `list` (calls `list_versions()`, prints one version per line) and `show <version>` (calls `get_manifest(version)`, prints manifest JSON). Exit 0 on success, exit 1 with error message on failure (e.g. version not found). Add tests to `tests/test_registry.py` (or a new `tests/test_registry_cli.py`): verify `list` output format, `show v0` outputs valid JSON with expected fields, `show v99` exits with error.
 - **Issue:** #108
 - **Flags:** `--reviewers auto`
