@@ -168,7 +168,7 @@ Phase A (validate PR) ── gate: ≥ baseline WR → merge
             └─ fail ──→ escalate. Options: shared-process self-play (shrinks plan), or drop self-play entirely and keep versioning for manual curation.
 ```
 
-## Baseline (as of 2026-04-16)
+## Baseline (as of 2026-04-17)
 
 **Model / training stack:**
 
@@ -194,6 +194,12 @@ Phase A (validate PR) ── gate: ≥ baseline WR → merge
   lineage, git SHA, fingerprints. CLI: `python -m orchestrator list/show`,
   `scripts/snapshot_bot.py`. Gate verified: snapshot → boot → SC2 game.
   943 tests, mypy strict (62 files).
+- **Phase 3 COMPLETE 2026-04-17** (tag `master-plan/3/final`):
+  Subprocess self-play batch runner in `src/orchestrator/selfplay.py`.
+  Port-collision patch absorbed from Phase 0 spike. Seat alternation,
+  crash/timeout handling, PFSP-lite opponent sampling. Results to
+  `data/selfplay_results.jsonl`. CLI: `scripts/selfplay.py` (head-to-head
+  + PFSP modes). Gate: 4-game live batch PASS. 967 tests.
 
 **Autonomous platform (from completed always-up Phases 1–4.5):**
 
@@ -215,7 +221,7 @@ Phase A (validate PR) ── gate: ≥ baseline WR → merge
   curriculum/advised-run control.
 - 48 reward rules in `data/reward_rules.json` (only affect PPO under
   `--decision-mode hybrid`, not rule-based default play).
-- **916 Python unit tests + 126 frontend vitest tests passing.**
+- **967 Python unit tests + 126 frontend vitest tests passing.**
 - Four `/improve-bot-advised` runs completed; run-4 code improvements
   landed (anti-float expansion override, warp-in forward pylon
   selection, bot wins 100% at difficulty 3).
