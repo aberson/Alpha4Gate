@@ -35,10 +35,10 @@ here because they operate on different things.
                    ┌───────────────────────────────┐
                    │   Transparency Dashboard      │
                    │                               │
-                   │  9 tabs: Live, Stats,         │
+                   │  10 tabs: Live, Stats,        │
                    │  Decisions, Training, Loop,   │
                    │  Advisor, Improvements,       │
-                   │  Processes, Alerts            │
+                   │  Processes, Alerts, Ladder    │
                    └───────────────────────────────┘
 ```
 
@@ -85,7 +85,7 @@ here because they operate on different things.
 
 | Page | Description |
 |------|-------------|
-| [Frontend Dashboard](frontend.md) | 9 tabs, React components, WebSocket protocol, poll cadences |
+| [Frontend Dashboard](frontend.md) | 10 tabs, React components, WebSocket protocol, poll cadences |
 | [Domain Coupling](domain-coupling.md) | What's SC2-specific vs domain-agnostic |
 | [Testing](testing.md) | 916 unit tests, SC2 integration tests, coverage map |
 

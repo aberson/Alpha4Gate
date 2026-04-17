@@ -3,8 +3,8 @@
 React SPA for live game observation, training metrics, command input, and autonomous
 loop transparency.
 
-> **At a glance:** 9-tab SPA (Live, Stats, Decisions, Training, Loop,
-> Advisor, Improvements, Processes, Alerts) built with React + TypeScript + Vite. Live game data via
+> **At a glance:** 10-tab SPA (Live, Stats, Decisions, Training, Loop,
+> Advisor, Improvements, Processes, Alerts, Ladder) built with React + TypeScript + Vite. Live game data via
 > WebSocket (real-time). Training and loop metrics via REST polling (5s, with exceptions below). Seven custom
 > hooks handle WebSocket connections, API calls, and client-side alerting. All frontend
 > code is domain-agnostic — it renders whatever JSON the backend sends. Unit tests run
@@ -27,6 +27,7 @@ The dashboard provides transparency into what the bot is doing and how it's perf
 | **Improvements** | AdvisedImprovements + RecentImprovements + RewardTrends | `/api/improvements` + `/api/training/promotions/history` + `/api/training/reward-trends` | 5-10s poll | COMMIT + TRAIN |
 | **Processes** | ProcessMonitor | `/api/processes` | 5s poll | Cross-cutting (liveness) |
 | **Alerts** | AlertsPanel (+ AlertToast overlay) | `useAlerts` hook (derives from `/api/training/*` polls) | 5s poll | Cross-cutting |
+| **Ladder** | LadderTab | `/api/ladder` (reads `data/bot_ladder.json`) | 10s poll | Cross-cutting (Elo standings) |
 
 The Advisor tab is the single source of truth for outer-loop state — it reads `bots/v0/data/advised_run_state.json` via `/api/advised/state` and writes `bots/v0/data/advised_run_control.json` via `/api/advised/control`.
 
@@ -174,6 +175,7 @@ as `*.test.tsx` / `*.test.ts`. Run with `npm run test:run`.
 | `frontend/src/components/AlertsPanel.tsx` | Full alert history + filter + ack |
 | `frontend/src/components/AdvisedControlPanel.tsx` | Advisor tab: live status, loop controls, hints, reward injection |
 | `frontend/src/components/ConnectionStatus.tsx` | Header connection dot + advised-run badge |
+| `frontend/src/components/LadderTab.tsx` | Elo standings table + head-to-head grid (Phase 4) |
 | `frontend/src/components/StaleDataBanner.tsx` | Reusable stale-data warning banner |
 | `frontend/src/hooks/useWebSocket.ts` | Generic WS hook |
 | `frontend/src/hooks/useGameState.ts` | Game state WS hook |
