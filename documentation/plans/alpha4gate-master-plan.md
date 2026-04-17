@@ -991,6 +991,88 @@ transformer version. Prior stacks untouched.
 
 ---
 
+## Phase G — Multi-race support (Zerg, then Terran)
+
+**Track:** Capability. **Status:** Future. **Prerequisites:** Phase 6
+operational (the autonomous loop works end-to-end for Protoss first).
+
+**Goal:** Extend the bot from Protoss-only to all three SC2 races. Each
+race is a separate `bots/` version line sharing infrastructure but with
+its own gameplay code.
+
+This is a large effort — the gameplay layer (macro, micro, production,
+abilities, build orders, reward rules, feature encoding) is deeply
+Protoss-specific today. The architecture (decision engine, command system,
+PPO pipeline, dashboard, ladder, sandbox) is already race-agnostic.
+
+### Phased approach
+
+**Phase G.1 — Race interface extraction.** Before adding new races,
+extract a race-agnostic interface from the Protoss code:
+- `RaceConfig`: unit roster, production tree, ability set, macro mechanic
+  (Chronoboost vs Inject vs MULE), worker type, supply structure
+- `ProductionAdapter`: abstract over Warp Gate vs Larva vs Add-On
+- `MicroAdapter`: abstract over race-specific abilities
+- `FeatureSpec`: race-parameterized unit-type slots
+- `RewardTemplate`: race-parameterized reward rules
+- Refactor `bots/v0/` (Protoss) to use these interfaces — no behavior
+  change, just structural extraction. All 1020+ tests must still pass.
+
+**Phase G.2 — Zerg.** First new race (most different from Protoss —
+validates the interface deeply):
+- `bots/zerg_v0/`: Larva/Inject economy, Creep spread, Overlord supply,
+  morph-based production (Roach, Hydra, Lurker, Mutalisk, Corruptor,
+  Brood Lord, Viper, Infestor, Ultralisk, Baneling, Zergling)
+- Zerg-specific micro: Bile, Fungal, Burrow, Abduct
+- Zerg build orders (hatch-first, pool-first, 12-pool)
+- Zerg reward rules (~40 rules, adapted from Protoss patterns)
+- Zerg feature encoding (unit-type slots, larva count, inject timers)
+- Train from scratch, promote via Elo ladder (vs SC2 AI, not vs Protoss)
+
+**Phase G.3 — Terran.** Second new race:
+- `bots/terran_v0/`: SCV economy, MULEs, Supply Depot walls, Add-On
+  production (Reactor/Tech Lab), Siege mode, Stim, Medivac healing
+- Terran-specific micro: Siege/Unsiege, Stim, Snipe, EMP, Nuke
+- Terran build orders (1-1-1, 2-1-1, mech, bio)
+- Terran reward rules and feature encoding
+- Train from scratch, promote via Elo ladder
+
+**Phase G.4 — Cross-race ladder.** Once all three races have promoted
+versions, enable cross-race self-play in the ladder. Each race's version
+line competes within-race for promotion; cross-race matches are
+informational (Elo tracked separately).
+
+### Effort estimate
+
+| Sub-phase | Estimate |
+|-----------|----------|
+| G.1 (interface extraction) | 1–2 weeks |
+| G.2 (Zerg) | 3–4 weeks |
+| G.3 (Terran) | 2–3 weeks (interface proven) |
+| G.4 (cross-race ladder) | 2–3 days |
+| **Total** | **~7–10 weeks** |
+
+### Gate
+
+Each sub-phase gates independently:
+- G.1: All existing Protoss tests pass, interface coverage for 3 races
+- G.2: Zerg wins ≥50% at difficulty 3 over 20 games
+- G.3: Terran wins ≥50% at difficulty 3 over 20 games
+- G.4: Cross-race Elo ladder produces stable rankings
+
+### Kill criterion
+
+G.1 interface extraction proves too invasive (breaks >5% of tests or
+requires >500 lines of adapter code). Indicates the gameplay layer is
+more tightly coupled than expected — defer and revisit after more
+capability phases mature the Protoss codebase.
+
+### Rollback
+
+Each race is its own `bots/` directory — delete and ladder is unaffected.
+
+---
+
 ## Compute target
 
 Single Windows 11 box, CPU-only PyTorch (no CUDA). Phase F adds load —
@@ -1017,6 +1099,7 @@ signal. GPU support explicitly out of scope.
 | **+ 20% integration buffer** | +0.7 w | +1.3 w | +2.2 w |
 | **Total (excl. F)** | **~4 w** | **~7–8 w** | **~12–13 w** |
 | **+ F if chased** | +1.5 w | +2 w | +3 w |
+| **+ G (multi-race)** | +6 w | +8–10 w | +14 w |
 
 ## What's NOT in this plan (deliberately)
 
@@ -1039,7 +1122,7 @@ signal. GPU support explicitly out of scope.
   version genuinely needs different deps, that's an
   `advised-proposed-substrate` PR.
 - **Multi-map ladders.** Scoped to Simple64 for now.
-- **Race-specific bot versioning.** Protoss-only.
+- **~~Race-specific bot versioning.~~** Moved to Phase G (Zerg first, then Terran).
 - **Human-vs-bot interactive play.**
 - **Cross-version feature-spec or action-space invariants.** Each
   `bots/vN/` is an independent stack; no global append-only rule.
