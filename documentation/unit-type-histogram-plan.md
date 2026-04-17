@@ -162,6 +162,7 @@ to work without modification. Only `bot.py` actively populates them.
 - **Produces:** Extended `test_features_v2.py` with diagnostic fixtures and migration smoke test
 - **Done when:** All tests pass, migration smoke test confirms old→new column compatibility
 - **Depends on:** Step 3
+- **Status:** DONE (2026-04-17)
 
 ### Manual section — `/build-phase` halts here, operator takes over
 
