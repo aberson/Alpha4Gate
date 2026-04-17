@@ -106,6 +106,7 @@ Disk cost is acceptable at our scale (single bot, single machine).
 ## 6. Build steps
 
 ### Step 2.1: Add `list_versions()` to registry + tests
+- **Status:** DONE (2026-04-16)
 - **Problem:** Add `list_versions() -> list[str]` to `src/orchestrator/registry.py`. Scans `bots/` for directories containing a `VERSION` file. Returns sorted list of version strings (e.g. `["v0"]`). Does NOT include `current/` or dirs without `VERSION`. Add tests to `tests/test_registry.py`: happy path with 1 version, multiple versions, empty (no versions), ignores dirs without VERSION file.
 - **Issue:** #108
 - **Flags:** `--reviewers auto`

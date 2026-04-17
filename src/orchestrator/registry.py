@@ -1,7 +1,9 @@
 """Version discovery + per-version data-path resolution.
 
-Public surface (Step 1.7):
+Public surface:
 
+- :func:`list_versions` — enumerate ``bots/v*/`` directories that contain a
+  ``VERSION`` file; returns a sorted list of version strings.
 - :func:`current_version` — read ``bots/current/current.txt`` and return the
   active version string (e.g. ``"v0"``).
 - :func:`get_version_dir` — map a version name to its ``bots/<v>/`` directory.
@@ -33,6 +35,7 @@ __all__ = [
     "get_data_dir",
     "get_manifest",
     "get_version_dir",
+    "list_versions",
     "resolve_data_path",
 ]
 
@@ -47,6 +50,27 @@ def _repo_root() -> Path:
     to redirect every public function at a temporary tree in one call.
     """
     return Path(__file__).resolve().parent.parent.parent
+
+
+def list_versions() -> list[str]:
+    """Return sorted version strings for all ``bots/vN/`` directories.
+
+    A directory qualifies as a version if it contains a ``VERSION`` file.
+    ``bots/current/`` and directories without ``VERSION`` are excluded.
+    """
+    bots_dir = _repo_root() / "bots"
+    if not bots_dir.is_dir():
+        return []
+    versions: list[str] = []
+    for child in bots_dir.iterdir():
+        if not child.is_dir():
+            continue
+        if child.name == "current":
+            continue
+        if (child / "VERSION").is_file():
+            versions.append(child.name)
+    versions.sort()
+    return versions
 
 
 def current_version() -> str:
