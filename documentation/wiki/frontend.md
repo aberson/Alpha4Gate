@@ -28,7 +28,7 @@ The dashboard provides transparency into what the bot is doing and how it's perf
 | **Processes** | ProcessMonitor | `/api/processes` | 5s poll | Cross-cutting (liveness) |
 | **Alerts** | AlertsPanel (+ AlertToast overlay) | `useAlerts` hook (derives from `/api/training/*` polls) | 5s poll | Cross-cutting |
 
-The Advisor tab is the single source of truth for outer-loop state — it reads `data/advised_run_state.json` via `/api/advised/state` and writes `data/advised_run_control.json` via `/api/advised/control`.
+The Advisor tab is the single source of truth for outer-loop state — it reads `bots/v0/data/advised_run_state.json` via `/api/advised/state` and writes `bots/v0/data/advised_run_control.json` via `/api/advised/control`.
 
 ### What each component shows
 

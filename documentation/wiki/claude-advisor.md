@@ -73,4 +73,4 @@ parser.
 
 Default model: `sonnet`. The subprocess is killed on exception.
 
-**File:** `src/alpha4gate/claude_advisor.py`
+**File:** `bots/v0/claude_advisor.py`

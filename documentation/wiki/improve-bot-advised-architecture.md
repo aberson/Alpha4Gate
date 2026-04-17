@@ -267,11 +267,11 @@ They operate purely on code, config, and data.
 |---|---|---|
 | Outer loop | `.claude/skills/improve-bot-advised/SKILL.md` | Strategic orchestrator, zero-input |
 | Inner dev loop | `.claude/skills/improve-bot/SKILL.md` | Branch, build, gate, merge, rollback |
-| Game runner | `src/alpha4gate/runner.py` | CLI entry point, launches games |
-| Claude Advisor | `src/alpha4gate/claude_advisor.py` | Real-time advice during live games |
-| Training Daemon | `src/alpha4gate/learning/daemon.py` | Background PPO training trigger |
-| Training Loop | `src/alpha4gate/learning/trainer.py` | PPO cycles: game -> learn -> save |
-| Evaluator | `src/alpha4gate/learning/evaluator.py` | Deterministic eval (no gradients) |
-| Promotion Gate | `src/alpha4gate/learning/promotion.py` | Compare checkpoints, promote if better |
-| Rollback Monitor | `src/alpha4gate/learning/rollback.py` | Detect regression, revert |
+| Game runner | `bots/v0/runner.py` | CLI entry point, launches games |
+| Claude Advisor | `bots/v0/claude_advisor.py` | Real-time advice during live games |
+| Training Daemon | `bots/v0/learning/daemon.py` | Background PPO training trigger |
+| Training Loop | `bots/v0/learning/trainer.py` | PPO cycles: game -> learn -> save |
+| Evaluator | `bots/v0/learning/evaluator.py` | Deterministic eval (no gradients) |
+| Promotion Gate | `bots/v0/learning/promotion.py` | Compare checkpoints, promote if better |
+| Rollback Monitor | `bots/v0/learning/rollback.py` | Detect regression, revert |
 | Strategy Reference | `documentation/protoss_sc2_guiding_principles.md` | What Claude judges games against |

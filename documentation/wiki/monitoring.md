@@ -73,12 +73,12 @@ Each loop phase has a primary dashboard tab, a persistent evidence file, and cha
 | Phase | Primary tab | Persistent evidence | Run-log marker |
 |---|---|---|---|
 | **THE TASK** (SC2) | Live | `logs/game_*.jsonl`, `replays/*.SC2Replay` | `Game X: Result.Victory (Xs)` |
-| **PLAY** | Stats, Decisions | `data/training.db`, `data/stats.json`, `data/decision_audit.json` | `=== ITERATION N BATCH START/COMPLETE ===` |
+| **PLAY** | Stats, Decisions | `bots/v0/data/training.db`, `data/stats.json`, `data/decision_audit.json` | `=== ITERATION N BATCH START/COMPLETE ===` |
 | **THINK** | Advisor (`current_improvement`) | `data/decision_audit.json`, skill-scoped prompt in log | "## Iteration N Summary — selected improvement" |
 | **FIX** | Advisor | `data/reward_rules.pre-advised-<RUN_TS>.json` backup, feature branch | "applying change: <title>" |
 | **TEST** | Stats (validation rows) | validation games in `training.db` | `=== ITER N VALIDATION START/COMPLETE ===` |
 | **COMMIT** | Improvements | `data/improvement_log.json`, git master, GitHub issue | `improve-bot-advised: <title> (iteration N)` commit |
-| **TRAIN** | Training, Loop, Improvements | `data/promotion_history.json`, `data/checkpoints/manifest.json` | "daemon cycle N complete" |
+| **TRAIN** | Training, Loop, Improvements | `bots/v0/data/promotion_history.json`, `bots/v0/data/checkpoints/manifest.json` | "daemon cycle N complete" |
 
 ### THE TASK — "is the game actually running?"
 
@@ -157,9 +157,9 @@ new games ──> PPO gradient update ──> new checkpoint
 
 - **Training tab** (`TrainingDashboard.tsx`, 5s poll) — current checkpoint, total games, total transitions, DB size, rolling win rates (last-10/50/100/overall).
 - **Loop tab** (`LoopStatus.tsx`) — daemon state (`idle | checking | training | evaluating`), `runs_completed`, `last_run`, `next_check`, `last_error`, `last_result`.
-- **Improvements → Recent Improvements** (`RecentImprovements.tsx`) — reads `data/promotion_history.json` and classifies each entry as `promotion | rollback | rejected`. Fields per entry: `new_checkpoint, old_best, new_win_rate, old_win_rate, delta, reason, reason_code, difficulty`.
-- **Improvements → Reward Trends** (`RewardTrends.tsx`) — per-rule contribution over the last N games, sourced from `data/reward_logs/game_*.jsonl` via `/api/training/reward-trends`.
-- **Checkpoint list** (`CheckpointList.tsx`) — table of all saved checkpoints from `data/checkpoints/manifest.json`, with `best` indicator.
+- **Improvements → Recent Improvements** (`RecentImprovements.tsx`) — reads `bots/v0/data/promotion_history.json` and classifies each entry as `promotion | rollback | rejected`. Fields per entry: `new_checkpoint, old_best, new_win_rate, old_win_rate, delta, reason, reason_code, difficulty`.
+- **Improvements → Reward Trends** (`RewardTrends.tsx`) — per-rule contribution over the last N games, sourced from `bots/v0/data/reward_logs/game_*.jsonl` via `/api/training/reward-trends`.
+- **Checkpoint list** (`CheckpointList.tsx`) — table of all saved checkpoints from `bots/v0/data/checkpoints/manifest.json`, with `best` indicator.
 
 ---
 
@@ -188,7 +188,7 @@ Client-side rule engine in `frontend/src/lib/alertRules.ts`, polled by `useAlert
 | `ruleDiskUsageHigh` | warning | DB + reward logs > 50 GB | storage |
 | `ruleBackendErrors` | error | `error_count_since_start > 0`; hashed on latest ts so new errors re-fire | cross-cutting |
 
-Backed by `ErrorLogBuffer` (50-entry ring in `src/alpha4gate/error_log.py`), surfaced via `/api/training/status → recent_errors[]`. Synthetic test: `POST /api/debug/raise_error` (gated by `DEBUG_ENDPOINTS=1`) — use before a multi-hour run to confirm the alerts pipe works end-to-end.
+Backed by `ErrorLogBuffer` (50-entry ring in `bots/v0/error_log.py`), surfaced via `/api/training/status → recent_errors[]`. Synthetic test: `POST /api/debug/raise_error` (gated by `DEBUG_ENDPOINTS=1`) — use before a multi-hour run to confirm the alerts pipe works end-to-end.
 
 ### 3. Fail streak
 
@@ -209,7 +209,7 @@ Backed by `ErrorLogBuffer` (50-entry ring in `src/alpha4gate/error_log.py`), sur
 | Change games/cycle | Advisor tab numeric input → `PUT /api/advised/control` | Applied at next PLAY |
 | Change difficulty | Advisor tab → control file | Applied at next PLAY |
 | Inject a hint | Advisor tab text input → control file `user_hint` | Appended to the next THINK prompt |
-| Add a reward rule | Advisor tab → control file `reward_rule_add` | Appended to `data/reward_rules.json` before next PLAY |
+| Add a reward rule | Advisor tab → control file `reward_rule_add` | Appended to `bots/v0/data/reward_rules.json` before next PLAY |
 | Force-kill daemon | Processes tab → `POST /api/kill-daemons` | Targeted daemon shutdown |
 | Restart backend | Processes tab → `POST /api/restart` | Backend lifecycle bounce |
 
@@ -224,12 +224,12 @@ Backed by `ErrorLogBuffer` (50-entry ring in `src/alpha4gate/error_log.py`), sur
 | Run narrative | `documentation/soak-test-runs/advised-YYYY-MM-DD.md` | Permanent | All |
 | Per-iteration record | `data/improvement_log.json` | Permanent | COMMIT |
 | Per-game snapshots | `logs/game_*.jsonl` | Permanent (one file per game) | THE TASK |
-| Per-game rewards | `data/reward_logs/game_*.jsonl` | Permanent | PLAY, TEST, TRAIN |
-| Game results + transitions | `data/training.db` | Permanent | PLAY, TEST, TRAIN |
+| Per-game rewards | `bots/v0/data/reward_logs/game_*.jsonl` | Permanent | PLAY, TEST, TRAIN |
+| Game results + transitions | `bots/v0/data/training.db` | Permanent | PLAY, TEST, TRAIN |
 | Batch aggregates | `data/stats.json` | Permanent | PLAY, TEST |
 | Decision log | `data/decision_audit.json` | Current session; cleared between iterations | THINK |
-| Promotion/rollback events | `data/promotion_history.json` | Permanent | TRAIN |
-| Checkpoint manifest | `data/checkpoints/manifest.json` | Permanent | TRAIN |
+| Promotion/rollback events | `bots/v0/data/promotion_history.json` | Permanent | TRAIN |
+| Checkpoint manifest | `bots/v0/data/checkpoints/manifest.json` | Permanent | TRAIN |
 | Config backups | `data/{reward_rules,hyperparams,daemon_config}.pre-advised-<RUN_TS>.json` | Per run (restore points) | FIX |
 | Git tags | `advised/run/<RUN_TS>/{baseline,final}` | Permanent | Bootstrap + Phase 8 |
 | GitHub issues | Umbrella + per-iteration, labeled | Permanent | COMMIT, Phase 8 |
@@ -296,14 +296,14 @@ Three threads, two queues. All cross-thread communication uses `queue.Queue` (th
 
 | File | Purpose |
 |------|---------|
-| `src/alpha4gate/observer.py` | Extract game state dict from BotAI |
-| `src/alpha4gate/logger.py` | GameLogger — background thread JSONL writer |
-| `src/alpha4gate/web_socket.py` | ConnectionManager + broadcast/command queues |
-| `src/alpha4gate/api.py` | FastAPI app — REST endpoints, WS handlers, broadcast loop |
-| `src/alpha4gate/process_registry.py` | Process/port/state-file inventory for Processes tab |
-| `src/alpha4gate/error_log.py` | 50-entry error ring buffer surfaced via `/api/training/status` |
-| `src/alpha4gate/learning/promotion.py` | PromotionLogger writes `promotion_history.json` |
-| `src/alpha4gate/learning/rollback.py` | RollbackMonitor appends to same log |
+| `bots/v0/observer.py` | Extract game state dict from BotAI |
+| `bots/v0/logger.py` | GameLogger — background thread JSONL writer |
+| `bots/v0/web_socket.py` | ConnectionManager + broadcast/command queues |
+| `bots/v0/api.py` | FastAPI app — REST endpoints, WS handlers, broadcast loop |
+| `bots/v0/process_registry.py` | Process/port/state-file inventory for Processes tab |
+| `bots/v0/error_log.py` | 50-entry error ring buffer surfaced via `/api/training/status` |
+| `bots/v0/learning/promotion.py` | PromotionLogger writes `promotion_history.json` |
+| `bots/v0/learning/rollback.py` | RollbackMonitor appends to same log |
 | `.claude/skills/improve-bot-advised/SKILL.md` | Writes state file at each phase boundary |
 | `frontend/src/lib/alertRules.ts` | Alert rule definitions |
 | `frontend/src/hooks/useAdvisedRun.ts` | Advisor tab state + control hook |
@@ -313,4 +313,4 @@ Three threads, two queues. All cross-thread communication uses `queue.Queue` (th
 - **Decision data is ephemeral across sessions.** Action probabilities from the neural engine exist only in memory (`_last_probabilities`); no persistence.
 - **No email/push alerting.** All alerts are dashboard-only; a run failing overnight is visible on the GitHub umbrella issue only after Phase 8 completes.
 - **`/ws/decisions` is unused.** The endpoint accepts connections but no code broadcasts to it; decisions are served via REST instead.
-- **`reward-log` flag is batch-only.** `--train rl` creates its own RewardCalculator without a log path — silently ignored. `data/reward_logs/` is populated by the advised loop directly, not the flag.
+- **`reward-log` flag is batch-only.** `--train rl` creates its own RewardCalculator without a log path — silently ignored. `bots/v0/data/reward_logs/` is populated by the advised loop directly, not the flag.

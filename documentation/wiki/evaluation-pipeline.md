@@ -2,7 +2,7 @@
 
 How the bot knows if it's getting better.
 
-> **At a glance:** Four evaluation layers at four timescales — per-step shaped rewards (63 JSON rules + base rewards), per-game win/loss (SQLite), cross-game rolling win rates, and per-checkpoint deterministic eval via `ModelEvaluator`. The `PromotionManager` uses the per-checkpoint eval as its promotion gate (see [promotions.md](promotions.md)). Reward logging is always-on per-game in `data/reward_logs/`.
+> **At a glance:** Four evaluation layers at four timescales — per-step shaped rewards (63 JSON rules + base rewards), per-game win/loss (SQLite), cross-game rolling win rates, and per-checkpoint deterministic eval via `ModelEvaluator`. The `PromotionManager` uses the per-checkpoint eval as its promotion gate (see [promotions.md](promotions.md)). Reward logging is always-on per-game in `bots/v0/data/reward_logs/`.
 
 This doc covers "how do we measure improvement." See [training-pipeline.md](training-pipeline.md) for what drives the improvement, and [improve-bot-advised-architecture.md](improve-bot-advised-architecture.md) for how the outer loop's TEST phase uses these measurements to validate a fix.
 
@@ -13,11 +13,11 @@ This doc covers "how do we measure improvement." See [training-pipeline.md](trai
 | Question | Timescale | Mechanism | Used by |
 |---|---|---|---|
 | Did this step help? | Per-step (every 22 game ticks) | `RewardCalculator` — 63 shaped rules + base rewards | PPO training (inner-loop TRAIN) |
-| Did we win? | Per-game | Win/loss row in `data/training.db` | All higher-timescale signals |
+| Did we win? | Per-game | Win/loss row in `bots/v0/data/training.db` | All higher-timescale signals |
 | Is the model's WR trending? | Cross-game | `get_recent_win_rate(N)` over last N games | Curriculum auto-advancement; TrainingDashboard rolling windows |
 | Is this checkpoint better than the last? | Per-checkpoint | `ModelEvaluator` — deterministic inference-only eval over 20 games | `PromotionManager`, `RollbackMonitor`, TEST-phase validation |
 
-All four write to the same `data/training.db`. `ModelEvaluator` uses a distinct `eval_*` game-id prefix so its games don't pollute training-WR windows.
+All four write to the same `bots/v0/data/training.db`. `ModelEvaluator` uses a distinct `eval_*` game-id prefix so its games don't pollute training-WR windows.
 
 ---
 
@@ -38,7 +38,7 @@ state dict ──> _add_derived_fields() ──> evaluate each active rule
                                          + JSONL logging (per-game)
 ```
 
-### Rule schema (`data/reward_rules.json`)
+### Rule schema (`bots/v0/data/reward_rules.json`)
 
 ```json
 {
@@ -78,7 +78,7 @@ state dict ──> _add_derived_fields() ──> evaluate each active rule
 
 ### Per-game reward logging (always on)
 
-`RewardCalculator` is constructed with `log_dir=data/reward_logs/`. Before each game, `open_game_log(game_id)` opens `data/reward_logs/game_<id>.jsonl` and writes one line per step:
+`RewardCalculator` is constructed with `log_dir=bots/v0/data/reward_logs/`. Before each game, `open_game_log(game_id)` opens `bots/v0/data/reward_logs/game_<id>.jsonl` and writes one line per step:
 
 ```json
 {"game_time": 150.0, "total_reward": 0.581, "fired_rules": [{"id": "mineral-floating", "reward": -0.02}], "is_terminal": false, "result": null}
@@ -147,7 +147,7 @@ Every game gets a unique ID of the shape `{base}_{uuid4.hex[:12]}`:
 
 ## Database Schema
 
-SQLite at `data/training.db`. Two tables:
+SQLite at `bots/v0/data/training.db`. Two tables:
 
 ### `games` — one row per completed game
 
@@ -223,7 +223,7 @@ Features 10–16 are SC2/Protoss-specific (domain coupling). Features 17–23 le
 
 | Store | Written by | Used for |
 |---|---|---|
-| `data/training.db` | `TrainingDB.store_game()` during training + eval | Win-rate queries, curriculum, PPO batches, ModelEvaluator |
+| `bots/v0/data/training.db` | `TrainingDB.store_game()` during training + eval | Win-rate queries, curriculum, PPO batches, ModelEvaluator |
 | `data/stats.json` | `batch_runner.save_stats()` during `--batch` runs | Cross-game aggregates, Stats tab |
 
 These are **not synced**. A game played during RL training/eval goes into SQLite only. A game played via `--batch` goes into stats.json only. The Stats tab reads both: per-difficulty aggregates from `stats.json`, per-game browsable history from `training.db`.
@@ -235,7 +235,7 @@ These are **not synced**. A game played during RL training/eval goes into SQLite
 | Script | Input | Output |
 |---|---|---|
 | `scripts/evaluate_model.py` | `--mode {rules,neural,hybrid} --games N --difficulty D` | Stdout: win/loss count, avg duration |
-| `scripts/analyze_rewards.py` | `data/reward_logs/game_*.jsonl` | Stdout: per-rule fire rate, total contribution, dead/noisy rule warnings |
+| `scripts/analyze_rewards.py` | `bots/v0/data/reward_logs/game_*.jsonl` | Stdout: per-rule fire rate, total contribution, dead/noisy rule warnings |
 
 Since reward logging is now always-on, `analyze_rewards.py` always has data to read.
 
@@ -245,15 +245,15 @@ Since reward logging is now always-on, `analyze_rewards.py` always has data to r
 
 | File | Purpose |
 |---|---|
-| `src/alpha4gate/learning/rewards.py` | `RewardCalculator`, `RewardRule`, derived fields |
-| `src/alpha4gate/learning/database.py` | `TrainingDB`, schema, queries |
-| `src/alpha4gate/learning/features.py` | `encode` / `decode`, `FEATURE_DIM=24`, `BASE_GAME_FEATURE_DIM=17` |
-| `src/alpha4gate/learning/evaluator.py` | `ModelEvaluator`, `EvalResult`, `ComparisonResult`, job system |
-| `src/alpha4gate/learning/reward_aggregator.py` | Per-rule trend aggregation for Reward Trends tab |
-| `src/alpha4gate/batch_runner.py` | `GameRecord`, `StatsAggregates`, `compute_aggregates` |
-| `data/reward_rules.json` | 63 active reward rule definitions |
-| `data/reward_logs/` | Per-game reward JSONL files |
-| `data/training.db` | SQLite database |
+| `bots/v0/learning/rewards.py` | `RewardCalculator`, `RewardRule`, derived fields |
+| `bots/v0/learning/database.py` | `TrainingDB`, schema, queries |
+| `bots/v0/learning/features.py` | `encode` / `decode`, `FEATURE_DIM=24`, `BASE_GAME_FEATURE_DIM=17` |
+| `bots/v0/learning/evaluator.py` | `ModelEvaluator`, `EvalResult`, `ComparisonResult`, job system |
+| `bots/v0/learning/reward_aggregator.py` | Per-rule trend aggregation for Reward Trends tab |
+| `bots/v0/batch_runner.py` | `GameRecord`, `StatsAggregates`, `compute_aggregates` |
+| `bots/v0/data/reward_rules.json` | 63 active reward rule definitions |
+| `bots/v0/data/reward_logs/` | Per-game reward JSONL files |
+| `bots/v0/data/training.db` | SQLite database |
 | `data/stats.json` | Cross-game aggregates |
 | `scripts/evaluate_model.py` | Manual model evaluation |
 | `scripts/analyze_rewards.py` | Post-hoc reward analysis |

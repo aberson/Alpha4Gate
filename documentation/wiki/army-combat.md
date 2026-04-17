@@ -94,6 +94,6 @@ trapped behind Nexus/Gateway/Assimilator with no exit path.
 
 | File | Purpose |
 |------|---------|
-| `src/alpha4gate/army_coherence.py` | ArmyCoherenceManager — parameters, staging, attack/retreat |
-| `src/alpha4gate/micro.py` | MicroController — target selection, kiting, commands |
-| `src/alpha4gate/bot.py` (`_produce_army`) | Unit training — warp-in forward pylon selection, robo priorities |
+| `bots/v0/army_coherence.py` | ArmyCoherenceManager — parameters, staging, attack/retreat |
+| `bots/v0/micro.py` | MicroController — target selection, kiting, commands |
+| `bots/v0/bot.py` (`_produce_army`) | Unit training — warp-in forward pylon selection, robo priorities |

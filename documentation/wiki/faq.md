@@ -78,7 +78,7 @@ deterministic inference-only eval, and promoted only if strictly better.
 Four mechanisms at different timescales ([evaluation-pipeline.md](evaluation-pipeline.md)):
 
 - **Per-step:** 63 shaped reward rules (JSON-driven) give dense feedback
-- **Per-game:** Win/loss stored in SQLite (`data/training.db`)
+- **Per-game:** Win/loss stored in SQLite (`bots/v0/data/training.db`)
 - **Cross-game:** Sliding-window win rates (last 10/50/100 games)
 - **Per-checkpoint:** `ModelEvaluator` runs N inference-only eval games; `PromotionManager` compares new vs best
 

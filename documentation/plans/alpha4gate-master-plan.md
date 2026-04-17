@@ -168,7 +168,7 @@ Phase A (validate PR) ── gate: ≥ baseline WR → merge
             └─ fail ──→ escalate. Options: shared-process self-play (shrinks plan), or drop self-play entirely and keep versioning for manual curation.
 ```
 
-## Baseline (as of 2026-04-15)
+## Baseline (as of 2026-04-16)
 
 **Model / training stack:**
 
@@ -183,6 +183,11 @@ Phase A (validate PR) ── gate: ≥ baseline WR → merge
   at difficulty 3 hybrid in the A.6 soak. Shipped defaults on master are
   still MlpPolicy/kl=0/imitation=false; the winning full-stack
   hyperparams are in `git stash` awaiting Phase 1 reactivation.
+- **Phase 1 COMPLETE 2026-04-16** (tag `master-plan/1/final`):
+  Full bot stack moved from `src/alpha4gate/` to `bots/v0/`. Per-version
+  data dir at `bots/v0/data/`. `bots/current/` MetaPathFinder alias.
+  `src/orchestrator/` scaffolded with registry, contracts, stubs. 916
+  tests import from `bots.v0.*`. `src/alpha4gate/` deleted.
 
 **Autonomous platform (from completed always-up Phases 1–4.5):**
 
@@ -204,7 +209,7 @@ Phase A (validate PR) ── gate: ≥ baseline WR → merge
   curriculum/advised-run control.
 - 48 reward rules in `data/reward_rules.json` (only affect PPO under
   `--decision-mode hybrid`, not rule-based default play).
-- **864 Python unit tests + 126 frontend vitest tests passing.**
+- **916 Python unit tests + 126 frontend vitest tests passing.**
 - Four `/improve-bot-advised` runs completed; run-4 code improvements
   landed (anti-float expansion override, warp-in forward pylon
   selection, bot wins 100% at difficulty 3).
@@ -328,7 +333,9 @@ Spike script is throwaway; no state to undo.
 
 ---
 
-## Phase 1 — Move full stack + data to `bots/v0/`; scaffold orchestrator
+## Phase 1 — Move full stack + data to `bots/v0/`; scaffold orchestrator ✅
+
+**Status: COMPLETE** (tag `master-plan/1/final`, 2026-04-16). See `documentation/phase-1-build-plan.md` for step-by-step details.
 
 **Track:** Versioning. **Goal:** `src/alpha4gate/` becomes `bots/v0/`.
 `data/` splits: per-version state moves into `bots/v0/data/`, shared

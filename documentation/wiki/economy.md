@@ -87,8 +87,8 @@ Failed builds (e.g., not enough minerals, no valid placement) go into BuildBackl
 
 | File | Purpose |
 |------|---------|
-| `src/alpha4gate/macro_manager.py` | Economy automation |
-| `src/alpha4gate/build_orders.py` | BuildOrder, BuildStep, BuildSequencer |
-| `src/alpha4gate/build_backlog.py` | Retry queue for failed builds |
-| `src/alpha4gate/fortification.py` | Static defense scaling |
+| `bots/v0/macro_manager.py` | Economy automation |
+| `bots/v0/build_orders.py` | BuildOrder, BuildStep, BuildSequencer |
+| `bots/v0/build_backlog.py` | Retry queue for failed builds |
+| `bots/v0/fortification.py` | Static defense scaling |
 | `data/build_orders.json` | Saved build orders (used by backend; no longer surfaced in the UI) |

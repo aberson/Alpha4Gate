@@ -87,7 +87,7 @@ here because they operate on different things.
 |------|-------------|
 | [Frontend Dashboard](frontend.md) | 9 tabs, React components, WebSocket protocol, poll cadences |
 | [Domain Coupling](domain-coupling.md) | What's SC2-specific vs domain-agnostic |
-| [Testing](testing.md) | 864 unit tests, SC2 integration tests, coverage map |
+| [Testing](testing.md) | 916 unit tests, SC2 integration tests, coverage map |
 
 ---
 
