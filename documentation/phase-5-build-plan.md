@@ -187,6 +187,7 @@ version snapshot.
 
 ### Step 5.3: Pre-commit wiring
 - **Issue:** #120
+- **Status:** DONE (2026-04-17)
 - **Problem:** Add `pre-commit` as a dev dependency in `pyproject.toml`
   under `[project.optional-dependencies]` `dev` extra (matching existing
   pattern — pytest, ruff, mypy, httpx are already there). Create
@@ -206,6 +207,7 @@ version snapshot.
 
 ### Step 5.4: Skill updates — banner + promotion wiring
 - **Issue:** #121
+- **Status:** DONE (2026-04-17)
 - **Problem:** Update `.claude/skills/improve-bot-advised/SKILL.md`:
   (a) In Phase 0 (bootstrap), add a run-start banner that prints:
   "I can edit: bots/current/**. I cannot edit: src/orchestrator/,
