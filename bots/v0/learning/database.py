@@ -67,6 +67,14 @@ CREATE TABLE IF NOT EXISTS transitions (
     disruptor_count   INTEGER NOT NULL DEFAULT 0,
     warp_prism_count  INTEGER NOT NULL DEFAULT 0,
     observer_count    INTEGER NOT NULL DEFAULT 0,
+    enemy_light_count     INTEGER NOT NULL DEFAULT 0,
+    enemy_armored_count   INTEGER NOT NULL DEFAULT 0,
+    enemy_siege_count     INTEGER NOT NULL DEFAULT 0,
+    enemy_support_count   INTEGER NOT NULL DEFAULT 0,
+    enemy_air_harass_count INTEGER NOT NULL DEFAULT 0,
+    enemy_heavy_count     INTEGER NOT NULL DEFAULT 0,
+    enemy_capital_count   INTEGER NOT NULL DEFAULT 0,
+    enemy_cloak_count     INTEGER NOT NULL DEFAULT 0,
     action        INTEGER NOT NULL,
     reward        REAL NOT NULL,
     next_supply_used   INTEGER,
@@ -101,6 +109,14 @@ CREATE TABLE IF NOT EXISTS transitions (
     next_disruptor_count  INTEGER DEFAULT 0,
     next_warp_prism_count INTEGER DEFAULT 0,
     next_observer_count   INTEGER DEFAULT 0,
+    next_enemy_light_count     INTEGER DEFAULT 0,
+    next_enemy_armored_count   INTEGER DEFAULT 0,
+    next_enemy_siege_count     INTEGER DEFAULT 0,
+    next_enemy_support_count   INTEGER DEFAULT 0,
+    next_enemy_air_harass_count INTEGER DEFAULT 0,
+    next_enemy_heavy_count     INTEGER DEFAULT 0,
+    next_enemy_capital_count   INTEGER DEFAULT 0,
+    next_enemy_cloak_count     INTEGER DEFAULT 0,
     done          INTEGER NOT NULL DEFAULT 0
 );
 
@@ -110,7 +126,7 @@ CREATE INDEX IF NOT EXISTS idx_games_result ON games(result);
 CREATE INDEX IF NOT EXISTS idx_games_model ON games(model_version);
 """
 
-# Column names for the 32 state features in transitions table (matches feature vector order)
+# Column names for the 40 state features in transitions table (matches feature vector order)
 _STATE_COLS = [
     "supply_used", "supply_cap", "minerals", "vespene", "army_supply",
     "worker_count", "base_count", "enemy_near", "enemy_supply",
@@ -120,6 +136,9 @@ _STATE_COLS = [
     "colossus_count", "archon_count", "high_templar_count", "dark_templar_count",
     "phoenix_count", "void_ray_count", "carrier_count", "tempest_count",
     "disruptor_count", "warp_prism_count", "observer_count",
+    "enemy_light_count", "enemy_armored_count", "enemy_siege_count",
+    "enemy_support_count", "enemy_air_harass_count", "enemy_heavy_count",
+    "enemy_capital_count", "enemy_cloak_count",
 ]
 
 _NEXT_STATE_COLS = [f"next_{c}" for c in _STATE_COLS]
@@ -183,6 +202,22 @@ _LATER_ADDED_COLS: list[tuple[str, str]] = [
     ("next_disruptor_count", "INTEGER DEFAULT 0"),
     ("next_warp_prism_count", "INTEGER DEFAULT 0"),
     ("next_observer_count", "INTEGER DEFAULT 0"),
+    ("enemy_light_count", "INTEGER DEFAULT 0"),
+    ("enemy_armored_count", "INTEGER DEFAULT 0"),
+    ("enemy_siege_count", "INTEGER DEFAULT 0"),
+    ("enemy_support_count", "INTEGER DEFAULT 0"),
+    ("enemy_air_harass_count", "INTEGER DEFAULT 0"),
+    ("enemy_heavy_count", "INTEGER DEFAULT 0"),
+    ("enemy_capital_count", "INTEGER DEFAULT 0"),
+    ("enemy_cloak_count", "INTEGER DEFAULT 0"),
+    ("next_enemy_light_count", "INTEGER DEFAULT 0"),
+    ("next_enemy_armored_count", "INTEGER DEFAULT 0"),
+    ("next_enemy_siege_count", "INTEGER DEFAULT 0"),
+    ("next_enemy_support_count", "INTEGER DEFAULT 0"),
+    ("next_enemy_air_harass_count", "INTEGER DEFAULT 0"),
+    ("next_enemy_heavy_count", "INTEGER DEFAULT 0"),
+    ("next_enemy_capital_count", "INTEGER DEFAULT 0"),
+    ("next_enemy_cloak_count", "INTEGER DEFAULT 0"),
     ("action_probs", "TEXT DEFAULT NULL"),
 ]
 
@@ -298,7 +333,7 @@ class TrainingDB:
         """Insert a single (s, a, r, s') transition.
 
         state and next_state are raw (un-normalized) integer feature vectors
-        matching the 32-column order in _STATE_COLS.
+        matching the 40-column order in _STATE_COLS.
 
         action_probs: optional list of action probabilities from the neural
         engine, stored as JSON text.

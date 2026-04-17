@@ -849,6 +849,9 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
             "dark_templar_count", "phoenix_count", "void_ray_count",
             "carrier_count", "tempest_count", "disruptor_count",
             "warp_prism_count", "observer_count",
+            "enemy_light_count", "enemy_armored_count", "enemy_siege_count",
+            "enemy_support_count", "enemy_air_harass_count", "enemy_heavy_count",
+            "enemy_capital_count", "enemy_cloak_count",
         ]
         values = []
         for f in fields:

@@ -114,11 +114,11 @@ def run_imitation_training(
     states, actions, rewards = db.sample_batch(total)
     _log.info("Loaded %d transitions for imitation training", total)
 
-    # Normalize 17 base game-state features to [0, 1], then pad with 7 zeros
+    # Normalize 40 base game-state features to [0, 1], then pad with 7 zeros
     # for the advisor slots. Padding keeps the saved checkpoint's input
-    # shape aligned with SC2Env.observation_space (FEATURE_DIM=24) so the
+    # shape aligned with SC2Env.observation_space (FEATURE_DIM=47) so the
     # trainer can load v0_pretrain directly without dimension mismatch.
-    # The DB only stores the 17 base features — advisor context is
+    # The DB only stores the 40 base features — advisor context is
     # ephemeral — so the advisor slots are legitimately zero at BC time.
     base = np.zeros_like(states)
     for i, (_, divisor) in enumerate(_FEATURE_SPEC):

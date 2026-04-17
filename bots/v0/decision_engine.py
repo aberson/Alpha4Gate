@@ -77,6 +77,14 @@ class GameSnapshot:
     disruptor_count: int = 0
     warp_prism_count: int = 0
     observer_count: int = 0
+    enemy_light_count: int = 0
+    enemy_armored_count: int = 0
+    enemy_siege_count: int = 0
+    enemy_support_count: int = 0
+    enemy_air_harass_count: int = 0
+    enemy_heavy_count: int = 0
+    enemy_capital_count: int = 0
+    enemy_cloak_count: int = 0
 
 
 @dataclass

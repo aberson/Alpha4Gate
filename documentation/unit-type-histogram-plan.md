@@ -144,6 +144,7 @@ to work without modification. Only `bot.py` actively populates them.
 - **Produces:** Modified `decision_engine.py`, `features.py`, `database.py`, `imitation.py` (comment); extended `test_features_v2.py`; new threat-class mapping
 - **Done when:** All tests pass, padding round-trip test covers 17→40 width, mypy strict clean
 - **Depends on:** Step 1
+- **Status:** DONE (2026-04-17)
 
 #### Step 3: Wire unit counts from SC2 game state
 - **Problem:** In `bot.py`, populate the 15 own-army unit-count fields and 8 enemy threat-class fields on `GameSnapshot` from SC2 unit data (`self.units`, `self.enemy_units`). Own-army: count units by type ID. Enemy: map visible enemy units through the threat-class bucketing from Step 2. Add unit tests covering snapshot population logic with mock unit lists.
