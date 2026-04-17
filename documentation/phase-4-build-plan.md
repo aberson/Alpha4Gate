@@ -403,7 +403,7 @@ The CLI exposes this as `python scripts/ladder.py replay [--jsonl <path>]`.
 - **Depends on:** 4.1.
 
 ### Step 4.6: Dashboard Ladder tab (frontend)
-- **Status:** pending
+- **Status:** DONE (2026-04-17)
 - **Type:** code
 - **Problem:** Create the 10th dashboard tab:
   (a) Create `frontend/src/components/LadderTab.tsx` — call
