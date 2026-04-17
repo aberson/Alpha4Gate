@@ -144,11 +144,57 @@ class SelfPlayRecord:
         return cls(**json.loads(data))
 
 
+@dataclass(frozen=True)
+class LadderEntry:
+    """One row of the Elo ladder standings in ``data/bot_ladder.json``.
+
+    Written by :func:`orchestrator.ladder.save_ladder` after Elo updates.
+    """
+
+    version: str
+    elo: float
+    games_played: int
+    last_updated: str  # ISO 8601 UTC
+
+    def to_json(self) -> str:
+        return json.dumps(dataclasses.asdict(self))
+
+    @classmethod
+    def from_json(cls, data: str | bytes) -> LadderEntry:
+        return cls(**json.loads(data))
+
+
+@dataclass(frozen=True)
+class PromotionResult:
+    """Outcome of a cross-version promotion gate check.
+
+    Returned by :func:`orchestrator.ladder.check_promotion`.
+    ``promoted`` is ``True`` only when all gates pass.
+    """
+
+    candidate: str
+    parent: str
+    elo_delta: float
+    games_played: int
+    wr_vs_sc2: float | None  # None if not tested (Phase 4 scope)
+    promoted: bool
+    reason: str
+
+    def to_json(self) -> str:
+        return json.dumps(dataclasses.asdict(self))
+
+    @classmethod
+    def from_json(cls, data: str | bytes) -> PromotionResult:
+        return cls(**json.loads(data))
+
+
 __all__ = [
     "BotSpawnArgs",
+    "LadderEntry",
     "Manifest",
     "MatchResult",
     "Outcome",
+    "PromotionResult",
     "Role",
     "SelfPlayRecord",
     "VersionFingerprint",
