@@ -2,11 +2,9 @@
 
 ![Python](https://img.shields.io/badge/python-3.12-blue) ![pytest](https://img.shields.io/badge/pytest-829%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-126%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
 
-It plays, watches itself fail, figures out why, writes a fix, proves the fix works, and repeats. The task happens to be StarCraft II, but the loop is general. A live React dashboard streams every phase — every proposed fix, every rejection, every win-rate swing — while the agent runs unattended for hours.
+An AI agent that teaches itself to get better at a task with <i><b>- zero human input</b></i>.
 
-> An AI agent that **teaches itself to get better at a task — zero human input.**
->
-> **50% → 83%** win rate at SC2 difficulty 4 — reached via 6 code changes the agent wrote and validated itself.
+It plays, watches itself fail, figures out why, writes a fix, proves the fix works, and repeats. The task happens to be StarCraft II, but the loop is general. A live React dashboard streams every phase — every proposed fix, every rejection, every win-rate swing — while the agent runs unattended for hours.  (Techincally an iterative LLM-guided reinforcement learning model with a learned advisor)
 
 <table>
 <tr>
@@ -24,6 +22,8 @@ It plays, watches itself fail, figures out why, writes a fix, proves the fix wor
 </td>
 </tr>
 </table>
+
+> **50% → 83%** win rate at SC2 difficulty 4 — reached via 6 code changes the agent wrote and validated itself.
 
 ## What makes this different
 
@@ -99,7 +99,32 @@ So the tight loop runs on rule-based strategy + a PPO policy network (both decid
 
 Fast-and-dumb does the playing. Slow-and-smart does the learning.
 
-## Stack
+---
+
+# The Story So Far of Alpha4Gate
+
+- **Original Motivation -** Beat my friend at a video game using AI.
+- **The basic bot -** A rule-based bot player that built units and hoped for the best. 
+- **Teaching it to think -** Added a neural network so it could learn.
+- **Learning to fight -** Targeted lessons: keep the army together, deny expansions, hold the line.
+- **Bringing in a coach -** Claude whispers strategy tips mid-match alongside human commands.
+- **The observation deck -** A live dashboard showing every decision, reward, and training run.
+- **The robot that trains itself -** A daemon that plays, scores, promotes winners, and rolls back duds overnight.
+- **The first soak test -** Left it alone — 17 things broke. Fixed them all.
+- **Claude as personal trainer -** Claude watches games, diagnoses problems, and writes the fixes itself.
+- **The breakthrough -** Self-improvement took win rate from 0% to 75% at difficulty 3.
+- **Reality check -** Harder opponents exposed that training scores lie — need honest exams.
+- **The big merge -** Three plans became one: every future bot is a snapshot that must beat its ancestors.
+- **Phase A -** Added memory (LSTM) and a gentler training recipe — 19/20 wins at difficulty 3.
+- **The arena works -** Two bot versions fighting each other in separate sandboxes, validated.
+- **Now -** Packaging the current bot as "v0" — the first official entry in the lineage.
+
+---
+
+<details>
+
+
+<summary><b>Stack</b></summary>
 
 | Layer | Tool | Why |
 |---|---|---|
@@ -116,9 +141,10 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 | Testing (Frontend) | vitest + jsdom + @testing-library/react | 126 component / hook / lib tests |
 | Linting | ruff + mypy | Strict type checking, consistent style |
 
----
+</details>
 
 <details>
+
 <summary><b>Setup</b></summary>
 
 ### Prerequisites
