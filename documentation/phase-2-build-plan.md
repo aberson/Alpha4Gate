@@ -132,6 +132,7 @@ Disk cost is acceptable at our scale (single bot, single machine).
 - **Depends on:** 2.1.
 
 ### Step 2.4: Create `scripts/snapshot_bot.py` CLI
+- **Status:** DONE (2026-04-16)
 - **Problem:** Create `scripts/snapshot_bot.py` as a thin CLI wrapper around `orchestrator.snapshot.snapshot_current()`. Argparse with `--name` (optional, override version name). Prints the path to the new version dir on success. Exit 0 on success, exit 1 with error on failure. Add a test in `tests/test_snapshot.py` (or new file) that verifies the script's argparse (not a full end-to-end — snapshot logic is already tested in step 2.2).
 - **Issue:** #108
 - **Flags:** `--reviewers auto`

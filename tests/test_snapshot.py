@@ -207,3 +207,33 @@ class TestNextVersionName:
         monkeypatch.setattr(registry, "_repo_root", lambda: tmp_path)
         (tmp_path / "bots").mkdir(parents=True)
         assert snapshot._next_version_name() == "v0"
+
+
+class TestSnapshotBotScript:
+    """Tests for ``scripts/snapshot_bot.py`` CLI argparse."""
+
+    def test_help_exits_zero(self) -> None:
+        from scripts.snapshot_bot import main as snap_main
+
+        with pytest.raises(SystemExit) as exc_info:
+            snap_main(["--help"])
+        assert exc_info.value.code == 0
+
+    def test_name_arg_parsed(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Verify --name targets a nonexistent version and errors cleanly."""
+        monkeypatch.setattr(registry, "_repo_root", lambda: tmp_path)
+        monkeypatch.setattr(snapshot, "_repo_root", lambda: tmp_path)
+        # No seeded version → FileNotFoundError
+        _seed_current(tmp_path, "v_nonexistent")
+
+        from scripts.snapshot_bot import main as snap_main
+
+        rc = snap_main(["--name", "v_test"])
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "does not exist" in err
