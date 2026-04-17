@@ -117,11 +117,39 @@ class Manifest:
         return cls(fingerprint=VersionFingerprint(**fp), **payload)
 
 
+@dataclass(frozen=True)
+class SelfPlayRecord:
+    """One row of ``data/selfplay_results.jsonl``.
+
+    Written by :func:`orchestrator.selfplay.run_batch` after each game.
+    ``winner`` is the version string of the winning side, or ``None`` for
+    draws / crashes.
+    """
+
+    match_id: str
+    p1_version: str
+    p2_version: str
+    winner: str | None
+    map_name: str
+    duration_s: float
+    seat_swap: bool
+    timestamp: str
+    error: str | None = None
+
+    def to_json(self) -> str:
+        return json.dumps(dataclasses.asdict(self))
+
+    @classmethod
+    def from_json(cls, data: str | bytes) -> SelfPlayRecord:
+        return cls(**json.loads(data))
+
+
 __all__ = [
     "BotSpawnArgs",
     "Manifest",
     "MatchResult",
     "Outcome",
     "Role",
+    "SelfPlayRecord",
     "VersionFingerprint",
 ]
