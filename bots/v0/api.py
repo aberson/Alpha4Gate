@@ -1652,3 +1652,40 @@ async def ws_decisions(websocket: WebSocket) -> None:
             await websocket.receive_text()
     except WebSocketDisconnect:
         ws_manager.disconnect_decisions(websocket)
+
+
+# ---------------------------------------------------------------------------
+# Elo ladder (Phase 4)
+# ---------------------------------------------------------------------------
+
+# Shared data dir at repo root — NOT _data_dir (which is per-version).
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+@app.get("/api/ladder")
+async def get_ladder() -> dict[str, Any]:
+    """Get Elo ladder standings + head-to-head grid.
+
+    Reads from shared ``data/bot_ladder.json`` (written by
+    ``scripts/ladder.py update`` or ``ladder_replay``). Returns empty
+    structures if the file does not exist.
+    """
+    ladder_path = _REPO_ROOT / "data" / "bot_ladder.json"
+    if not ladder_path.is_file():
+        return {"standings": [], "head_to_head": {}}
+
+    import json as _json
+
+    raw: dict[str, Any] = _json.loads(ladder_path.read_text(encoding="utf-8"))
+
+    # Convert standings dict to sorted list for the frontend.
+    standings_dict: dict[str, Any] = raw.get("standings", {})
+    standings_list = [
+        {"version": v, **entry} for v, entry in standings_dict.items()
+    ]
+    standings_list.sort(key=lambda e: e.get("elo", 0), reverse=True)
+
+    return {
+        "standings": standings_list,
+        "head_to_head": raw.get("head_to_head", {}),
+    }

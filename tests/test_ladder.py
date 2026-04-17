@@ -560,3 +560,70 @@ class TestLadderCLI:
             text=True,
         )
         assert result.returncode == 1
+
+
+# ---------------------------------------------------------------------------
+# /api/ladder endpoint (Step 4.5)
+# ---------------------------------------------------------------------------
+
+
+class TestLadderAPI:
+    """Tests for the ``GET /api/ladder`` endpoint."""
+
+    @pytest.fixture()
+    def client(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> object:
+        from bots.v0.api import app, configure
+
+        data_dir = tmp_path / "data"
+        log_dir = tmp_path / "logs"
+        replay_dir = tmp_path / "replays"
+        data_dir.mkdir()
+        log_dir.mkdir()
+        replay_dir.mkdir()
+        configure(data_dir, log_dir, replay_dir)
+
+        # Point _REPO_ROOT at tmp_path so the endpoint finds our ladder file.
+        monkeypatch.setattr("bots.v0.api._REPO_ROOT", tmp_path)
+
+        from fastapi.testclient import TestClient
+
+        return TestClient(app)
+
+    def test_empty_ladder_returns_defaults(self, client: object) -> None:
+        from fastapi.testclient import TestClient
+
+        assert isinstance(client, TestClient)
+        resp = client.get("/api/ladder")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["standings"] == []
+        assert data["head_to_head"] == {}
+
+    def test_ladder_with_data(
+        self, client: object, tmp_path: Path
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        assert isinstance(client, TestClient)
+
+        # Write a ladder file at the repo-root data/ path.
+        ladder_data = {
+            "standings": {
+                "v0": {"elo": 1020.0, "games_played": 10, "last_updated": "t"},
+                "v1": {"elo": 980.0, "games_played": 10, "last_updated": "t"},
+            },
+            "head_to_head": {
+                "v0": {"v1": {"wins": 7, "losses": 3, "draws": 0}},
+            },
+        }
+        ladder_path = tmp_path / "data" / "bot_ladder.json"
+        ladder_path.write_text(json.dumps(ladder_data), encoding="utf-8")
+
+        resp = client.get("/api/ladder")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["standings"]) == 2
+        # Should be sorted by Elo descending.
+        assert data["standings"][0]["version"] == "v0"
+        assert data["standings"][1]["version"] == "v1"
+        assert data["head_to_head"]["v0"]["v1"]["wins"] == 7

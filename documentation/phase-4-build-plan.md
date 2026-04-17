@@ -380,7 +380,7 @@ The CLI exposes this as `python scripts/ladder.py replay [--jsonl <path>]`.
 - **Depends on:** 4.2, 4.3.
 
 ### Step 4.5: Backend `/api/ladder` endpoint
-- **Status:** pending
+- **Status:** DONE (2026-04-17)
 - **Type:** code
 - **Problem:** Add to `bots/v0/api.py`:
   (a) `GET /api/ladder` — reads shared `data/bot_ladder.json` via
