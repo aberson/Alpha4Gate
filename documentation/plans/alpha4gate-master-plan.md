@@ -200,6 +200,14 @@ Phase A (validate PR) ── gate: ≥ baseline WR → merge
   crash/timeout handling, PFSP-lite opponent sampling. Results to
   `data/selfplay_results.jsonl`. CLI: `scripts/selfplay.py` (head-to-head
   + PFSP modes). Gate: 4-game live batch PASS. 967 tests.
+- **Phase 4 COMPLETE 2026-04-17** (tag `master-plan/4/final`):
+  Elo ladder in `src/orchestrator/ladder.py`. Standard Elo K=32, seeding
+  from manifest/parent/1000. Round-robin `ladder_update()`, JSONL replay,
+  cross-version promotion gate (`check_promotion()` → `snapshot_current()`).
+  CLI: `scripts/ladder.py` (update/show/compare/replay). `GET /api/ladder`
+  endpoint. Ladder tab (10th dashboard tab) with standings + head-to-head
+  grid. `LadderEntry` + `PromotionResult` contracts. Gate: v0-vs-v0
+  produces Elo delta 0 → correctly rejected. 1011 tests, 129 vitest.
 
 **Autonomous platform (from completed always-up Phases 1–4.5):**
 
@@ -1055,6 +1063,9 @@ steps) are closed as subsumed by full-stack versioning; see this plan's
 
 Append-only — do not edit prior entries.
 
+- *2026-04-17* — Phase 4 (Elo ladder + cross-version promotion) complete.
+  All 7 build steps shipped. `src/orchestrator/ladder.py`, `scripts/ladder.py`,
+  `GET /api/ladder`, Ladder tab (10th). 1011 tests + 129 vitest.
 - *2026-04-15* — merged `always-up-plan.md` into this plan. Always-up
   Phases 1–4.5 collapsed into the Baseline + Historical phases table;
   always-up Phase 5 (Domain interface / CartPole) dropped as subsumed

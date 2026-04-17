@@ -15,6 +15,7 @@ import { AdvisedControlPanel } from "./components/AdvisedControlPanel";
 import { AdvisedImprovements } from "./components/AdvisedImprovements";
 import { ProcessMonitor } from "./components/ProcessMonitor";
 import { AlertsPanel } from "./components/AlertsPanel";
+import { LadderTab } from "./components/LadderTab";
 import { AlertToast } from "./components/AlertToast";
 import { ConnectionStatus } from "./components/ConnectionStatus";
 import { useAdvisedRun } from "./hooks/useAdvisedRun";
@@ -30,7 +31,8 @@ type Tab =
   | "loop"
   | "advisor"
   | "improvements"
-  | "alerts";
+  | "alerts"
+  | "ladder";
 
 function App() {
   const [tab, setTab] = useState<Tab>("live");
@@ -121,6 +123,12 @@ function App() {
               </span>
             ) : null}
           </button>
+          <button
+            onClick={() => setTab("ladder")}
+            className={tab === "ladder" ? "active" : ""}
+          >
+            Ladder
+          </button>
         </nav>
         <ConnectionStatus />
         </div>
@@ -153,6 +161,7 @@ function App() {
           </>
         )}
         {tab === "processes" && <ProcessMonitor />}
+        {tab === "ladder" && <LadderTab />}
         {tab === "alerts" && (
           <AlertsPanel
             alerts={alerts}

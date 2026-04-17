@@ -1,6 +1,6 @@
 # Alpha4Gate
 
-![Python](https://img.shields.io/badge/python-3.12-blue) ![pytest](https://img.shields.io/badge/pytest-829%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-126%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
+![Python](https://img.shields.io/badge/python-3.12-blue) ![pytest](https://img.shields.io/badge/pytest-1011%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-129%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
 
 An AI agent that teaches itself to get better at a task with <i><b>- zero human input</b></i>.
 

@@ -40,7 +40,7 @@ See [index.md](index.md) for the system diagram, [improve-bot-advised-architectu
 | Phase 1 | Rule-based bot (10 build steps) — full games, macro + micro |
 | Phase 2 | Deep learning pipeline (PPO + imitation) — hybrid mode |
 | Phase 3 | Always-up autonomous training loop — daemon, promotion gate, rollback |
-| Phase 4 | Transparency dashboard — 9 tabs, alerts |
+| Phase 4 | Transparency dashboard — 10 tabs (incl. Ladder), alerts |
 | Phase A | Imitation-init + LSTM + KL-to-rules (on branch `feat/lstm-kl-imitation`) |
 | 2026-04 | `/improve-bot-advised` skill — hours-long autonomous sessions that write code |
 
@@ -84,7 +84,7 @@ Four mechanisms at different timescales ([evaluation-pipeline.md](evaluation-pip
 
 ## What can I see in the dashboard?
 
-Nine tabs ([frontend.md](frontend.md)):
+Ten tabs ([frontend.md](frontend.md)):
 
 | Tab | What it shows |
 |---|---|
@@ -97,6 +97,7 @@ Nine tabs ([frontend.md](frontend.md)):
 | Improvements | Promotions / rollbacks, per-rule reward trends, iteration log |
 | Processes | Live process inventory, port bindings, state-file contents |
 | Alerts | Severity-filtered alerts (7 client-side rules) |
+| Ladder | Elo standings + head-to-head grid across bot versions |
 
 ## How does Claude fit in?
 

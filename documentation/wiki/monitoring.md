@@ -254,6 +254,7 @@ Tabs defined in `frontend/src/App.tsx`. Each tab consumes the endpoints or WebSo
 | Improvements | `RecentImprovements.tsx` + `RewardTrends.tsx` + `AdvisedImprovements.tsx` | `/api/training/promotions/history`, `/api/training/reward-trends`, `/api/improvements` | 10s | COMMIT, TRAIN |
 | Processes | `ProcessMonitor.tsx` | `/api/processes`, cleanup endpoints | 5s | Cross-cutting (liveness) |
 | Alerts | `AlertsPanel.tsx` + `AlertToast.tsx` | client rules over poll data | — | Cross-cutting |
+| Ladder | `LadderTab.tsx` | `/api/ladder` (`data/bot_ladder.json`) | 10s | Cross-cutting (Elo) |
 
 A green dot appears in the nav bar when `advised_run_state.status ∈ {running, paused}` (`App.tsx:86–99`).
 
