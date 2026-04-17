@@ -519,3 +519,44 @@ class TestLadderReplay:
         # v99 should NOT appear — replay starts fresh.
         assert "v99" not in standings
         assert set(standings.keys()) == {"v0", "v1"}
+
+
+# ---------------------------------------------------------------------------
+# CLI argparse (Step 4.4)
+# ---------------------------------------------------------------------------
+
+
+class TestLadderCLI:
+    """Tests for ``scripts/ladder.py`` argparse."""
+
+    def test_help_exits_zero(self) -> None:
+        import subprocess
+
+        result = subprocess.run(
+            ["uv", "run", "python", "scripts/ladder.py", "--help"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+        assert "Elo ladder" in result.stdout
+
+    def test_show_subcommand_help(self) -> None:
+        import subprocess
+
+        result = subprocess.run(
+            ["uv", "run", "python", "scripts/ladder.py", "show", "--help"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+        assert "--json" in result.stdout
+
+    def test_no_subcommand_exits_one(self) -> None:
+        import subprocess
+
+        result = subprocess.run(
+            ["uv", "run", "python", "scripts/ladder.py"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 1

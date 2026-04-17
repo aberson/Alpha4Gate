@@ -353,7 +353,7 @@ The CLI exposes this as `python scripts/ladder.py replay [--jsonl <path>]`.
 - **Depends on:** 4.1.
 
 ### Step 4.4: CLI wrapper `scripts/ladder.py`
-- **Status:** pending
+- **Status:** DONE (2026-04-17)
 - **Type:** code
 - **Problem:** Create `scripts/ladder.py` as a thin CLI wrapper with
   three subcommands:
