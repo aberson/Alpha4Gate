@@ -13,7 +13,7 @@ Completes the version registry with enumeration (`list_versions()`) and adds a
 full-stack snapshot tool that copies `bots/current/` to `bots/vN+1/`, writes a
 fresh `manifest.json` with parent lineage, git SHA, timestamp, Elo snapshot,
 and feature/action-space fingerprints. Also adds CLI entry points for both the
-registry (`python -m orchestrator.registry list/show`) and the snapshot tool
+registry (`python -m orchestrator list/show`) and the snapshot tool
 (`scripts/snapshot_bot.py`). After this phase, a developer can snapshot the
 working bot to create a new frozen version that can independently boot and play.
 
@@ -47,7 +47,7 @@ working bot to create a new frozen version that can independently boot and play.
 - Add `list_versions()` to `src/orchestrator/registry.py`.
 - Implement `src/orchestrator/snapshot.py` with `snapshot_current()`.
 - Create `scripts/snapshot_bot.py` CLI.
-- Add `src/orchestrator/__main__.py` for `python -m orchestrator.registry list/show`.
+- Add `src/orchestrator/__main__.py` for `python -m orchestrator list/show`.
 - Tests for new functionality.
 
 **Out of scope:**
@@ -122,13 +122,13 @@ Disk cost is acceptable at our scale (single bot, single machine).
 - **Done when:** new tests pass, 916+step1 tests still pass, mypy strict green, ruff green.
 - **Depends on:** 2.1.
 
-### Step 2.3: Add registry CLI (`python -m orchestrator.registry`)
+### Step 2.3: Add registry CLI (`python -m orchestrator`)
 - **Status:** DONE (2026-04-16)
 - **Problem:** Create `src/orchestrator/__main__.py` with argparse supporting two subcommands: `list` (calls `list_versions()`, prints one version per line) and `show <version>` (calls `get_manifest(version)`, prints manifest JSON). Exit 0 on success, exit 1 with error message on failure (e.g. version not found). Add tests to `tests/test_registry.py` (or a new `tests/test_registry_cli.py`): verify `list` output format, `show v0` outputs valid JSON with expected fields, `show v99` exits with error.
 - **Issue:** #108
 - **Flags:** `--reviewers auto`
 - **Produces:** new `src/orchestrator/__main__.py`, new/updated test file.
-- **Done when:** `python -m orchestrator.registry list` prints `v0`, `python -m orchestrator.registry show v0` prints valid manifest JSON, tests pass, mypy strict green.
+- **Done when:** `python -m orchestrator list` prints `v0`, `python -m orchestrator show v0` prints valid manifest JSON, tests pass, mypy strict green.
 - **Depends on:** 2.1.
 
 ### Step 2.4: Create `scripts/snapshot_bot.py` CLI
@@ -141,8 +141,9 @@ Disk cost is acceptable at our scale (single bot, single machine).
 - **Depends on:** 2.2.
 
 ### Step 2.5: Gate verification — snapshot round-trip
+- **Status:** DONE (2026-04-16)
 - **Type:** operator
-- **Problem:** Human-run end-to-end verification. Checklist: (a) `uv run python scripts/snapshot_bot.py --name v1` creates `bots/v1/` with all expected files; (b) `bots/v1/VERSION` contains `v1`; (c) `bots/v1/manifest.json` has `parent: "v0"` and correct fingerprint; (d) `bots/current/current.txt` now says `v1`; (e) `uv run python -m orchestrator.registry list` shows both `v0` and `v1`; (f) `uv run python -m orchestrator.registry show v1` outputs valid manifest; (g) `uv run python -m bots.v1 --role solo --map Simple64 --difficulty 1` boots and plays a game (requires SC2); (h) `bots/v0/` is unchanged. After verification, delete `bots/v1/` and reset `current.txt` to `v0` (this was a test snapshot, not a real promotion).
+- **Problem:** Human-run end-to-end verification. Checklist: (a) `uv run python scripts/snapshot_bot.py --name v1` creates `bots/v1/` with all expected files; (b) `bots/v1/VERSION` contains `v1`; (c) `bots/v1/manifest.json` has `parent: "v0"` and correct fingerprint; (d) `bots/current/current.txt` now says `v1`; (e) `uv run python -m orchestrator list` shows both `v0` and `v1`; (f) `uv run python -m orchestrator show v1` outputs valid manifest; (g) `uv run python -m bots.v1 --role solo --map Simple64 --difficulty 1` boots and plays a game (requires SC2); (h) `bots/v0/` is unchanged. After verification, delete `bots/v1/` and reset `current.txt` to `v0` (this was a test snapshot, not a real promotion).
 - **Issue:** #108
 - **Produces:** comment on #108 with checklist results.
 - **Done when:** all checklist items pass, user signs off.
