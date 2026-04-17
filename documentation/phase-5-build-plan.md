@@ -230,6 +230,7 @@ version snapshot.
 ### Step 5.5: Gate verification
 - **Issue:** #122
 - **Type:** operator
+- **Status:** DONE (2026-04-17)
 - **Problem:** Verify the two gate criteria from the master plan:
   (a) Stage `pyproject.toml` for commit, set `ADVISED_AUTO=1`, run
   `uv run pre-commit run --all-files` → hook blocks with clear error.
