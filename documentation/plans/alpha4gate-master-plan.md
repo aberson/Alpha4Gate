@@ -708,6 +708,21 @@ endings, path-separator bugs). Fallback: server-side hook on the remote
 
 `git revert`; hook disables by removing its entry from `.pre-commit-config.yaml`.
 
+### Result — COMPLETE (2026-04-17)
+
+**All 5 issues closed (#118–#122). 1020/1020 tests passing. Zero type errors. Zero lint violations.**
+
+What was built:
+- `scripts/check_sandbox.py` — pre-commit hook enforcing `bots/current/`-only sandbox for `ADVISED_AUTO=1` commits
+- `tests/test_sandbox_hook.py` — 9 test cases (passthrough, allowed/forbidden paths, path traversal, mixed, edge cases)
+- `.pre-commit-config.yaml` — `repo: local` + `language: system` wiring
+- `pre-commit` added to dev dependencies
+- `/improve-bot-advised` SKILL.md updated: run-start banner, `[advised-auto]` commit tag, `ADVISED_AUTO=1` env var, `check_promotion()` Elo gate, `--self-improve-code` path restriction
+
+Gate verified: forbidden file blocked, allowed file passed, banner matches sandbox scope.
+
+Build plan: `documentation/phase-5-build-plan.md`
+
 ---
 
 ## Phase B — Unit-type histogram observation expansion

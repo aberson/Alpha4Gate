@@ -2,7 +2,7 @@
 
 What's tested, how to run it, and what's not covered.
 
-> **At a glance:** 864 unit tests across 48 files, collected in ~9s. Heavy mocking of SC2 BotAI via MagicMock/AsyncMock — no SC2 client needed for unit tests. Integration tests require a running SC2 client and are marked `@pytest.mark.sc2`. No `conftest.py` — fixtures are inline. The test suite now covers the full autonomous loop (daemon, promotion, rollback, evaluator, advised-run bridge).
+> **At a glance:** 1020 unit tests across 51 files, collected in ~9s. Heavy mocking of SC2 BotAI via MagicMock/AsyncMock — no SC2 client needed for unit tests. Integration tests require a running SC2 client and are marked `@pytest.mark.sc2`. No `conftest.py` — fixtures are inline. The test suite now covers the full autonomous loop (daemon, promotion, rollback, evaluator, advised-run bridge).
 
 ## Purpose & Design
 
@@ -78,6 +78,8 @@ cd frontend && npm test          # Frontend tests (vitest)
 | test_advisor_bridge.py | Thread-safe advisor bridge for training |
 | test_error_log_buffer.py | ErrorLogBuffer ring buffer |
 | test_batch_runner.py | GameRecord aggregation |
+| test_ladder.py | Elo ladder, match recording, promotion gate |
+| test_sandbox_hook.py | Pre-commit sandbox enforcement (9 cases: passthrough, allowed/forbidden paths, traversal, mixed) |
 
 Plus `pyproject.toml` config for pytest, mypy, ruff.
 

@@ -124,11 +124,11 @@ The `/improve-bot-advised` loop treats SC2 as an opaque task: code + config go i
 | Frontend | React + TypeScript + Vite |
 | Deep learning | PyTorch, Stable Baselines 3 (PPO), recurrent PPO + custom KL variants |
 | Training data | SQLite |
-| Testing | pytest (864 unit tests), ruff, mypy strict |
+| Testing | pytest (1020 unit tests), ruff, mypy strict |
 
 ## How many tests are there?
 
-864 unit tests across 48 test files. Zero type errors, zero lint violations. SC2 integration tests are separate (`pytest -m sc2`) and require a running SC2 client. See [testing.md](testing.md).
+1020 unit tests across 51 test files. Zero type errors, zero lint violations. SC2 integration tests are separate (`pytest -m sc2`) and require a running SC2 client. See [testing.md](testing.md).
 
 ## Where do I start if I want to work on this?
 

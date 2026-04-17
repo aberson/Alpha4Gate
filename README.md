@@ -1,6 +1,6 @@
 # Alpha4Gate
 
-![Python](https://img.shields.io/badge/python-3.12-blue) ![pytest](https://img.shields.io/badge/pytest-1011%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-129%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
+![Python](https://img.shields.io/badge/python-3.12-blue) ![pytest](https://img.shields.io/badge/pytest-1020%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-129%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
 
 An AI agent that teaches itself to get better at a task with <i><b>- zero human input</b></i>.
 
@@ -117,7 +117,8 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 - **The big merge -** Three plans became one: every future bot is a snapshot that must beat its ancestors.
 - **Phase A -** Added memory (LSTM) and a gentler training recipe — 19/20 wins at difficulty 3.
 - **The arena works -** Two bot versions fighting each other in separate sandboxes, validated.
-- **Now -** Packaging the current bot as "v0" — the first official entry in the lineage.
+- **The arena -** Bot versions fight each other in sandboxed self-play. Elo ladder + promotion gate decides who ships.
+- **Now -** Sandbox enforcement locks autonomous commits to `bots/current/` only — the self-improvement loop can't corrupt the platform.
 
 ---
 
@@ -137,8 +138,8 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 | Deep learning | PyTorch + Stable Baselines 3 | PPO policy network for strategic decisions |
 | Training data | SQLite | Structured (s,a,r,s') transition storage |
 | Charts | Recharts 3.8 | Per-rule reward trend visualization |
-| Testing (Python) | pytest | 829 unit tests, SC2 integration markers |
-| Testing (Frontend) | vitest + jsdom + @testing-library/react | 126 component / hook / lib tests |
+| Testing (Python) | pytest | 1020 unit tests, SC2 integration markers |
+| Testing (Frontend) | vitest + jsdom + @testing-library/react | 129 component / hook / lib tests |
 | Linting | ruff + mypy | Strict type checking, consistent style |
 
 </details>
@@ -207,6 +208,7 @@ cd frontend && npm run dev
 | Improvements | Recent promotions/rollbacks + per-rule reward trend chart |
 | Processes | Live system process monitor, port status, state files, backend restart |
 | Alerts | Severity-filtered alert list with ack/dismiss + unread badge in nav |
+| Ladder | Cross-version Elo ladder, match history, promotion gate status |
 
 In-app `AlertToast` lives at the App root and shows new alerts as they fire, regardless of which tab is active.
 
@@ -270,10 +272,10 @@ bash scripts/start-dev.sh
 ### Testing
 
 ```bash
-uv run pytest              # 829 unit tests (no SC2 needed)
+uv run pytest              # 1020 unit tests (no SC2 needed)
 uv run pytest -m sc2       # SC2 integration tests (SC2 must be running)
 uv run ruff check .        # Lint
-uv run mypy src            # Type check
+uv run mypy src bots --strict  # Type check
 cd frontend && npx tsc --noEmit  # TypeScript check
 ```
 
@@ -281,28 +283,24 @@ cd frontend && npx tsc --noEmit  # TypeScript check
 
 ```
 Alpha4Gate/
-├── src/alpha4gate/          # 47 Python modules
+├── bots/v0/                 # 46 Python modules (production bot code)
 │   ├── commands/            # Strategic command system (parser, interpreter, executor, queue)
+│   ├── learning/            # PPO training, features, rewards, imitation
 │   ├── bot.py               # Main BotAI subclass, game loop orchestration
 │   ├── decision_engine.py   # Strategic state machine (6 states)
 │   ├── neural_engine.py     # PPO policy integration with SB3
 │   ├── army_coherence.py    # Staging, grouping, engagement/retreat
-│   ├── fortification.py     # Cannons + batteries + FORTIFY state
-│   ├── macro_manager.py     # Economy, production, expansion
-│   ├── micro.py             # Kiting, focus fire, abilities
 │   ├── claude_advisor.py    # Async Claude CLI subprocess
-│   ├── trainer.py           # PPO training orchestrator
-│   ├── features.py          # Game state -> tensor encoding
-│   ├── rewards.py           # Configurable reward shaping
-│   ├── imitation.py         # Imitation pre-training from replays
 │   ├── api.py               # FastAPI server (REST + WebSocket)
-│   └── ...                  # scouting, config, logger, runner, etc.
-├── tests/                   # 829 unit tests (+ SC2 integration markers)
-├── frontend/                # React + TypeScript dashboard (Vite)
-├── scripts/                 # Live test, training analysis, model evaluation
+│   └── ...                  # scouting, config, macro, micro, etc.
+├── bots/current/            # Thin pointer package (MetaPathFinder → v0)
+├── src/orchestrator/        # Version registry, snapshots, self-play, Elo ladder
+├── tests/                   # 1020 unit tests (+ SC2 integration markers)
+├── frontend/                # React + TypeScript dashboard (Vite, 10 tabs)
+├── scripts/                 # Live test, training analysis, sandbox hook
 ├── documentation/wiki/      # Project wiki (start with index.md)
 ├── documentation/plans/     # Active plans (alpha4gate-master-plan.md)
-├── documentation/archived/  # Completed plans (Phase 1, Phase 2, improvement cycles)
+├── documentation/archived/  # Completed plans
 ├── data/                    # Cross-game stats, training DB, checkpoints (gitignored)
 ├── logs/                    # JSONL game logs (gitignored)
 └── replays/                 # SC2 replays (gitignored)
