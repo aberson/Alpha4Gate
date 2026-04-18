@@ -935,12 +935,13 @@ class Alpha4GateBot(BotAI):
                 elif cmd.target_position:
                     unit.attack(Point2(cmd.target_position))
             elif cmd.action == "move" and cmd.target_position is not None:
-                # In attack states, use attack-move so army fights enemies
-                # encountered along the way instead of walking past them.
-                if state in (StrategicState.ATTACK, StrategicState.LATE_GAME):
-                    unit.attack(Point2(cmd.target_position))
-                else:
-                    unit.move(Point2(cmd.target_position))
+                # _run_micro only runs in combat states (ATTACK, DEFEND,
+                # FORTIFY, LATE_GAME — see _step dispatch). Any advance toward
+                # a rally/staging/target point in these states must be
+                # attack-move so the army engages enemies on the way instead
+                # of walking past them. Plain move is reserved for kiting
+                # (handled below) and non-combat scouting paths.
+                unit.attack(Point2(cmd.target_position))
             elif cmd.action == "kite" and cmd.target_position is not None:
                 # Kiting uses plain move so the unit disengages; attack-move
                 # would re-target and break the kite.
