@@ -91,6 +91,7 @@ _TARGET_MAP: dict[str, UnitTypeId] = {
     "TwilightCouncil": UnitTypeId.TWILIGHTCOUNCIL,
     "Stargate": UnitTypeId.STARGATE,
     "RoboticsBay": UnitTypeId.ROBOTICSBAY,
+    "TemplarArchive": UnitTypeId.TEMPLARARCHIVE,
     "Probe": UnitTypeId.PROBE,
     "Zealot": UnitTypeId.ZEALOT,
     "Stalker": UnitTypeId.STALKER,
@@ -114,6 +115,15 @@ _WARPGATE_ABILITIES: list[tuple[UnitTypeId, AbilityId]] = [
     (UnitTypeId.STALKER, AbilityId.WARPGATETRAIN_STALKER),
     (UnitTypeId.ZEALOT, AbilityId.WARPGATETRAIN_ZEALOT),
 ]
+# HighTemplar warp ability — gated on TemplarArchives + HT-count target
+# (Separate list so we only warp HTs for the Archon morph pipeline.)
+_HIGH_TEMPLAR_WARP: tuple[UnitTypeId, AbilityId] = (
+    UnitTypeId.HIGHTEMPLAR,
+    AbilityId.WARPGATETRAIN_HIGHTEMPLAR,
+)
+# Pair up to N HighTemplars at a time into Archons
+ARCHON_TARGET: int = 4
+HIGHTEMPLAR_WARP_CAP: int = ARCHON_TARGET * 2
 # Army units to train from robos
 _ROBO_ARMY: list[UnitTypeId] = [UnitTypeId.IMMORTAL, UnitTypeId.OBSERVER]
 
@@ -768,10 +778,28 @@ class Alpha4GateBot(BotAI):
         # WarpGates → warp in at nearest pylon
         # When gas is high (>200), skip Zealots — save minerals for Stalkers
         gas_high = int(self.vespene) > 200
+        # HighTemplar priority: when Templar Archives unlocks and HT+Archon
+        # count below target, warp HTs first so the Archon morph pipeline
+        # can feed the army with splash bulk.
+        has_templar_archives = bool(
+            self.structures(UnitTypeId.TEMPLARARCHIVE).ready,
+        )
+        ht_count = len(self.units(UnitTypeId.HIGHTEMPLAR))
+        archon_count = len(self.units(UnitTypeId.ARCHON))
+        want_high_templar = (
+            has_templar_archives
+            and archon_count < ARCHON_TARGET
+            and ht_count < HIGHTEMPLAR_WARP_CAP - archon_count * 2
+        )
+        warp_priority: list[tuple[UnitTypeId, AbilityId]] = (
+            [_HIGH_TEMPLAR_WARP, *_WARPGATE_ABILITIES]
+            if want_high_templar
+            else list(_WARPGATE_ABILITIES)
+        )
         for wg in self.structures(UnitTypeId.WARPGATE).ready:
             abilities_list = await self.get_available_abilities([wg])
             abilities = abilities_list[0] if abilities_list else []
-            for unit_id, ability in _WARPGATE_ABILITIES:
+            for unit_id, ability in warp_priority:
                 if gas_high and unit_id == UnitTypeId.ZEALOT:
                     continue
                 if ability not in abilities:
@@ -870,6 +898,19 @@ class Alpha4GateBot(BotAI):
                         {"action": "Train", "target": "VoidRay"}
                     )
                     voidray_count += 1
+
+        # Archon morph: any idle pair of HighTemplars → 1 Archon.
+        # Consume HTs in pairs; each pair frees 4 supply (2 HT × 2) and spawns
+        # one Archon (4 supply) after the morph animation.
+        high_templars = self.units(UnitTypeId.HIGHTEMPLAR)
+        if high_templars.amount >= 2:
+            pairs = list(high_templars)
+            for i in range(0, len(pairs) - 1, 2):
+                a, b = pairs[i], pairs[i + 1]
+                a(AbilityId.MORPH_ARCHON, b)
+                self._actions_this_step.append(
+                    {"action": "Morph", "target": "Archon"},
+                )
 
     # ------------------------------------------------------------------ #
     #  Scouting

@@ -264,6 +264,23 @@ class MacroManager:
                     )
                 )
 
+        # Templar Archives after Twilight — unlocks HighTemplar / Archon path
+        tc_structs = bot.structures(UnitTypeId.TWILIGHTCOUNCIL)
+        try:
+            has_tc_ready = bool(tc_structs.ready)
+        except AttributeError:
+            has_tc_ready = bool(tc_structs)
+        if has_tc_ready:
+            ta_count = len(bot.structures(UnitTypeId.TEMPLARARCHIVE))
+            if ta_count == 0 and bot.already_pending(UnitTypeId.TEMPLARARCHIVE) == 0:
+                self._pending.append(
+                    MacroDecision(
+                        action="build",
+                        target="TemplarArchive",
+                        reason="Unlocking HighTemplar / Archon splash path",
+                    )
+                )
+
         # Robotics Bay after Robo — unlocks Colossus
         robo_structs = bot.structures(UnitTypeId.ROBOTICSFACILITY)
         try:
