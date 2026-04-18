@@ -389,6 +389,7 @@ key raises a clear `KeyError` listing the available options.
 - **Depends on:** Step 1
 
 ### Step 3: Wire reparent primitive into the container
+- **Status:** DONE (2026-04-18)
 - **Problem:** `SelfPlayViewer` gains `attach_pane(slot, pid, label)`
   and `detach_pane(slot)` methods that look up the container's own
   HWND via `pygame.display.get_wm_info()['window']`, call
