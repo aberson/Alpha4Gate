@@ -340,6 +340,7 @@ key raises a clear `KeyError` listing the available options.
 ## 7. Build Steps
 
 ### Step 1: Scaffold pygame container + background loader
+- **Status:** DONE (2026-04-18)
 - **Problem:** Build the `selfplay_viewer` package skeleton: pygame
   window with configurable bar (top/side) and size (large/small), PNG
   background loading from `img_backgrounds/`, and a `demo.py` entry
