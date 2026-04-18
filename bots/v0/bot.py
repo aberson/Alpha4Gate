@@ -828,9 +828,9 @@ class Alpha4GateBot(BotAI):
         obs_count = len(self.units(UnitTypeId.OBSERVER))
         has_robo_bay = bool(self.structures(UnitTypeId.ROBOTICSBAY).ready)
         colossus_count = len(self.units(UnitTypeId.COLOSSUS))
+        COLOSSUS_TARGET = 6
         for robo in self.structures(UnitTypeId.ROBOTICSFACILITY).idle:
-            # Colossus: build up to 3 if Robotics Bay is ready
-            if has_robo_bay and colossus_count < 3:
+            if has_robo_bay and colossus_count < COLOSSUS_TARGET:
                 if self.can_afford(UnitTypeId.COLOSSUS) and self.supply_left >= 6:
                     robo.train(UnitTypeId.COLOSSUS)
                     self._actions_this_step.append(
