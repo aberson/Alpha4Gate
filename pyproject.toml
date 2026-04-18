@@ -66,3 +66,23 @@ namespace_packages = true
 [[tool.mypy.overrides]]
 module = "pygame.*"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "win32gui.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "win32con.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "win32process.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "win32api.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "pywintypes.*"
+ignore_missing_imports = true

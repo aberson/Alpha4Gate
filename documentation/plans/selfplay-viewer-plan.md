@@ -367,6 +367,7 @@ key raises a clear `KeyError` listing the available options.
 - **Depends on:** none
 
 ### Step 2: Win32 reparenting primitive (TDD)
+- **Status:** DONE (2026-04-18)
 - **Problem:** Implement `src/selfplay_viewer/reparent.py` with
   `find_hwnd_for_pid`, `attach_window`, `move_window`, `detach_window`.
   Use TDD: tests spawn `notepad.exe` via `subprocess.Popen`, wait for
