@@ -87,13 +87,20 @@ class TestNeuralDecisionEngine:
             result = engine.predict(GameSnapshot())
             assert result == expected_state
 
-    def test_hybrid_defend_override(self) -> None:
+    def test_hybrid_defend_override_real_threat(self) -> None:
+        """Non-trivial threat near base + can't counterattack -> DEFEND."""
         mock_model = _make_mock_model(action=2)  # would be ATTACK
         with patch("stable_baselines3.PPO") as mock_ppo_cls:
             mock_ppo_cls.load.return_value = mock_model
             engine = NeuralDecisionEngine("fake.zip", mode=DecisionMode.HYBRID)
 
-        snap = GameSnapshot(enemy_army_near_base=True)
+        # 30 supply threat, our army only 10 — both trivial-raid and
+        # counterattack-safe conditions fail, so the override should fire.
+        snap = GameSnapshot(
+            enemy_army_near_base=True,
+            enemy_army_supply_visible=30,
+            army_supply=10,
+        )
         result = engine.predict(snap)
         assert result == StrategicState.DEFEND
 
@@ -108,6 +115,11 @@ class TestNeuralDecisionEngine:
             assert p == (1.0 if i == defend_idx else 0.0)
 
     def test_hybrid_no_override_when_safe(self) -> None:
+        """Enemy not near base -> override never fires, PPO is trusted.
+
+        Also asserts the PPO model was actually consulted, so a passing
+        result of ATTACK cannot be a coincidence of the override path.
+        """
         mock_model = _make_mock_model(action=2)  # ATTACK
         with patch("stable_baselines3.PPO") as mock_ppo_cls:
             mock_ppo_cls.load.return_value = mock_model
@@ -116,4 +128,81 @@ class TestNeuralDecisionEngine:
         snap = GameSnapshot(enemy_army_near_base=False)
         result = engine.predict(snap)
         assert result == StrategicState.ATTACK
+        mock_model.predict.assert_called_once()
+
+    def test_hybrid_override_fires_on_hidden_threat_near_base(self) -> None:
+        """enemy_army_near_base=True + enemy_vis=0 -> unknown threat, fire DEFEND.
+
+        Hidden enemies (cloaked / burrowed / out of sensor) near our base
+        are MORE dangerous than small known raids, not less. The override
+        must fire even with enemy_vis=0.
+        """
+        mock_model = _make_mock_model(action=2)  # would be ATTACK
+        with patch("stable_baselines3.PPO") as mock_ppo_cls:
+            mock_ppo_cls.load.return_value = mock_model
+            engine = NeuralDecisionEngine("fake.zip", mode=DecisionMode.HYBRID)
+
+        snap = GameSnapshot(
+            enemy_army_near_base=True,
+            enemy_army_supply_visible=0,  # hidden — unknown composition
+            army_supply=100,  # plenty of army, but we can't see what to fight
+        )
+        result = engine.predict(snap)
+        assert result == StrategicState.DEFEND
+        # PPO must NOT have been consulted — override short-circuits.
+        mock_model.predict.assert_not_called()
+
+    def test_hybrid_suppressed_on_trivial_raid(self) -> None:
+        """Trivial raid (enemy_vis=5) near base -> override suppressed, PPO runs."""
+        mock_model = _make_mock_model(action=2)  # ATTACK
+        with patch("stable_baselines3.PPO") as mock_ppo_cls:
+            mock_ppo_cls.load.return_value = mock_model
+            engine = NeuralDecisionEngine("fake.zip", mode=DecisionMode.HYBRID)
+
+        snap = GameSnapshot(
+            enemy_army_near_base=True,
+            enemy_army_supply_visible=5,
+            army_supply=100,
+        )
+        result = engine.predict(snap)
+        assert result == StrategicState.ATTACK
+        # PPO path must have been taken
+        mock_model.predict.assert_called_once()
+
+    def test_hybrid_suppressed_when_can_counterattack(self) -> None:
+        """Big threat but we out-supply 1.5x -> override suppressed, PPO runs."""
+        mock_model = _make_mock_model(action=2)  # ATTACK
+        with patch("stable_baselines3.PPO") as mock_ppo_cls:
+            mock_ppo_cls.load.return_value = mock_model
+            engine = NeuralDecisionEngine("fake.zip", mode=DecisionMode.HYBRID)
+
+        # 30 enemy, 50 army — 50 >= 30*1.5 = 45, so we can counterattack.
+        snap = GameSnapshot(
+            enemy_army_near_base=True,
+            enemy_army_supply_visible=30,
+            army_supply=50,
+        )
+        result = engine.predict(snap)
+        assert result == StrategicState.ATTACK
+        mock_model.predict.assert_called_once()
+
+    def test_hybrid_override_fires_when_army_below_min_counterattack(self) -> None:
+        """Non-trivial threat + army below MIN_COUNTERATTACK_ARMY -> DEFEND.
+
+        Even when the raw ratio would allow counterattack (e.g. 11 vs 8),
+        an army under MIN_COUNTERATTACK_ARMY (12) is too small to commit.
+        """
+        mock_model = _make_mock_model(action=2)  # would be ATTACK
+        with patch("stable_baselines3.PPO") as mock_ppo_cls:
+            mock_ppo_cls.load.return_value = mock_model
+            engine = NeuralDecisionEngine("fake.zip", mode=DecisionMode.HYBRID)
+
+        # enemy=8 (just hits non-trivial), army=11 (below 12 minimum).
+        snap = GameSnapshot(
+            enemy_army_near_base=True,
+            enemy_army_supply_visible=8,
+            army_supply=11,
+        )
+        result = engine.predict(snap)
+        assert result == StrategicState.DEFEND
 

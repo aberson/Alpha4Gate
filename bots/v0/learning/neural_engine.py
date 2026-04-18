@@ -13,6 +13,7 @@ from bots.v0.decision_engine import (
     ACTION_TO_STATE as _ACTION_TO_STATE,
 )
 from bots.v0.decision_engine import (
+    DecisionEngine,
     GameSnapshot,
     StrategicState,
 )
@@ -24,6 +25,26 @@ _log = logging.getLogger(__name__)
 # Computed once at import time so adding/removing actions can never make it
 # point at the wrong slot.
 _DEFEND_IDX: int = _ACTION_TO_STATE.index(StrategicState.DEFEND)
+
+# Threat-aware hybrid DEFEND override thresholds.
+#
+# Previously the override fired any time ``enemy_army_near_base=True``,
+# which turned trivial scout raids or small harass forces into full army
+# recalls. This regressed max-supply engagements where a 130+ supply army
+# would abandon an attack for 2-Ultralisk harass.
+#
+# The override now only fires when the enemy presence is non-trivial OR
+# unknown (hidden / cloaked / burrowed), AND our army cannot safely
+# counterattack. Otherwise we trust PPO — it can still pick DEFEND for a
+# small known threat, or commit to ATTACK for a counterattack when we
+# out-supply the raiders.
+#
+# ``TRIVIAL_RAID_THRESHOLD`` mirrors ``DecisionEngine.DEFEND_INTERRUPT_THRESHOLD``
+# and ``MIN_COUNTERATTACK_ARMY`` reuses ``DecisionEngine.ATTACK_ARMY_SUPPLY``
+# via constant reference (not a local copy) so the hybrid override stays in
+# sync with the rule-based engine. ``COUNTERATTACK_SUPPLY_RATIO`` has no
+# equivalent in decision_engine.py, so it lives here.
+COUNTERATTACK_SUPPLY_RATIO: float = 1.5
 
 
 class DecisionMode(StrEnum):
@@ -73,13 +94,50 @@ class NeuralDecisionEngine:
         In hybrid mode, forces DEFEND when enemy is near base regardless
         of what the neural network suggests.
         """
-        # Hybrid override: rule-based DEFEND
+        # Hybrid override: rule-based DEFEND, but only for real threats we
+        # can't safely counterattack. Trivial known raids and lopsided
+        # matchups fall through to PPO so it can pick ATTACK / counterattack
+        # / other strategies as appropriate.
+        #
+        # Fog-of-war handling: ``enemy_vis == 0`` combined with
+        # ``enemy_army_near_base=True`` means something we can't see is close
+        # to home (burrowed, cloaked, out of sensor). That is MORE dangerous
+        # than a small known raid, not less — so unknown threats must also
+        # fire the DEFEND override. Both ``is_trivial_raid`` and
+        # ``can_counterattack`` therefore require ``enemy_vis > 0``; an
+        # unknown threat can never be trivial and can never be safely
+        # counterattacked against.
         if self._mode == DecisionMode.HYBRID and snapshot.enemy_army_near_base:
-            probs = [0.0] * len(_ACTION_TO_STATE)
-            probs[_DEFEND_IDX] = 1.0
-            self._last_probabilities = probs
-            _log.info("Hybrid override: DEFEND (enemy near base)")
-            return StrategicState.DEFEND
+            enemy_vis = snapshot.enemy_army_supply_visible
+            our_army = snapshot.army_supply
+
+            is_trivial_raid = 0 < enemy_vis < DecisionEngine.DEFEND_INTERRUPT_THRESHOLD
+            can_counterattack = (
+                enemy_vis > 0
+                and our_army >= DecisionEngine.ATTACK_ARMY_SUPPLY
+                and our_army >= enemy_vis * COUNTERATTACK_SUPPLY_RATIO
+            )
+
+            if not is_trivial_raid and not can_counterattack:
+                probs = [0.0] * len(_ACTION_TO_STATE)
+                probs[_DEFEND_IDX] = 1.0
+                self._last_probabilities = probs
+                _log.info(
+                    "Hybrid override: DEFEND (threat=%d near base, army=%d)",
+                    enemy_vis,
+                    our_army,
+                )
+                return StrategicState.DEFEND
+
+            # Fires every tick in HYBRID mode when enemy_army_near_base is
+            # True — keep at DEBUG to avoid flooding the INFO stream. The
+            # override-fires log above stays at INFO (rare, operationally
+            # significant).
+            _log.debug(
+                "Hybrid override suppressed (enemy=%d, army=%d): trusting PPO",
+                enemy_vis,
+                our_army,
+            )
 
         obs = encode(snapshot)
         action, _ = self._model.predict(obs, deterministic=self._deterministic)
