@@ -808,9 +808,15 @@ to diff 4-5. The hard fix is safe for diff 1-3 where opponents rarely doom-drop.
 
 ### T.2 — Low-ground bleeding (rally below ramps)
 
-See `memory/feedback_lowground_bleeding.md`. Army rallies below enemy ramps and
-takes free ranged fire instead of committing up or retreating. Rally-point
-selection needs elevation awareness.
+**Status:** SHIPPED as commit `c5bd90d` (#138).
+
+Reactive detection instead of elevation awareness: when army centroid moves
+< 2.0 tiles AND HP drops for >= 3.0 seconds, force attack-move on enemy main.
+Same primitive as `FINISHER_SUPPLY` override. Reuses `_should_reissue_attack_to_position`
+from T.7. `_bleeding_since` timer resets unconditionally after commit fires.
+
+Elevation-aware rally-point selection (proactive version) deferred — the
+reactive fix addresses the observable bad behavior directly.
 
 ### T.3 — Tech structures placed on low ground
 
