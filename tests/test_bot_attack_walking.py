@@ -44,6 +44,9 @@ class _MockUnit:
         "position",
         "attack_calls",
         "move_calls",
+        "is_idle",
+        "is_attacking",
+        "order_target",
     )
 
     def __init__(
@@ -60,6 +63,10 @@ class _MockUnit:
         self.position = _MockPosition(position[0], position[1])
         self.attack_calls: list[Any] = []
         self.move_calls: list[Any] = []
+        # Default idle — matches pre-churn-fix behavior (re-issue always fires).
+        self.is_idle: bool = True
+        self.is_attacking: bool = False
+        self.order_target: Any = None
 
     def attack(self, target: Any) -> None:
         self.attack_calls.append(target)

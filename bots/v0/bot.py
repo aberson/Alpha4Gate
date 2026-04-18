@@ -118,6 +118,49 @@ _WARPGATE_ABILITIES: list[tuple[UnitTypeId, AbilityId]] = [
 _ROBO_ARMY: list[UnitTypeId] = [UnitTypeId.IMMORTAL, UnitTypeId.OBSERVER]
 
 
+def _should_reissue_attack_to_unit(unit: Any, target_tag: int) -> bool:
+    """Return True if unit should be (re-)commanded to attack ``target_tag``.
+
+    Skips re-issue when the unit is already attacking the same target tag,
+    to avoid churning the weapon cycle every tick. Each fresh ``unit.attack``
+    resets the unit's weapon-ready timer, so spamming it per-tick prevents
+    units from ever firing in large melees.
+    """
+    if unit.is_idle:
+        return True
+    if unit.is_attacking:
+        current = unit.order_target
+        # order_target is either an int (unit tag) or Point2 (position) or None.
+        if isinstance(current, int) and current == target_tag:
+            return False
+    return True
+
+
+def _should_reissue_attack_to_position(
+    unit: Any, target_pos: Point2, tolerance: float = 2.0,
+) -> bool:
+    """Return True if unit should be (re-)commanded to attack-move to ``target_pos``.
+
+    Skips re-issue when the unit is already attack-moving toward the same
+    spot (within ``tolerance`` tiles), to avoid churning the weapon cycle or
+    recomputing the path every tick.
+    """
+    if unit.is_idle:
+        return True
+    if unit.is_attacking:
+        current = unit.order_target
+        # A position target is a Point2 — check distance. ``None`` and int tags
+        # both fall through to returning True (re-issue).
+        if current is not None and hasattr(current, "distance_to"):
+            try:
+                if current.distance_to(target_pos) <= tolerance:
+                    return False
+            except (TypeError, AttributeError):
+                # Defensive: unexpected target type — fall through and re-issue.
+                return True
+    return True
+
+
 class Alpha4GateBot(BotAI):
     """Main bot class that orchestrates all decision layers."""
 
@@ -931,9 +974,12 @@ class Alpha4GateBot(BotAI):
             if cmd.action == "attack" and cmd.target_tag is not None:
                 target_unit = self.enemy_units.find_by_tag(cmd.target_tag)
                 if target_unit:
-                    unit.attack(target_unit)
+                    if _should_reissue_attack_to_unit(unit, cmd.target_tag):
+                        unit.attack(target_unit)
                 elif cmd.target_position:
-                    unit.attack(Point2(cmd.target_position))
+                    pos = Point2(cmd.target_position)
+                    if _should_reissue_attack_to_position(unit, pos):
+                        unit.attack(pos)
             elif cmd.action == "move" and cmd.target_position is not None:
                 # _run_micro only runs in combat states (ATTACK, DEFEND,
                 # FORTIFY, LATE_GAME — see _step dispatch). Any advance toward
@@ -941,7 +987,9 @@ class Alpha4GateBot(BotAI):
                 # attack-move so the army engages enemies on the way instead
                 # of walking past them. Plain move is reserved for kiting
                 # (handled below) and non-combat scouting paths.
-                unit.attack(Point2(cmd.target_position))
+                pos = Point2(cmd.target_position)
+                if _should_reissue_attack_to_position(unit, pos):
+                    unit.attack(pos)
             elif cmd.action == "kite" and cmd.target_position is not None:
                 # Kiting uses plain move so the unit disengages; attack-move
                 # would re-target and break the kite.
@@ -958,7 +1006,8 @@ class Alpha4GateBot(BotAI):
             if unit.is_structure or unit.type_id == UnitTypeId.PROBE:
                 continue
             if unit.distance_to(rally_pt) > 10:
-                unit.attack(rally_pt)
+                if _should_reissue_attack_to_position(unit, rally_pt):
+                    unit.attack(rally_pt)
 
     def _attack_target(self) -> tuple[float, float] | None:
         """Pick an attack target: enemy natural (early) or enemy main (high supply)."""
