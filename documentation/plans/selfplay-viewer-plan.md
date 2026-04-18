@@ -513,6 +513,7 @@ key raises a clear `KeyError` listing the available options.
 - **Depends on:** Step 5
 
 ### Step 8: Runtime resize / bar-toggle polish
+- **Status:** DONE (2026-04-18)
 - **Problem:** `s` and `b` hotkeys already work from Step 3. This step
   is the polish pass: (a) ensure pygame `set_mode` + `MoveWindow` are
   sequenced correctly so the container and both SC2 panes stay

@@ -469,6 +469,95 @@ def render_placeholder(
         surface.set_clip(prior_clip)
 
 
+#: Vertical offset (pixels) from the bottom of the container where the
+#: toast pill is centred. 80px leaves clearance for taskbar-like chrome
+#: and keeps the toast floating above the SC2 panes' bottom edge.
+TOAST_BOTTOM_OFFSET_PX: Final[int] = 80
+
+#: Horizontal padding inside the toast pill (pixels).
+TOAST_PAD_X_PX: Final[int] = 24
+
+#: Vertical padding inside the toast pill (pixels).
+TOAST_PAD_Y_PX: Final[int] = 10
+
+
+def render_toast(
+    *,
+    surface: pygame.Surface,
+    container_size: tuple[int, int],
+    message: str,
+    alpha: float,
+) -> None:
+    """Paint a centered floating toast pill on the container.
+
+    Parameters
+    ----------
+    surface:
+        The pygame display surface (full container size). Only pixels
+        inside the toast pill are touched.
+    container_size:
+        ``(width, height)`` of the container — used to centre the pill
+        horizontally and offset it from the bottom edge.
+    message:
+        Short text to display inside the pill (e.g. ``"Large layout"``
+        or ``"Side bar"``). No substitution is performed.
+    alpha:
+        Opacity multiplier in ``[0.0, 1.0]``. Applied to BOTH the dark
+        background fill AND the white foreground text so the whole pill
+        fades together. Values outside the range are clamped.
+
+    Notes
+    -----
+    Lazy ``import pygame`` matches :func:`render_overlay` so the
+    Linux-importable contract of this module is preserved. The text
+    uses :data:`OVERLAY_SMALL_FONT_PX` to stay subtle and the pill
+    auto-sizes to fit the message plus
+    :data:`TOAST_PAD_X_PX` / :data:`TOAST_PAD_Y_PX`.
+
+    Position: horizontally centred on the container, vertically offset
+    :data:`TOAST_BOTTOM_OFFSET_PX` pixels above the bottom edge.
+    """
+    import pygame
+
+    _ensure_font_init()
+
+    clamped_alpha = max(0.0, min(1.0, alpha))
+    if clamped_alpha <= 0.0:
+        # Fully faded — skip the blit so a zero-alpha pill doesn't
+        # accidentally leave a ghost rect on the surface.
+        return
+
+    font = _get_font(OVERLAY_SMALL_FONT_PX)
+    text_surface = font.render(message, True, OVERLAY_TEXT_COLOR)
+    tw, th = text_surface.get_size()
+
+    pill_w = tw + 2 * TOAST_PAD_X_PX
+    pill_h = th + 2 * TOAST_PAD_Y_PX
+
+    cw, ch = container_size
+    pill_x = (cw - pill_w) // 2
+    pill_y = ch - TOAST_BOTTOM_OFFSET_PX - pill_h
+
+    # Alpha-blended dark fill. OVERLAY_FILL_COLOR is (0,0,0,0x80); we
+    # scale the 0x80 base alpha by the fade multiplier so the pill
+    # opacity follows the curve.
+    alpha_int = int(round(OVERLAY_FILL_COLOR[3] * clamped_alpha))
+    pill_surface = pygame.Surface((pill_w, pill_h), pygame.SRCALPHA)
+    pill_surface.fill(
+        (OVERLAY_FILL_COLOR[0], OVERLAY_FILL_COLOR[1], OVERLAY_FILL_COLOR[2], alpha_int)
+    )
+    surface.blit(pill_surface, (pill_x, pill_y))
+
+    # Fade the text in lockstep with the fill. set_alpha works on a
+    # per-surface basis; the rendered Font surface is fresh here so
+    # mutating it has no cross-frame aliasing.
+    text_alpha_int = int(round(255 * clamped_alpha))
+    text_surface.set_alpha(text_alpha_int)
+    text_x = pill_x + TOAST_PAD_X_PX
+    text_y = pill_y + TOAST_PAD_Y_PX
+    surface.blit(text_surface, (text_x, text_y))
+
+
 def render_overlay(
     *,
     surface: pygame.Surface,
@@ -595,9 +684,13 @@ __all__ = [
     "SIDEBAR_SCORE_Y_PX",
     "SIDEBAR_V2_RESERVED_Y",
     "Size",
+    "TOAST_BOTTOM_OFFSET_PX",
+    "TOAST_PAD_X_PX",
+    "TOAST_PAD_Y_PX",
     "TOP_BAR_SUBTITLE_Y_PX",
     "TOP_BAR_TITLE_Y_PX",
     "render_overlay",
     "render_placeholder",
+    "render_toast",
     "reset_font_cache",
 ]

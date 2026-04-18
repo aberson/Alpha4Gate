@@ -34,6 +34,7 @@ from selfplay_viewer.overlay import (
     PLACEHOLDER_MESSAGES,
     render_overlay,
     render_placeholder,
+    render_toast,
     reset_font_cache,
 )
 
@@ -88,6 +89,14 @@ BATCH_STOP_JOIN_TIMEOUT_SECONDS: Final[float] = 30.0
 #: the plan's default (Step 7) — fast enough to catch a mid-game crash
 #: within a frame or two, slow enough to stay off the Win32 hot path.
 PLACEHOLDER_POLL_INTERVAL_SECONDS: Final[float] = 0.5
+
+#: Display duration for the layout-change toast overlay (seconds). After
+#: an ``S`` / ``B`` hotkey fires, :meth:`SelfPlayViewer._paint_frame`
+#: paints a short "Large layout" / "Side bar" pill that fades from full
+#: opacity to zero over this window. 0.2s matches the plan's Step-8
+#: "brief ~200ms" requirement — long enough to register visually,
+#: short enough to not obstruct the panes.
+TOAST_DURATION_SECONDS: Final[float] = 0.2
 
 
 @dataclass(frozen=True)
@@ -196,6 +205,15 @@ class SelfPlayViewer:
         self._p2_label: str = ""
         self._p1_wins: int = 0
         self._p2_wins: int = 0
+        #: Toast overlay state — painted centred near the bottom of the
+        #: container for a short fade window after an ``S`` / ``B``
+        #: hotkey fires. ``None`` means "no toast"; :meth:`_paint_frame`
+        #: clears the message back to ``None`` once the deadline is
+        #: reached so stale strings never linger. Monotonic deadline
+        #: pairs with :data:`TOAST_DURATION_SECONDS` to drive the alpha
+        #: fade. See :meth:`_trigger_toast`.
+        self._toast_message: str | None = None
+        self._toast_expires_at: float = 0.0
 
     # ------------------------------------------------------------------
     # Public API
@@ -532,11 +550,11 @@ class SelfPlayViewer:
                                 target_bar if target_bar is not None else self.bar
                             )
                             target_bar = "side" if base_bar == "top" else "top"
-                if target_bar is not None or target_size is not None:
-                    screen, background_surface = self._apply_layout_change(
-                        new_bar=target_bar if target_bar is not None else self.bar,
-                        new_size=target_size if target_size is not None else self.size,
-                    )
+                applied = self._maybe_apply_layout_targets(
+                    target_bar, target_size, screen, background_surface
+                )
+                if applied is not None:
+                    screen, background_surface = applied
 
                 self._drain_event_queue()
 
@@ -862,11 +880,11 @@ class SelfPlayViewer:
                                 target_bar if target_bar is not None else self.bar
                             )
                             target_bar = "side" if base_bar == "top" else "top"
-                if target_bar is not None or target_size is not None:
-                    screen, background_surface = self._apply_layout_change(
-                        new_bar=target_bar if target_bar is not None else self.bar,
-                        new_size=target_size if target_size is not None else self.size,
-                    )
+                applied = self._maybe_apply_layout_targets(
+                    target_bar, target_size, screen, background_surface
+                )
+                if applied is not None:
+                    screen, background_surface = applied
 
                 self._paint_frame(screen, background_surface)
                 pygame.display.flip()
@@ -886,6 +904,78 @@ class SelfPlayViewer:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _maybe_apply_layout_targets(
+        self,
+        target_bar: str | None,
+        target_size: str | None,
+        screen: pygame.Surface,
+        background_surface: pygame.Surface,
+    ) -> tuple[pygame.Surface, pygame.Surface] | None:
+        """Apply the coalesced (target_bar, target_size) if it changes state.
+
+        Used by BOTH :meth:`run` and :meth:`run_with_batch` — the
+        single hotkey-apply point per frame.
+
+        Coalescing rules:
+
+        * If neither target is set, do nothing (returns ``None``).
+        * An even number of S (or B) presses in one frame leaves
+          ``target_size`` (or ``target_bar``) equal to ``self.size``
+          (``self.bar``). That is a net-no-change — we must NOT fire
+          the toast or call :meth:`_apply_layout_change` for it,
+          otherwise a rapid double-tap flashes "Top bar" for a no-op.
+        * When both bar AND size flipped in the same frame, the toast
+          announces the SIZE change — S is the coarser visual change.
+          Priority lives here (not in :meth:`_trigger_toast`) so the
+          helper stays a dumb state setter.
+
+        Returns
+        -------
+        tuple[pygame.Surface, pygame.Surface] | None
+            The new ``(screen, background_surface)`` pair when a
+            real layout change was applied, or ``None`` when the
+            call was a net-no-op (so the caller keeps its current
+            surfaces).
+        """
+        if target_bar is None and target_size is None:
+            return None
+        effective_bar = target_bar if target_bar is not None else self.bar
+        effective_size = target_size if target_size is not None else self.size
+        if effective_bar == self.bar and effective_size == self.size:
+            # Net-no-change — two presses coalesced to a no-op. Skip
+            # the toast + _apply_layout_change so we don't flash a
+            # bogus "Top bar" notification for an unchanged layout.
+            return None
+        # Arm the toast BEFORE _apply_layout_change so visual feedback
+        # still fires if the layout call raises.
+        if effective_size != self.size:
+            self._trigger_toast(f"{effective_size.capitalize()} layout")
+        else:
+            bar_label = "Top bar" if effective_bar == "top" else "Side bar"
+            self._trigger_toast(bar_label)
+        return self._apply_layout_change(
+            new_bar=effective_bar, new_size=effective_size
+        )
+
+    def _trigger_toast(self, message: str) -> None:
+        """Arm the toast overlay with *message* for :data:`TOAST_DURATION_SECONDS`.
+
+        Writes :attr:`_toast_message` and :attr:`_toast_expires_at` in
+        lockstep so :meth:`_paint_frame` can compute a linear alpha
+        fade. A fresh trigger while a prior toast is still active
+        replaces it rather than queuing — whichever call lands last
+        wins the overlay slot.
+
+        Priority policy (which of "size" vs "bar" to announce when both
+        hotkeys fire in the same frame) is NOT decided here: the event
+        drain in :meth:`run` / :meth:`run_with_batch` picks the message
+        before calling this helper. ``_trigger_toast`` is a dumb state
+        setter — it trusts its caller. See the coalescing block in the
+        hotkey handlers for the actual size-over-bar rule.
+        """
+        self._toast_message = message
+        self._toast_expires_at = time.monotonic() + TOAST_DURATION_SECONDS
 
     def _resolve_background_path(self) -> Path:
         """Resolve the configured background key to an on-disk PNG path.
@@ -991,13 +1081,27 @@ class SelfPlayViewer:
 
         Notes
         -----
-        Uniform sequence: detach EVERY attached pane to top-level FIRST
-        (so a fresh container HWND across ``set_mode`` cannot cascade
-        WM_DESTROY through still-WS_CHILD orphans), THEN call
-        ``pygame.display.set_mode``, THEN re-attach every snapshot entry
-        against the new container HWND. Per-pane re-attach failures fall
-        back to ``_safe_detach`` so the child stays top-level rather than
-        in a broken half-reparent.
+        Uniform sequence (Step 8 "Option A", locked in by
+        ``tests/test_resize_sequencing.py``):
+
+        1. Snapshot :attr:`_attached_panes`.
+        2. ``_safe_detach`` every snapshot pane to top-level.
+        3. ``pygame.display.set_mode`` — may recreate the container HWND.
+        4. Re-read the new container HWND.
+        5. ``reparent.attach_window`` each snapshot pane into its new
+           rect under the new container HWND. Per-pane failure rolls
+           back to ``_safe_detach`` (slot stays empty, child stays
+           top-level).
+
+        Why not "keep children attached across ``set_mode``"? pygame may
+        destroy-and-recreate the container HWND on a resize, and the
+        child-window cascade would then carry WM_DESTROY through every
+        still-WS_CHILD SC2 pane — the exact failure the Never-Terminate
+        rule forbids (Step 2 gauntlet finding). The child windows are
+        briefly visible on the desktop as independent top-level
+        windows during the re-flow; this is a visual flash but NOT
+        positional tearing — the container and its panes are never in
+        conflicting rect states within the same frame.
 
         ``self.bar`` / ``self.size`` are committed only on full success.
         On any exception both stay at their pre-call values and the
@@ -1241,6 +1345,24 @@ class SelfPlayViewer:
             p1_wins=self._p1_wins,
             p2_wins=self._p2_wins,
         )
+
+        # Toast overlay — painted LAST so it sits on top of every other
+        # pixel (including the stats bar). Cleared once expired so stale
+        # messages don't linger on the surface between frames.
+        if self._toast_message is not None:
+            now = time.monotonic()
+            remaining = self._toast_expires_at - now
+            if remaining <= 0.0:
+                self._toast_message = None
+            else:
+                alpha = max(0.0, min(1.0, remaining / TOAST_DURATION_SECONDS))
+                container_size = CONTAINER_SIZES[(self.bar, self.size)]
+                render_toast(
+                    surface=screen,
+                    container_size=container_size,
+                    message=self._toast_message,
+                    alpha=alpha,
+                )
 
 
 __all__ = ["AttachedPane", "SelfPlayViewer"]
