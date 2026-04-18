@@ -96,6 +96,76 @@ class TestStateTransitions:
         assert engine.evaluate(snap) == StrategicState.EXPAND
 
 
+class TestMaxSupplyAttackOverride:
+    """Tests for the max-supply ATTACK override.
+
+    At supply_used >= MAX_SUPPLY_ATTACK_THRESHOLD (180), `_compute_next_state`
+    must unconditionally return ATTACK, bypassing DEFEND, FORTIFY, build-order,
+    and late-game rules. This fixes the max-supply passivity bug where the
+    bot sat at 200/200 supply without engaging.
+    """
+
+    def test_threshold_constant_is_180(self) -> None:
+        assert DecisionEngine.MAX_SUPPLY_ATTACK_THRESHOLD == 180
+
+    def test_override_fires_at_threshold_even_with_enemy_near_base(self) -> None:
+        """supply_used=180 + enemy_army_near_base=True → ATTACK, not DEFEND."""
+        engine = DecisionEngine()
+        snap = GameSnapshot(
+            supply_used=180,
+            enemy_army_near_base=True,
+            enemy_army_supply_visible=50,
+            army_supply=0,
+        )
+        assert engine.evaluate(snap) == StrategicState.ATTACK
+
+    def test_override_from_opening(self) -> None:
+        """Engine in OPENING with incomplete multi-step build order → override fires → ATTACK.
+
+        A bot still executing its build order at 180+ supply is the strongest
+        regression target — this must bypass the build-order sequencer.
+        """
+        order = _simple_build_order(3)  # multi-step, not yet advanced
+        engine = DecisionEngine(build_order=order)
+        assert engine.state == StrategicState.OPENING
+
+        snap = GameSnapshot(supply_used=180, army_supply=0)
+        assert engine.evaluate(snap) == StrategicState.ATTACK
+
+    def test_no_override_just_below_threshold(self) -> None:
+        """supply_used=179 does NOT fire the override — normal rules apply.
+
+        With enemy near base and no army, DEFEND should still win.
+        """
+        engine = DecisionEngine()
+        snap = GameSnapshot(
+            supply_used=179,
+            enemy_army_near_base=True,
+            enemy_army_supply_visible=50,
+            army_supply=0,
+        )
+        assert engine.evaluate(snap) == StrategicState.DEFEND
+
+    def test_override_from_fortify(self) -> None:
+        """Engine in FORTIFY → override still fires → ATTACK."""
+        order = _simple_build_order(1)
+        engine = DecisionEngine(build_order=order, fortify_trigger_ratio=1.5)
+        engine.sequencer.advance()
+        engine.evaluate(GameSnapshot(supply_used=20))  # → EXPAND
+        engine._recently_retreated = True
+        engine.evaluate(
+            GameSnapshot(army_supply=10, enemy_army_supply_visible=30)
+        )
+        assert engine.state == StrategicState.FORTIFY
+
+        snap = GameSnapshot(
+            supply_used=180,
+            army_supply=10,
+            enemy_army_supply_visible=30,
+        )
+        assert engine.evaluate(snap) == StrategicState.ATTACK
+
+
 class TestDecisionLog:
     def test_logs_state_transition(self) -> None:
         order = _simple_build_order(1)

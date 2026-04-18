@@ -122,6 +122,11 @@ class DecisionEngine:
     ATTACK_ARMY_SUPPLY: int = 12
     LATE_GAME_BASE_COUNT: int = 3
     LATE_GAME_TIME_SECONDS: float = 480.0  # 8 minutes
+    # Max-supply commit: at or above this supply, force ATTACK regardless of
+    # other conditions. At 180+/200 supply the bot is near cap and there is
+    # zero benefit to waiting — sitting passively at max supply was a live
+    # bug where the army refused to engage.
+    MAX_SUPPLY_ATTACK_THRESHOLD: int = 180
 
     def __init__(
         self,
@@ -267,6 +272,12 @@ class DecisionEngine:
 
     def _compute_next_state(self, snapshot: GameSnapshot) -> StrategicState:
         """Determine the next state based on current game conditions."""
+        # Max-supply commit: at 180+ supply, there is zero benefit to waiting.
+        # Force ATTACK regardless of other conditions so the finisher logic
+        # in bot.py can fire and push the army into the enemy base.
+        if snapshot.supply_used >= self.MAX_SUPPLY_ATTACK_THRESHOLD:
+            return StrategicState.ATTACK
+
         # Defend if enemy is near base — but allow counterattack when
         # our army is strong enough to break out of the DEFEND loop.
         if snapshot.enemy_army_near_base:
