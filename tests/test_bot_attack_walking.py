@@ -47,6 +47,8 @@ class _MockUnit:
         "is_idle",
         "is_attacking",
         "order_target",
+        "health",
+        "shield",
     )
 
     def __init__(
@@ -67,6 +69,9 @@ class _MockUnit:
         self.is_idle: bool = True
         self.is_attacking: bool = False
         self.order_target: Any = None
+        # Needed by _is_bleeding_stationary when _run_micro delegates to it.
+        self.health: int = 100
+        self.shield: int = 50
 
     def attack(self, target: Any) -> None:
         self.attack_calls.append(target)
@@ -104,10 +109,12 @@ class _UnitsCollection:
 # Stub snapshot object: _run_micro only reads .army_supply
 # ---------------------------------------------------------------------------
 class _StubSnapshot:
-    __slots__ = ("army_supply",)
+    __slots__ = ("army_supply", "game_time_seconds")
 
     def __init__(self, army_supply: float = 30.0) -> None:
         self.army_supply = army_supply
+        # _is_bleeding_stationary reads this; first-tick path returns early anyway.
+        self.game_time_seconds: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -129,9 +136,15 @@ class _StubBot:
         "_enemy_main_pos",
         "_staging_pt",
         "_snapshot",
+        "_last_army_centroid",
+        "_last_army_hp",
+        "_bleeding_since",
     )
 
     FINISHER_SUPPLY = Alpha4GateBot.FINISHER_SUPPLY
+    BLEEDING_MOVE_THRESHOLD = Alpha4GateBot.BLEEDING_MOVE_THRESHOLD
+    BLEEDING_HP_PER_TICK_THRESHOLD = Alpha4GateBot.BLEEDING_HP_PER_TICK_THRESHOLD
+    BLEEDING_COMMIT_SECONDS = Alpha4GateBot.BLEEDING_COMMIT_SECONDS
 
     def __init__(
         self,
@@ -161,6 +174,12 @@ class _StubBot:
         self._staging_pt: tuple[float, float] | None = (40.0, 40.0)
         self._snapshot = _StubSnapshot(army_supply=army_supply)
 
+        # Bleeding-commit state (see Alpha4GateBot._is_bleeding_stationary).
+        # Starts unseeded — first call just caches, never triggers.
+        self._last_army_centroid: tuple[float, float] | None = None
+        self._last_army_hp: int = 0
+        self._bleeding_since: float | None = None
+
     # --- methods that _run_micro calls on self --------------------------- #
     def _build_snapshot(self) -> _StubSnapshot:
         return self._snapshot
@@ -179,8 +198,9 @@ class _StubBot:
     def _enemy_main(self) -> tuple[float, float] | None:
         return self._enemy_main_pos
 
-    # Bind the real production method
+    # Bind the real production methods
     _run_micro = Alpha4GateBot._run_micro  # type: ignore[assignment]
+    _is_bleeding_stationary = Alpha4GateBot._is_bleeding_stationary  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +322,109 @@ class TestAttackCommandsUnchanged:
         # Attack on a tagged unit passes the enemy unit object itself
         assert own.attack_calls[0] is enemy
         assert own.move_calls == []
+
+
+# ===========================================================================
+# Bleeding-commit wiring — _run_micro must call _is_bleeding_stationary and
+# short-circuit to attack-move on the enemy main when it returns True.
+# ===========================================================================
+class TestBleedingCommitWiring:
+    """Integration-style: when bleeding fires, _run_micro commits forward.
+
+    Unit tests (test_bot_bleeding.py) cover the heuristic in isolation. These
+    tests verify the wire-up: _run_micro actually calls the heuristic, and on
+    True it issues attack-move at the enemy main BEFORE any rally / staging /
+    micro-command logic runs.
+    """
+
+    def test_bleeding_fires_attack_move_on_enemy_main(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When _is_bleeding_stationary is True, all army units attack-move enemy main."""
+        unit = _MockUnit(tag=1, type_id=UnitTypeId.STALKER, position=(5.0, 5.0))
+        bot = _StubBot(
+            army=[unit],
+            enemies=[],
+            # A bogus move command — if we reach micro_controller, we'd see it.
+            commands=[_move_cmd(unit.tag, (99.0, 99.0))],
+            army_supply=30.0,
+            is_coherent=True,
+        )
+        # Force the heuristic True for this tick.
+        # __slots__ blocks per-instance attr assignment; patch on the class.
+        monkeypatch.setattr(
+            _StubBot, "_is_bleeding_stationary", lambda self, _a, _s: True,
+        )
+        bot._enemy_main_pos = (60.0, 60.0)
+
+        _run(bot._run_micro(StrategicState.ATTACK))
+
+        # Attack-move fired at the enemy main, not the stale move target.
+        assert len(unit.attack_calls) == 1, (
+            "Bleeding commit must issue attack-move on enemy main."
+        )
+        assert isinstance(unit.attack_calls[0], Point2)
+        assert unit.attack_calls[0].x == 60.0
+        assert unit.attack_calls[0].y == 60.0
+        # And micro controller was short-circuited (no plain moves happened).
+        assert unit.move_calls == []
+
+    def test_bleeding_commit_resets_bleeding_since(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Committing resets _bleeding_since so we don't re-fire every tick."""
+        unit = _MockUnit(tag=2, type_id=UnitTypeId.STALKER)
+        bot = _StubBot(
+            army=[unit],
+            enemies=[],
+            commands=[],
+            army_supply=30.0,
+            is_coherent=True,
+        )
+        # __slots__ blocks per-instance attr assignment; patch on the class.
+        monkeypatch.setattr(
+            _StubBot, "_is_bleeding_stationary", lambda self, _a, _s: True,
+        )
+        bot._bleeding_since = 5.0  # seeded as if already tracking bleed
+        bot._enemy_main_pos = (60.0, 60.0)
+
+        _run(bot._run_micro(StrategicState.ATTACK))
+
+        assert bot._bleeding_since is None, (
+            "After a commit, _bleeding_since must reset so we don't retry every tick."
+        )
+
+    def test_bleeding_commit_resets_even_when_enemy_main_unknown(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """_bleeding_since must reset even when _enemy_main() returns None.
+
+        Otherwise we'd recompute the bleed+commit branch every tick with a
+        stale start time, re-logging and wasting CPU.
+        """
+        unit = _MockUnit(tag=3, type_id=UnitTypeId.STALKER)
+        bot = _StubBot(
+            army=[unit],
+            enemies=[],
+            commands=[_move_cmd(unit.tag, (99.0, 99.0))],
+            army_supply=30.0,
+            is_coherent=True,
+        )
+        # __slots__ blocks per-instance attr assignment; patch on the class.
+        monkeypatch.setattr(
+            _StubBot, "_is_bleeding_stationary", lambda self, _a, _s: True,
+        )
+        bot._bleeding_since = 5.0
+        bot._enemy_main_pos = None  # scout not up yet — target unknown
+
+        _run(bot._run_micro(StrategicState.ATTACK))
+
+        assert bot._bleeding_since is None, (
+            "Reset must be unconditional — not gated on _enemy_main() != None."
+        )
+        # With no target, we still short-circuited (no stale move issued).
+        assert unit.attack_calls == []
+        assert unit.move_calls == []
 
 
 # ===========================================================================

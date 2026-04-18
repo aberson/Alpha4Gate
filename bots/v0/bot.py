@@ -171,6 +171,11 @@ class Alpha4GateBot(BotAI):
     PUSH_MAIN_SUPPLY: int = 60
     FINISHER_SUPPLY: int = 100
 
+    # Bleeding-commit thresholds (see _is_bleeding_stationary for rationale)
+    BLEEDING_MOVE_THRESHOLD: float = 2.0  # tiles — centroid moving < this per tick = stationary
+    BLEEDING_HP_PER_TICK_THRESHOLD: int = 1  # HP lost per tick to count as "taking damage"
+    BLEEDING_COMMIT_SECONDS: float = 3.0  # bleed this long before force-commit
+
     # Maps StrategicState → action index (inverse of _ACTION_TO_STATE in environment.py)
     _STATE_TO_ACTION: dict[StrategicState, int] = {
         StrategicState.OPENING: 0,
@@ -243,6 +248,11 @@ class Alpha4GateBot(BotAI):
         self._prev_snapshot: GameSnapshot | None = None
         self._prev_obs: np.ndarray | None = None
         self._prev_action: int | None = None
+
+        # Bleeding-commit state (see _is_bleeding_stationary)
+        self._last_army_centroid: tuple[float, float] | None = None
+        self._last_army_hp: int = 0
+        self._bleeding_since: float | None = None  # game time bleeding started
 
     def _build_snapshot(self) -> GameSnapshot:
         """Build a GameSnapshot from current bot state."""
@@ -916,6 +926,62 @@ class Alpha4GateBot(BotAI):
     #  Micro (combat)
     # ------------------------------------------------------------------ #
 
+    def _is_bleeding_stationary(self, army: list[Any], snapshot: GameSnapshot) -> bool:
+        """Return True if army is stationary AND losing HP over BLEEDING_COMMIT_SECONDS.
+
+        Stationary + taking damage means the army is stuck in a bad position
+        (classically: clustered below an enemy ramp taking free ranged fire).
+        The fix is to commit forward — either the push succeeds or dies trying,
+        either way faster than the current slow bleed.
+        """
+        if not army:
+            # No army — reset state, not bleeding
+            self._last_army_centroid = None
+            self._last_army_hp = 0
+            self._bleeding_since = None
+            return False
+
+        # Compute current centroid and HP+shield
+        cx = sum(u.position.x for u in army) / len(army)
+        cy = sum(u.position.y for u in army) / len(army)
+        current_centroid = (cx, cy)
+        current_hp = sum(int(u.health) + int(u.shield) for u in army)
+
+        if self._last_army_centroid is None:
+            # First observation — cache and return
+            self._last_army_centroid = current_centroid
+            self._last_army_hp = current_hp
+            return False
+
+        # Distance moved since last tick
+        dx = current_centroid[0] - self._last_army_centroid[0]
+        dy = current_centroid[1] - self._last_army_centroid[1]
+        moved = (dx * dx + dy * dy) ** 0.5
+
+        # HP delta — positive means we lost HP
+        hp_lost = self._last_army_hp - current_hp
+
+        # Update cache for next call
+        self._last_army_centroid = current_centroid
+        self._last_army_hp = current_hp
+
+        is_bleeding_now = (
+            moved < self.BLEEDING_MOVE_THRESHOLD
+            and hp_lost >= self.BLEEDING_HP_PER_TICK_THRESHOLD
+        )
+
+        if is_bleeding_now:
+            if self._bleeding_since is None:
+                self._bleeding_since = snapshot.game_time_seconds
+                return False
+            elapsed = snapshot.game_time_seconds - self._bleeding_since
+            if elapsed >= self.BLEEDING_COMMIT_SECONDS:
+                return True
+        else:
+            self._bleeding_since = None
+
+        return False
+
     async def _run_micro(self, state: StrategicState) -> None:
         """Issue combat micro commands to army units."""
         army = [u for u in self.units if not u.is_structure and u.type_id != UnitTypeId.PROBE]
@@ -935,6 +1001,27 @@ class Alpha4GateBot(BotAI):
                     for u in army:
                         u.attack(target_pt)
                     return
+
+            # Bleeding commit: stationary army losing HP (classically stuck
+            # below an enemy ramp taking free ranged fire). Force commit
+            # forward — the push either succeeds or dies faster than the
+            # current slow bleed. Same primitive as the FINISHER override.
+            if self._is_bleeding_stationary(army, snapshot):
+                target = self._enemy_main()
+                if target is not None:
+                    target_pt = Point2(target)
+                    for u in army:
+                        if _should_reissue_attack_to_position(u, target_pt):
+                            u.attack(target_pt)
+                    _log.info(
+                        "Bleeding commit: stationary+losing HP %.1fs, forcing attack-move",
+                        snapshot.game_time_seconds - (self._bleeding_since or 0.0),
+                    )
+                # Reset unconditionally: we've handled this bleeding state (either
+                # committed, or deferred because _enemy_main is unknown). Either
+                # way don't retry commit every tick from the same _bleeding_since.
+                self._bleeding_since = None
+                return
 
             rally = self._resolve_attack_rally(army, snapshot, cm)
 
