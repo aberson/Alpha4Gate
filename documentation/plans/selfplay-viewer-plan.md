@@ -412,6 +412,7 @@ key raises a clear `KeyError` listing the available options.
 - **Depends on:** Step 2
 
 ### Step 4: Integrate with `run_batch` + `scripts/selfplay.py`
+- **Status:** DONE (2026-04-18)
 - **Problem:** Add optional `on_game_start(game_index, total, p1_pid,
   p2_pid, p1_label, p2_label)` and `on_game_end(result)` callbacks to
   `run_batch` in `src/orchestrator/selfplay.py`, threading through

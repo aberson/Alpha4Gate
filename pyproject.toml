@@ -29,6 +29,7 @@ dev = [
 viewer = [
     "pygame>=2.5",
     "pywin32>=306",
+    "psutil>=5.9",
 ]
 
 [build-system]

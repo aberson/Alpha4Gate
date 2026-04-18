@@ -20,8 +20,10 @@ import logging
 import os
 import random
 import sys
+import threading
 import time
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -33,9 +35,32 @@ if TYPE_CHECKING:
     from sc2.main import GameMatch
     from sc2.player import AbstractPlayer, BotProcess
 
+#: Type alias for the ``on_game_start`` callback. Takes
+#: ``(game_index, total, p1_pid, p2_pid, p1_label, p2_label)`` — labels
+#: are resolved AFTER seat swap so they match the versions the user
+#: sees. ``-1`` for a PID means discovery timed out OR the game crashed
+#: before PIDs appeared; the viewer paints a placeholder in that slot.
+#:
+#: .. warning::
+#:
+#:     The (pid, label) positional correspondence is **not authoritative**.
+#:     We cannot reliably determine whether a freshly-spawned SC2 process
+#:     belongs to p1 or p2 without cooperation from burnysc2 (the bot
+#:     subprocess PID is a local in ``sc2.proxy.play_with_proxy`` and not
+#:     exposed on ``BotProcess``). The viewer treats the pair as an
+#:     unordered set — slot-0 / slot-1 assignment is arbitrary and both
+#:     slots show the same "P1 vs P2" label context.
+OnGameStart = Callable[[int, int, int, int, str, str], None]
+
+#: Type alias for the ``on_game_end`` callback. Receives the finalised
+#: :class:`SelfPlayRecord` for the just-completed game.
+OnGameEnd = Callable[[SelfPlayRecord], None]
+
 _log = logging.getLogger(__name__)
 
 __all__ = [
+    "OnGameEnd",
+    "OnGameStart",
     "pfsp_sample",
     "run_batch",
 ]
@@ -272,6 +297,208 @@ async def _run_single_game(
     return results[0] if results else None  # type: ignore[return-value]
 
 
+def _sc2_pid_snapshot() -> set[int]:
+    """Return the current set of SC2_x64.exe PIDs visible to this process.
+
+    ``psutil`` is imported lazily so non-viewer callers (PFSP on Linux,
+    unit tests that mock the SC2 layer) do not need the dep at import
+    time. ``psutil`` is declared on the ``[viewer]`` optional extra.
+    """
+    import psutil  # type: ignore[import-untyped]
+
+    pids: set[int] = set()
+    for proc in psutil.process_iter(["name"]):
+        try:
+            name = proc.info.get("name") or ""
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+        if name and "SC2_x64" in name:
+            pids.add(proc.pid)
+    return pids
+
+
+def _orchestrator_descendant_pids() -> set[int] | None:
+    """Return PIDs descended from the current (orchestrator) process.
+
+    Returns ``None`` on permission / import / platform failures so the
+    caller can fall back to a looser filter. Logs a WARNING on failure
+    so the operator has a breadcrumb if mid-batch slot-stealing happens.
+    """
+    try:
+        import os as _os
+
+        import psutil
+
+        me = psutil.Process(_os.getpid())
+        # recursive=True walks the full subtree (direct + indirect).
+        return {child.pid for child in me.children(recursive=True)}
+    except Exception:
+        _log.warning(
+            "psutil descendant walk failed; SC2 PID filter will not "
+            "exclude user-spawned SC2 instances",
+            exc_info=True,
+        )
+        return None
+
+
+async def _wait_for_sc2_pids(
+    before: set[int],
+    timeout_s: float = 15.0,
+    poll_interval_s: float = 0.2,
+) -> tuple[int, int]:
+    """Poll psutil until two new SC2_x64.exe PIDs appear.
+
+    Returns the pair of new PIDs (lowest PID first for determinism), or
+    ``(-1, -1)`` if fewer than two new SC2 processes appear within
+    *timeout_s* seconds. The return order is stable but has **no inherent
+    p1/p2 meaning** — the caller treats the pair as an unordered set and
+    lets the viewer decide which slot to paint first. See the
+    :data:`OnGameStart` warning for why.
+
+    The "new" set is filtered to orchestrator-descendant PIDs when
+    possible so a user spawning a third SC2 mid-batch does not displace
+    one of our two. On descendant-walk failure (permission error, etc.)
+    we fall back to sorting all new PIDs and picking the lowest two.
+    """
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            current = _sc2_pid_snapshot()
+        except Exception:
+            _log.warning("psutil SC2 PID snapshot failed", exc_info=True)
+            return (-1, -1)
+        new_all = current - before
+        descendants = _orchestrator_descendant_pids()
+        if descendants is not None:
+            ours = sorted(new_all & descendants)
+        else:
+            # Best-effort fallback: no way to filter out user-owned SC2
+            # instances, so pick the lowest two (stable, deterministic).
+            ours = sorted(new_all)
+        if len(ours) >= 2:
+            return (ours[0], ours[1])
+        await asyncio.sleep(poll_interval_s)
+    return (-1, -1)
+
+
+async def _run_single_game_with_callbacks(
+    match: GameMatch,
+    hard_timeout: float,
+    game_index: int,
+    total: int,
+    p1_label: str,
+    p2_label: str,
+    on_game_start: OnGameStart | None,
+) -> dict[AbstractPlayer, object] | None:
+    """Run one game while concurrently discovering its SC2 PIDs.
+
+    Behaves identically to :func:`_run_single_game` when
+    *on_game_start* is ``None``. When a callback is supplied, snapshots
+    SC2 PIDs BEFORE spawning the game, spawns the game as a task, and
+    concurrently polls psutil for the two new SC2_x64.exe PIDs. Races
+    the PID poll against the game task: whichever completes first wins.
+    If the game crashes before PIDs appear the callback still fires
+    (with sentinel ``(-1, -1)`` PIDs) so downstream contracts stay
+    intact (every game produces one ``on_game_start`` and one
+    ``on_game_end``). Exceptions from *on_game_start* are caught and
+    logged at WARNING — operator-side viewer bugs must not abort a
+    running batch.
+
+    Parameters
+    ----------
+    match:
+        Pre-built burnysc2 ``GameMatch`` for the game.
+    hard_timeout:
+        Wall-clock timeout (seconds) for the underlying SC2 game.
+    game_index, total:
+        1-based position of this game in the batch and batch size.
+    p1_label, p2_label:
+        Human-readable post-swap version labels for each seat.
+    on_game_start:
+        Callback forwarded from :func:`run_batch`. ``None`` short-circuits
+        to the pid-less :func:`_run_single_game` fast path.
+
+    Returns
+    -------
+    dict[AbstractPlayer, object] | None
+        Raw burnysc2 result dict for the game, or ``None`` if the SC2
+        layer returned no result.
+    """
+    from sc2.main import a_run_multiple_games
+
+    if on_game_start is None:
+        return await _run_single_game(match, hard_timeout)
+
+    try:
+        before = _sc2_pid_snapshot()
+    except Exception:
+        _log.warning(
+            "psutil pre-spawn snapshot failed; on_game_start will fire "
+            "with (-1, -1)",
+            exc_info=True,
+        )
+        before = set()
+
+    game_task = asyncio.create_task(
+        asyncio.wait_for(a_run_multiple_games([match]), timeout=hard_timeout)
+    )
+    pid_task = asyncio.create_task(_wait_for_sc2_pids(before))
+
+    # Race: if the game finishes (normally or via exception) before PIDs
+    # appear, cancel the pid_task and fire on_game_start with sentinel
+    # PIDs. Without this a fast crash wastes the full PID-poll timeout.
+    done, _pending = await asyncio.wait(
+        {pid_task, game_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+
+    if game_task in done:
+        # Game completed (normally or with exception) before PID
+        # discovery finished. Cancel the pid_task so we don't leak it.
+        pid_task.cancel()
+        try:
+            await pid_task
+        except (asyncio.CancelledError, Exception):
+            # CancelledError is expected; any other exception is noise
+            # we don't want to surface over the real game result/error.
+            pass
+        p1_pid, p2_pid = -1, -1
+        _log.warning(
+            "game %d/%d completed before SC2 PIDs were discovered; "
+            "firing on_game_start with (-1, -1)",
+            game_index,
+            total,
+        )
+    else:
+        # pid_task completed first — it returned either a real pair or
+        # (-1, -1) on its own timeout. game_task is still in flight.
+        try:
+            p1_pid, p2_pid = pid_task.result()
+        except Exception:
+            _log.warning("SC2 PID discovery crashed", exc_info=True)
+            p1_pid, p2_pid = -1, -1
+        if p1_pid == -1 or p2_pid == -1:
+            _log.warning(
+                "SC2 PID discovery timed out for game %d/%d; firing "
+                "on_game_start with (-1, -1)",
+                game_index,
+                total,
+            )
+
+    try:
+        on_game_start(game_index, total, p1_pid, p2_pid, p1_label, p2_label)
+    except Exception:
+        _log.warning(
+            "on_game_start callback raised (game %d/%d); continuing batch",
+            game_index,
+            total,
+            exc_info=True,
+        )
+
+    results = await game_task
+    return results[0] if results else None  # type: ignore[return-value]
+
+
 def _parse_winner(
     raw_result: dict[AbstractPlayer, object] | None,
     p1_version: str,
@@ -315,6 +542,9 @@ def run_batch(
     hard_timeout: float = 600.0,
     seed: int | None = None,
     results_path: Path | None = None,
+    on_game_start: OnGameStart | None = None,
+    on_game_end: OnGameEnd | None = None,
+    stop_event: threading.Event | None = None,
 ) -> list[SelfPlayRecord]:
     """Run *games* self-play matches between two bot versions.
 
@@ -344,11 +574,31 @@ def run_batch(
     results_path:
         Path to the JSONL results file.  Defaults to
         ``<repo_root>/data/selfplay_results.jsonl``.
+    on_game_start:
+        Optional callback fired AFTER SC2 spawns for each game with the
+        signature ``(game_index, total, p1_pid, p2_pid, p1_label,
+        p2_label)``. ``game_index`` is 1-based. Labels / PIDs are
+        post-swap so they match the SC2 windows the user sees. ``-1``
+        PIDs indicate discovery timeout — the viewer is expected to
+        paint a placeholder in that slot. Exceptions raised by the
+        callback are caught and logged at WARNING so operator-side
+        viewer bugs cannot abort a running batch.
+    on_game_end:
+        Optional callback fired once per game with the finalised
+        :class:`SelfPlayRecord`. Same exception-isolation contract as
+        *on_game_start*.
+    stop_event:
+        Optional :class:`threading.Event`. When set, the batch breaks
+        out of the game loop at the next inter-game boundary (the
+        currently-running game is allowed to finish). Used by the
+        viewer to tear down cooperatively when the user closes the
+        window mid-batch. ``None`` disables the check entirely.
 
     Returns
     -------
     list[SelfPlayRecord]
-        One record per game played.
+        One record per game played (up to *games*; fewer if
+        *stop_event* interrupts the batch).
     """
     os.environ.setdefault("SC2PATH", r"C:\Program Files (x86)\StarCraft II")
     _install_port_collision_patch()
@@ -363,6 +613,18 @@ def run_batch(
     records: list[SelfPlayRecord] = []
 
     for i in range(games):
+        # Cooperative cancellation checkpoint — check BEFORE starting a
+        # game so a viewer close that races with game N+1's launch wins
+        # the race and we return whatever we've accumulated so far.
+        if stop_event is not None and stop_event.is_set():
+            _log.info(
+                "stop_event set before game %d/%d; ending batch early "
+                "with %d record(s)",
+                i + 1,
+                games,
+                len(records),
+            )
+            break
         match_id = str(uuid.uuid4())
         match, seat_swap = _build_match(
             p1, p2, map_name, i, result_dir, game_time_limit, seed
@@ -386,7 +648,17 @@ def run_batch(
         winner: str | None = None
 
         try:
-            raw = asyncio.run(_run_single_game(match, hard_timeout))
+            raw = asyncio.run(
+                _run_single_game_with_callbacks(
+                    match,
+                    hard_timeout,
+                    game_index=i + 1,
+                    total=games,
+                    p1_label=game_p1,
+                    p2_label=game_p2,
+                    on_game_start=on_game_start,
+                )
+            )
             winner = _parse_winner(raw, p1, p2, seat_swap)
         except TimeoutError:
             error = f"timeout after {hard_timeout}s"
@@ -412,6 +684,18 @@ def run_batch(
         )
         records.append(record)
         _append_result(record, results_path)
+
+        if on_game_end is not None:
+            try:
+                on_game_end(record)
+            except Exception:
+                _log.warning(
+                    "on_game_end callback raised (game %d/%d); "
+                    "continuing batch",
+                    i + 1,
+                    games,
+                    exc_info=True,
+                )
 
         _log.info(
             "game %d result: winner=%s duration=%.1fs error=%s",

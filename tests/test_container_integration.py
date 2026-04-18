@@ -237,6 +237,37 @@ def test_attach_pane_replaces_existing(
 
 
 @pytest.mark.win32
+def test_attach_pane_honors_hwnd_timeout(
+    viewer_with_display: tuple[SelfPlayViewer, int],
+) -> None:
+    """attach_pane honors hwnd_timeout_s for main-thread responsiveness.
+
+    Passing a bogus PID with a sub-second timeout must raise RuntimeError
+    promptly rather than waiting out the 15s default. This is the Step-4
+    contract that keeps ``_handle_game_start`` from freezing the pygame
+    UI when one SC2 process is slow to spawn its window.
+    """
+    import time
+
+    viewer, _ = viewer_with_display
+
+    # PID 99999 is extremely unlikely to own any visible top-level
+    # window on the machine running the test. The timeout is what we're
+    # asserting, not the miss behaviour of find_hwnd_for_pid itself.
+    t0 = time.monotonic()
+    with pytest.raises(RuntimeError, match="find_hwnd_for_pid"):
+        viewer.attach_pane(0, 99999, "dead", hwnd_timeout_s=0.1)
+    elapsed = time.monotonic() - t0
+
+    # Generous margin for CI + EnumWindows drift, but well below the
+    # 15s default.
+    assert elapsed < 2.0, (
+        f"attach_pane(hwnd_timeout_s=0.1) took {elapsed:.2f}s — "
+        f"timeout kwarg not honored"
+    )
+
+
+@pytest.mark.win32
 def test_attach_pane_same_pid_reattach(
     viewer_with_display: tuple[SelfPlayViewer, int],
 ) -> None:

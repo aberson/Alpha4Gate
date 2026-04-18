@@ -148,6 +148,7 @@ dev = [
     { name = "ruff" },
 ]
 viewer = [
+    { name = "psutil" },
     { name = "pygame" },
     { name = "pywin32" },
 ]
@@ -163,6 +164,7 @@ requires-dist = [
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24" },
     { name = "pre-commit", marker = "extra == 'dev'" },
+    { name = "psutil", marker = "extra == 'viewer'", specifier = ">=5.9" },
     { name = "pygame", marker = "extra == 'viewer'", specifier = ">=2.5" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "python-dotenv" },
