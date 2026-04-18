@@ -29,8 +29,9 @@ from selfplay_viewer import reparent
 from selfplay_viewer.backgrounds import pick_background
 from selfplay_viewer.overlay import (
     CONTAINER_SIZES,
-    OVERLAY_RECTS,
     PANE_RECTS,
+    render_overlay,
+    reset_font_cache,
 )
 
 if TYPE_CHECKING:
@@ -56,15 +57,6 @@ def _ensure_main_thread() -> None:
 
 #: Grey placeholder colour for the SC2 panes (RGB).
 PLACEHOLDER_COLOR: Final[tuple[int, int, int]] = (0xAA, 0xAA, 0xAA)
-
-#: Border colour for the overlay stub (RGB).
-OVERLAY_BORDER_COLOR: Final[tuple[int, int, int]] = (0xFF, 0xFF, 0xFF)
-
-#: Semi-transparent dark fill for the overlay stub (RGBA).
-OVERLAY_FILL_COLOR: Final[tuple[int, int, int, int]] = (0x00, 0x00, 0x00, 0x80)
-
-#: Border thickness for the overlay stub (px).
-OVERLAY_BORDER_PX: Final[int] = 4
 
 #: Target frame rate for the demo loop.
 TARGET_FPS: Final[int] = 30
@@ -143,6 +135,16 @@ class SelfPlayViewer:
         #: performs all Win32 work on the main thread. ``queue.Queue``
         #: is thread-safe by construction so no additional lock is needed.
         self._event_queue: queue.Queue[tuple[str, tuple[Any, ...]]] = queue.Queue()
+        #: Overlay state — updated from drained ``game_start`` /
+        #: ``game_end`` events on the pygame main thread. A
+        #: ``game_index`` of ``0`` means "batch not started" and signals
+        #: :func:`render_overlay` to paint only the dark background rect.
+        self._game_index: int = 0
+        self._total_games: int = 0
+        self._p1_label: str = ""
+        self._p2_label: str = ""
+        self._p1_wins: int = 0
+        self._p2_wins: int = 0
 
     # ------------------------------------------------------------------
     # Public API
@@ -504,6 +506,12 @@ class SelfPlayViewer:
             except Exception:  # noqa: BLE001 — already logged per-slot
                 pass
             pygame.quit()
+            # Drop cached pygame.font.Font handles — they reference
+            # SDL_TTF state that pygame.quit() just freed. Without this
+            # a future SelfPlayViewer.run* in the same process would
+            # hand the dead handle back to the overlay and SIGSEGV on
+            # the first Font.render. See overlay.reset_font_cache.
+            reset_font_cache()
             # Wait for the batch thread to wind down. When stop_event is
             # wired, the in-flight game completes naturally and the loop
             # exits at the next boundary — give it a real budget
@@ -559,6 +567,89 @@ class SelfPlayViewer:
                     file=sys.stderr,
                 )
 
+    def _update_game_start_state(
+        self,
+        game_index: int,
+        total: int,
+        p1_label: str,
+        p2_label: str,
+    ) -> None:
+        """Pure state-update for a ``game_start`` event.
+
+        Split out from :meth:`_handle_game_start` so the overlay
+        bookkeeping (index, total, labels) can be unit-tested without
+        needing pygame / Win32.
+
+        ``game_index == 1`` resets the W-L counters — that's the natural
+        batch boundary, and the same ``SelfPlayViewer`` instance can be
+        reused across multiple ``run_with_batch`` calls (e.g. live demo
+        + soak run back-to-back). Without the reset, counters from the
+        previous batch would bleed into the next batch's overlay.
+        """
+        if game_index == 1:
+            self._p1_wins = 0
+            self._p2_wins = 0
+        self._game_index = game_index
+        self._total_games = total
+        self._p1_label = p1_label
+        self._p2_label = p2_label
+
+    def _update_game_end_state(self, result: SelfPlayRecord) -> None:
+        """Pure state-update for a ``game_end`` event.
+
+        Two modes:
+
+        - **Cross-version (default)** — increments ``_p1_wins`` /
+          ``_p2_wins`` based on whether the record's ``winner`` matches
+          the stored label.
+        - **Same-version self-play** (``self._p1_label ==
+          self._p2_label``, e.g. ``v0`` vs ``v0``) — both seats share
+          one label, so the per-seat ``if/elif`` would always fire on
+          the ``_p1_wins`` branch and ``_p2_wins`` would stay 0 forever.
+          We collapse to a single counter (``_p1_wins`` is the canonical
+          slot, ``_p2_wins`` stays at 0) and the overlay renders a unified
+          "Wins: N" string.
+
+        Draws (``winner is None``) and labels that match neither seat
+        (defensive) produce no increment.
+
+        Defensive label-consistency check: ``SelfPlayRecord`` carries
+        the post-swap ``p1_version`` / ``p2_version`` values that the
+        orchestrator authoritatively assigned to each seat. They should
+        match the labels we stored from the matching ``on_game_start``.
+        If they ever drift (e.g. an out-of-order event reorders the
+        queue) we log a warning rather than raise — surfacing the
+        inconsistency without crashing the viewer mid-batch.
+        """
+        if (
+            result.p1_version != self._p1_label
+            or result.p2_version != self._p2_label
+        ):
+            print(
+                f"[selfplay_viewer] warning: game_end labels "
+                f"({result.p1_version!r}, {result.p2_version!r}) do not "
+                f"match game_start labels "
+                f"({self._p1_label!r}, {self._p2_label!r}); score "
+                f"attribution may be wrong",
+                file=sys.stderr,
+            )
+        if result.winner is None:
+            return
+        if self._p1_label == self._p2_label:
+            # Same-version self-play: both seats share a label so the
+            # per-side W-L is undefined. Collapse to a unified Wins
+            # counter on _p1_wins; _p2_wins stays at 0 (and the overlay
+            # detects the same-label case and renders "Wins: N").
+            if result.winner == self._p1_label:
+                self._p1_wins += 1
+            return
+        if result.winner == self._p1_label:
+            self._p1_wins += 1
+        elif result.winner == self._p2_label:
+            self._p2_wins += 1
+        # else: defensive — winner didn't match either seat label.
+        # Silently skip rather than mis-attribute the win.
+
     def _handle_game_start(self, payload: tuple[Any, ...]) -> None:
         """Apply a ``game_start`` event on the pygame thread.
 
@@ -567,8 +658,14 @@ class SelfPlayViewer:
         and skips so the other slot still gets a chance. ``-1`` PIDs
         (PID discovery timed out on the orchestrator side) are skipped
         entirely; the pane stays in its placeholder state.
+
+        Overlay bookkeeping is updated FIRST via
+        :meth:`_update_game_start_state` so a failed attach on one slot
+        doesn't prevent the W-L header from showing the right index /
+        labels.
         """
-        _game_index, _total, p1_pid, p2_pid, p1_label, p2_label = payload
+        game_index, total, p1_pid, p2_pid, p1_label, p2_label = payload
+        self._update_game_start_state(game_index, total, p1_label, p2_label)
         for slot, pid, label in ((0, p1_pid, p1_label), (1, p2_pid, p2_label)):
             if pid == -1:
                 # PID discovery failed upstream — leave the slot in its
@@ -599,10 +696,15 @@ class SelfPlayViewer:
         Detaches both slots. ``detach_pane`` is a no-op for slots that
         aren't currently attached (e.g. when PID discovery failed for
         that side), so this is safe to call unconditionally.
+
+        Also updates the running W-L counters via
+        :meth:`_update_game_end_state` so the overlay reflects the new
+        score BEFORE the next ``game_start`` arrives. Running the
+        state-update first means a failure in the detach path doesn't
+        strand the scoreboard.
         """
-        # The SelfPlayRecord payload is stored for future overlay use
-        # (Step 5 will render game count / W-L in the bar); Step 4
-        # only needs the detach trigger.
+        (result,) = payload
+        self._update_game_end_state(result)
         for slot in (0, 1):
             try:
                 self.detach_pane(slot)
@@ -702,6 +804,10 @@ class SelfPlayViewer:
             # Step 2 code-gauntlet finding documented in the plan.
             self._detach_all_panes()
             pygame.quit()
+            # Same stale-handle gotcha as run_with_batch — drop the
+            # font cache so a subsequent SelfPlayViewer.run in the same
+            # process doesn't hand back a SIGSEGV-on-render handle.
+            reset_font_cache()
 
     # ------------------------------------------------------------------
     # Helpers
@@ -923,11 +1029,17 @@ class SelfPlayViewer:
         screen: pygame.Surface,
         background_surface: pygame.Surface,
     ) -> None:
-        """Paint background + placeholder panes (only for unattached slots) + overlay stub.
+        """Paint background + placeholder panes (only for unattached slots) + overlay.
 
         Attached panes have a real Win32 child rendering into their pane
         rect already, so painting a grey fill there would cover the
         child window with an opaque rectangle on every frame.
+
+        The overlay is delegated to :func:`render_overlay` which handles
+        both the semi-transparent background rect AND the text content
+        (VS header, game index, W-L). When ``self._game_index == 0``
+        (batch not started) ``render_overlay`` paints only the
+        background rect.
         """
         import pygame
 
@@ -939,18 +1051,16 @@ class SelfPlayViewer:
                 continue  # Real Win32 child owns this rect — do not overpaint.
             pygame.draw.rect(screen, PLACEHOLDER_COLOR, pygame.Rect(*rect))
 
-        overlay_rect = OVERLAY_RECTS[(self.bar, self.size)]
-        ox, oy, ow, oh = overlay_rect
-        # Semi-transparent dark fill via a per-pixel-alpha overlay surface.
-        overlay_surface = pygame.Surface((ow, oh), pygame.SRCALPHA)
-        overlay_surface.fill(OVERLAY_FILL_COLOR)
-        screen.blit(overlay_surface, (ox, oy))
-        # Visible border on top.
-        pygame.draw.rect(
-            screen,
-            OVERLAY_BORDER_COLOR,
-            pygame.Rect(ox, oy, ow, oh),
-            OVERLAY_BORDER_PX,
+        render_overlay(
+            surface=screen,
+            bar=self.bar,
+            size=self.size,
+            p1_label=self._p1_label,
+            p2_label=self._p2_label,
+            game_index=self._game_index,
+            total=self._total_games,
+            p1_wins=self._p1_wins,
+            p2_wins=self._p2_wins,
         )
 
 

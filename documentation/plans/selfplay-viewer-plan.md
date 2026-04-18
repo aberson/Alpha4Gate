@@ -444,6 +444,7 @@ key raises a clear `KeyError` listing the available options.
 - **Depends on:** Step 3
 
 ### Step 5: Overlay — version labels, game N/M, running W-L score
+- **Status:** DONE (2026-04-18)
 - **Problem:** Implement the overlay content renderer in
   `src/selfplay_viewer/overlay.py`. Top-bar variant: centered
   `{p1_label}  VS  {p2_label}` at 48pt in the top 60px of the bar;
