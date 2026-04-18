@@ -774,6 +774,46 @@ Delete `bots/v1/` if it existed; `current` re-forks from `v0`.
 
 ---
 
+## Tactical refinements backlog (surfaced during Phase B eval)
+
+Bugs observed during Phase B Step 5 eval that are tactical, not observational.
+These block Phase B Step 6 (v1 snapshot) because win-rate numbers are inflated
+(games take 40+ min due to passivity). Not formal phases — handle via
+`/improve-bot --self-improve-code` or standalone `/build-step` fixes.
+
+### T.1 — Soften max-supply ATTACK override
+
+**Status:** Hard override shipped as commit `0bc2f90` (#134). `MAX_SUPPLY_ATTACK_THRESHOLD=180`
+forces ATTACK regardless of DEFEND/FORTIFY/EXPAND/OPENING state. **Deliberately
+heavy-handed for now — get it working, tune later.**
+
+**Problem with the current fix:** At higher difficulties (4-5), a legitimate
+defensive stand (e.g., enemy doom-drop into main while own army is across the
+map at 180+ supply) would be incorrectly preempted into ATTACK, losing the
+defender's advantage. The 180-supply check fires even when defending is the
+correct play.
+
+**Softer solution candidates (pick one when tuning):**
+- Require `army_supply >= enemy_army_supply_visible * k` before ATTACK fires,
+  so max-supply doesn't override when outgunned in the engagement area.
+- Add a cooldown: override fires only if `supply_used >= 180` has held for
+  N seconds, preventing flip-flop with a visible enemy raid.
+- Scale the threshold by difficulty (180 at diff 3, 190 at diff 4, 195 at diff 5).
+- Replace with a "production saturation" signal: override when no new units
+  can be produced (all warp-gates on cooldown + all production full) AND
+  supply at cap — captures the actual "waste" condition without false-firing.
+
+**When to tune:** After re-eval at diff 3 confirms win-rate hold, before pushing
+to diff 4-5. The hard fix is safe for diff 1-3 where opponents rarely doom-drop.
+
+### T.2 — Low-ground bleeding (rally below ramps)
+
+See `memory/feedback_lowground_bleeding.md`. Army rallies below enemy ramps and
+takes free ranged fire instead of committing up or retreating. Rally-point
+selection needs elevation awareness.
+
+---
+
 ## Phase D — Build-order z-statistic (reward refactor)
 
 **Track:** Capability. **Prerequisites:** Phase 5. B and D are orthogonal.
