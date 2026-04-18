@@ -124,6 +124,21 @@ OVERLAY_LABEL_FONT_PX: Final[int] = 36
 #: Font size for the small text rows (subtitle / score / game number).
 OVERLAY_SMALL_FONT_PX: Final[int] = 24
 
+#: Flavor messages used by :func:`render_placeholder` when a pane's SC2
+#: window vanishes mid-game (process died, HWND destroyed by crash).
+#: Each entry must contain the ``{label}`` placeholder so
+#: ``.format(label=...)`` substitution works. See Step 7 of
+#: ``documentation/plans/selfplay-viewer-plan.md``.
+PLACEHOLDER_MESSAGES: Final[tuple[str, ...]] = (
+    "{label} has rage-quit",
+    "{label} is refusing to come out of the base",
+    "{label} crashed into the void",
+    "{label} forgot how to SC2",
+    "{label} took a coffee break",
+    "{label} surrendered to Brood War",
+)
+
+
 #: Module-level font cache so the pygame main loop doesn't open a fresh
 #: ``pygame.font.Font(None, N)`` on every frame (60-90 opens/sec
 #: otherwise). Populated lazily by :func:`_get_font`. The cache is keyed
@@ -388,6 +403,72 @@ def _render_side_bar(
     surface.blit(score_surface, (text_x, oy + SIDEBAR_SCORE_Y_PX))
 
 
+def render_placeholder(
+    *,
+    surface: pygame.Surface,
+    pane_rect: Rect,
+    message: str,
+) -> None:
+    """Paint the placeholder overlay over a pane rect.
+
+    Called by :meth:`SelfPlayViewer._paint_frame` for every slot whose
+    attached SC2 HWND has gone dead mid-game. Paints a full-pane
+    semi-transparent dark rectangle (reusing :data:`OVERLAY_FILL_COLOR`)
+    and a single centred line of flavor text (*message*) on top.
+
+    Parameters
+    ----------
+    surface:
+        The pygame display surface (full container size). Only pixels
+        inside *pane_rect* are touched — a clip-rect guard mirrors
+        :func:`render_overlay` so no caller can overrun the pane.
+    pane_rect:
+        ``(x, y, width, height)`` of the pane slot to paint. Typically
+        looked up via ``PANE_RECTS[(bar, size)][slot]``.
+    message:
+        Pre-formatted (``{label}`` already substituted) string to paint
+        at the pane's centre. Truncated with :func:`_fit_text` when it
+        would otherwise overflow the pane width.
+
+    Notes
+    -----
+    The lazy ``import pygame`` matches :func:`render_overlay` so the
+    Linux-importable contract of this module is preserved. The clip
+    rect is restored in ``finally`` so caller-set clip state is not
+    stomped.
+    """
+    import pygame
+
+    _ensure_font_init()
+
+    prior_clip = surface.get_clip()
+    surface.set_clip(pygame.Rect(*pane_rect))
+    try:
+        px, py, pw, ph = pane_rect
+        # Full-pane semi-transparent dark fill.
+        overlay_surface = pygame.Surface((pw, ph), pygame.SRCALPHA)
+        overlay_surface.fill(OVERLAY_FILL_COLOR)
+        surface.blit(overlay_surface, (px, py))
+
+        # Centred flavor text — truncated with an ellipsis if it would
+        # overflow the pane width. A tight padding budget (2 *
+        # SIDEBAR_LEFT_PAD_PX) leaves breathing room around the glyph run.
+        label_font = _get_font(OVERLAY_LABEL_FONT_PX)
+        text_budget = max(0, pw - 2 * SIDEBAR_LEFT_PAD_PX)
+        fitted = _fit_text(message, label_font, text_budget)
+        if not fitted:
+            return
+        text_surface = label_font.render(fitted, True, OVERLAY_TEXT_COLOR)
+        tw, th = text_surface.get_size()
+        # Centre horizontally within the pane rect, vertically within
+        # the pane height.
+        tx = px + (pw - tw) // 2
+        ty = py + (ph - th) // 2
+        surface.blit(text_surface, (tx, ty))
+    finally:
+        surface.set_clip(prior_clip)
+
+
 def render_overlay(
     *,
     surface: pygame.Surface,
@@ -503,6 +584,7 @@ __all__ = [
     "OVERLAY_TEXT_COLOR",
     "OVERLAY_TITLE_FONT_PX",
     "PANE_RECTS",
+    "PLACEHOLDER_MESSAGES",
     "Rect",
     "SIDEBAR_DIVIDER_Y_PX",
     "SIDEBAR_GAME_Y_PX",
@@ -516,5 +598,6 @@ __all__ = [
     "TOP_BAR_SUBTITLE_Y_PX",
     "TOP_BAR_TITLE_Y_PX",
     "render_overlay",
+    "render_placeholder",
     "reset_font_cache",
 ]

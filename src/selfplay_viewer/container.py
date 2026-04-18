@@ -31,7 +31,9 @@ from selfplay_viewer.backgrounds import pick_background
 from selfplay_viewer.overlay import (
     CONTAINER_SIZES,
     PANE_RECTS,
+    PLACEHOLDER_MESSAGES,
     render_overlay,
+    render_placeholder,
     reset_font_cache,
 )
 
@@ -78,6 +80,14 @@ GAME_START_HWND_TIMEOUT_SECONDS: Final[float] = 2.0
 #: the user closes the viewer. If the join times out we log a WARNING
 #: and return — we do NOT forcibly kill SC2 (Never-Terminate rule).
 BATCH_STOP_JOIN_TIMEOUT_SECONDS: Final[float] = 30.0
+
+#: Cadence for the main-loop HWND liveness check. Every slot in
+#: :attr:`SelfPlayViewer._attached_panes` is probed via ``IsWindow`` no
+#: more often than this interval; on a dead HWND the slot transitions to
+#: the placeholder state rendered by :func:`render_placeholder`. 0.5s is
+#: the plan's default (Step 7) — fast enough to catch a mid-game crash
+#: within a frame or two, slow enough to stay off the Win32 hot path.
+PLACEHOLDER_POLL_INTERVAL_SECONDS: Final[float] = 0.5
 
 
 @dataclass(frozen=True)
@@ -142,6 +152,14 @@ class SelfPlayViewer:
         self._background_rng: random.Random | None = (
             random.Random(seed) if seed is not None else None
         )
+        #: Separate seeded RNG for placeholder flavor-message selection.
+        #: Kept distinct from ``_background_rng`` so reusing the
+        #: background picker for messages doesn't tangle the two streams
+        #: (a change in background selection frequency would drift the
+        #: message sequence for the same seed, and vice versa).
+        self._placeholder_rng: random.Random | None = (
+            random.Random(seed) if seed is not None else None
+        )
         #: Cache for the first :meth:`_resolve_background_path` result.
         #: Populated on first call and reused thereafter so a single
         #: viewer instance keeps the same random background across
@@ -151,6 +169,17 @@ class SelfPlayViewer:
         #: Slot-keyed registry of reparented child windows. Empty until
         #: ``attach_pane`` is called.
         self._attached_panes: dict[int, AttachedPane] = {}
+        #: Slot-keyed registry of panes whose attached HWND died
+        #: mid-game. A slot is in placeholder state iff it's in this
+        #: dict; the value is the pre-formatted flavor message
+        #: (``{label}`` already substituted). Cleared on
+        #: ``attach_pane`` / ``detach_pane`` / ``_detach_all_panes``.
+        self._placeholder_panes: dict[int, str] = {}
+        #: Monotonic deadline for the next HWND-liveness poll. Read +
+        #: bumped in :meth:`_poll_attached_panes_for_death`; initialised
+        #: by :meth:`run` / :meth:`run_with_batch` before the main loop
+        #: starts so the first frame triggers the first poll.
+        self._next_placeholder_check_at: float = 0.0
         #: Cross-thread event bus. ``on_game_start`` / ``on_game_end``
         #: push ``(event_type, payload)`` tuples from the ``run_batch``
         #: thread; the pygame main loop drains them each frame and
@@ -222,6 +251,14 @@ class SelfPlayViewer:
             raise ValueError(
                 f"slot must be one of {sorted(_VALID_SLOTS)}, got {slot!r}"
             )
+
+        # If this slot was showing a placeholder (HWND died in a prior
+        # game), clear it FIRST. The next ``on_game_start`` hand-off
+        # brings a fresh HWND and we want the grey/reparent path to
+        # take over cleanly — any surviving placeholder entry would be
+        # rendered on top of the new pane each frame until the slot is
+        # detached again.
+        self._placeholder_panes.pop(slot, None)
 
         # Same-PID re-attach: a window already wired into this slot is a
         # WS_CHILD of the container, so ``find_hwnd_for_pid`` cannot see
@@ -295,6 +332,9 @@ class SelfPlayViewer:
             raise ValueError(
                 f"slot must be one of {sorted(_VALID_SLOTS)}, got {slot!r}"
             )
+        # An explicit detach clears any placeholder state for this slot
+        # too — a subsequent attach_pane will find a clean slate.
+        self._placeholder_panes.pop(slot, None)
         if slot not in self._attached_panes:
             return
         # Detach FIRST, pop on success — if both the primary and rescue
@@ -466,8 +506,14 @@ class SelfPlayViewer:
             clock = pygame.time.Clock()
             running = True
             batch_done_at: float | None = None
+            # Initialise the HWND-liveness poll clock so the first frame
+            # triggers the first scan (monotonic deadline in the past).
+            self._next_placeholder_check_at = time.monotonic()
 
             while running:
+                # Scan BEFORE event drain so a pane that just died is
+                # transitioned to placeholder before we re-paint this frame.
+                self._poll_attached_panes_for_death()
                 target_bar: str | None = None
                 target_size: str | None = None
                 for event in pygame.event.get():
@@ -786,7 +832,13 @@ class SelfPlayViewer:
 
             clock = pygame.time.Clock()
             running = True
+            # Initialise the HWND-liveness poll clock so the first frame
+            # triggers the first scan (monotonic deadline in the past).
+            self._next_placeholder_check_at = time.monotonic()
             while running:
+                # Scan BEFORE event drain so a pane that just died is
+                # transitioned to placeholder before we re-paint this frame.
+                self._poll_attached_panes_for_death()
                 # Coalesce S/B hotkey events: pygame.event.get() drains
                 # the entire queue, so two K_s presses in one frame would
                 # otherwise trigger two _apply_layout_change calls (double
@@ -1029,6 +1081,11 @@ class SelfPlayViewer:
         re-raises (both primary and rescue paths failed) stays in the
         dict for visibility — the per-slot ``try`` here catches the
         re-raise so the loop continues to the next slot.
+
+        Placeholder state is cleared wholesale at the end — placeholder
+        bookkeeping is tied to the lifetime of a single pygame session
+        and must not survive teardown (a subsequent ``run`` / ``run_with_batch``
+        on the same instance starts with a clean slate).
         """
         _ensure_main_thread()
         # Snapshot keys first so the dict-mutation in the loop body is safe.
@@ -1041,6 +1098,76 @@ class SelfPlayViewer:
                 # so the situation is visible to callers / next teardown.
                 continue
             del self._attached_panes[slot]
+        self._placeholder_panes.clear()
+
+    def _is_hwnd_alive(self, hwnd: int) -> bool:
+        """Return ``True`` when *hwnd* still refers to a live window.
+
+        Thin wrapper over ``win32gui.IsWindow`` with a lazy ``win32gui``
+        import (Linux-importable contract) and a defensive
+        ``try/except`` so a pywin32 error on a stale handle degrades to
+        "dead" rather than crashing the poll loop. The call is read-
+        only — we NEVER call ``SetParent(hwnd, NULL)`` or any other
+        mutator on a dead HWND (that would raise or no-op) and we NEVER
+        signal the owning process (Never-Terminate rule).
+        """
+        try:
+            import win32gui  # lazy — Windows-only
+        except ImportError:
+            # On non-Windows the Win32 primitive is unreachable anyway;
+            # treat every HWND as dead so callers can fall through to
+            # the placeholder path uniformly. Production code never
+            # hits this branch — run() / run_with_batch() are Windows-
+            # only — but tests benefit from the graceful fallback.
+            return False
+        try:
+            return bool(win32gui.IsWindow(hwnd))
+        except Exception:  # noqa: BLE001 — treat any Win32 failure as dead
+            return False
+
+    def _poll_attached_panes_for_death(self) -> None:
+        """Detect dead HWNDs and transition their slots to placeholder state.
+
+        Rate-limited to one scan per :data:`PLACEHOLDER_POLL_INTERVAL_SECONDS`.
+        Called once per frame from the pygame main loop (both
+        :meth:`run` and :meth:`run_with_batch`). For each currently-
+        attached slot whose HWND reports dead via :meth:`_is_hwnd_alive`:
+
+        1. Pick a random flavor message from
+           :data:`overlay.PLACEHOLDER_MESSAGES` (using
+           :attr:`_placeholder_rng` if seeded, else module ``random``).
+        2. Remove the slot from :attr:`_attached_panes` — we do NOT
+           call :func:`reparent.detach_window` because the HWND is
+           already gone; calling detach on a dead handle would raise
+           or no-op.
+        3. Record the formatted message in :attr:`_placeholder_panes`
+           so the next :meth:`_paint_frame` draws the placeholder.
+        4. Log an INFO line to stderr with the slot / label / message
+           so operators can correlate the visual with the crash.
+        """
+        now = time.monotonic()
+        if now < self._next_placeholder_check_at:
+            return
+        self._next_placeholder_check_at = now + PLACEHOLDER_POLL_INTERVAL_SECONDS
+
+        # Snapshot — the loop body mutates self._attached_panes.
+        for slot, pane in list(self._attached_panes.items()):
+            if self._is_hwnd_alive(pane.hwnd):
+                continue
+            if self._placeholder_rng is not None:
+                template = self._placeholder_rng.choice(PLACEHOLDER_MESSAGES)
+            else:
+                template = random.choice(PLACEHOLDER_MESSAGES)
+            formatted_message = template.format(label=pane.label)
+            # Drop the bookkeeping entry without calling detach — the
+            # HWND is already gone, so SetParent(0) would raise.
+            del self._attached_panes[slot]
+            self._placeholder_panes[slot] = formatted_message
+            print(
+                f"[selfplay_viewer] slot {slot} pane ({pane.label}) died "
+                f"mid-game; showing placeholder: {formatted_message!r}",
+                file=sys.stderr,
+            )
 
     @staticmethod
     def _load_background(
@@ -1067,7 +1194,11 @@ class SelfPlayViewer:
 
         Attached panes have a real Win32 child rendering into their pane
         rect already, so painting a grey fill there would cover the
-        child window with an opaque rectangle on every frame.
+        child window with an opaque rectangle on every frame. Slots in
+        :attr:`_placeholder_panes` (HWND died mid-game) also skip the
+        grey rect — the dark placeholder overlay is painted there
+        instead via :func:`render_placeholder`. The grey rect would
+        otherwise cover the placeholder dark fill.
 
         The overlay is delegated to :func:`render_overlay` which handles
         both the semi-transparent background rect AND the text content
@@ -1083,7 +1214,21 @@ class SelfPlayViewer:
         for slot, rect in enumerate(pane_rects):
             if slot in self._attached_panes:
                 continue  # Real Win32 child owns this rect — do not overpaint.
+            if slot in self._placeholder_panes:
+                continue  # render_placeholder paints this slot below.
             pygame.draw.rect(screen, PLACEHOLDER_COLOR, pygame.Rect(*rect))
+
+        # Paint dead-pane placeholders after the grey rects so they
+        # render on top of the background (the overlay fill itself is
+        # semi-transparent and would otherwise be washed out by a grey
+        # base). Slots with a real attached child don't go through this
+        # loop — the Win32 child is painting itself already.
+        for slot, message in self._placeholder_panes.items():
+            render_placeholder(
+                surface=screen,
+                pane_rect=pane_rects[slot],
+                message=message,
+            )
 
         render_overlay(
             surface=screen,

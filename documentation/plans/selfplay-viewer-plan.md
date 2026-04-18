@@ -487,6 +487,7 @@ key raises a clear `KeyError` listing the available options.
 - **Depends on:** Step 1 (for the loader); Step 4 (for the CLI wiring)
 
 ### Step 7: Crash placeholder with flavor-message pool
+- **Status:** DONE (2026-04-18)
 - **Problem:** In `SelfPlayViewer`, poll each attached HWND each frame
   via `IsWindow(hwnd)` (or check `PROCESS_QUERY_LIMITED_INFORMATION` on
   the PID). When a pane's HWND becomes invalid, transition the pane to
