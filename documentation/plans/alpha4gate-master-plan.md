@@ -812,6 +812,114 @@ See `memory/feedback_lowground_bleeding.md`. Army rallies below enemy ramps and
 takes free ranged fire instead of committing up or retreating. Rally-point
 selection needs elevation awareness.
 
+### T.3 — Tech structures placed on low ground
+
+**Observed (2026-04-17):** Twilight Council and Forge placed on low ground
+outside the main base ramp, with no expansion or defensive structures nearby.
+Creates free-kill targets for enemy raids — losing a Twilight Council resets
+the tech path and is game-ending at higher difficulties.
+
+**Rule of thumb the bot should follow:**
+- **Pylons** — low ground is fine (cheap, power grid coverage, vision).
+- **Tech structures** (Twilight, Robotics Bay, Cybernetics Core, Forge,
+  Templar Archives, Fleet Beacon) — place inside the main base perimeter
+  OR adjacent to an established expansion with cannons. Never alone on
+  low ground.
+- **Gateways / Robotics / Stargates** — generally inside main, occasionally
+  at natural for warp-in proxy, but only when defended.
+
+**Candidate fixes:**
+- Add a `structure_placement_priority` map: each building type gets a preferred
+  placement zone (main / natural / proxy / any-powered). Default placement
+  logic respects the zone.
+- Placement query: before committing to a low-ground pylon-powered spot for a
+  tech structure, check if any townhall is within N tiles. Reject if not.
+- Look at `build_manager.py` / wherever `build_structure` or pylon-adjacent
+  placement search lives.
+
+**Related observation:** Repeated "red placement location" error messages in
+the log suggest the placement search is retrying invalid spots. May be a
+symptom of the same bug (trying to place tech on an already-taken low-ground
+spot) or a separate retry-storm issue worth grepping for.
+
+### T.4 — Target priority: engage producers, not their spawns
+
+**Observed (2026-04-17):** Against Broodlord composition, bot units engage
+the ground-spawned Broodlings instead of the flying Broodlords that produce
+them. Broodlings respawn continuously as long as the Broodlord lives; killing
+the Broodlord collapses the entire threat. Wasting DPS on Broodlings is a
+positive-feedback loss (more time spent on Broodlings = more Broodlings spawn).
+
+**General principle:** For "producer + spawn" enemy unit pairs, target the
+producer. Cases:
+- Broodlord (air) → produces Broodlings (ground). Kill Broodlord.
+- Carrier → produces Interceptors. Kill Carrier.
+- Swarm Host (burrowed) → spawns Locusts. Kill Swarm Host.
+- Warp Prism (air) + Zealots (warped in) → kill Warp Prism first.
+
+**Candidate fixes:**
+- Target priority table in `micro_controller.py` or `tactics/`:
+  `{UnitTypeId.BROODLORD: priority_high, UnitTypeId.BROODLING: priority_low}`,
+  `{UnitTypeId.CARRIER: priority_high, UnitTypeId.INTERCEPTOR: priority_low}`.
+- When selecting attack targets, filter the enemy list by `priority_high`
+  first; fall back to closest-enemy only if no high-priority targets are in range.
+- Unit capability constraint: ground-only units (Zealot, Stalker without blink,
+  Immortal) can still hit Broodlord since it's low-ground air — but ensure
+  anti-air units (Stalker, Phoenix, Void Ray) prioritize flying producers.
+
+### T.5 — Attack-walking regression still live
+
+Observed again (2026-04-17) during same game. Units move past enemies instead
+of attack-moving. This is a known bug (`feedback_attack_walking_vs_moving.md`)
+but evidence shows it persists. When T.4 (target priority) is fixed, make sure
+the issued command is `.attack()` not `.move()`, closing this gap together.
+
+**Status:** SHIPPED as commit `e0ae944` (#135). `_run_micro` now unconditionally
+attack-moves in all combat states since it's only dispatched when state is
+ATTACK/DEFEND/FORTIFY/LATE_GAME.
+
+### T.6 — Hybrid DEFEND override too aggressive (ROOT CAUSE of passivity)
+
+**Status:** SHIPPED as commit `65d854c` (#136).
+
+The `neural_engine.py::predict` hybrid-mode override fired unconditionally
+whenever `enemy_army_near_base=True`, forcing DEFEND even when PPO was 97.8%
+confident on ATTACK with overwhelming supply. This was THE root cause of the
+max-supply passivity bug — the earlier 180-supply override (T.1) was a
+band-aid that only kicked in above 180.
+
+New logic: override only fires when:
+- Enemy near base AND
+- Not a trivial raid (enemy_vis >= 8 or hidden near base) AND
+- Can't safely counterattack (army < 12 OR army < enemy_vis * 1.5)
+
+Otherwise trust PPO. Constants imported from `DecisionEngine` to prevent drift.
+"Suppressed" log moved to DEBUG to prevent per-tick INFO spam.
+
+**Found via:** log-reading during eval, not code review —
+`feedback_check_logs_during_debug.md`.
+
+### T.7 — Units in melee don't deal damage proportional to count
+
+**Observed (2026-04-17, game time 13:16):** Large Protoss army intermixed with
+Zerg in full melee. Units visibly engaged but the engagement drags — bot loses
+what should be winning fights. User described it as "move, attack move, don't
+really attack."
+
+**Candidate root causes (need log evidence to diagnose):**
+1. **Target priority (duplicate of T.4):** units engage nearest trash (Roaches,
+   Zerglings, Banelings) instead of Broodlords/Ravagers/priority targets.
+2. **Command churn:** `_run_micro` runs every tick, issues attack-move every
+   tick, interrupting the unit's current attack animation before damage lands.
+   Check: does DispatchGuard (shipped 2026-04-14) apply to unit commands or only
+   build commands?
+3. **Target switching:** units chase closer enemies mid-attack, never finishing
+   a kill.
+
+**Next step:** grab log snippet around game time 13:16 from an eval run to see
+which code path is firing. Likely needs T.4 fix + possibly command-rate-limit
+on attack commands.
+
 ---
 
 ## Phase D — Build-order z-statistic (reward refactor)
