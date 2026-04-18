@@ -17,6 +17,7 @@ the platform check cascades through that surface.
 from __future__ import annotations
 
 import queue
+import random
 import sys
 import threading
 import time
@@ -107,6 +108,13 @@ class SelfPlayViewer:
     background:
         Either ``"random"`` (default) or a derived key from
         ``selfplay_viewer.backgrounds.list_backgrounds``.
+    seed:
+        Optional RNG seed that makes ``background="random"`` selection
+        deterministic. Bound once at construction time and used for the
+        first (and only) background pick; subsequent calls to
+        :meth:`_resolve_background_path` return the cached path so the
+        image stays stable across layout changes (``S`` / ``B``
+        hotkeys). When ``None`` the module-level ``random`` is used.
     """
 
     def __init__(
@@ -114,6 +122,8 @@ class SelfPlayViewer:
         bar: str = "top",
         size: str = "large",
         background: str = "random",
+        *,
+        seed: int | None = None,
     ) -> None:
         if bar not in _VALID_BARS:
             raise ValueError(
@@ -126,6 +136,18 @@ class SelfPlayViewer:
         self.bar: str = bar
         self.size: str = size
         self.background: str = background
+        #: Seeded RNG for deterministic ``--background random`` picks.
+        #: ``None`` when no seed was supplied — ``pick_background`` then
+        #: falls back to the module-level ``random``.
+        self._background_rng: random.Random | None = (
+            random.Random(seed) if seed is not None else None
+        )
+        #: Cache for the first :meth:`_resolve_background_path` result.
+        #: Populated on first call and reused thereafter so a single
+        #: viewer instance keeps the same random background across
+        #: layout changes (``S`` / ``B`` hotkeys trigger a re-resolve
+        #: via ``_apply_layout_change``).
+        self._resolved_background_path: Path | None = None
         #: Slot-keyed registry of reparented child windows. Empty until
         #: ``attach_pane`` is called.
         self._attached_panes: dict[int, AttachedPane] = {}
@@ -814,8 +836,20 @@ class SelfPlayViewer:
     # ------------------------------------------------------------------
 
     def _resolve_background_path(self) -> Path:
-        """Resolve the configured background key to an on-disk PNG path."""
-        return pick_background(self.background)
+        """Resolve the configured background key to an on-disk PNG path.
+
+        Cached on first call — every subsequent call returns the same
+        :class:`~pathlib.Path` so a layout change (``S`` / ``B`` hotkey)
+        re-paints with the same background image rather than drawing a
+        fresh random pick each time. The cache also means the seeded RNG
+        is only consumed once per viewer; a ``--seed 42`` run is stable
+        even when the layout flips multiple times.
+        """
+        if self._resolved_background_path is None:
+            self._resolved_background_path = pick_background(
+                self.background, rng=self._background_rng
+            )
+        return self._resolved_background_path
 
     def _current_container_hwnd(self) -> int:
         """Return the live HWND of the pygame container window.

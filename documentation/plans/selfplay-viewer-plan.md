@@ -469,6 +469,7 @@ key raises a clear `KeyError` listing the available options.
 - **Depends on:** Step 4
 
 ### Step 6: `--background` flag + random default
+- **Status:** DONE (2026-04-18)
 - **Problem:** Wire `--background {brazil,china,random,...}` in
   `scripts/selfplay.py` into `SelfPlayViewer(background=...)`. Default
   is `random`. Unknown key prints the list of available keys (derived

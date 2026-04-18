@@ -259,7 +259,10 @@ def _run_pfsp_mode(args: argparse.Namespace, use_viewer: bool) -> int:
         from selfplay_viewer import SelfPlayViewer
 
         viewer = SelfPlayViewer(
-            bar=args.bar, size=args.size, background=args.background
+            bar=args.bar,
+            size=args.size,
+            background=args.background,
+            seed=args.seed,
         )
         viewer.run_with_batch(
             lambda: _sweep(
@@ -287,7 +290,10 @@ def _run_h2h_mode(args: argparse.Namespace, use_viewer: bool) -> int:
         from selfplay_viewer import SelfPlayViewer
 
         viewer = SelfPlayViewer(
-            bar=args.bar, size=args.size, background=args.background
+            bar=args.bar,
+            size=args.size,
+            background=args.background,
+            seed=args.seed,
         )
         stop_event = threading.Event()
         result = viewer.run_with_batch(
