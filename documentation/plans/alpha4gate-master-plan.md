@@ -1060,6 +1060,21 @@ to see whether the current logic is base-indexed or hard-coded to main.
 Simplest fix: add a "natural defense" check that fires once the 2nd Nexus
 has been standing for ~45s and no ShieldBattery is within 10 tiles of it.
 
+### T.12 — Re-validate Archon morph fix in hybrid mode
+
+**Status:** Debug instrumentation shipped 2026-04-18 at
+`bot.py::_produce_army` morph branch. First diagnostic run was done in
+**rules** mode at diff 3 (simpler, removes the policy variable while
+isolating the engine-level morph dispatch).
+
+Once the root cause is identified and the fix lands, the morph behaviour
+must be re-validated in **hybrid mode** (`--decision-mode hybrid
+--model-path bots/v0/data/checkpoints/v3.zip --no-claude`) to confirm
+the PPO policy doesn't suppress HT warp-ins or starve the gas economy
+enough to skip the morph branch in realistic deployment. Archon count
+must be non-zero across a 5-game hybrid sample before we consider the
+fix shipped.
+
 ---
 
 ## Phase D — Build-order z-statistic (reward refactor)

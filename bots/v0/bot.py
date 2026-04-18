@@ -899,15 +899,19 @@ class Alpha4GateBot(BotAI):
                     )
                     voidray_count += 1
 
-        # Archon morph: any idle pair of HighTemplars → 1 Archon.
-        # Consume HTs in pairs; each pair frees 4 supply (2 HT × 2) and spawns
-        # one Archon (4 supply) after the morph animation.
+        # Archon morph: any pair of HighTemplars → 1 Archon.
+        # MORPH_ARCHON is a no-target combineable ability in burnysc2 — issue
+        # it to both templars separately; the protocol layer combines the two
+        # unit tags into a single morph command that the engine resolves into
+        # one Archon. Passing b as a target triggers a RuntimeWarning and the
+        # command is silently dropped.
         high_templars = self.units(UnitTypeId.HIGHTEMPLAR)
         if high_templars.amount >= 2:
             pairs = list(high_templars)
             for i in range(0, len(pairs) - 1, 2):
                 a, b = pairs[i], pairs[i + 1]
-                a(AbilityId.MORPH_ARCHON, b)
+                a(AbilityId.MORPH_ARCHON)
+                b(AbilityId.MORPH_ARCHON)
                 self._actions_this_step.append(
                     {"action": "Morph", "target": "Archon"},
                 )
