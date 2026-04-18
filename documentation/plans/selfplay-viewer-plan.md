@@ -376,7 +376,7 @@ key raises a clear `KeyError` listing the available options.
   and skipped on non-Windows CI. Handle the 3–10s window-ready delay
   with a polling loop and a clear timeout error.
 - **Issue:** #140
-- **Flags:** --tdd
+- **Flags:** --reviewers code --isolation worktree
 - **Produces:** `src/selfplay_viewer/reparent.py`, `tests/test_reparent.py`.
 - **Done when:** TDD cycle completes with all tests green on Windows.
   Notepad is spawned, attached to a test parent, moved, detached,
