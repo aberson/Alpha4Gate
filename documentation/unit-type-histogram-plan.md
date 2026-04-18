@@ -171,6 +171,15 @@ to work without modification. Only `bot.py` actively populates them.
 - **Problem:** Retrain from `v0_pretrain` for 2 cycles with the expanded feature vector. Compare win rate at difficulty 3 vs Phase A end-state across 20 deterministic eval games. Run Elo self-play vs prior `v0` across 20 games.
 - **Issue:** #132
 - **Depends on:** Step 4
+- **Status:** DONE (2026-04-17) — conditional pass; see notes below
+
+**Operator notes (2026-04-17):**
+- Imitation: 89.5% agreement (below 95% target — expected since 104K training transitions predate Phase B, all 23 new unit-count cols are zero in historical data)
+- PPO: 2 cycles completed, v2.zip checkpoint saved (47-dim)
+- Eval: bot wins at diff 3 (AI opponent surrenders) but games take 40+ min due to max-supply passivity bug (sits at 200/200 without engaging)
+- Elo comparison skipped — ladder.py compare requires registered versions, not checkpoint names
+- No NaN/Inf observed, training loss converging
+- **Binding constraint is tactical (max-supply passivity), not observational.** Fix passivity first, then re-eval.
 
 **Commands to run:**
 ```powershell
@@ -209,6 +218,7 @@ uv run python scripts/ladder.py run --opponent v0 --games 20
 - **Problem:** If Step 5 passes the gate, run `snapshot_current()` to create `bots/v1/` with the expanded feature spec. Verify the promotion gate accepts the new version. Update wiki docs with new dimension references.
 - **Issue:** #133
 - **Depends on:** Step 5 (only if gate passes)
+- **Status:** SKIPPED (2026-04-17) — deferred until max-supply passivity bug is fixed and clean eval confirms win rate hold
 
 **Commands to run:**
 ```powershell
