@@ -41,6 +41,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="AI difficulty 1-10 (default: Easy)",
     )
     parser.add_argument(
+        "--game-time-limit",
+        type=int,
+        default=1800,
+        metavar="SECS",
+        help=(
+            "In-game time (seconds) before burnysc2 declares a Tie. "
+            "Default 1800 (30 min) — large enough that v0 vs AI games "
+            "play to natural conclusion rather than auto-Tie at 5 min."
+        ),
+    )
+    parser.add_argument(
         "--realtime",
         action="store_true",
         help="Run in realtime mode",
@@ -365,6 +376,7 @@ def _run_single_game(
         map_name=args.map,
         opponent_difficulty=args.difficulty,
         realtime=args.realtime,
+        game_time_limit=args.game_time_limit,
     )
 
     logger.stop()
@@ -475,6 +487,7 @@ def _run_batch(settings: Settings, args: argparse.Namespace) -> None:
             map_name=args.map,
             opponent_difficulty=args.difficulty,
             realtime=False,
+            game_time_limit=args.game_time_limit,
         )
         logger.stop()
         reward_calc.close_game_log()

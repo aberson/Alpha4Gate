@@ -151,6 +151,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable per-step reward JSONL logging (solo role only)",
     )
+    parser.add_argument(
+        "--game-time-limit",
+        type=int,
+        default=1800,
+        metavar="SECS",
+        help=(
+            "In-game time (seconds) before burnysc2 declares a Tie "
+            "(solo role only; default 1800 = 30 min so games play to "
+            "natural conclusion rather than auto-Tie at the historical "
+            "5-minute default)."
+        ),
+    )
     return parser
 
 
@@ -230,6 +242,8 @@ def _run_solo(args: argparse.Namespace) -> None:
         runner_argv.append("--no-claude")
     if args.no_reward_log:
         runner_argv.append("--no-reward-log")
+    if args.game_time_limit is not None:
+        runner_argv += ["--game-time-limit", str(args.game_time_limit)]
 
     runner_args = runner.build_parser().parse_args(runner_argv)
     settings = load_settings()
