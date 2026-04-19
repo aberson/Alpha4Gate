@@ -148,10 +148,12 @@ class SelfPlayViewer:
         vertical layout (which currently has one fixed preset).
     layout:
         Either ``"horizontal"`` (default, panes side-by-side) or
-        ``"vertical"`` (panes stacked with 1280x720 widescreen sizing
-        so the full container fits vertically on a 2560x1600 display).
-        Vertical mode supports only ``bar="top"`` and ``size="large"``
-        in v1; other combinations raise ``ValueError``.
+        ``"vertical"`` (panes stacked with 1280x720 widescreen sizing).
+        Vertical mode supports only ``bar="side"`` and ``size="large"``
+        in v1; other combinations raise ``ValueError``. A right-edge
+        side bar was chosen over a top bar so the 2-pane stack plus
+        overlay fits under 1500 logical pixels of height (fits on
+        2560x1600 with room for title bar + taskbar).
     background:
         Either ``"random"`` (default) or a derived key from
         ``selfplay_viewer.backgrounds.list_backgrounds``.
@@ -187,7 +189,7 @@ class SelfPlayViewer:
             )
         if layout == "vertical" and (bar, size) not in VERTICAL_PANE_RECTS:
             raise ValueError(
-                f"layout='vertical' supports only (bar='top', size='large') "
+                f"layout='vertical' supports only (bar='side', size='large') "
                 f"in v1; got (bar={bar!r}, size={size!r}). Add an entry to "
                 f"VERTICAL_PANE_RECTS + VERTICAL_CONTAINER_SIZES + "
                 f"VERTICAL_OVERLAY_RECTS in selfplay_viewer.overlay to "

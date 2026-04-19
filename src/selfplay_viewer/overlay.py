@@ -84,27 +84,31 @@ OVERLAY_RECTS: dict[tuple[str, str], Rect] = {
     ("side", "small"): (2118, 0, 280, 808),
 }
 
-#: Vertical-layout container dimensions. Only ``bar="top"`` +
+#: Vertical-layout container dimensions. Only ``bar="side"`` +
 #: ``size="large"`` supported in v1 — vertical stacks 1280x720 panes
-#: so total height stays under 1600. Adding more presets means adding
-#: entries here and updating ``SelfPlayViewer`` validation.
+#: with a right-edge stats bar so total height stays under 1500 and
+#: fits comfortably on a 2560x1600 display minus title-bar + taskbar.
+#: A vertical-top-bar variant was prototyped 2026-04-18 but rejected
+#: because a 2-pane 720-tall stack + any top bar + title bar + taskbar
+#: exceeded 1600 logical pixels.
 VERTICAL_CONTAINER_SIZES: dict[tuple[str, str], tuple[int, int]] = {
-    ("top", "large"): (1320, 1580),
+    ("side", "large"): (1580, 1470),
 }
 
 #: Vertical-layout pane rectangles ``(p1, p2)``. Pane 2 stacks below
-#: pane 1 with a 20px gap. Both 1280x720 (widescreen — SC2 accepts
+#: pane 1 with a 10px gap. Both 1280x720 (widescreen — SC2 accepts
 #: this size per the min-size probe).
 VERTICAL_PANE_RECTS: dict[tuple[str, str], tuple[Rect, Rect]] = {
-    ("top", "large"): (
-        (20, 100, 1280, 720),
-        (20, 840, 1280, 720),
+    ("side", "large"): (
+        (10, 10, 1280, 720),
+        (10, 740, 1280, 720),
     ),
 }
 
-#: Vertical-layout overlay rectangles.
+#: Vertical-layout overlay rectangles. Side bar sits to the right of
+#: the stacked panes at x=1300 (10 left margin + 1280 pane + 10 gap).
 VERTICAL_OVERLAY_RECTS: dict[tuple[str, str], Rect] = {
-    ("top", "large"): (0, 0, 1320, 80),
+    ("side", "large"): (1300, 0, 280, 1470),
 }
 
 #: Border colour for the overlay (RGB). White.

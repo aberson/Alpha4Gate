@@ -115,11 +115,15 @@ def test_size_cycle_hits_every_preset() -> None:
 
 
 def test_vertical_layout_dicts_match_plan() -> None:
-    """Vertical layout v1: single preset (top, large) at 1320x1580.
+    """Vertical layout v1: single preset (side, large) at 1580x1470.
 
     Guards the SC2-min-size-probe-derived dimensions. Widescreen
-    1280x720 panes stacked with 20px margins / 20px gap / 80px top bar.
-    Panes land at (20, 100) and (20, 840) — pane 2 y = 100 + 720 + 20.
+    1280x720 panes stacked with 10px margins / 10px gap; stats bar
+    sits as a 280px right-edge side bar so the full container fits
+    on a 2560x1600 display without exceeding 1500 pixels of height.
+    A vertical-top-bar variant was prototyped 2026-04-18 but rejected
+    because a top bar plus two 720-tall panes exceeded available
+    screen height once title bar + taskbar were accounted for.
     """
     from selfplay_viewer.overlay import (
         VERTICAL_CONTAINER_SIZES,
@@ -127,12 +131,14 @@ def test_vertical_layout_dicts_match_plan() -> None:
         VERTICAL_PANE_RECTS,
     )
 
-    assert VERTICAL_CONTAINER_SIZES[("top", "large")] == (1320, 1580)
-    assert VERTICAL_PANE_RECTS[("top", "large")] == (
-        (20, 100, 1280, 720),
-        (20, 840, 1280, 720),
+    assert VERTICAL_CONTAINER_SIZES[("side", "large")] == (1580, 1470)
+    assert VERTICAL_PANE_RECTS[("side", "large")] == (
+        (10, 10, 1280, 720),
+        (10, 740, 1280, 720),
     )
-    assert VERTICAL_OVERLAY_RECTS[("top", "large")] == (0, 0, 1320, 80)
+    assert VERTICAL_OVERLAY_RECTS[("side", "large")] == (1300, 0, 280, 1470)
+    # vertical + top bar is deliberately NOT supported in v1.
+    assert ("top", "large") not in VERTICAL_CONTAINER_SIZES
 
 
 # ---------------------------------------------------------------------------

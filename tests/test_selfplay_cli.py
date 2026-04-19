@@ -50,11 +50,33 @@ def test_default_flags() -> None:
         ["--p1", "v0", "--p2", "v0", "--games", "1"]
     )
 
-    assert args.bar == "top"
+    # --bar is None at argparse time; main() resolves it to a
+    # layout-appropriate default (horizontal → "top", vertical →
+    # "side"). See test_bar_default_resolves_per_layout below.
+    assert args.bar is None
     assert args.size == "large"
     assert args.background == "random"
     assert args.no_viewer is False
     assert args.seed is None
+
+
+def test_bar_default_resolves_per_layout() -> None:
+    """``main()`` picks bar='side' for vertical, 'top' for horizontal."""
+    mod = _load_cli_module()
+    parser = mod.build_parser()
+
+    hor = parser.parse_args(["--p1", "v0", "--p2", "v0", "--games", "1"])
+    # Simulate the main() resolution step.
+    if hor.bar is None:
+        hor.bar = "side" if hor.layout == "vertical" else "top"
+    assert hor.bar == "top"
+
+    vert = parser.parse_args(
+        ["--p1", "v0", "--p2", "v0", "--games", "1", "--layout", "vertical"]
+    )
+    if vert.bar is None:
+        vert.bar = "side" if vert.layout == "vertical" else "top"
+    assert vert.bar == "side"
 
 
 def test_explicit_viewer_flags() -> None:

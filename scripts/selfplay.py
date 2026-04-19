@@ -118,8 +118,12 @@ def build_parser() -> argparse.ArgumentParser:
     viewer.add_argument(
         "--bar",
         choices=["top", "side"],
-        default="top",
-        help="Stats bar placement (default: top)",
+        default=None,
+        help=(
+            "Stats bar placement. Default depends on --layout: "
+            "horizontal → top; vertical → side (vertical-top is not "
+            "supported because the stack overflows 1600 pixels of height)."
+        ),
     )
     viewer.add_argument(
         "--size",
@@ -362,6 +366,14 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    # --bar defaults to None so we can pick a layout-appropriate value
+    # here. Vertical layout currently only supports bar="side" (the
+    # top-bar variant was rejected because the 2-pane 720-tall stack
+    # plus any top bar overflowed 1600 pixels of height on a 2560x1600
+    # display). Horizontal keeps the historical bar="top" default.
+    if args.bar is None:
+        args.bar = "side" if args.layout == "vertical" else "top"
 
     use_viewer = _viewer_enabled(args.no_viewer)
     if not use_viewer:
