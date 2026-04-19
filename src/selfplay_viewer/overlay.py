@@ -31,54 +31,80 @@ Rect = tuple[int, int, int, int]
 Bar = Literal["top", "side"]
 
 #: Allowed SC2-pane size presets.
-Size = Literal["large", "small", "tiny"]
+#:
+#: Both presets use 1024x768 panes — SC2's empirically-determined
+#: minimum client rect (see ``scripts/probe_sc2_min_size.py``). The
+#: difference is layout tightness: ``"large"`` uses roomy 40-60-100
+#: padding / gap / bar; ``"small"`` tightens to 20-30-80 to save ~70
+#: pixels per dimension without cropping the SC2 render.
+Size = Literal["large", "small"]
 
-#: Container window dimensions ``(width, height)`` keyed by ``(bar, size)``.
+#: Allowed container layout presets. ``"horizontal"`` places the two
+#: SC2 panes side-by-side (default). ``"vertical"`` stacks them with
+#: widescreen 1280x720 panes so the whole container fits on a
+#: 2560x1600 display vertically.
+Layout = Literal["horizontal", "vertical"]
+
+#: Container window dimensions ``(width, height)`` keyed by ``(bar,
+#: size)``. Horizontal layout only.
 CONTAINER_SIZES: dict[tuple[str, str], tuple[int, int]] = {
     ("top", "large"): (2188, 948),
-    ("top", "small"): (2060, 900),
-    ("top", "tiny"): (1420, 660),
+    ("top", "small"): (2118, 888),
     ("side", "large"): (2468, 848),
-    ("side", "small"): (2340, 800),
-    ("side", "tiny"): (1700, 560),
+    ("side", "small"): (2398, 808),
 }
 
 #: Two SC2 pane rectangles ``(p1, p2)`` keyed by ``(bar, size)``.
+#: Horizontal layout only.
 PANE_RECTS: dict[tuple[str, str], tuple[Rect, Rect]] = {
     ("top", "large"): (
         (40, 140, 1024, 768),
         (1124, 140, 1024, 768),
     ),
     ("top", "small"): (
-        (40, 140, 960, 720),
-        (1060, 140, 960, 720),
-    ),
-    ("top", "tiny"): (
-        (40, 140, 640, 480),
-        (740, 140, 640, 480),
+        (20, 100, 1024, 768),
+        (1074, 100, 1024, 768),
     ),
     ("side", "large"): (
         (40, 40, 1024, 768),
         (1124, 40, 1024, 768),
     ),
     ("side", "small"): (
-        (40, 40, 960, 720),
-        (1060, 40, 960, 720),
-    ),
-    ("side", "tiny"): (
-        (40, 40, 640, 480),
-        (740, 40, 640, 480),
+        (20, 20, 1024, 768),
+        (1074, 20, 1024, 768),
     ),
 }
 
-#: Overlay (stats-bar) rectangle keyed by ``(bar, size)``.
+#: Overlay (stats-bar) rectangle keyed by ``(bar, size)``. Horizontal
+#: layout only.
 OVERLAY_RECTS: dict[tuple[str, str], Rect] = {
     ("top", "large"): (0, 0, 2188, 100),
-    ("top", "small"): (0, 0, 2060, 100),
-    ("top", "tiny"): (0, 0, 1420, 100),
+    ("top", "small"): (0, 0, 2118, 80),
     ("side", "large"): (2188, 0, 280, 848),
-    ("side", "small"): (2060, 0, 280, 800),
-    ("side", "tiny"): (1420, 0, 280, 560),
+    ("side", "small"): (2118, 0, 280, 808),
+}
+
+#: Vertical-layout container dimensions. Only ``bar="top"`` +
+#: ``size="large"`` supported in v1 — vertical stacks 1280x720 panes
+#: so total height stays under 1600. Adding more presets means adding
+#: entries here and updating ``SelfPlayViewer`` validation.
+VERTICAL_CONTAINER_SIZES: dict[tuple[str, str], tuple[int, int]] = {
+    ("top", "large"): (1320, 1580),
+}
+
+#: Vertical-layout pane rectangles ``(p1, p2)``. Pane 2 stacks below
+#: pane 1 with a 20px gap. Both 1280x720 (widescreen — SC2 accepts
+#: this size per the min-size probe).
+VERTICAL_PANE_RECTS: dict[tuple[str, str], tuple[Rect, Rect]] = {
+    ("top", "large"): (
+        (20, 100, 1280, 720),
+        (20, 840, 1280, 720),
+    ),
+}
+
+#: Vertical-layout overlay rectangles.
+VERTICAL_OVERLAY_RECTS: dict[tuple[str, str], Rect] = {
+    ("top", "large"): (0, 0, 1320, 80),
 }
 
 #: Border colour for the overlay (RGB). White.

@@ -71,14 +71,24 @@ def test_explicit_viewer_flags() -> None:
     assert args.size == "small"
 
 
-def test_size_tiny_flag() -> None:
-    """``--size tiny`` is accepted (640x480 per pane preset)."""
+def test_layout_default_is_horizontal() -> None:
+    """``--layout`` defaults to ``"horizontal"``."""
     mod = _load_cli_module()
     args = mod.build_parser().parse_args(
-        ["--p1", "v0", "--p2", "v0", "--games", "1", "--size", "tiny"]
+        ["--p1", "v0", "--p2", "v0", "--games", "1"]
     )
 
-    assert args.size == "tiny"
+    assert args.layout == "horizontal"
+
+
+def test_layout_vertical_flag() -> None:
+    """``--layout vertical`` is accepted."""
+    mod = _load_cli_module()
+    args = mod.build_parser().parse_args(
+        ["--p1", "v0", "--p2", "v0", "--games", "1", "--layout", "vertical"]
+    )
+
+    assert args.layout == "vertical"
 
 
 def test_no_viewer_flag() -> None:

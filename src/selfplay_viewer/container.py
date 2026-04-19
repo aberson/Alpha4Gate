@@ -32,6 +32,8 @@ from selfplay_viewer.overlay import (
     CONTAINER_SIZES,
     PANE_RECTS,
     PLACEHOLDER_MESSAGES,
+    VERTICAL_CONTAINER_SIZES,
+    VERTICAL_PANE_RECTS,
     render_overlay,
     render_placeholder,
     render_toast,
@@ -44,17 +46,17 @@ if TYPE_CHECKING:
     from orchestrator.contracts import SelfPlayRecord
 
 _VALID_BARS: Final[frozenset[str]] = frozenset({"top", "side"})
-_VALID_SIZES: Final[frozenset[str]] = frozenset({"large", "small", "tiny"})
+_VALID_SIZES: Final[frozenset[str]] = frozenset({"large", "small"})
+_VALID_LAYOUTS: Final[frozenset[str]] = frozenset({"horizontal", "vertical"})
 _VALID_SLOTS: Final[frozenset[int]] = frozenset({0, 1})
 
 #: S-hotkey cycles through size presets in this order:
-#: ``large → small → tiny → large``. Driving the cycle off a dict keeps
+#: ``large → small → large``. Driving the cycle off a dict keeps
 #: ``_handle_s_hotkey`` identical in every place it's open-coded and
-#: makes adding a fourth preset a one-line change.
+#: makes adding a third preset a one-line change.
 _SIZE_CYCLE_NEXT: Final[dict[str, str]] = {
     "large": "small",
-    "small": "tiny",
-    "tiny": "large",
+    "small": "large",
 }
 
 _MAIN_THREAD_MSG = (
@@ -134,11 +136,22 @@ class SelfPlayViewer:
     ----------
     bar:
         Where the stats overlay sits — ``"top"`` for a banner, ``"side"``
-        for a vertical right-edge bar.
+        for a vertical right-edge bar. ``layout="vertical"`` supports
+        only ``"top"``.
     size:
-        SC2 pane preset — ``"large"`` is 1024x768, ``"small"`` is
-        960x720, ``"tiny"`` is 640x480. The ``S`` hotkey cycles
-        ``large → small → tiny → large``.
+        SC2 pane preset — both ``"large"`` and ``"small"`` use 1024x768
+        panes (SC2's empirical minimum; see
+        ``scripts/probe_sc2_min_size.py``). ``"large"`` has roomy
+        margins (40 / 60 / 100); ``"small"`` is tightened to 20 / 30
+        / 80 saving ~70 pixels per dimension. The ``S`` hotkey cycles
+        ``large ↔ small`` in horizontal layout and is a no-op in
+        vertical layout (which currently has one fixed preset).
+    layout:
+        Either ``"horizontal"`` (default, panes side-by-side) or
+        ``"vertical"`` (panes stacked with 1280x720 widescreen sizing
+        so the full container fits vertically on a 2560x1600 display).
+        Vertical mode supports only ``bar="top"`` and ``size="large"``
+        in v1; other combinations raise ``ValueError``.
     background:
         Either ``"random"`` (default) or a derived key from
         ``selfplay_viewer.backgrounds.list_backgrounds``.
@@ -157,6 +170,7 @@ class SelfPlayViewer:
         size: str = "large",
         background: str = "random",
         *,
+        layout: str = "horizontal",
         seed: int | None = None,
     ) -> None:
         if bar not in _VALID_BARS:
@@ -167,8 +181,21 @@ class SelfPlayViewer:
             raise ValueError(
                 f"size must be one of {sorted(_VALID_SIZES)}, got {size!r}"
             )
+        if layout not in _VALID_LAYOUTS:
+            raise ValueError(
+                f"layout must be one of {sorted(_VALID_LAYOUTS)}, got {layout!r}"
+            )
+        if layout == "vertical" and (bar, size) not in VERTICAL_PANE_RECTS:
+            raise ValueError(
+                f"layout='vertical' supports only (bar='top', size='large') "
+                f"in v1; got (bar={bar!r}, size={size!r}). Add an entry to "
+                f"VERTICAL_PANE_RECTS + VERTICAL_CONTAINER_SIZES + "
+                f"VERTICAL_OVERLAY_RECTS in selfplay_viewer.overlay to "
+                f"extend."
+            )
         self.bar: str = bar
         self.size: str = size
+        self.layout: str = layout
         self.background: str = background
         #: Seeded RNG for deterministic ``--background random`` picks.
         #: ``None`` when no seed was supplied — ``pick_background`` then
@@ -229,6 +256,28 @@ class SelfPlayViewer:
         #: fade. See :meth:`_trigger_toast`.
         self._toast_message: str | None = None
         self._toast_expires_at: float = 0.0
+
+    # ------------------------------------------------------------------
+    # Layout-aware dict routing — returns the right pane/container/
+    # overlay rect table based on self.layout. Horizontal layouts read
+    # from the top-level CONTAINER_SIZES / PANE_RECTS / OVERLAY_RECTS
+    # dicts; vertical layout reads from the VERTICAL_* siblings. Every
+    # lookup inside this class must go through these helpers so a
+    # future layout ("grid", "pip", etc.) only has to add a new branch
+    # here instead of hunting down 7+ call sites.
+    # ------------------------------------------------------------------
+
+    def _pane_rect(self, slot: int) -> tuple[int, int, int, int]:
+        """Return ``(x, y, w, h)`` for pane *slot* under the current layout."""
+        if self.layout == "vertical":
+            return VERTICAL_PANE_RECTS[(self.bar, self.size)][slot]
+        return PANE_RECTS[(self.bar, self.size)][slot]
+
+    def _container_size(self) -> tuple[int, int]:
+        """Return ``(width, height)`` of the container under the current layout."""
+        if self.layout == "vertical":
+            return VERTICAL_CONTAINER_SIZES[(self.bar, self.size)]
+        return CONTAINER_SIZES[(self.bar, self.size)]
 
     # ------------------------------------------------------------------
     # Public API
@@ -318,7 +367,7 @@ class SelfPlayViewer:
             prior = self._attached_panes.pop(slot)
             self._safe_detach(prior.hwnd, slot, prior.pid, prior.label)
 
-        pane_rect = PANE_RECTS[(self.bar, self.size)][slot]
+        pane_rect = self._pane_rect(slot)
         try:
             reparent.attach_window(child_hwnd, container_hwnd, pane_rect)
         except Exception:
@@ -528,7 +577,7 @@ class SelfPlayViewer:
 
         pygame.init()
         try:
-            width, height = CONTAINER_SIZES[(self.bar, self.size)]
+            width, height = self._container_size()
             screen = pygame.display.set_mode((width, height))
             pygame.display.set_caption("Alpha4Gate self-play viewer")
 
@@ -555,12 +604,18 @@ class SelfPlayViewer:
                     elif event.type == pygame.KEYDOWN:
                         if event.key == pygame.K_ESCAPE:
                             running = False
-                        elif event.key == pygame.K_s:
+                        elif event.key == pygame.K_s and self.layout == "horizontal":
+                            # S hotkey is horizontal-only — vertical has
+                            # a single preset in v1; additional vertical
+                            # sizes would need entries in VERTICAL_*
+                            # dicts + a layout-aware cycle dict.
                             base_size = (
                                 target_size if target_size is not None else self.size
                             )
                             target_size = _SIZE_CYCLE_NEXT[base_size]
-                        elif event.key == pygame.K_b:
+                        elif event.key == pygame.K_b and self.layout == "horizontal":
+                            # B hotkey is horizontal-only — vertical
+                            # only supports bar="top" in v1.
                             base_bar = (
                                 target_bar if target_bar is not None else self.bar
                             )
@@ -853,7 +908,7 @@ class SelfPlayViewer:
 
         pygame.init()
         try:
-            width, height = CONTAINER_SIZES[(self.bar, self.size)]
+            width, height = self._container_size()
             screen = pygame.display.set_mode((width, height))
             pygame.display.set_caption("Alpha4Gate self-play viewer")
 
@@ -885,12 +940,18 @@ class SelfPlayViewer:
                     elif event.type == pygame.KEYDOWN:
                         if event.key == pygame.K_ESCAPE:
                             running = False
-                        elif event.key == pygame.K_s:
+                        elif event.key == pygame.K_s and self.layout == "horizontal":
+                            # S hotkey is horizontal-only — vertical has
+                            # a single preset in v1; additional vertical
+                            # sizes would need entries in VERTICAL_*
+                            # dicts + a layout-aware cycle dict.
                             base_size = (
                                 target_size if target_size is not None else self.size
                             )
                             target_size = _SIZE_CYCLE_NEXT[base_size]
-                        elif event.key == pygame.K_b:
+                        elif event.key == pygame.K_b and self.layout == "horizontal":
+                            # B hotkey is horizontal-only — vertical
+                            # only supports bar="top" in v1.
                             base_bar = (
                                 target_bar if target_bar is not None else self.bar
                             )
@@ -1082,12 +1143,18 @@ class SelfPlayViewer:
     ) -> tuple[pygame.Surface, pygame.Surface]:
         """Resize the container and re-attach child panes to the new layout.
 
+        Horizontal-layout only — the S/B hotkey handlers are gated on
+        ``self.layout == "horizontal"``, so this method is never reached
+        in vertical mode. Direct reads of :data:`CONTAINER_SIZES` /
+        :data:`PANE_RECTS` (rather than the layout-routing helpers)
+        rely on that invariant.
+
         Parameters
         ----------
         new_bar:
             Target ``bar`` value (``"top"`` or ``"side"``).
         new_size:
-            Target ``size`` value (``"large"``, ``"small"``, or ``"tiny"``).
+            Target ``size`` value (``"large"`` or ``"small"``).
 
         Returns
         -------
@@ -1329,7 +1396,7 @@ class SelfPlayViewer:
 
         screen.blit(background_surface, (0, 0))
 
-        pane_rects = PANE_RECTS[(self.bar, self.size)]
+        pane_rects = (self._pane_rect(0), self._pane_rect(1))
         for slot, rect in enumerate(pane_rects):
             if slot in self._attached_panes:
                 continue  # Real Win32 child owns this rect — do not overpaint.
@@ -1371,7 +1438,7 @@ class SelfPlayViewer:
                 self._toast_message = None
             else:
                 alpha = max(0.0, min(1.0, remaining / TOAST_DURATION_SECONDS))
-                container_size = CONTAINER_SIZES[(self.bar, self.size)]
+                container_size = self._container_size()
                 render_toast(
                     surface=screen,
                     container_size=container_size,

@@ -123,11 +123,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     viewer.add_argument(
         "--size",
-        choices=["large", "small", "tiny"],
+        choices=["large", "small"],
         default="large",
         help=(
-            "SC2 pane size preset (default: large). tiny=640x480 per pane "
-            "for small screens / dense multi-window layouts."
+            "SC2 pane size preset (default: large). Both use 1024x768 "
+            "panes (SC2's enforced minimum); small has tighter margins / "
+            "bar for a more compact container."
+        ),
+    )
+    viewer.add_argument(
+        "--layout",
+        choices=["horizontal", "vertical"],
+        default="horizontal",
+        help=(
+            "Pane orientation (default: horizontal, panes side-by-side). "
+            "vertical stacks 1280x720 panes to fit on a 2560x1600 "
+            "display; vertical requires --bar top and ignores --size."
         ),
     )
     viewer.add_argument(
@@ -265,6 +276,7 @@ def _run_pfsp_mode(args: argparse.Namespace, use_viewer: bool) -> int:
             bar=args.bar,
             size=args.size,
             background=args.background,
+            layout=args.layout,
             seed=args.seed,
         )
         viewer.run_with_batch(
@@ -296,6 +308,7 @@ def _run_h2h_mode(args: argparse.Namespace, use_viewer: bool) -> int:
             bar=args.bar,
             size=args.size,
             background=args.background,
+            layout=args.layout,
             seed=args.seed,
         )
         stop_event = threading.Event()

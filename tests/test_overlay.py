@@ -43,14 +43,9 @@ _EXPECTED: dict[
         (0, 0, 2188, 100),
     ),
     ("top", "small"): (
-        (2060, 900),
-        ((40, 140, 960, 720), (1060, 140, 960, 720)),
-        (0, 0, 2060, 100),
-    ),
-    ("top", "tiny"): (
-        (1420, 660),
-        ((40, 140, 640, 480), (740, 140, 640, 480)),
-        (0, 0, 1420, 100),
+        (2118, 888),
+        ((20, 100, 1024, 768), (1074, 100, 1024, 768)),
+        (0, 0, 2118, 80),
     ),
     ("side", "large"): (
         (2468, 848),
@@ -58,14 +53,9 @@ _EXPECTED: dict[
         (2188, 0, 280, 848),
     ),
     ("side", "small"): (
-        (2340, 800),
-        ((40, 40, 960, 720), (1060, 40, 960, 720)),
-        (2060, 0, 280, 800),
-    ),
-    ("side", "tiny"): (
-        (1700, 560),
-        ((40, 40, 640, 480), (740, 40, 640, 480)),
-        (1420, 0, 280, 560),
+        (2398, 808),
+        ((20, 20, 1024, 768), (1074, 20, 1024, 768)),
+        (2118, 0, 280, 808),
     ),
 }
 
@@ -104,24 +94,45 @@ def test_overlay_rect_matches_plan(bar: str, size: str) -> None:
 
 
 def test_size_cycle_hits_every_preset() -> None:
-    """``S`` hotkey cycles ``large → small → tiny → large``.
+    """``S`` hotkey cycles ``large → small → large`` (2-way v1).
 
-    Guards against a regression where adding a fourth preset breaks the
-    cycle or skips a size. Starting from every preset we should return
-    to the starting preset after N cycle steps where N == len(cycle).
+    Guards against a regression where adding or removing a preset
+    breaks the cycle. Starting from every preset we should return to
+    the starting preset after N cycle steps where N == len(cycle).
     """
     from selfplay_viewer.container import _SIZE_CYCLE_NEXT
 
-    assert set(_SIZE_CYCLE_NEXT.keys()) == {"large", "small", "tiny"}
-    assert set(_SIZE_CYCLE_NEXT.values()) == {"large", "small", "tiny"}
+    assert set(_SIZE_CYCLE_NEXT.keys()) == {"large", "small"}
+    assert set(_SIZE_CYCLE_NEXT.values()) == {"large", "small"}
 
     visited = []
     current = "large"
     for _ in range(len(_SIZE_CYCLE_NEXT)):
         visited.append(current)
         current = _SIZE_CYCLE_NEXT[current]
-    assert visited == ["large", "small", "tiny"]
+    assert visited == ["large", "small"]
     assert current == "large"  # closed the loop
+
+
+def test_vertical_layout_dicts_match_plan() -> None:
+    """Vertical layout v1: single preset (top, large) at 1320x1580.
+
+    Guards the SC2-min-size-probe-derived dimensions. Widescreen
+    1280x720 panes stacked with 20px margins / 20px gap / 80px top bar.
+    Panes land at (20, 100) and (20, 840) — pane 2 y = 100 + 720 + 20.
+    """
+    from selfplay_viewer.overlay import (
+        VERTICAL_CONTAINER_SIZES,
+        VERTICAL_OVERLAY_RECTS,
+        VERTICAL_PANE_RECTS,
+    )
+
+    assert VERTICAL_CONTAINER_SIZES[("top", "large")] == (1320, 1580)
+    assert VERTICAL_PANE_RECTS[("top", "large")] == (
+        (20, 100, 1280, 720),
+        (20, 840, 1280, 720),
+    )
+    assert VERTICAL_OVERLAY_RECTS[("top", "large")] == (0, 0, 1320, 80)
 
 
 # ---------------------------------------------------------------------------
