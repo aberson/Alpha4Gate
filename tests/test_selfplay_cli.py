@@ -71,6 +71,16 @@ def test_explicit_viewer_flags() -> None:
     assert args.size == "small"
 
 
+def test_size_tiny_flag() -> None:
+    """``--size tiny`` is accepted (640x480 per pane preset)."""
+    mod = _load_cli_module()
+    args = mod.build_parser().parse_args(
+        ["--p1", "v0", "--p2", "v0", "--games", "1", "--size", "tiny"]
+    )
+
+    assert args.size == "tiny"
+
+
 def test_no_viewer_flag() -> None:
     """``--no-viewer`` sets the flag to True."""
     mod = _load_cli_module()

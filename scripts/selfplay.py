@@ -123,9 +123,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     viewer.add_argument(
         "--size",
-        choices=["large", "small"],
+        choices=["large", "small", "tiny"],
         default="large",
-        help="SC2 pane size preset (default: large)",
+        help=(
+            "SC2 pane size preset (default: large). tiny=640x480 per pane "
+            "for small screens / dense multi-window layouts."
+        ),
     )
     viewer.add_argument(
         "--background",

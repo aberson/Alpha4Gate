@@ -47,6 +47,11 @@ _EXPECTED: dict[
         ((40, 140, 960, 720), (1060, 140, 960, 720)),
         (0, 0, 2060, 100),
     ),
+    ("top", "tiny"): (
+        (1420, 660),
+        ((40, 140, 640, 480), (740, 140, 640, 480)),
+        (0, 0, 1420, 100),
+    ),
     ("side", "large"): (
         (2468, 848),
         ((40, 40, 1024, 768), (1124, 40, 1024, 768)),
@@ -56,6 +61,11 @@ _EXPECTED: dict[
         (2340, 800),
         ((40, 40, 960, 720), (1060, 40, 960, 720)),
         (2060, 0, 280, 800),
+    ),
+    ("side", "tiny"): (
+        (1700, 560),
+        ((40, 40, 640, 480), (740, 40, 640, 480)),
+        (1420, 0, 280, 560),
     ),
 }
 
@@ -91,6 +101,27 @@ def test_pane_rects_match_plan(bar: str, size: str) -> None:
 def test_overlay_rect_matches_plan(bar: str, size: str) -> None:
     _, _, expected_overlay = _EXPECTED[(bar, size)]
     assert OVERLAY_RECTS[(bar, size)] == expected_overlay
+
+
+def test_size_cycle_hits_every_preset() -> None:
+    """``S`` hotkey cycles ``large → small → tiny → large``.
+
+    Guards against a regression where adding a fourth preset breaks the
+    cycle or skips a size. Starting from every preset we should return
+    to the starting preset after N cycle steps where N == len(cycle).
+    """
+    from selfplay_viewer.container import _SIZE_CYCLE_NEXT
+
+    assert set(_SIZE_CYCLE_NEXT.keys()) == {"large", "small", "tiny"}
+    assert set(_SIZE_CYCLE_NEXT.values()) == {"large", "small", "tiny"}
+
+    visited = []
+    current = "large"
+    for _ in range(len(_SIZE_CYCLE_NEXT)):
+        visited.append(current)
+        current = _SIZE_CYCLE_NEXT[current]
+    assert visited == ["large", "small", "tiny"]
+    assert current == "large"  # closed the loop
 
 
 # ---------------------------------------------------------------------------

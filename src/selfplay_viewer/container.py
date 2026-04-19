@@ -44,8 +44,18 @@ if TYPE_CHECKING:
     from orchestrator.contracts import SelfPlayRecord
 
 _VALID_BARS: Final[frozenset[str]] = frozenset({"top", "side"})
-_VALID_SIZES: Final[frozenset[str]] = frozenset({"large", "small"})
+_VALID_SIZES: Final[frozenset[str]] = frozenset({"large", "small", "tiny"})
 _VALID_SLOTS: Final[frozenset[int]] = frozenset({0, 1})
+
+#: S-hotkey cycles through size presets in this order:
+#: ``large → small → tiny → large``. Driving the cycle off a dict keeps
+#: ``_handle_s_hotkey`` identical in every place it's open-coded and
+#: makes adding a fourth preset a one-line change.
+_SIZE_CYCLE_NEXT: Final[dict[str, str]] = {
+    "large": "small",
+    "small": "tiny",
+    "tiny": "large",
+}
 
 _MAIN_THREAD_MSG = (
     "SelfPlayViewer attach/detach must be called from the main thread "
@@ -127,7 +137,8 @@ class SelfPlayViewer:
         for a vertical right-edge bar.
     size:
         SC2 pane preset — ``"large"`` is 1024x768, ``"small"`` is
-        960x720.
+        960x720, ``"tiny"`` is 640x480. The ``S`` hotkey cycles
+        ``large → small → tiny → large``.
     background:
         Either ``"random"`` (default) or a derived key from
         ``selfplay_viewer.backgrounds.list_backgrounds``.
@@ -548,7 +559,7 @@ class SelfPlayViewer:
                             base_size = (
                                 target_size if target_size is not None else self.size
                             )
-                            target_size = "small" if base_size == "large" else "large"
+                            target_size = _SIZE_CYCLE_NEXT[base_size]
                         elif event.key == pygame.K_b:
                             base_bar = (
                                 target_bar if target_bar is not None else self.bar
@@ -878,7 +889,7 @@ class SelfPlayViewer:
                             base_size = (
                                 target_size if target_size is not None else self.size
                             )
-                            target_size = "small" if base_size == "large" else "large"
+                            target_size = _SIZE_CYCLE_NEXT[base_size]
                         elif event.key == pygame.K_b:
                             base_bar = (
                                 target_bar if target_bar is not None else self.bar
@@ -1076,7 +1087,7 @@ class SelfPlayViewer:
         new_bar:
             Target ``bar`` value (``"top"`` or ``"side"``).
         new_size:
-            Target ``size`` value (``"large"`` or ``"small"``).
+            Target ``size`` value (``"large"``, ``"small"``, or ``"tiny"``).
 
         Returns
         -------

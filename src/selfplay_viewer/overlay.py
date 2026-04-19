@@ -31,14 +31,16 @@ Rect = tuple[int, int, int, int]
 Bar = Literal["top", "side"]
 
 #: Allowed SC2-pane size presets.
-Size = Literal["large", "small"]
+Size = Literal["large", "small", "tiny"]
 
 #: Container window dimensions ``(width, height)`` keyed by ``(bar, size)``.
 CONTAINER_SIZES: dict[tuple[str, str], tuple[int, int]] = {
     ("top", "large"): (2188, 948),
     ("top", "small"): (2060, 900),
+    ("top", "tiny"): (1420, 660),
     ("side", "large"): (2468, 848),
     ("side", "small"): (2340, 800),
+    ("side", "tiny"): (1700, 560),
 }
 
 #: Two SC2 pane rectangles ``(p1, p2)`` keyed by ``(bar, size)``.
@@ -51,6 +53,10 @@ PANE_RECTS: dict[tuple[str, str], tuple[Rect, Rect]] = {
         (40, 140, 960, 720),
         (1060, 140, 960, 720),
     ),
+    ("top", "tiny"): (
+        (40, 140, 640, 480),
+        (740, 140, 640, 480),
+    ),
     ("side", "large"): (
         (40, 40, 1024, 768),
         (1124, 40, 1024, 768),
@@ -59,14 +65,20 @@ PANE_RECTS: dict[tuple[str, str], tuple[Rect, Rect]] = {
         (40, 40, 960, 720),
         (1060, 40, 960, 720),
     ),
+    ("side", "tiny"): (
+        (40, 40, 640, 480),
+        (740, 40, 640, 480),
+    ),
 }
 
 #: Overlay (stats-bar) rectangle keyed by ``(bar, size)``.
 OVERLAY_RECTS: dict[tuple[str, str], Rect] = {
     ("top", "large"): (0, 0, 2188, 100),
     ("top", "small"): (0, 0, 2060, 100),
+    ("top", "tiny"): (0, 0, 1420, 100),
     ("side", "large"): (2188, 0, 280, 848),
     ("side", "small"): (2060, 0, 280, 800),
+    ("side", "tiny"): (1420, 0, 280, 560),
 }
 
 #: Border colour for the overlay (RGB). White.
