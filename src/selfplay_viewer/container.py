@@ -71,11 +71,15 @@ TARGET_FPS: Final[int] = 30
 BATCH_COMPLETE_GRACE_SECONDS: Final[float] = 3.0
 
 #: Per-slot HWND discovery timeout (seconds) used by
-#: :meth:`SelfPlayViewer._handle_game_start`. Shorter than the default
-#: 15s because the ``_handle_game_start`` drain runs on the pygame main
-#: thread and a 15s block freezes the UI. Step 7 will move the waiting
-#: HWND lookup to a per-frame deferred task.
-GAME_START_HWND_TIMEOUT_SECONDS: Final[float] = 2.0
+#: :meth:`SelfPlayViewer._handle_game_start`. SC2 takes ~5-7 seconds
+#: from ``Creating SC2 Processes`` to the first visible top-level
+#: window; the original 2.0 value caught the process before the window
+#: was ready and left slot 0 unattached every game (Step 9 soak,
+#: 2026-04-18). Aligned with the 15s default of
+#: :func:`reparent.find_hwnd_for_pid` — this is a hotfix that blocks
+#: the pygame main thread during game_start; the proper Step-7-style
+#: per-frame deferred HWND lookup is tracked in a follow-up issue.
+GAME_START_HWND_TIMEOUT_SECONDS: Final[float] = 15.0
 
 #: Grace window (seconds) given to the batch thread to wind down after
 #: the user closes the viewer. If the join times out we log a WARNING

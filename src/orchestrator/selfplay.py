@@ -120,6 +120,60 @@ def _install_port_collision_patch() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Worker-thread signal-handler monkey-patch
+# ---------------------------------------------------------------------------
+
+_SIGNAL_PATCH_INSTALLED = False
+
+
+def _install_worker_thread_signal_patch() -> None:
+    """Idempotent patch: no-op ``signal.signal`` from worker threads.
+
+    ``sc2.sc2process.SC2Process.__aenter__`` unconditionally calls
+    ``signal.signal(SIGINT, ...)``. Python's ``signal.signal`` only works
+    in the main thread; off-main-thread callers get
+    ``ValueError: signal only works in main thread of the main interpreter``
+    synchronously. ``SelfPlayViewer.run_with_batch`` puts ``run_batch`` on
+    a ``selfplay-batch`` worker so pygame can own the main thread, so
+    every game fails in ~10ms before SC2 ever spawns.
+
+    The fix swaps the ``signal`` module reference inside
+    ``sc2.sc2process`` for a minimal proxy that exposes ``SIGINT`` /
+    ``SIG_DFL`` unchanged and routes ``signal(...)`` calls through the
+    real ``signal.signal`` only when invoked from the main thread. Ctrl+C
+    cleanup via burnysc2's KillSwitch is preserved for main-thread
+    callers (tests, ``--no-viewer`` CLI); viewer-owned batches rely on
+    ``Esc`` + ``stop_event`` instead.
+    """
+    global _SIGNAL_PATCH_INSTALLED  # noqa: PLW0603
+    if _SIGNAL_PATCH_INSTALLED:
+        return
+
+    import signal as _signal_module
+    import types
+
+    import sc2.sc2process as _sc2p
+
+    real_signal = _signal_module.signal
+
+    def _thread_safe_signal(
+        signalnum: int, handler: Callable[..., object] | int | None
+    ) -> Callable[..., object] | int | None:
+        if threading.current_thread() is threading.main_thread():
+            return real_signal(signalnum, handler)  # type: ignore[arg-type,return-value,unused-ignore]
+        return None
+
+    proxy = types.SimpleNamespace(
+        SIGINT=_signal_module.SIGINT,
+        SIG_DFL=_signal_module.SIG_DFL,
+        signal=_thread_safe_signal,
+    )
+    _sc2p.signal = proxy  # type: ignore[assignment,attr-defined]
+    _SIGNAL_PATCH_INSTALLED = True
+    _log.info("worker-thread signal patch installed")
+
+
+# ---------------------------------------------------------------------------
 # PFSP-lite sampling
 # ---------------------------------------------------------------------------
 
@@ -602,6 +656,7 @@ def run_batch(
     """
     os.environ.setdefault("SC2PATH", r"C:\Program Files (x86)\StarCraft II")
     _install_port_collision_patch()
+    _install_worker_thread_signal_patch()
     _validate_versions(p1, p2)
 
     if results_path is None:

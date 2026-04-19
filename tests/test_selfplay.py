@@ -401,3 +401,55 @@ class TestSelfPlayRecordContract:
         assert "\n" not in line
         parsed = json.loads(line)
         assert parsed["winner"] == "v1"
+
+
+class TestWorkerThreadSignalPatch:
+    """Regression for the viewer-owned-batch bug.
+
+    ``SC2Process.__aenter__`` calls ``signal.signal(SIGINT, ...)`` which
+    raises ``ValueError`` off-main-thread. Step 4's
+    ``SelfPlayViewer.run_with_batch`` puts the batch on a worker thread,
+    so unpatched burnysc2 fails every game in ~10ms before SC2 spawns.
+    """
+
+    def test_patch_allows_signal_call_from_worker_thread(self) -> None:
+        import signal
+        import threading
+
+        from orchestrator.selfplay import _install_worker_thread_signal_patch
+
+        _install_worker_thread_signal_patch()
+
+        import sc2.sc2process as sc2p
+
+        errors: list[BaseException] = []
+
+        def worker() -> None:
+            try:
+                sc2p.signal.signal(sc2p.signal.SIGINT, signal.SIG_DFL)
+                sc2p.signal.signal(sc2p.signal.SIGINT, signal.SIG_DFL)
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        t = threading.Thread(target=worker, name="selfplay-batch")
+        t.start()
+        t.join()
+
+        assert not errors, f"signal proxy raised in worker thread: {errors!r}"
+
+    def test_patch_preserves_main_thread_behaviour(self) -> None:
+        import signal
+
+        from orchestrator.selfplay import _install_worker_thread_signal_patch
+
+        _install_worker_thread_signal_patch()
+
+        import sc2.sc2process as sc2p
+
+        prev = sc2p.signal.signal(sc2p.signal.SIGINT, signal.SIG_DFL)
+        # Real signal.signal returns the previous handler — either a
+        # callable or one of the SIG_* constants. ``None`` would mean the
+        # proxy short-circuited on the main thread, which is the bug.
+        assert prev is not None
+        # Restore default so the test leaves no side effects.
+        sc2p.signal.signal(sc2p.signal.SIGINT, prev)
