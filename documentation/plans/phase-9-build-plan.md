@@ -299,6 +299,7 @@ operators can opt in with `--viewer` for debugging.
   `Improvement` objects; malformed responses raise a clear `ValueError` with the
   offending snippet in the message.
 - **Depends on:** Step 2.
+- **Status:** DONE (2026-04-20)
 
 ### Step 4: `scripts/evolve.py` CLI + orchestration loop
 

@@ -17,6 +17,8 @@ Public surface:
 - :class:`Improvement` — frozen dataclass describing a proposed change.
 - :class:`RoundResult` — frozen dataclass describing the outcome of one round.
 - :func:`apply_improvement` — apply one :class:`Improvement` to a version dir.
+- :func:`generate_pool` — run mirror games and ask Claude to propose a pool
+  of candidate improvements to try next.
 - :func:`run_round` — execute one full evolve round (snapshot + apply + AB +
   parent gate + cleanup).
 
@@ -42,12 +44,13 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import os
 import shutil
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from orchestrator.contracts import SelfPlayRecord
 from orchestrator.registry import (
@@ -62,6 +65,7 @@ __all__ = [
     "Improvement",
     "RoundResult",
     "apply_improvement",
+    "generate_pool",
     "run_round",
 ]
 
@@ -553,3 +557,543 @@ def run_round(
             _safe_rmtree(cand_b_dir)
         _restore_pointer(parent)
         raise
+
+
+# ---------------------------------------------------------------------------
+# generate_pool
+# ---------------------------------------------------------------------------
+
+
+# Fields every Improvement item in the Claude JSON response MUST have.
+_REQUIRED_IMP_FIELDS: tuple[str, ...] = (
+    "rank",
+    "title",
+    "type",
+    "description",
+    "principle_ids",
+    "expected_impact",
+    "concrete_change",
+)
+
+# Exactly the set of allowed keys on each improvement object. Claude
+# sometimes decorates responses with extra explanatory fields (e.g.
+# ``files_touched``, ``notes``); we reject rather than silently drop so the
+# advisor-side drift is surfaced early.
+_ALLOWED_IMP_FIELDS: frozenset[str] = frozenset(_REQUIRED_IMP_FIELDS)
+
+# Depth cap for the source-tree listing pasted into the prompt. Anything
+# deeper is collapsed so the prompt doesn't balloon on unusual layouts.
+_SOURCE_TREE_MAX_DEPTH = 5
+
+# Directory names to exclude from the source-tree listing (noise).
+_SOURCE_TREE_EXCLUDE: frozenset[str] = frozenset(
+    {"__pycache__", ".pytest_cache", "data", ".mypy_cache", ".ruff_cache"}
+)
+
+
+def _strip_markdown_fences(raw: str) -> str:
+    """Remove triple-backtick fences from a Claude response, if present.
+
+    Mirrors the behaviour in ``bots/v0/commands/interpreter.py`` — Claude
+    sometimes wraps JSON in ``` or ```json fences even when asked not to.
+    Returns the inner JSON-looking payload, or the stripped input if no
+    fences are present.
+    """
+    cleaned = raw.strip()
+    if "```" not in cleaned:
+        return cleaned
+    parts = cleaned.split("```")
+    for part in parts:
+        candidate = part.strip()
+        if candidate.startswith("json"):
+            candidate = candidate[4:].strip()
+        if candidate.startswith("[") or candidate.startswith("{"):
+            return candidate
+    # Fences were present but no JSON-looking segment found — fall back.
+    return cleaned
+
+
+def _validate_improvement_item(item: Any, index: int) -> Improvement:
+    """Validate one raw Claude JSON item against the Improvement schema.
+
+    Raises ``ValueError`` with a message that names the offending field and
+    includes the item index (so the caller can find it in the batch). The
+    schema is STRICT: unknown keys (beyond the seven required fields) trigger
+    ``ValueError`` rather than being silently dropped — Claude occasionally
+    decorates responses with extra explanatory keys and we want that drift
+    to surface immediately.
+    """
+    if not isinstance(item, dict):
+        raise ValueError(
+            f"improvement[{index}] must be a JSON object; got {type(item).__name__}"
+        )
+
+    missing = [f for f in _REQUIRED_IMP_FIELDS if f not in item]
+    if missing:
+        raise ValueError(
+            f"improvement[{index}] missing required field(s): {missing!r}"
+        )
+
+    unknown = sorted(set(item.keys()) - _ALLOWED_IMP_FIELDS)
+    if unknown:
+        raise ValueError(
+            f"improvement[{index}] has unknown field(s): {unknown!r}; "
+            f"allowed fields are {sorted(_ALLOWED_IMP_FIELDS)!r}"
+        )
+
+    rank = item["rank"]
+    if not isinstance(rank, int) or isinstance(rank, bool) or rank < 1:
+        raise ValueError(
+            f"improvement[{index}].rank must be a positive int; got {rank!r}"
+        )
+
+    for field in ("title", "description", "expected_impact"):
+        val = item[field]
+        if not isinstance(val, str):
+            raise ValueError(
+                f"improvement[{index}].{field} must be a string; got "
+                f"{type(val).__name__}"
+            )
+
+    type_val = item["type"]
+    if type_val not in ("training", "dev"):
+        raise ValueError(
+            f"improvement[{index}].type must be 'training' or 'dev'; got "
+            f"{type_val!r}"
+        )
+
+    principle_ids = item["principle_ids"]
+    if not isinstance(principle_ids, list) or not all(
+        isinstance(p, str) for p in principle_ids
+    ):
+        raise ValueError(
+            f"improvement[{index}].principle_ids must be a list of strings; "
+            f"got {principle_ids!r}"
+        )
+
+    concrete = item["concrete_change"]
+    # concrete_change is a str for training (JSON-encoded patch) and a str
+    # for dev (free-text). If Claude emits a dict we coerce via json.dumps so
+    # the Improvement dataclass (which declares concrete_change: str) stays
+    # type-consistent.
+    if isinstance(concrete, dict):
+        concrete = json.dumps(concrete)
+    elif not isinstance(concrete, str):
+        raise ValueError(
+            f"improvement[{index}].concrete_change must be a string or JSON "
+            f"object; got {type(concrete).__name__}"
+        )
+
+    return Improvement(
+        rank=rank,
+        title=item["title"],
+        type=cast(ImprovementType, type_val),
+        description=item["description"],
+        principle_ids=list(principle_ids),
+        expected_impact=item["expected_impact"],
+        concrete_change=concrete,
+    )
+
+
+def _parse_claude_pool(raw: str) -> list[Improvement]:
+    """Parse Claude's response string into a list of Improvement objects.
+
+    Expects a JSON array at the top level. Strips markdown fences first.
+    Raises ``ValueError`` (with the first 500 chars of the offending payload)
+    on decode failure or schema violations.
+    """
+    cleaned = _strip_markdown_fences(raw)
+    try:
+        parsed: Any = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        snippet = cleaned[:500]
+        raise ValueError(
+            f"Claude response is not valid JSON: {exc.msg} at pos {exc.pos}. "
+            f"Response snippet (first 500 chars): {snippet!r}"
+        ) from exc
+
+    if not isinstance(parsed, list):
+        raise ValueError(
+            f"Claude response must be a JSON array at top level; got "
+            f"{type(parsed).__name__}"
+        )
+
+    return [_validate_improvement_item(item, i) for i, item in enumerate(parsed)]
+
+
+def _list_source_tree(bots_dir: Path, parent: str) -> list[str]:
+    """List .py files under ``bots/<parent>/`` as repo-relative paths.
+
+    Excludes ``data/``, cache dirs, and anything past
+    ``_SOURCE_TREE_MAX_DEPTH`` from the version root. Returned paths use
+    forward slashes for cross-platform consistency in the prompt.
+    """
+    version_root = bots_dir / parent
+    if not version_root.is_dir():
+        return []
+
+    files: list[str] = []
+    root_parts = len(version_root.parts)
+    for dirpath, dirnames, filenames in os.walk(version_root):
+        # Prune excluded dirs in-place so os.walk skips them.
+        dirnames[:] = [d for d in dirnames if d not in _SOURCE_TREE_EXCLUDE]
+
+        cur = Path(dirpath)
+        depth = len(cur.parts) - root_parts
+        # Stop DESCENDING past the depth cap, but still collect .py files at
+        # exactly the cap depth. Using ``>`` instead of ``>=`` here: files at
+        # depth==_SOURCE_TREE_MAX_DEPTH are included, descent stops at
+        # depth+1. Previously ``>=`` paired with ``continue`` silently hid
+        # any .py file sitting at exactly the cap depth.
+        if depth > _SOURCE_TREE_MAX_DEPTH:
+            dirnames[:] = []
+            continue
+        if depth == _SOURCE_TREE_MAX_DEPTH:
+            dirnames[:] = []
+
+        for name in filenames:
+            if not name.endswith(".py"):
+                continue
+            rel = (cur / name).relative_to(bots_dir.parent)
+            files.append(rel.as_posix())
+
+    files.sort()
+    return files
+
+
+def _read_log_tails(
+    logs_dir: Path, parent: str, *, max_bytes: int = 4000
+) -> str:
+    """Read tails of matching ``selfplay_<parent>_*.log`` files.
+
+    Missing ``logs/`` or no matches is not an error — returns a placeholder
+    so the prompt is still well-formed. Each log is truncated to the last
+    ``max_bytes`` bytes to keep the prompt bounded.
+    """
+    if not logs_dir.is_dir():
+        return "(no logs/ directory — fresh project or mocked run)"
+
+    matches = sorted(logs_dir.glob(f"selfplay_{parent}_*.log"))
+    if not matches:
+        return f"(no selfplay_{parent}_*.log files in {logs_dir})"
+
+    chunks: list[str] = []
+    for log_path in matches:
+        try:
+            raw = log_path.read_bytes()
+        except OSError as exc:
+            _log.warning("failed to read %s: %s", log_path, exc)
+            continue
+        tail = raw[-max_bytes:].decode("utf-8", errors="replace")
+        chunks.append(f"--- {log_path.name} (tail) ---\n{tail}")
+    if not chunks:
+        return f"(no readable selfplay logs for {parent})"
+    return "\n\n".join(chunks)
+
+
+def _summarize_records(
+    records: list[SelfPlayRecord], parent: str
+) -> dict[str, Any]:
+    """Compute winner counts / durations / crash counts for the prompt."""
+    wins_p1 = sum(1 for r in records if r.winner == parent and not r.seat_swap)
+    wins_p2 = sum(1 for r in records if r.winner == parent and r.seat_swap)
+    total_parent_wins = sum(1 for r in records if r.winner == parent)
+    draws = sum(1 for r in records if r.winner is None and r.error is None)
+    crashes = sum(1 for r in records if r.error is not None)
+    durations = [r.duration_s for r in records if r.duration_s > 0]
+    avg_duration = sum(durations) / len(durations) if durations else 0.0
+    return {
+        "games": len(records),
+        "parent_wins_p1_seat": wins_p1,
+        "parent_wins_p2_seat": wins_p2,
+        "parent_wins_total": total_parent_wins,
+        "draws": draws,
+        "crashes": crashes,
+        "avg_duration_s": round(avg_duration, 1),
+    }
+
+
+_PROMPT_HEADER = """You are the improvement advisor for Alpha4Gate, a Protoss \
+StarCraft II bot. Your job: propose a pool of {pool_size} candidate \
+improvements that a sibling-tournament loop will try in parallel.
+
+Parent version: {parent}
+Map: {map_name}
+Mirror games run (parent vs parent): {mirror_games}
+
+## Mirror-game summary
+
+{summary_json}
+
+## Self-play log tails
+
+{log_tails}
+
+## Parent source tree (.py files only)
+
+{source_tree}
+
+## Guiding principles (full)
+
+{principles}
+
+## Output schema
+
+Return a JSON array of EXACTLY {pool_size} improvement objects, ordered by \
+expected_impact descending (rank 1 = most impactful). Each object MUST have \
+these seven fields:
+
+  - rank: positive int (1 is best)
+  - title: short human label (string)
+  - type: "training" or "dev" (exactly one of these two strings)
+  - description: long-form rationale (string)
+  - principle_ids: list of principle ID strings from the guiding principles \
+above
+  - expected_impact: free-text prediction (string)
+  - concrete_change: string. For "training" imps it must be JSON-encoded with \
+shape {{"file": "reward_rules.json" | "hyperparams.json", "patch": \
+{{"<key>": <value>, ...}}}} — flat top-level keys only. For "dev" imps it is \
+a free-text instruction for a sub-agent that edits Python source under \
+bots/{parent}/ .
+
+## Constraints
+
+- type must be exactly "training" or "dev". No other values.
+- training improvements edit reward_rules.json or hyperparams.json inside \
+the version's data/ dir. They do NOT edit Python.
+- dev improvements edit Python source under bots/{parent}/. They do NOT \
+touch data files.
+- Every principle_ids entry should cite a real section or rule from the \
+guiding-principles document above.
+- Return ONLY the JSON array. No prose, no markdown fences.
+"""
+
+
+_PROMPT_RETRY_PREFIX = (
+    "The previous response returned {got} items but EXACTLY {want} are "
+    "required. Return the same schema, but with exactly {want} items this "
+    "time. No prose, no markdown fences.\n\n"
+)
+
+
+def _build_prompt(
+    *,
+    parent: str,
+    pool_size: int,
+    mirror_games: int,
+    map_name: str,
+    summary: dict[str, Any],
+    log_tails: str,
+    source_tree: list[str],
+    principles: str,
+) -> str:
+    """Assemble the Claude prompt from the collected context blocks."""
+    tree_text = (
+        "\n".join(f"- {p}" for p in source_tree)
+        if source_tree
+        else f"(no .py files found under bots/{parent}/ — empty or missing)"
+    )
+    return _PROMPT_HEADER.format(
+        parent=parent,
+        pool_size=pool_size,
+        mirror_games=mirror_games,
+        map_name=map_name,
+        summary_json=json.dumps(summary, indent=2),
+        log_tails=log_tails,
+        source_tree=tree_text,
+        principles=principles,
+    )
+
+
+# Default Anthropic model for the advisor. Opus tier because the advisor
+# does strategic reasoning where quality dominates latency/cost (per the
+# "Prefer Opus for subagents" project memory note). The Alpha4Gate project
+# convention (see ``bots/v0/commands/interpreter.py``) is dated aliases
+# like ``claude-haiku-4-5-20251001``; no confirmed dated Opus 4.7 alias
+# lives in the tree yet, so we default to the undated family alias and
+# let production override via the ``ANTHROPIC_POOL_MODEL`` env var or the
+# ``model`` parameter on :func:`_default_claude_fn`. When Anthropic ships
+# a dated Opus 4.7 alias, bump this constant (e.g. ``claude-opus-4-7-<date>``)
+# to match the interpreter.py convention.
+_CLAUDE_POOL_MODEL_DEFAULT = "claude-opus-4-7"
+
+
+def _default_claude_fn(prompt: str, *, model: str | None = None) -> str:
+    """Production Claude invocation. Opus via synchronous Anthropic SDK.
+
+    Sync (not async) because :func:`generate_pool` is called once at run
+    start, not in a hot loop. Reads ``ANTHROPIC_API_KEY`` from the
+    environment — matches the pattern in ``bots/v0/config.py``.
+
+    Model resolution (first match wins):
+
+    1. Explicit ``model`` argument if provided.
+    2. ``ANTHROPIC_POOL_MODEL`` env var if set.
+    3. :data:`_CLAUDE_POOL_MODEL_DEFAULT` (currently ``"claude-opus-4-7"``,
+       the undated family alias).
+
+    The project convention elsewhere (see
+    ``bots/v0/commands/interpreter.py``) is dated aliases like
+    ``claude-haiku-4-5-20251001``. Production deployments may want to
+    pin a dated Opus alias by setting ``ANTHROPIC_POOL_MODEL`` to e.g.
+    ``claude-opus-4-7-<yyyymmdd>`` once such an alias exists.
+
+    Raises ``RuntimeError`` if the API key is missing — this function is
+    only called from production paths, not tests (tests inject a mock
+    ``claude_fn`` into :func:`generate_pool`).
+    """
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        raise RuntimeError(
+            "ANTHROPIC_API_KEY is not set; cannot call Claude. Set the env "
+            "var or inject a claude_fn into generate_pool()."
+        )
+    resolved_model = (
+        model
+        or os.getenv("ANTHROPIC_POOL_MODEL")
+        or _CLAUDE_POOL_MODEL_DEFAULT
+    )
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=api_key)
+    message = client.messages.create(
+        model=resolved_model,
+        max_tokens=8192,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    block = message.content[0]
+    text = block.text if hasattr(block, "text") else str(block)
+    return cast(str, text)
+
+
+def generate_pool(
+    parent: str,
+    *,
+    mirror_games: int = 3,
+    pool_size: int = 10,
+    map_name: str = "Simple64",
+    run_batch_fn: Callable[..., list[SelfPlayRecord]] | None = None,
+    claude_fn: Callable[[str], str] | None = None,
+) -> list[Improvement]:
+    """Generate a pool of improvements via mirror self-play + Claude advisor.
+
+    Runs ``mirror_games`` parent-vs-parent games, then prompts Claude with:
+
+    * a summary of the mirror-game outcomes (winners, durations, crashes),
+    * tail snippets of any matching ``logs/selfplay_<parent>_*.log`` files
+      (optional — missing logs are not fatal),
+    * a listing of ``.py`` files under ``bots/<parent>/`` (depth-limited),
+    * the full text of ``documentation/sc2/protoss/guiding-principles.md``,
+    * and the :class:`Improvement` JSON schema with a strict "return exactly
+      ``pool_size`` items" instruction.
+
+    The response (expected to be a JSON array) is parsed and validated
+    against the :class:`Improvement` schema. If Claude returns fewer than
+    ``pool_size`` items we retry ONCE with an explicit "return exactly N"
+    prefix prepended. A second short response raises ``ValueError``.
+
+    Parameters
+    ----------
+    parent:
+        The version name to mirror and to target for improvements.
+    mirror_games:
+        Number of parent-vs-parent games to run. Defaults to 3.
+    pool_size:
+        Exact number of improvements to return. Defaults to 10.
+    map_name:
+        SC2 map passed to ``run_batch_fn``. Defaults to ``"Simple64"``.
+    run_batch_fn:
+        Injected in tests. Defaults to :func:`orchestrator.selfplay.run_batch`.
+    claude_fn:
+        Injected in tests. Defaults to :func:`_default_claude_fn` (real
+        Anthropic SDK call to Opus).
+
+    Returns
+    -------
+    list[Improvement]
+        Exactly ``pool_size`` validated improvements.
+
+    Raises
+    ------
+    ValueError
+        If Claude's response is malformed, any item fails schema validation,
+        or the retry still returns too few items.
+    """
+    if run_batch_fn is None:
+        from orchestrator import selfplay
+
+        run_batch_fn = selfplay.run_batch
+    if claude_fn is None:
+        claude_fn = _default_claude_fn
+
+    # 1. Run parent-vs-parent mirror games.
+    _log.info(
+        "generate_pool: running %d mirror games for %s on %s",
+        mirror_games,
+        parent,
+        map_name,
+    )
+    records = run_batch_fn(parent, parent, mirror_games, map_name)
+
+    # 2. Summary stats for the prompt.
+    summary = _summarize_records(records, parent)
+
+    # 3. Log tails (optional; missing logs are fine).
+    repo_root = _repo_root()
+    log_tails = _read_log_tails(repo_root / "logs", parent)
+
+    # 4. Source-tree listing under bots/<parent>/.
+    source_tree = _list_source_tree(repo_root / "bots", parent)
+
+    # 5. Guiding-principles doc.
+    principles_path = (
+        repo_root / "documentation" / "sc2" / "protoss" / "guiding-principles.md"
+    )
+    try:
+        principles = principles_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        principles = (
+            f"(guiding-principles.md not found at {principles_path} — "
+            "advisor must fall back to general SC2 Protoss knowledge)"
+        )
+
+    # 6. Build prompt + call Claude.
+    prompt = _build_prompt(
+        parent=parent,
+        pool_size=pool_size,
+        mirror_games=mirror_games,
+        map_name=map_name,
+        summary=summary,
+        log_tails=log_tails,
+        source_tree=source_tree,
+        principles=principles,
+    )
+    _log.info(
+        "generate_pool: calling claude_fn (prompt=%d chars) for pool of %d",
+        len(prompt),
+        pool_size,
+    )
+    raw = claude_fn(prompt)
+    pool = _parse_claude_pool(raw)
+
+    # 7. Retry once if Claude under-delivered.
+    if len(pool) < pool_size:
+        _log.warning(
+            "generate_pool: got %d items, expected %d; retrying once",
+            len(pool),
+            pool_size,
+        )
+        retry_prompt = (
+            _PROMPT_RETRY_PREFIX.format(got=len(pool), want=pool_size) + prompt
+        )
+        raw_retry = claude_fn(retry_prompt)
+        pool = _parse_claude_pool(raw_retry)
+        if len(pool) < pool_size:
+            raise ValueError(
+                f"Claude returned {len(pool)} improvements on retry; need "
+                f"exactly {pool_size}. Aborting."
+            )
+
+    # Truncate if Claude over-delivered so the caller always gets exactly
+    # pool_size — ordering is preserved (highest-rank first).
+    return pool[:pool_size]
