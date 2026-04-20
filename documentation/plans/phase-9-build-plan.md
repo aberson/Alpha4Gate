@@ -278,6 +278,7 @@ operators can opt in with `--viewer` for debugging.
   handling, concurrent snapshot name collision, version-dir cleanup on discard.
 - **Done when:** Tests pass; `evolve` exports surface through `src/orchestrator/__init__.py`.
 - **Depends on:** Step 1.
+- **Status:** DONE (2026-04-20)
 
 ### Step 3: `generate_pool()` — mirror-seed + Claude pool generation
 
