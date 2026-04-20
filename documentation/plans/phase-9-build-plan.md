@@ -336,6 +336,7 @@ operators can opt in with `--viewer` for debugging.
   with no flags enters phase 0 without asking any questions; skill references pass
   `/skill-xref`.
 - **Depends on:** Step 4.
+- **Status:** DONE (2026-04-20)
 
 ### Step 6: Dashboard Evolution tab + API endpoints
 
