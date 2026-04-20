@@ -1031,6 +1031,37 @@ class TestGeneratePool:
         assert len(pool) == 10
         assert pool[0].title == "pool-imp-1"
 
+    def test_prose_preamble_is_stripped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: Opus routinely prefixes the JSON with prose.
+
+        Observed in the 2026-04-20 Step 8 soak (commit 533a02a + timeout
+        bump): response began "Now I have all the data I need. Here's
+        the pool of 10 candidate improvements based on the mirror-game
+        analysis.\\n\\n[...]". `json.loads` fails because the first
+        char isn't '['.
+        """
+        self._setup(tmp_path, monkeypatch)
+        body = json.dumps(_well_formed_pool(10))
+        prefaced = (
+            "Now I have all the data I need. Here's the pool of 10 "
+            "candidate improvements based on the mirror-game analysis.\n\n"
+            f"{body}\n\nLet me know if you'd like me to refine any."
+        )
+        claude = _ScriptedClaude([prefaced])
+        batch = _BatchRecorder([(1, 1, 1)])
+
+        pool = generate_pool(
+            "v0",
+            mirror_games=3,
+            pool_size=10,
+            run_batch_fn=batch,
+            claude_fn=claude,
+        )
+        assert len(pool) == 10
+        assert pool[0].title == "pool-imp-1"
+
     def test_short_pool_triggers_single_retry(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

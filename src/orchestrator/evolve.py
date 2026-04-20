@@ -608,24 +608,38 @@ _SOURCE_TREE_EXCLUDE: frozenset[str] = frozenset(
 
 
 def _strip_markdown_fences(raw: str) -> str:
-    """Remove triple-backtick fences from a Claude response, if present.
+    """Remove triple-backtick fences AND prose preamble/postamble.
 
     Mirrors the behaviour in ``bots/v0/commands/interpreter.py`` — Claude
     sometimes wraps JSON in ``` or ```json fences even when asked not to.
-    Returns the inner JSON-looking payload, or the stripped input if no
-    fences are present.
+    Opus additionally likes to prefix the response with a preamble
+    ("Now I have the data. Here's the pool: [...]") even under strict
+    instruction. Extract from the first ``[``/``{`` to the matching last
+    ``]``/``}`` so the payload is feedable to ``json.loads`` directly.
     """
     cleaned = raw.strip()
-    if "```" not in cleaned:
-        return cleaned
-    parts = cleaned.split("```")
-    for part in parts:
-        candidate = part.strip()
-        if candidate.startswith("json"):
-            candidate = candidate[4:].strip()
-        if candidate.startswith("[") or candidate.startswith("{"):
-            return candidate
-    # Fences were present but no JSON-looking segment found — fall back.
+
+    if "```" in cleaned:
+        parts = cleaned.split("```")
+        for part in parts:
+            candidate = part.strip()
+            if candidate.startswith("json"):
+                candidate = candidate[4:].strip()
+            if candidate.startswith("[") or candidate.startswith("{"):
+                cleaned = candidate
+                break
+
+    if cleaned and cleaned[0] not in "[{":
+        i_arr = cleaned.find("[")
+        i_obj = cleaned.find("{")
+        candidates = [p for p in (i_arr, i_obj) if p >= 0]
+        if candidates:
+            start = min(candidates)
+            opener = cleaned[start]
+            closer = "]" if opener == "[" else "}"
+            end = cleaned.rfind(closer)
+            if end > start:
+                cleaned = cleaned[start : end + 1]
     return cleaned
 
 
@@ -983,7 +997,7 @@ def _default_claude_fn(prompt: str, *, model: str | None = None) -> str:
             capture_output=True,
             text=True,
             check=False,
-            timeout=180,
+            timeout=600,
         )
     except FileNotFoundError as e:
         raise RuntimeError(
