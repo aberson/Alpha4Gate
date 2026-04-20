@@ -115,12 +115,12 @@ Explicitly list the operations the run may perform and have the user approve the
 ls -la data/
 ```
 
-- **demo**: `cp -r data data.demo-snapshot-$TS` (the snapshot is the contract — at stop, the skill will diff `data/` against this snapshot; any diff is a demo-contract violation). Never `mv`, never `mkdir` over it.
-- **training / dev / hybrid**: if fresh was chosen: `mv data data.bak-$TS && mkdir data`. Never `rm -rf data/`.
+- **demo**: `mkdir -p data-snapshots && cp -r data data-snapshots/data.demo-snapshot-$TS` (the snapshot is the contract — at stop, the skill will diff `data/` against this snapshot; any diff is a demo-contract violation). Never `mv`, never `mkdir` over it.
+- **training / dev / hybrid**: if fresh was chosen: `mkdir -p data-snapshots && mv data data-snapshots/data.bak-$TS && mkdir data`. Never `rm -rf data/`.
 
 ### Soak-test pre-flight checklists
 
-Canonical pre-flight lives in `documentation/soak-test.md`. Execute both of these in order; stop on any failure:
+Canonical pre-flight lives in `documentation/soak-test-runs/README.md`. Execute both of these in order; stop on any failure:
 
 - **§2 Pre-soak checklist** (§2.1–§2.5): `data/` snapshot-or-reset, daemon config values, disk budget, duration/stop conditions, create the run log.
 - **§3 Startup sequence** (§3.1–§3.5): start SC2, start backend with daemon enabled, start frontend, open dashboard, run the **§3.5 synthetic alert pre-flight** (verifies the alerts pipeline end-to-end before the long run begins).
@@ -129,7 +129,7 @@ Note that §3.5 specifically is the alerts-pipeline verification — do not conf
 
 For **demo** flavor, §2 still applies (minus daemon config values, since the daemon is off), and §3 still applies except §3.2 runs **without** `--daemon`. Run §3.5 as written — the alerts-pipeline verification is exactly what demo mode is for.
 
-If either document's section numbers drift, read `documentation/soak-test.md` top-to-bottom to find the current checklist boundaries and adapt. Do not invent pre-flight items that aren't in the doc.
+If either document's section numbers drift, read `documentation/soak-test-runs/README.md` top-to-bottom to find the current checklist boundaries and adapt. Do not invent pre-flight items that aren't in the doc.
 
 ### Launch command
 

@@ -33,6 +33,12 @@ replays/
 # Scoped to the root so `bots/*/data/` below can use negation for tracked
 # config files.
 /data/
+# Snapshot/backup parent dir — operator manual snapshots
+# (data-pre-soak-*, data-post-soak-*) and skill-auto backups
+# (data.bak-*, data.demo-snapshot-*) all live here. README is tracked so
+# the convention is documented; everything else is gitignored.
+/data-snapshots/*
+!/data-snapshots/README.md
 
 # Versioned bot data (Step 1.8+) — runtime state ignored, config tracked.
 /bots/*/data/**
