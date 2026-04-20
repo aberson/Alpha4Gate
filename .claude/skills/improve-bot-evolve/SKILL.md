@@ -3,7 +3,7 @@ name: improve-bot-evolve
 description: Autonomous (1+λ)-ES sibling-tournament improvement loop. Generates a pool of Claude-proposed improvements, plays them off in pairs (A vs B), gates winners against the current parent, and promotes decisive winners — repeating for hours until the pool or wall-clock budget is exhausted. Designed for overnight unattended runs.
 user-invocable: true
 argument: Optional flags only — no free-text suggestion needed. Flags: `--pool-size N` (default 10), `--ab-games N` (default 10), `--gate-games N` (default 5), `--hours N` (default 4), `--map NAME` (default Simple64), `--no-commit` (dev/test only), `--seed N` (RNG seed for sampling), `--results-path PATH`, `--pool-path PATH`, `--state-path PATH`, `--run-log PATH`.
-required-env: SC2 installed at `C:/Program Files (x86)/StarCraft II/`, `ANTHROPIC_API_KEY` set (for pool generation).
+required-env: SC2 installed at `C:/Program Files (x86)/StarCraft II/`, `claude` CLI on PATH and authenticated (OAuth subscription token OR `ANTHROPIC_API_KEY` — whichever the CLI is set up with).
 ---
 
 # /improve-bot-evolve
@@ -12,7 +12,7 @@ Autonomous evolutionary improvement loop: Claude proposes a pool of candidate im
 
 **Design goal:** `/improve-bot-evolve` in a fresh context window with no additional input should produce a measurably stronger parent version after a few hours, with every promotion recorded as a `[evo-auto]` commit that passes the sandbox pre-commit hook.
 
-**Zero-input contract:** When invoked with no flags, this skill MUST NOT ask the user any questions. It proceeds immediately with safe defaults (pool size 10, A-vs-B 10 games, gate 5 games, 4-hour budget, Simple64). Every phase is designed to resolve ambiguity autonomously — pick reasonable defaults, log the choice, and keep going. The only exception is if a hard pre-flight failure makes the run impossible (e.g., SC2 not installed, `ANTHROPIC_API_KEY` unset).
+**Zero-input contract:** When invoked with no flags, this skill MUST NOT ask the user any questions. It proceeds immediately with safe defaults (pool size 10, A-vs-B 10 games, gate 5 games, 4-hour budget, Simple64). Every phase is designed to resolve ambiguity autonomously — pick reasonable defaults, log the choice, and keep going. The only exception is if a hard pre-flight failure makes the run impossible (e.g., SC2 not installed, `claude` CLI missing or unauthenticated).
 
 **Relationship to `/improve-bot-advised`:** These two skills are siblings with different inner mechanics:
 - `/improve-bot-advised` picks one improvement, applies it, validates win-rate, commits — linear.
@@ -86,8 +86,8 @@ git fetch origin && git status -sb    # check sync
 # SC2
 ls "C:/Program Files (x86)/StarCraft II/Versions/"
 
-# Anthropic API key
-python -c "import os; exit(0 if os.environ.get('ANTHROPIC_API_KEY') else 1)"
+# Claude CLI on PATH + authenticated (OAuth or API key — either works)
+claude --version && claude -p "ping" --model haiku --output-format text --no-session-persistence | head -1
 
 # Tools
 uv run pytest --co -q 2>&1 | tail -1              # tests discoverable
@@ -115,7 +115,7 @@ if state.get('status') == 'running':
 - **Behind origin/master:** `git pull --rebase origin master`. If conflicts, STOP — this is unrecoverable without human judgment.
 - **Quality gates fail (pytest/mypy/ruff):** Log failures but proceed anyway — pre-existing failures are the baseline, not a blocker. The skill only gates its own commits against these.
 - **SC2 not found:** STOP — this is a hard requirement, log and exit.
-- **`ANTHROPIC_API_KEY` unset:** STOP — pool generation cannot run without it. Log and exit.
+- **`claude` CLI missing or unauthenticated:** STOP — pool generation cannot run without it. Log and exit. Operator should run `claude setup-token` (subscription) or set `ANTHROPIC_API_KEY` (whichever auth mode the CLI is configured for).
 - **Advised run active:** STOP — never run two auto-commit skills concurrently against `bots/current/current.txt`. Wait for the advised run to finish, or stop it via its dashboard control first.
 - **Stale evolve run (state file says `running` but no process holds it):** inspect `data/evolve_run_state.json.started_at`. If older than 12 hours, rewrite `status: "stopped"` and proceed. If fresher, assume another operator is running evolve and abort.
 
@@ -493,7 +493,7 @@ One JSON line per `RoundResult`, appended atomically after each round. Durable a
 Check `$LOGFILE` for the Python exception. Common causes:
 
 - **Claude returned malformed JSON.** `orchestrator.evolve._parse_claude_pool` strips markdown fences and retries once if the item count is short; a second short/malformed response raises `ValueError`. Re-run the script — the retry usually succeeds on transient JSON hiccups.
-- **`ANTHROPIC_API_KEY` missing or invalid.** `_default_claude_fn` raises `RuntimeError` with the message `"ANTHROPIC_API_KEY is not set..."`. Export the key and re-run.
+- **`claude` CLI missing or unauthenticated.** `_default_claude_fn` shells out to `claude -p ... --model opus --output-format text --no-session-persistence` (matches `bots/v0/claude_advisor.py`). If the binary is not on PATH you get `RuntimeError("claude CLI not found on PATH...")`; if it's unauthenticated you get a non-zero exit code with the CLI's error message. Run `claude --version` to confirm it's installed, then `claude -p "ping" --model haiku --output-format text --no-session-persistence` to confirm auth.
 - **Rate limit from Anthropic.** Wait a few minutes; the prompt is a single call so retries are cheap.
 - **Mirror games crashed.** If the 3 parent-vs-parent games fail, `generate_pool` still has the failure summary in its prompt, but if no games completed at all the prompt is degenerate. Check `data/evolve_results.jsonl` — if empty, re-run the seed-game step in Phase 0.5 manually to diagnose SC2/subprocess issues before retrying evolve.
 

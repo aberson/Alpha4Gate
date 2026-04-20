@@ -905,65 +905,83 @@ def _build_prompt(
     )
 
 
-# Default Anthropic model for the advisor. Opus tier because the advisor
-# does strategic reasoning where quality dominates latency/cost (per the
-# "Prefer Opus for subagents" project memory note). The Alpha4Gate project
-# convention (see ``bots/v0/commands/interpreter.py``) is dated aliases
-# like ``claude-haiku-4-5-20251001``; no confirmed dated Opus 4.7 alias
-# lives in the tree yet, so we default to the undated family alias and
-# let production override via the ``ANTHROPIC_POOL_MODEL`` env var or the
-# ``model`` parameter on :func:`_default_claude_fn`. When Anthropic ships
-# a dated Opus 4.7 alias, bump this constant (e.g. ``claude-opus-4-7-<date>``)
-# to match the interpreter.py convention.
-_CLAUDE_POOL_MODEL_DEFAULT = "claude-opus-4-7"
+# Default model alias for the advisor. We shell out to the ``claude`` CLI
+# (matches ``bots/v0/claude_advisor.py``), so this is a CLI alias
+# (``opus`` / ``sonnet`` / ``haiku``), not a dated SDK model ID. Auth is
+# handled by the CLI itself — OAuth subscription token OR ANTHROPIC_API_KEY,
+# whichever the operator configured. Opus tier because pool generation is
+# strategic reasoning where quality dominates latency/cost (per the
+# "Prefer Opus for subagents" project memory note).
+_CLAUDE_POOL_MODEL_DEFAULT = "opus"
 
 
 def _default_claude_fn(prompt: str, *, model: str | None = None) -> str:
-    """Production Claude invocation. Opus via synchronous Anthropic SDK.
+    """Production Claude invocation. Shells out to the ``claude`` CLI.
+
+    Matches the pattern in :mod:`bots.v0.claude_advisor` — auth is
+    handled by the CLI (OAuth subscription token OR ``ANTHROPIC_API_KEY``,
+    whichever the operator configured). This avoids forcing subscription
+    users to obtain an API key just to run the evolve pool generator.
 
     Sync (not async) because :func:`generate_pool` is called once at run
-    start, not in a hot loop. Reads ``ANTHROPIC_API_KEY`` from the
-    environment — matches the pattern in ``bots/v0/config.py``.
+    start, not in a hot loop.
 
     Model resolution (first match wins):
 
     1. Explicit ``model`` argument if provided.
-    2. ``ANTHROPIC_POOL_MODEL`` env var if set.
-    3. :data:`_CLAUDE_POOL_MODEL_DEFAULT` (currently ``"claude-opus-4-7"``,
-       the undated family alias).
+    2. ``EVOLVE_POOL_MODEL`` env var if set.
+    3. :data:`_CLAUDE_POOL_MODEL_DEFAULT` (currently ``"opus"``).
 
-    The project convention elsewhere (see
-    ``bots/v0/commands/interpreter.py``) is dated aliases like
-    ``claude-haiku-4-5-20251001``. Production deployments may want to
-    pin a dated Opus alias by setting ``ANTHROPIC_POOL_MODEL`` to e.g.
-    ``claude-opus-4-7-<yyyymmdd>`` once such an alias exists.
+    The CLI accepts family aliases (``opus`` / ``sonnet`` / ``haiku``)
+    and dated model IDs. The default is a family alias so the CLI
+    resolves to the latest version the installed ``claude`` binary knows.
 
-    Raises ``RuntimeError`` if the API key is missing — this function is
-    only called from production paths, not tests (tests inject a mock
-    ``claude_fn`` into :func:`generate_pool`).
+    Raises ``RuntimeError`` if the CLI returns a non-zero exit code or
+    empty output. This function is only called from production paths;
+    tests inject a mock ``claude_fn`` into :func:`generate_pool`.
     """
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        raise RuntimeError(
-            "ANTHROPIC_API_KEY is not set; cannot call Claude. Set the env "
-            "var or inject a claude_fn into generate_pool()."
-        )
+    import subprocess  # noqa: PLC0415 — lazy-imported to match the pattern
+
     resolved_model = (
         model
-        or os.getenv("ANTHROPIC_POOL_MODEL")
+        or os.getenv("EVOLVE_POOL_MODEL")
         or _CLAUDE_POOL_MODEL_DEFAULT
     )
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=api_key)
-    message = client.messages.create(
-        model=resolved_model,
-        max_tokens=8192,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    block = message.content[0]
-    text = block.text if hasattr(block, "text") else str(block)
-    return cast(str, text)
+    try:
+        result = subprocess.run(
+            [
+                "claude",
+                "-p",
+                prompt,
+                "--model",
+                resolved_model,
+                "--output-format",
+                "text",
+                "--no-session-persistence",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=180,
+        )
+    except FileNotFoundError as e:
+        raise RuntimeError(
+            "claude CLI not found on PATH; install Claude Code or inject a "
+            "claude_fn into generate_pool()."
+        ) from e
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(
+            f"claude CLI timed out after {e.timeout}s generating the pool."
+        ) from e
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"claude CLI failed (rc={result.returncode}): "
+            f"{result.stderr.strip()[:500]}"
+        )
+    text = result.stdout.strip()
+    if not text:
+        raise RuntimeError("claude CLI returned empty output.")
+    return text
 
 
 def generate_pool(
