@@ -664,6 +664,10 @@ def run_loop(
         from orchestrator.registry import current_version
 
         current_version_fn = current_version
+    if dev_apply_fn is None:
+        from orchestrator.evolve_dev_apply import spawn_dev_subagent
+
+        dev_apply_fn = spawn_dev_subagent
 
     rng = random.Random(args.seed)
 
