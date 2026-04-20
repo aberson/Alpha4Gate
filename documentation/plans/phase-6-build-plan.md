@@ -36,15 +36,107 @@ B / D / E / F autonomously once they ship.
 
 ## 3. Scope (operational steps)
 
-1. `/improve-bot-advised --self-improve-code --opponent v5` — curriculum
-   opponent selection (advance when +N Elo cleared).
-2. Stretch: pool sampling from top-K versions for mixed-style validation
-   (AlphaStar-lite league at single-box scale) using PFSP-lite sampler.
-3. Operational mode — this is how B / D / E / F are driven autonomously
-   once shipped. Not a one-shot phase; an ongoing regime.
-4. Dashboard surfacing: Ladder tab (from Phase 4) shows cross-version
-   progress; Improvements tab continues to show intra-version
-   promotions/rollbacks from the existing daemon.
+This phase is **operational**, not infrastructure. The two real code
+deliverables are below; items 3–4 below are descriptions of the
+ongoing regime and dashboard surfacing (no work item).
+
+| Step | Issue | Description |
+|------|-------|-------------|
+| 6.1  | #178  | `/improve-bot-advised --opponent vN` curriculum flag |
+| 6.2  | #179  | PFSP-lite pool sampling stretch |
+| (3)  | n/a   | Operational mode — how B/D/E/F are driven autonomously once shipped (description, not work) |
+| (4)  | n/a   | Dashboard surfacing — Ladder tab (from Phase 4) already shows cross-version progress (already done) |
+
+### Step 6.1: `/improve-bot-advised --opponent vN` curriculum flag
+
+**What to build.** Today `/improve-bot-advised --self-improve-code`
+validates trainee runs against SC2 built-in AI. Phase 6 swaps in a
+prior `bots/vN/` opponent via subprocess self-play. Operator passes
+`--opponent v5` (or any registered version). Curriculum logic: pin the
+opponent until trainee clears +N Elo, then advance to next opponent in
+the registry. If `--opponent` is not specified, fall back to current
+SC2-AI behavior (no breaking change).
+
+**Existing context.**
+- `.claude/skills/improve-bot-advised/SKILL.md` — Phase 4 dispatch loop
+  picks an improvement and runs validation games. The current
+  validation invocation uses SC2-AI difficulty.
+- `src/orchestrator/selfplay.py::run_batch(p1, p2, games, map_name, …)`
+  — Phase 3 primitive that boots two `python -m bots.vN` subprocesses
+  per game.
+- `src/orchestrator/ladder.py::get_elo(version)` + `LadderEntry`
+  contract from Phase 4 — read current Elo to drive curriculum
+  advancement.
+- `src/orchestrator/registry.py::list_versions()` — enumerate
+  registered opponents to walk the curriculum.
+
+**Files to modify/create.**
+- `.claude/skills/improve-bot-advised/SKILL.md` — accept `--opponent vN`
+  flag in Phase 0 bootstrap; thread through to Phase 4 validation; fall
+  through to SC2-AI if absent.
+- `src/orchestrator/curriculum.py` (NEW) —
+  `pick_opponent(current_elo, opponents, advance_threshold) -> str`.
+- `tests/test_curriculum_opponent.py` (NEW) — synthetic Elo trajectory
+  walks 3 opponents.
+
+**Done when.**
+- `--opponent v5` flag accepted; SKILL.md documents the flag.
+- Curriculum advances correctly: trainee at Elo X+10 vs pinned opponent
+  → next opponent gets pinned automatically.
+- Backwards-compat: omitting `--opponent` runs the existing SC2-AI eval
+  unchanged.
+- `tests/test_curriculum_opponent.py` covers: pinning, advancement on
+  threshold cross, exhaustion of opponent list (graceful stop).
+- Dashboard "Loop" tab shows current opponent (read from
+  `bots/current/data/advised_run_state.json`).
+
+**Flags (recommended for `/build-step`).** `--reviewers code --isolation worktree`
+
+**Depends on.** Phase 5 (sandbox); Phase 4 (ladder data).
+
+**Produces.** Updated SKILL.md; new `curriculum.py`; new tests; small
+addition to Loop dashboard tab.
+
+### Step 6.2: PFSP-lite pool sampling (stretch)
+
+**What to build.** Generalize Step 6.1's "pin one opponent" to
+"sample from top-K opponents using PFSP-lite weights." Trainee plays
+mixed-style validation games against a pool instead of single
+opponent. AlphaStar-lite league at single-box scale.
+
+**Existing context.**
+- Phase 3 already shipped the PFSP-lite sampler in
+  `src/orchestrator/selfplay.py` (`--sample pfsp --pool v0,v1,v2,v3`).
+- Step 6.1's `pick_opponent` returns a single string; Step 6.2
+  generalizes to `pick_opponent_pool` returning a sampler.
+- Promotion gate must track WR per opponent in pool, not aggregate
+  (so a strong-vs-weak pool doesn't artificially inflate a single
+  number).
+
+**Files to modify/create.**
+- `.claude/skills/improve-bot-advised/SKILL.md` — accept
+  `--opponent-pool top-K` flag (mutually exclusive with `--opponent`).
+- `src/orchestrator/curriculum.py` — add `pick_opponent_pool(top_k,
+  ladder, sampler="pfsp")` returning a callable that draws an
+  opponent per game.
+- `tests/test_curriculum_opponent.py` — extend with pool-sampling
+  cases.
+
+**Done when.**
+- `--opponent-pool top-3` flag accepted; sampler draws across top-3
+  weighted by PFSP-lite (lower WR vs trainee → higher weight).
+- Per-opponent WR tracked in `advised_run_state.json` (not just
+  aggregate).
+- Promotion gate fires only if trainee beats EACH opponent in the
+  pool by margin (configurable; default ≥ +5 Elo per opponent).
+
+**Flags (recommended).** `--reviewers code --isolation worktree`
+
+**Depends on.** Step 6.1 (curriculum module exists).
+
+**Produces.** SKILL.md update; `curriculum.py` extension; test
+coverage; possibly minor tweak to Phase 4 promotion gate to handle
+pool-mode trainees.
 
 ## 4. Tests
 
