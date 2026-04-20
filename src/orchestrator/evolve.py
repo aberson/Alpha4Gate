@@ -964,17 +964,22 @@ def _default_claude_fn(prompt: str, *, model: str | None = None) -> str:
         or _CLAUDE_POOL_MODEL_DEFAULT
     )
     try:
+        # Pipe the prompt via stdin rather than argv. On Windows, CreateProcess
+        # rejects cmdlines longer than ~32 KiB with WinError 206 ("filename or
+        # extension is too long"), and evolve pool prompts routinely hit 40 KiB
+        # (guiding-principles.md + source tree + log tails). stdin has no such
+        # limit. claude CLI reads the prompt from stdin when -p has no argument.
         result = subprocess.run(
             [
                 "claude",
                 "-p",
-                prompt,
                 "--model",
                 resolved_model,
                 "--output-format",
                 "text",
                 "--no-session-persistence",
             ],
+            input=prompt,
             capture_output=True,
             text=True,
             check=False,

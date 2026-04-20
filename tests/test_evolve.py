@@ -1428,3 +1428,50 @@ class TestGeneratePool:
         assert [imp.rank for imp in pool] == list(range(1, 11))
         # Only one Claude call (no retry needed since we got >= pool_size).
         assert claude.call_count == 1
+
+
+class TestDefaultClaudeFn:
+    """The real subprocess wrapper — unit-tested via monkeypatched subprocess.run."""
+
+    def test_prompt_piped_via_stdin_not_argv(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: on Windows a 40 KiB prompt in argv trips WinError 206.
+
+        Pool prompts routinely hit 40 KiB (guiding-principles.md + source tree
+        + log tails). Passing via argv used to raise FileNotFoundError that was
+        mis-reported as "claude CLI not found". Verify the prompt is now
+        piped via stdin and argv carries only the flags.
+        """
+        from orchestrator import evolve as evolve_mod
+
+        captured: dict[str, Any] = {}
+
+        class _FakeCompleted:
+            returncode = 0
+            stdout = "[]"
+            stderr = ""
+
+        def _fake_run(argv: list[str], **kwargs: Any) -> _FakeCompleted:
+            captured["argv"] = argv
+            captured["input"] = kwargs.get("input")
+            return _FakeCompleted()
+
+        import subprocess as _sub
+
+        monkeypatch.setattr(_sub, "run", _fake_run)
+
+        long_prompt = "x" * 40000
+        evolve_mod._default_claude_fn(long_prompt)
+
+        argv = captured["argv"]
+        assert "claude" in argv
+        assert "-p" in argv
+        # Critical: the prompt must NOT be in argv (would exceed Windows limit).
+        assert long_prompt not in argv
+        for token in argv:
+            assert len(token) < 1000, (
+                f"argv token length {len(token)} suggests prompt leaked to argv"
+            )
+        # And it MUST be piped via stdin.
+        assert captured["input"] == long_prompt
