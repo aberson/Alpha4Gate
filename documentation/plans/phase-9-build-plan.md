@@ -397,6 +397,49 @@ operators can opt in with `--viewer` for debugging.
   committed. Memory + CLAUDE.md updated with any operational lessons learned.
 - **Depends on:** Step 7.
 
+### Step 9: Dev-apply sub-agent + candidate-isolation rewrite
+
+- **Surfaced:** 2026-04-20, mid Step 8 attempt
+- **Problem:** Step 8's first real pool was 6 dev-type + 4 training-type. Every
+  round discarded because `apply_improvement` raised `NotImplementedError` on
+  dev-type — the `dev_apply_fn` slot defined in Step 2 was never wired to an
+  actual sub-agent spawner. Separately, while designing the spawner, we
+  discovered that `bots/v0/*.py` uses absolute `from bots.v0.* import ...`
+  imports — so even AFTER the sub-agent edits `bots/cand_xyz/foo.py`, the
+  candidate's runtime import graph still pulls from the original `bots/v0/`.
+  Any edit outside `__main__.py`'s module-level imports is silently ignored.
+- **Done when:**
+  - New module `src/orchestrator/evolve_dev_apply.py` with
+    `spawn_dev_subagent(version_dir, imp, *, model="opus", timeout=900,
+    validate=True, run=subprocess.run)`.
+  - CLI shell-out shape: `claude -p --model opus --tools
+    "Read,Edit,Write,Grep,Glob" --permission-mode acceptEdits --add-dir
+    <version_dir> --output-format text --no-session-persistence`, cwd
+    scoped to the candidate dir, prompt piped via stdin.
+  - Out-of-scope detector: `git status --porcelain` before/after sub-agent
+    — any path outside `bots/<candidate>/` triggers `git checkout -- <p>`
+    revert and raises `DevApplyOutOfScopeError`.
+  - Validation gate: py-mtime+size snapshot of the candidate dir before/after
+    (git status collapses untracked dirs, so can't see internal edits); ruff
+    check + mypy --strict on every changed .py. Either failure raises
+    `DevApplyValidationError`. The round's error handler catches
+    `DevApplyError` and marks the improvement consumed-tie (user-specified
+    "consumed-failed" semantic — out of pool, no retry).
+  - `scripts/evolve.py` defaults `dev_apply_fn` to `spawn_dev_subagent`.
+  - `src/orchestrator/snapshot.py::snapshot_current` rewrites `from bots.<src>.*`
+    imports to `from bots.<new>.*` across the snapshot tree (regex on four
+    import-statement shapes at column 0). Without this, the sub-agent's edits
+    to the candidate are unreachable at runtime.
+  - 20 new tests in `tests/test_evolve_dev_apply.py` + 5 in
+    `tests/test_snapshot.py`; full suite passes (1284 tests).
+  - Live smoke confirmed end-to-end: sub-agent changed `X = 1` to `X = 2` in
+    a scratch candidate dir.
+- **Commits:** 5924543 (dev_apply_fn), f182a7a (snapshot import rewrite).
+- **Follow-up (revisit after first soak):** the ruff+mypy strict gate is a
+  first-pass heuristic. If it rejects too many otherwise-reasonable Opus
+  patches, tune the ruff rule classes or switch mypy to non-strict. Tracked
+  as an inline comment in `evolve_dev_apply.py:_run_ruff`.
+
 ## 8. Risks and Open Questions
 
 | Item | Risk | Mitigation |
