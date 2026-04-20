@@ -150,7 +150,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=_background_key,
         default="random",
         help=(
-            "Background key from img_backgrounds/ or 'random' "
+            "Background key from src/selfplay_viewer/assets/ or 'random' "
             "(default: random)"
         ),
     )
@@ -177,8 +177,8 @@ def _background_key(value: str) -> str:
         return value
     valid = set(list_backgrounds())
     if not valid:
-        # img_backgrounds/ not present in this checkout — accept any
-        # value so --no-viewer / non-Windows callers are not blocked.
+        # assets dir not present in this checkout — accept any value so
+        # --no-viewer / non-Windows callers are not blocked.
         return value
     if value not in valid:
         raise argparse.ArgumentTypeError(

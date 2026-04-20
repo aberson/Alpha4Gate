@@ -420,7 +420,7 @@ def test_placeholder_survives_layout_change() -> None:
         try:
             # Also stub the container HWND probe + background loader +
             # background-path resolver so the test doesn't depend on
-            # img_backgrounds/ having any PNGs on disk.
+            # src/selfplay_viewer/assets/ having any PNGs on disk.
             from pathlib import Path
 
             viewer._current_container_hwnd = (  # type: ignore[method-assign]

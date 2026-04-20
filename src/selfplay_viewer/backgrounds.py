@@ -1,15 +1,16 @@
 """Background discovery for the self-play viewer.
 
-Pure-Python module — does NOT import pygame. Enumerates ``*.png`` files
-under ``img_backgrounds/`` and derives a short key from each filename so
-the CLI accepts ``--background brazil`` instead of the full
+Pure-Python module — does NOT import pygame. Enumerates image files
+(``*.webp`` and ``*.png``) under ``src/selfplay_viewer/assets/`` and
+derives a short key from each filename so the CLI accepts
+``--background brazil`` instead of the full
 ``protoss_themed_sf2_brazil_background`` stem.
 
 Conventions
 -----------
-Filenames matching ``protoss_themed_sf2_<key>_background.png`` are
+Filenames matching ``protoss_themed_sf2_<key>_background.{webp,png}`` are
 mapped to ``<key>``. Anything else falls back to the bare filename
-stem (so ``tokyo.png`` works with ``--background tokyo``). New drops
+stem (so ``tokyo.webp`` works with ``--background tokyo``). New drops
 that follow either convention are picked up automatically — no code
 change required.
 """
@@ -19,10 +20,9 @@ from __future__ import annotations
 import random
 from pathlib import Path
 
-#: Default location of the ``img_backgrounds/`` directory (repo root).
-#: Resolved lazily from this file's location: ``src/selfplay_viewer/`` ->
-#: ``<repo>/img_backgrounds``.
-_DEFAULT_BACKGROUND_DIR: Path = Path(__file__).resolve().parents[2] / "img_backgrounds"
+#: Default location of the background assets. Resolved from this file's
+#: location: ``src/selfplay_viewer/backgrounds.py`` -> ``./assets``.
+_DEFAULT_BACKGROUND_DIR: Path = Path(__file__).parent / "assets"
 
 _PREFIX = "protoss_themed_sf2_"
 _SUFFIX = "_background"
@@ -36,12 +36,12 @@ def _derive_key(stem: str) -> str:
 
 
 def list_backgrounds(backgrounds_dir: Path | None = None) -> dict[str, Path]:
-    """Enumerate ``*.png`` files and derive ``{key: path}`` from each filename.
+    """Enumerate image files and derive ``{key: path}`` from each filename.
 
     Parameters
     ----------
     backgrounds_dir:
-        Directory to scan. Defaults to ``<repo>/img_backgrounds``.
+        Directory to scan. Defaults to ``src/selfplay_viewer/assets``.
 
     Returns
     -------
@@ -54,12 +54,13 @@ def list_backgrounds(backgrounds_dir: Path | None = None) -> dict[str, Path]:
         return {}
     out: dict[str, Path] = {}
     collisions: dict[str, list[Path]] = {}
-    for png in sorted(base.glob("*.png")):
-        key = _derive_key(png.stem)
+    candidates = sorted([*base.glob("*.webp"), *base.glob("*.png")])
+    for path in candidates:
+        key = _derive_key(path.stem)
         if key in out:
-            collisions.setdefault(key, [out[key]]).append(png)
+            collisions.setdefault(key, [out[key]]).append(path)
         else:
-            out[key] = png
+            out[key] = path
     if collisions:
         lines = []
         for key, paths in sorted(collisions.items()):
@@ -94,7 +95,7 @@ def pick_background(
         selection (used by tests and the eventual ``--seed`` CLI flag).
         When ``None`` the module-level ``random`` is used.
     backgrounds_dir:
-        Directory to scan. Defaults to ``<repo>/img_backgrounds``.
+        Directory to scan. Defaults to ``src/selfplay_viewer/assets``.
     """
     available = list_backgrounds(backgrounds_dir=backgrounds_dir)
     if not available:
