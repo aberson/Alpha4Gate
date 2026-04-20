@@ -124,6 +124,28 @@ Each phase has:
 - **Kill criterion** — fail-and-stop condition
 - **Rollback** — how to undo the phase if retroactively regretted
 
+### Substrate vs phase (vocabulary used throughout this plan)
+
+A **phase** is a unit of work that ships a thing then closes. Phases B/D/E
+each ship a single capability (better observation, rewards, action space)
+— once shipped, the phase is done; the capability exists.
+
+A **substrate** is a foundational layer that other things run on.
+Substrates compound: every future thing built uses them. Phase 0
+(subprocess orchestration), Phase 1 (bots/vN/ structure), Phase 4 (Elo
+ladder) — all substrates. They didn't ship visible bot improvements, but
+every later phase uses them.
+
+A phase can deliver substrate or just deliver capability. **Phase 9
+(improve-bot-evolve) is a phase that ships a new substrate** — the
+sibling-tournament improvement loop — which once operational drives all
+subsequent capability work autonomously. That's why it's prioritized
+ahead of B/D/E in the current execution order: substrate beats capability
+at equal effort.
+
+Rule of thumb when deciding what to build next:
+"substrate-or-capability?" Substrate wins ties.
+
 ## Execution mode
 
 Human-led with per-phase automation. Not a single `/build-phase` autonomous
@@ -142,33 +164,62 @@ Per phase:
 ## Track structure
 
 ```
-Track 1 — Validation   [Phase A]   on current src/alpha4gate/
-Track 2 — Versioning   [0–5]       subprocess spike → move+data migration → registry → self-play → ladder → sandbox
-Track 3 — Capability   [B, D, E]   per-version improvements inside bots/current/**
-Track 4 — Capability-F [F]         deferred; only if B/D/E insufficient
-Track 5 — Operational  [6, 7, 9]   cross-version PPO loop (6) + advised stale-policy detection (7) + improve-bot-evolve sibling-tournament loop (9; numbered 9 not 8 to match issue titles); orthogonal mechanisms that all share run_batch
-Track 6 — Multi-race   [G]         post-Phase-6; Zerg then Terran via per-race bots/<race>_v0/ stacks
+Track 1 — Validation   [Phase A]    on current src/alpha4gate/                                  ✅
+Track 2 — Versioning   [0–5]        subprocess spike → bots/v0/ → registry → self-play → ladder → sandbox  ✅
+Track 5 — Operational  [9, 6, 7]    NEXT — Phase 9 (improve-bot-evolve) is the priority; substrate-not-just-phase
+Track 3 — Capability   [B, D, E]    per-version improvements inside bots/current/**             after Phase 9
+Track 4 — Capability-F [F]          deferred; only if B/D/E insufficient                        after Phase 9
+Track 6 — Multi-race   [G]          post-Phase-6 operational; Zerg then Terran via per-race bots/<race>_v0/ stacks
 ```
+
+**Track 5 priority (2026-04-19 reorder):** Phase 9 (improve-bot-evolve)
+ships a new substrate — the sibling-tournament improvement loop — that
+once operational drives capability work autonomously. Higher leverage
+than B/D/E individually: B/D/E each deliver one improvement; Phase 9
+delivers the *mechanism that generates improvements*. So Phase 9 jumps
+the queue ahead of B/D/E.
+
+Within Track 5: Phase 9 → Phase 7 (operational improvement on the
+existing /improve-bot-advised loop) → Phase 6 (cross-version PPO regime;
+defer until at least one of B/D/E ships so it has a non-trivial trainee).
 
 ## Decision graph
 
 ```
-Phase A ✅ ──→ Phase 0 ✅ ──→ Phase 1 ✅ ──→ Phase 2 ✅ ──→ Phase 3 ✅ ──→ Phase 4 ✅ ──→ Phase 5 ✅
-                                                                                                  │
-              ┌───────────────────┬─────────────────┬─────────────────┬───────────────┬───────────┤
-              ▼                   ▼                 ▼                 ▼               ▼           ▼
-         Phase B             Phase D           Phase E           Phase 7         Phase 9     Phase G
-         (obs)               (z-stat)          (autoreg)         (advised        (evolve     (multi-race;
-                                                                  staleness;     sibling     after Phase 6)
-                                                                  standalone)    tournament;
-                                                                                 standalone)
-              │                   │                 │
-              └───────────────────┴─────────────────┴─→ Phase 6 (PPO-driven loop) ── hungry? ──→ Phase F (transformer)
+Phase A ✅ → Phase 0 ✅ → Phase 1 ✅ → Phase 2 ✅ → Phase 3 ✅ → Phase 4 ✅ → Phase 5 ✅
+                                                                                       │
+                                                                                       ▼
+                                                                          Phase B Step 6 (#133)  ← clean-up; ~30 min
+                                                                                       │
+                                                                                       ▼
+                                                                          ┌───────────────────────┐
+                                                                          │  Phase 9              │  ← NEXT (substrate)
+                                                                          │  improve-bot-evolve   │
+                                                                          │  Steps 1–8            │
+                                                                          │  #154–#161            │
+                                                                          └──────────┬────────────┘
+                                                                                     │
+                                ┌────────────────────────────────────────────────────┤
+                                ▼                                                    ▼
+                          Phase 7 (advised staleness)                    Phase B / D / E (capabilities,
+                          standalone, operational                         driven by Phase 9 loop;
+                          improvement)                                    individual phase order
+                                                                          determined by what shows up
+                                                                          in evolve runs)
+                                                                                     │
+                                                                                     ▼
+                                                                          Phase 6 (cross-version PPO regime;
+                                                                          needs ≥ 1 of B/D/E shipped)
+                                                                                     │
+                                                                                     ▼
+                                                                          Phase G (multi-race)
+                                                                          Phase F (transformer; deferred)
 ```
 
-Operational tracks (6, 7, 8) are independent of each other and of the
-capability tracks (B/D/E/F); each can ship without the others. Phase G is
-gated on Phase 6 operational maturity.
+Phase 9 is independent of B/D/E/6/7. Phase 7 is independent of 6/9. Once
+Phase 9 is operational, capability phases (B/D/E) can be driven by it
+autonomously (sibling-tournament selects which improvements actually
+move the needle).
 
 ## Baseline (as of 2026-04-17)
 
@@ -958,6 +1009,21 @@ experience only (no dashboard integration). Plan:
 ## Plan history
 
 Append-only — do not edit prior entries.
+
+- *2026-04-19* — **reordered Track 5 to put Phase 9 first.** Phase 9
+  (improve-bot-evolve) is substrate, not just a phase: it ships the
+  sibling-tournament improvement loop that, once operational, drives
+  capability work autonomously. Higher leverage than B/D/E individually
+  (which each deliver one improvement vs Phase 9 delivering the
+  mechanism that generates improvements). New execution order: Phase B
+  Step 6 (#133, clean-up) → Phase 9 Steps 1-8 (#154-#161) → Phase 7
+  (#162-#180-#184) standalone → B/D/E driven by Phase 9 loop → Phase 6
+  cross-version PPO regime (needs ≥1 of B/D/E shipped) → G/F. Track
+  structure + decision graph updated. Phase 9 is technically unblocked
+  today (Phase 0/1/2/3/4/5 prerequisites all done). Bounded risk
+  flagged: Phase 9 kill criterion is "pool exhaustion without promote
+  across two attempts" — Step 7 smoke gate (1h) catches catastrophic
+  failures before Step 8 commits to overnight soak.
 
 - *2026-04-19* — **renumbered evolve from Phase 8 → Phase 9** to align
   with pre-existing GitHub issues #154-#161 (titled "Phase 9 Step N").
