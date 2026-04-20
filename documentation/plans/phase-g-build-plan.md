@@ -88,7 +88,7 @@ promotion; cross-race matches are informational (Elo tracked separately).
 **Effort:** 2–3 days.
 **Gate:** Cross-race Elo ladder produces stable rankings.
 
-## 4. Phase 8 (improve-bot-evolve) interaction
+## 4. Phase 9 (improve-bot-evolve) interaction
 
 When G.2 (Zerg) ships, the evolve skill needs:
 
@@ -101,7 +101,7 @@ When G.2 (Zerg) ships, the evolve skill needs:
   data stays in-distribution for Claude.
 - Optionally: a cross-race safety gate (winner must also not regress
   badly against a different-race opponent) — flagged as open question
-  in `documentation/plans/improve-bot-evolve-plan.md` §8.
+  in `documentation/plans/phase-9-build-plan.md` §8.
 
 Sandbox hook: `EVO_AUTO=1` already permits writes under `bots/**`, so
 no hook change is needed when new race directories appear.

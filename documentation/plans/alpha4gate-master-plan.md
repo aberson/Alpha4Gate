@@ -146,7 +146,7 @@ Track 1 — Validation   [Phase A]   on current src/alpha4gate/
 Track 2 — Versioning   [0–5]       subprocess spike → move+data migration → registry → self-play → ladder → sandbox
 Track 3 — Capability   [B, D, E]   per-version improvements inside bots/current/**
 Track 4 — Capability-F [F]         deferred; only if B/D/E insufficient
-Track 5 — Operational  [6, 7, 8]   cross-version PPO loop (6) + advised stale-policy detection (7) + improve-bot-evolve sibling-tournament loop (8); orthogonal mechanisms that all share run_batch
+Track 5 — Operational  [6, 7, 9]   cross-version PPO loop (6) + advised stale-policy detection (7) + improve-bot-evolve sibling-tournament loop (9; numbered 9 not 8 to match issue titles); orthogonal mechanisms that all share run_batch
 Track 6 — Multi-race   [G]         post-Phase-6; Zerg then Terran via per-race bots/<race>_v0/ stacks
 ```
 
@@ -157,7 +157,7 @@ Phase A ✅ ──→ Phase 0 ✅ ──→ Phase 1 ✅ ──→ Phase 2 ✅ �
                                                                                                   │
               ┌───────────────────┬─────────────────┬─────────────────┬───────────────┬───────────┤
               ▼                   ▼                 ▼                 ▼               ▼           ▼
-         Phase B             Phase D           Phase E           Phase 7         Phase 8     Phase G
+         Phase B             Phase D           Phase E           Phase 7         Phase 9     Phase G
          (obs)               (z-stat)          (autoreg)         (advised        (evolve     (multi-race;
                                                                   staleness;     sibling     after Phase 6)
                                                                   standalone)    tournament;
@@ -217,7 +217,7 @@ gated on Phase 6 operational maturity.
   run-start banner, `[advised-auto]` commit tag, `ADVISED_AUTO=1` env,
   `check_promotion()` Elo gate, `--self-improve-code` path restriction.
   1020 tests, zero mypy/ruff. Sandbox-modes table lives in the Phase 5
-  section; Phase 8 will extend it with `EVO_AUTO=1`.
+  section; Phase 9 will extend it with `EVO_AUTO=1`.
 
 **Autonomous platform (from completed always-up Phases 1–4.5):**
 
@@ -232,7 +232,7 @@ gated on Phase 6 operational maturity.
   per-model WR queries, source of truth for intra-version promotion.
 - `data/reward_logs/` — always-on per-game JSONL; aggregated via
   `learning/reward_aggregator.py` for the dashboard Reward Trends card.
-- Dashboard (10 tabs today; will be 11 when Phase 8 ships its Evolution
+- Dashboard (10 tabs today; will be 11 when Phase 9 ships its Evolution
   tab): Live, Stats, Decisions, Training, Loop, Advisor, Improvements,
   Processes, Alerts, Ladder. Client-side alert engine with a backend
   ERROR ring buffer.
@@ -377,7 +377,7 @@ sibling `bots/vN/` snapshots in one round.
 |---------|---------------|--------------------|--------------------|--------|
 | (none) | (any) | unrestricted (human PR) | (none) | Default |
 | `ADVISED_AUTO=1` | `[advised-auto]` | `bots/current/**` | `src/orchestrator/**`, `tests/**`, `scripts/**`, `pyproject.toml`, `frontend/**` | SHIPPED Phase 5 |
-| `EVO_AUTO=1` | `[evo-auto]` | `bots/**` (any version dir) | (same hard-deny set as above) | PENDING Phase 8 |
+| `EVO_AUTO=1` | `[evo-auto]` | `bots/**` (any version dir) | (same hard-deny set as above) | PENDING Phase 9 |
 
 If a future autonomous mode is added, extend this table — do not split
 the hook spec across multiple plan sections.
@@ -587,10 +587,10 @@ rules and curriculum opponent selection before iterating further.
 
 Operational phase — rollback is "stop running the skill." No code to revert.
 
-### Relationship to Phase 8 (improve-bot-evolve)
+### Relationship to Phase 9 (improve-bot-evolve)
 
 Both consume `run_batch`; orthogonal mechanisms. Phase 6 = PPO-training
-signal extension; Phase 8 = discrete A/B improvement-pool selection.
+signal extension; Phase 9 = discrete A/B improvement-pool selection.
 Mutually exclusive on the same `bots/current/` working tree (pre-flight
 check).
 
@@ -650,16 +650,22 @@ No data migrations.
 
 ---
 
-## Phase 8 — improve-bot-evolve (sibling-tournament evolutionary loop)
+## Phase 9 — improve-bot-evolve (sibling-tournament evolutionary loop)
 
 **Track:** Operational. **Prerequisites:** Phase 5 (sandbox + skill
 integration). Independent of B/D/E/6/7 — ships standalone.
 
 > **Build detail and step issues (#154–#161) live in
-> `documentation/plans/improve-bot-evolve-plan.md`. Read that document
+> `documentation/plans/phase-9-build-plan.md`. Read that document
 > before starting work on this phase — the per-step problem statements,
 > impact tables, design decisions, risks/open questions, and testing
 > strategy are canonical there, not summarised here.**
+
+**Note on numbering:** This phase is **Phase 9** (not Phase 8) to match
+the existing `#154–#161` issue titles ("Phase 9 Step N: ...") cut
+before the plan-merge. There is no Phase 8 in the master plan — that
+slot is intentionally skipped, similar to how Phase C was dropped in an
+earlier merge. See plan history (2026-04-19 renumber entry) for context.
 
 **Goal:** Drive cross-version improvement via discrete A/B selection
 between two sibling snapshots of the parent, with Claude-generated
@@ -674,7 +680,7 @@ improvements. Repeat until 10-item pool exhausted, wall-clock budget
 expires (default 4h), or 3 consecutive no-progress rounds.
 
 This phase sits **alongside** Phase 6, not inside it. Phase 6 is
-PPO-training-driven self-play (use H2H results as the RL signal). Phase 8
+PPO-training-driven self-play (use H2H results as the RL signal). Phase 9
 is improvement-pool-driven A/B selection (discrete edits, no PPO update
 per round). Both consume `run_batch` from `src/orchestrator/selfplay.py`.
 
@@ -730,7 +736,7 @@ per-round promotes while blocking any out-of-sandbox edits.
 Step 8 soak shows pool exhaustion before any promote across two attempts
 with regenerated pools — indicates Claude's pool generation is not
 producing sibling-decisive improvements at this codebase's maturity. Pause
-Phase 8, return to `/improve-bot-advised` for capability gains, revisit
+Phase 9, return to `/improve-bot-advised` for capability gains, revisit
 once Phase B/D/E land more measurable headroom.
 
 ### Rollback
@@ -820,7 +826,7 @@ but with its own gameplay code.
 - **G.4** Cross-race ladder — within-race promotion, cross-race
   informational.
 
-Phase 8 (improve-bot-evolve) gains a `--race` flag and per-race parent
+Phase 9 (improve-bot-evolve) gains a `--race` flag and per-race parent
 chains when G.2 ships — see Phase G build doc for details.
 
 ### Effort
@@ -869,9 +875,9 @@ signal. GPU support explicitly out of scope.
 | E | 1 w | 1 w | 2 w (SB3 override painful) |
 | 6 | 2 h code | open-ended soak | ongoing |
 | 7 | 1 d build | 1 d build + 1 overnight validation | 3 d (heuristic tuning) |
-| 8 | 3 d code (steps 1–6) | 3–5 d code + 1 h smoke + overnight soak | 1 w (dev-apply sub-agent edge cases) |
+| 9 | 3 d code (steps 1–6) | 3–5 d code + 1 h smoke + overnight soak | 1 w (dev-apply sub-agent edge cases) |
 | F | 1.5 w | 2 w | 3 w (training destabilizes) |
-| **Sub-total (A–E + 0–5 + 6 wire-up + 7 + 8)** | **~5 w** | **~7–8 w** | **~12–13 w** |
+| **Sub-total (A–E + 0–5 + 6 wire-up + 7 + 9)** | **~5 w** | **~7–8 w** | **~12–13 w** |
 | **+ 20% integration buffer** | +1.0 w | +1.6 w | +2.6 w |
 | **Total (excl. F)** | **~6 w** | **~9–10 w** | **~15 w** |
 | **+ F if chased** | +1.5 w | +2 w | +3 w |
@@ -952,6 +958,21 @@ experience only (no dashboard integration). Plan:
 ## Plan history
 
 Append-only — do not edit prior entries.
+
+- *2026-04-19* — **renumbered evolve from Phase 8 → Phase 9** to align
+  with pre-existing GitHub issues #154-#161 (titled "Phase 9 Step N").
+  The plan-merge earlier in the session had assigned Phase 8 (next slot
+  after Phase 7) without checking the issue-titling convention. Issues
+  #154-#161 were cut against an older plan version that numbered evolve
+  as Phase 9; renumbering the master plan was cheaper than renaming 8
+  issue titles. Master plan now has no Phase 8 (intentional gap, similar
+  to how Phase C was dropped in an earlier merge). All body-section
+  references updated; plan-history entries left intact (append-only).
+  Build doc renamed `improve-bot-evolve-plan.md` →
+  `phase-9-build-plan.md` for filename symmetry with other phase build
+  docs. 3 inbound references updated (master plan pointer, Phase G
+  build doc cross-ref, Phase 6 build doc Relationship section). Memory
+  entry `project_evolve_plan.md` updated to reflect Phase 9.
 
 - *2026-04-19* — **data-snapshots consolidation + improvements/ cleanup.**
   Project root had 13 root-level `data-*` and `data.bak-*` snapshot dirs

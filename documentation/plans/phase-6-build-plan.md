@@ -74,15 +74,15 @@ rules and curriculum opponent selection before iterating further.
 Operational phase — rollback is "stop running the skill." No code to
 revert. Promoted versions stay in `bots/vN/` and remain valid checkpoints.
 
-## 9. Relationship to Phase 8 (improve-bot-evolve)
+## 9. Relationship to Phase 9 (improve-bot-evolve)
 
-Phase 6 and Phase 8 are **orthogonal mechanisms** that both drive
+Phase 6 and Phase 9 are **orthogonal mechanisms** that both drive
 cross-version improvement, both consume `run_batch` from
 `src/orchestrator/selfplay.py`:
 
 - **Phase 6** is PPO-training-driven: use H2H self-play results as the
   RL signal for the trainee version.
-- **Phase 8** is improvement-pool-driven: discrete A/B selection between
+- **Phase 9** is improvement-pool-driven: discrete A/B selection between
   two siblings with Claude-generated improvement-pool items applied one
   per snapshot.
 
