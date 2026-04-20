@@ -428,7 +428,7 @@ sibling `bots/vN/` snapshots in one round.
 |---------|---------------|--------------------|--------------------|--------|
 | (none) | (any) | unrestricted (human PR) | (none) | Default |
 | `ADVISED_AUTO=1` | `[advised-auto]` | `bots/current/**` | `src/orchestrator/**`, `tests/**`, `scripts/**`, `pyproject.toml`, `frontend/**` | SHIPPED Phase 5 |
-| `EVO_AUTO=1` | `[evo-auto]` | `bots/**` (any version dir) | (same hard-deny set as above) | PENDING Phase 9 |
+| `EVO_AUTO=1` | `[evo-auto]` | `bots/**` (any version dir) | (same hard-deny set as above) | SHIPPED — Phase 9 Step 1 (`e87fada`) |
 
 If a future autonomous mode is added, extend this table — do not split
 the hook spec across multiple plan sections.
@@ -702,6 +702,8 @@ No data migrations.
 ---
 
 ## Phase 9 — improve-bot-evolve (sibling-tournament evolutionary loop)
+
+**Status: IN PROGRESS** — Steps 1-7 shipped 2026-04-20 (`51a2201..03a4b38`, 1257 pytest + 135 vitest). Step 8 (overnight soak, #161) operator-pending.
 
 **Track:** Operational. **Prerequisites:** Phase 5 (sandbox + skill
 integration). Independent of B/D/E/6/7 — ships standalone.
