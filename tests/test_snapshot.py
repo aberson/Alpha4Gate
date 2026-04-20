@@ -182,6 +182,96 @@ class TestSnapshotCurrent:
             snapshot.snapshot_current(name="v1")
 
 
+class TestRewriteImports:
+    """Regression tests for the absolute-import rewrite at snapshot time.
+
+    Without rewrite, ``bots/<new>/bot.py`` still says
+    ``from bots.v0.army_coherence import X`` and the snapshot is not
+    actually isolated — runtime imports go through the source version's
+    code, so any edit to the snapshot is silently ignored.
+    """
+
+    def test_from_import_rewritten(self, tmp_path: Path) -> None:
+        target = tmp_path / "bots" / "v1"
+        target.mkdir(parents=True)
+        (target / "bot.py").write_text(
+            "from bots.v0.army_coherence import X\n"
+            "from bots.v0 import runner\n"
+            "import bots.v0.commands.dispatch_guard\n"
+            "import bots.v0\n",
+            encoding="utf-8",
+        )
+        touched = snapshot._rewrite_imports(target, "v0", "v1")
+        assert touched == 1
+        out = (target / "bot.py").read_text(encoding="utf-8")
+        assert out == (
+            "from bots.v1.army_coherence import X\n"
+            "from bots.v1 import runner\n"
+            "import bots.v1.commands.dispatch_guard\n"
+            "import bots.v1\n"
+        )
+
+    def test_other_package_untouched(self, tmp_path: Path) -> None:
+        """An import of ``bots.otherversion`` is not the source — leave it."""
+        target = tmp_path / "bots" / "v1"
+        target.mkdir(parents=True)
+        src = "from bots.other_version.foo import X\n"
+        (target / "bot.py").write_text(src, encoding="utf-8")
+        touched = snapshot._rewrite_imports(target, "v0", "v1")
+        assert touched == 0
+        assert (target / "bot.py").read_text(encoding="utf-8") == src
+
+    def test_prose_containing_bots_v0_not_rewritten(
+        self, tmp_path: Path
+    ) -> None:
+        """A docstring or comment mentioning ``bots.v0`` must not get rewritten.
+
+        Only ``^import`` and ``^from`` at a line start should match.
+        """
+        target = tmp_path / "bots" / "v1"
+        target.mkdir(parents=True)
+        src = (
+            '"""Uses bots.v0 internally — see docs."""\n'
+            "# bots.v0 is the parent\n"
+            "x = 'bots.v0 in a string'\n"
+        )
+        (target / "note.py").write_text(src, encoding="utf-8")
+        touched = snapshot._rewrite_imports(target, "v0", "v1")
+        assert touched == 0
+        assert (target / "note.py").read_text(encoding="utf-8") == src
+
+    def test_nested_files_rewritten(self, tmp_path: Path) -> None:
+        target = tmp_path / "bots" / "v1"
+        (target / "learning").mkdir(parents=True)
+        (target / "learning" / "database.py").write_text(
+            "from bots.v0.config import Settings\n",
+            encoding="utf-8",
+        )
+        touched = snapshot._rewrite_imports(target, "v0", "v1")
+        assert touched == 1
+        assert (target / "learning" / "database.py").read_text(
+            encoding="utf-8"
+        ) == "from bots.v1.config import Settings\n"
+
+    def test_snapshot_current_rewrites_end_to_end(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """snapshot_current must call _rewrite_imports so the copy is isolated."""
+        monkeypatch.setattr(registry, "_repo_root", lambda: tmp_path)
+        monkeypatch.setattr(snapshot, "_repo_root", lambda: tmp_path)
+        v0 = _seed_version(tmp_path, "v0")
+        (v0 / "bot.py").write_text(
+            "from bots.v0.army_coherence import ArmyCoherenceManager\n",
+            encoding="utf-8",
+        )
+        _seed_current(tmp_path, "v0")
+
+        target = snapshot.snapshot_current("cand_x")
+        rewritten = (target / "bot.py").read_text(encoding="utf-8")
+        assert "from bots.cand_x.army_coherence" in rewritten
+        assert "from bots.v0.army_coherence" not in rewritten
+
+
 class TestNextVersionName:
     def test_next_after_v0(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
