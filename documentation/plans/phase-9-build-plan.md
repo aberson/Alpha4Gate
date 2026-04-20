@@ -254,6 +254,7 @@ operators can opt in with `--viewer` for debugging.
 - **Done when:** Tests pass for `EVO_AUTO=1` + `bots/v99/foo.py` edit (allowed) and
   `EVO_AUTO=1` + `src/orchestrator/foo.py` edit (blocked).
 - **Depends on:** none.
+- **Status:** DONE (2026-04-20)
 
 ### Step 2: `src/orchestrator/evolve.py` — round primitive
 

@@ -29,6 +29,13 @@ def _fake_git_diff(staged_files: list[str]) -> MagicMock:
     return cp
 
 
+@pytest.fixture(autouse=True)
+def _clear_auto_envs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure neither autonomous-mode env var leaks in from the caller's shell."""
+    monkeypatch.delenv("ADVISED_AUTO", raising=False)
+    monkeypatch.delenv("EVO_AUTO", raising=False)
+
+
 # ── (a) env var unset → passthrough (exit 0) ────────────────────────
 def test_passthrough_when_env_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ADVISED_AUTO", raising=False)
@@ -94,3 +101,99 @@ def test_allowed_nothing_staged(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ADVISED_AUTO", "1")
     with patch("check_sandbox.subprocess.run", return_value=_fake_git_diff([])):
         assert main() == 0
+
+
+# ── (j) EVO_AUTO=1 + bots/v99/foo.py → allowed (exit 0) ─────────────
+def test_evo_allowed_new_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EVO_AUTO", "1")
+    with patch("check_sandbox.subprocess.run", return_value=_fake_git_diff(["bots/v99/foo.py"])):
+        assert main() == 0
+
+
+# ── (k) EVO_AUTO=1 + bots/v0/learning/trainer.py → allowed (exit 0) ─
+def test_evo_allowed_deep_nested_existing_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EVO_AUTO", "1")
+    fake = _fake_git_diff(["bots/v0/learning/trainer.py"])
+    with patch("check_sandbox.subprocess.run", return_value=fake):
+        assert main() == 0
+
+
+# ── (l) EVO_AUTO=1 + src/orchestrator/foo.py → blocked (exit 1) ─────
+def test_evo_blocked_src(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EVO_AUTO", "1")
+    fake = _fake_git_diff(["src/orchestrator/foo.py"])
+    with patch("check_sandbox.subprocess.run", return_value=fake):
+        assert main() == 1
+
+
+# ── (m) EVO_AUTO=1 + tests/foo.py → blocked (exit 1) ────────────────
+def test_evo_blocked_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EVO_AUTO", "1")
+    with patch("check_sandbox.subprocess.run", return_value=_fake_git_diff(["tests/foo.py"])):
+        assert main() == 1
+
+
+# ── (n) EVO_AUTO=1 + scripts/foo.py → blocked (exit 1) ──────────────
+def test_evo_blocked_scripts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EVO_AUTO", "1")
+    with patch("check_sandbox.subprocess.run", return_value=_fake_git_diff(["scripts/foo.py"])):
+        assert main() == 1
+
+
+# ── (o) EVO_AUTO=1 + pyproject.toml → blocked (exit 1) ──────────────
+def test_evo_blocked_pyproject(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EVO_AUTO", "1")
+    with patch("check_sandbox.subprocess.run", return_value=_fake_git_diff(["pyproject.toml"])):
+        assert main() == 1
+
+
+# ── (p) EVO_AUTO=1 + .pre-commit-config.yaml → blocked (exit 1) ─────
+def test_evo_blocked_precommit_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EVO_AUTO", "1")
+    fake = _fake_git_diff([".pre-commit-config.yaml"])
+    with patch("check_sandbox.subprocess.run", return_value=fake):
+        assert main() == 1
+
+
+# ── (q) EVO_AUTO=1 + bots/../src/foo.py traversal → blocked (exit 1)─
+def test_evo_blocked_path_traversal(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EVO_AUTO", "1")
+    fake = _fake_git_diff(["bots/../src/foo.py"])
+    with patch("check_sandbox.subprocess.run", return_value=fake):
+        assert main() == 1
+
+
+# ── (r) EVO_AUTO=1 + mixed bots/v5 + src/orchestrator → blocked (1) ─
+def test_evo_blocked_mixed_bots_and_src(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EVO_AUTO", "1")
+    staged = ["bots/v5/foo.py", "src/orchestrator/bar.py"]
+    with patch("check_sandbox.subprocess.run", return_value=_fake_git_diff(staged)):
+        assert main() == 1
+
+
+# ── (s) EVO_AUTO=1 + nothing staged → allowed (exit 0, vacuous) ─────
+def test_evo_allowed_nothing_staged(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EVO_AUTO", "1")
+    with patch("check_sandbox.subprocess.run", return_value=_fake_git_diff([])):
+        assert main() == 0
+
+
+# ── (t) ADVISED_AUTO=1 AND EVO_AUTO=1 → blocked (conflict, exit 1) ──
+def test_both_modes_set_is_conflict(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ADVISED_AUTO", "1")
+    monkeypatch.setenv("EVO_AUTO", "1")
+    # Should fail before even running git diff — no subprocess mock needed,
+    # but patch it to guarantee we don't accidentally call the real git.
+    with patch("check_sandbox.subprocess.run") as mock_run:
+        assert main() == 1
+        mock_run.assert_not_called()
+
+
+# ── (u) EVO_AUTO unset + bots/v5/foo.py → passthrough (exit 0) ──────
+def test_passthrough_when_evo_unset_with_bots_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ADVISED_AUTO", raising=False)
+    monkeypatch.delenv("EVO_AUTO", raising=False)
+    # Human commit: passthrough without even inspecting staged files.
+    with patch("check_sandbox.subprocess.run") as mock_run:
+        assert main() == 0
+        mock_run.assert_not_called()
