@@ -42,6 +42,11 @@ ws_manager = ConnectionManager()
 _data_dir: Path = Path("data")
 _log_dir: Path = Path("logs")
 _replay_dir: Path = Path("replays")
+# Cross-version orchestrator state (evolve run state/pool/results/control)
+# lives at repo-root ``data/`` regardless of which bot version is current.
+# ``_data_dir`` points at ``bots/<current>/data/`` for per-version state
+# (training.db etc.), so evolve needs its own resolver.
+_evolve_dir: Path = Path("data")
 
 # Command system state
 _command_history: list[dict[str, Any]] = []
@@ -58,6 +63,8 @@ def configure(
     replay_dir: Path,
     api_key: str = "",
     daemon_config: DaemonConfig | None = None,
+    *,
+    evolve_dir: Path | None = None,
 ) -> None:
     """Configure directory paths for the API.
 
@@ -66,12 +73,25 @@ def configure(
     via ``TestClient`` (which does not enter the FastAPI lifespan by
     default) still capture backend errors in the alerts pipeline.
     ``install_error_log_handler`` is idempotent.
+
+    Parameters
+    ----------
+    data_dir:
+        Per-version data dir (resolves to ``bots/<current>/data/`` in
+        production via :func:`orchestrator.registry.get_data_dir`).
+    evolve_dir:
+        Cross-version data dir for evolve orchestrator state files.
+        Defaults to ``data_dir`` if not passed (tests reuse the same
+        tmp_path); the production runner passes ``_repo_root() / "data"``
+        explicitly so evolve files always land at the repo root
+        regardless of which bot version is current.
     """
-    global _data_dir, _log_dir, _replay_dir, _interpreter, _daemon
+    global _data_dir, _log_dir, _replay_dir, _interpreter, _daemon, _evolve_dir
     install_error_log_handler()
     _data_dir = data_dir
     _log_dir = log_dir
     _replay_dir = replay_dir
+    _evolve_dir = evolve_dir if evolve_dir is not None else data_dir
     if api_key:
         _interpreter = CommandInterpreter(api_key)
 
@@ -1136,6 +1156,13 @@ async def update_advised_control(request: dict[str, Any]) -> dict[str, Any]:
 
 
 # --- Evolve Run Dashboard Endpoints ---
+#
+# Evolve state is CROSS-VERSION orchestration (not per-version bot state),
+# so these files live at repo-root ``data/`` regardless of which bot
+# version is current. ``_data_dir`` points at ``bots/<current>/data/``
+# (per-version) for training.db / reward_logs / etc.; ``_evolve_dir``
+# is set separately by ``configure(..., evolve_dir=...)`` so the runner
+# can point evolve state at repo-root ``data/``.
 
 
 _EVOLVE_STATE_FILE = "evolve_run_state.json"
@@ -1176,7 +1203,7 @@ async def get_evolve_state() -> dict[str, Any]:
     the same top-level keys the running state would, so the frontend
     can destructure without null-coalescing every field.
     """
-    data = _read_json_file(_data_dir / _EVOLVE_STATE_FILE)
+    data = _read_json_file(_evolve_dir / _EVOLVE_STATE_FILE)
     if data is None:
         return dict(_EVOLVE_IDLE_STATE)
     return data
@@ -1185,7 +1212,7 @@ async def get_evolve_state() -> dict[str, Any]:
 @app.get("/api/evolve/control")
 async def get_evolve_control() -> dict[str, Any]:
     """Read current control signals for the evolve run."""
-    data = _read_json_file(_data_dir / _EVOLVE_CONTROL_FILE)
+    data = _read_json_file(_evolve_dir / _EVOLVE_CONTROL_FILE)
     if data is None:
         return dict(_EVOLVE_DEFAULT_CONTROL)
     return data
@@ -1223,7 +1250,7 @@ async def update_evolve_control(request: dict[str, Any]) -> dict[str, Any]:
                 detail=f"Field {key!r} must be a bool, got {type(value).__name__}",
             )
 
-    path = _data_dir / _EVOLVE_CONTROL_FILE
+    path = _evolve_dir / _EVOLVE_CONTROL_FILE
     existing = _read_json_file(path) or dict(_EVOLVE_DEFAULT_CONTROL)
     existing.update(request)
 
@@ -1246,7 +1273,7 @@ async def get_evolve_pool() -> dict[str, Any]:
     no pool file exists so the frontend can render an empty list
     without special-casing missing data.
     """
-    data = _read_json_file(_data_dir / _EVOLVE_POOL_FILE)
+    data = _read_json_file(_evolve_dir / _EVOLVE_POOL_FILE)
     if data is None:
         return {"parent": None, "generated_at": None, "pool": []}
     return data
@@ -1263,7 +1290,7 @@ async def get_evolve_results() -> dict[str, Any]:
     lines are skipped silently so a half-written tail line doesn't
     kill the whole endpoint.
     """
-    path = _data_dir / _EVOLVE_RESULTS_FILE
+    path = _evolve_dir / _EVOLVE_RESULTS_FILE
     if not path.exists():
         return {"rounds": []}
     try:

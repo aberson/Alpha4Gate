@@ -236,10 +236,15 @@ def _start_server(settings: Settings, daemon: bool = False) -> None:
     install_error_log_handler()
 
     daemon_config = load_daemon_config(settings.data_dir / "daemon_config.json")
+    # Cross-version evolve state always lives at repo-root data/,
+    # regardless of which bot version's per-version data_dir is active.
+    from orchestrator.registry import _repo_root
+    evolve_dir = _repo_root() / "data"
     configure(
         settings.data_dir, settings.log_dir, settings.replay_dir,
         api_key=settings.anthropic_api_key,
         daemon_config=daemon_config,
+        evolve_dir=evolve_dir,
     )
 
     if daemon:
@@ -279,10 +284,12 @@ def _start_server_background(settings: Settings) -> None:
             return
 
     from bots.v0.api import configure
+    from orchestrator.registry import _repo_root
 
     configure(
         settings.data_dir, settings.log_dir, settings.replay_dir,
         api_key=settings.anthropic_api_key,
+        evolve_dir=_repo_root() / "data",
     )
     config = uvicorn.Config(
         "bots.v0.api:app",
