@@ -18,13 +18,15 @@ const EVIDENCE_DIR = resolve(PROJECT_ROOT, ".ui-dashboard-evidence");
 const ALL_TABS = [
   { name: "live", label: "Live" },
   { name: "stats", label: "Stats" },
-{ name: "decisions", label: "Decisions" },
+  { name: "decisions", label: "Decisions" },
   { name: "training", label: "Training" },
   { name: "loop", label: "Loop" },
   { name: "advisor", label: "Advisor" },
   { name: "improvements", label: "Improvements" },
   { name: "processes", label: "Processes" },
   { name: "alerts", label: "Alerts" },
+  { name: "ladder", label: "Ladder" },
+  { name: "evolution", label: "Evolution" },
 ];
 
 // Filter tabs from CLI args

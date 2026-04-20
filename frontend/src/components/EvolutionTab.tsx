@@ -301,7 +301,7 @@ export function EvolutionTab() {
           </p>
           <p style={{ color: "#666", fontSize: "0.9em", marginTop: "8px" }}>
             Launch with{" "}
-            <code>python scripts/evolve.py --hours 4 --pool-size 10</code>
+            <code>uv run python scripts/evolve.py --hours 4 --pool-size 10</code>
           </p>
           <p style={{ color: "#666", fontSize: "0.85em", marginTop: "8px" }}>
             See the <code>/improve-bot-evolve</code> skill for the full
