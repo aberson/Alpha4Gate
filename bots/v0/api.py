@@ -1135,6 +1135,153 @@ async def update_advised_control(request: dict[str, Any]) -> dict[str, Any]:
     return existing
 
 
+# --- Evolve Run Dashboard Endpoints ---
+
+
+_EVOLVE_STATE_FILE = "evolve_run_state.json"
+_EVOLVE_CONTROL_FILE = "evolve_run_control.json"
+_EVOLVE_POOL_FILE = "evolve_pool.json"
+_EVOLVE_RESULTS_FILE = "evolve_results.jsonl"
+
+_EVOLVE_IDLE_STATE: dict[str, Any] = {
+    "status": "idle",
+    "parent_start": None,
+    "parent_current": None,
+    "started_at": None,
+    "wall_budget_hours": None,
+    "rounds_completed": None,
+    "rounds_promoted": None,
+    "no_progress_streak": None,
+    "pool_remaining_count": None,
+    "last_result": None,
+}
+
+_EVOLVE_DEFAULT_CONTROL: dict[str, Any] = {
+    "stop_run": False,
+    "pause_after_round": False,
+}
+
+_EVOLVE_CONTROL_KEYS: frozenset[str] = frozenset(
+    {"stop_run", "pause_after_round"}
+)
+
+
+@app.get("/api/evolve/state")
+async def get_evolve_state() -> dict[str, Any]:
+    """Read the evolve run state file.
+
+    Returns the current state of an ``improve-bot-evolve`` run, or the
+    idle skeleton ``{"status": "idle", "parent_start": None, ...}`` when
+    no run is active / no state file exists. The idle skeleton carries
+    the same top-level keys the running state would, so the frontend
+    can destructure without null-coalescing every field.
+    """
+    data = _read_json_file(_data_dir / _EVOLVE_STATE_FILE)
+    if data is None:
+        return dict(_EVOLVE_IDLE_STATE)
+    return data
+
+
+@app.get("/api/evolve/control")
+async def get_evolve_control() -> dict[str, Any]:
+    """Read current control signals for the evolve run."""
+    data = _read_json_file(_data_dir / _EVOLVE_CONTROL_FILE)
+    if data is None:
+        return dict(_EVOLVE_DEFAULT_CONTROL)
+    return data
+
+
+@app.put("/api/evolve/control")
+async def update_evolve_control(request: dict[str, Any]) -> dict[str, Any]:
+    """Write control signals for the evolve run.
+
+    The accepted payload shape is::
+
+        {"stop_run": <bool>, "pause_after_round": <bool>}
+
+    Both keys are optional; a partial payload is merged with the
+    existing control file (or the default skeleton when none exists).
+    Any key outside the allowed set is rejected with HTTP 400, and
+    every value must be a bool. We use PUT to match the
+    ``/api/advised/control`` convention even though the build plan
+    mentions POST — the dashboard uses a shared mutation pattern.
+
+    The on-disk write is atomic (temp file + rename) so concurrent
+    readers never see a half-written document.
+    """
+    # Validate the request shape first.
+    extras = set(request.keys()) - _EVOLVE_CONTROL_KEYS
+    if extras:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported fields: {sorted(extras)}",
+        )
+    for key, value in request.items():
+        if not isinstance(value, bool):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Field {key!r} must be a bool, got {type(value).__name__}",
+            )
+
+    path = _data_dir / _EVOLVE_CONTROL_FILE
+    existing = _read_json_file(path) or dict(_EVOLVE_DEFAULT_CONTROL)
+    existing.update(request)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(
+        json.dumps(existing, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+
+    return existing
+
+
+@app.get("/api/evolve/pool")
+async def get_evolve_pool() -> dict[str, Any]:
+    """Read the evolve pool file.
+
+    Returns ``{"parent": None, "generated_at": None, "pool": []}`` when
+    no pool file exists so the frontend can render an empty list
+    without special-casing missing data.
+    """
+    data = _read_json_file(_data_dir / _EVOLVE_POOL_FILE)
+    if data is None:
+        return {"parent": None, "generated_at": None, "pool": []}
+    return data
+
+
+@app.get("/api/evolve/results")
+async def get_evolve_results() -> dict[str, Any]:
+    """Read the last 50 rounds from ``evolve_results.jsonl``.
+
+    Each line of the JSONL file is one :class:`RoundResult` serialised
+    via ``dataclasses.asdict``. We truncate to the last 50 so the round
+    history table stays bounded even after a long overnight run. The
+    response shape is ``{"rounds": [RoundResult, ...]}``; malformed
+    lines are skipped silently so a half-written tail line doesn't
+    kill the whole endpoint.
+    """
+    path = _data_dir / _EVOLVE_RESULTS_FILE
+    if not path.exists():
+        return {"rounds": []}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {"rounds": []}
+    rounds: list[dict[str, Any]] = []
+    for line in lines[-50:]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            rounds.append(json.loads(stripped))
+        except json.JSONDecodeError:
+            continue
+    return {"rounds": rounds}
+
+
 @app.get("/api/processes")
 async def get_processes() -> dict[str, Any]:
     """Get full system process/state status."""

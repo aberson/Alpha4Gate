@@ -16,6 +16,7 @@ import { AdvisedImprovements } from "./components/AdvisedImprovements";
 import { ProcessMonitor } from "./components/ProcessMonitor";
 import { AlertsPanel } from "./components/AlertsPanel";
 import { LadderTab } from "./components/LadderTab";
+import { EvolutionTab } from "./components/EvolutionTab";
 import { AlertToast } from "./components/AlertToast";
 import { ConnectionStatus } from "./components/ConnectionStatus";
 import { useAdvisedRun } from "./hooks/useAdvisedRun";
@@ -32,7 +33,8 @@ type Tab =
   | "advisor"
   | "improvements"
   | "alerts"
-  | "ladder";
+  | "ladder"
+  | "evolution";
 
 function App() {
   const [tab, setTab] = useState<Tab>("live");
@@ -129,6 +131,12 @@ function App() {
           >
             Ladder
           </button>
+          <button
+            onClick={() => setTab("evolution")}
+            className={tab === "evolution" ? "active" : ""}
+          >
+            Evolution
+          </button>
         </nav>
         <ConnectionStatus />
         </div>
@@ -162,6 +170,7 @@ function App() {
         )}
         {tab === "processes" && <ProcessMonitor />}
         {tab === "ladder" && <LadderTab />}
+        {tab === "evolution" && <EvolutionTab />}
         {tab === "alerts" && (
           <AlertsPanel
             alerts={alerts}

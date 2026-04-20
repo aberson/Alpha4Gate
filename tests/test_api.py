@@ -473,6 +473,193 @@ class TestAdvisedEndpoints:
         assert resp.json()["status"] == "idle"
 
 
+class TestEvolveEndpoints:
+    """Tests for the evolve run dashboard API (GET/PUT /api/evolve/*)."""
+
+    def test_get_state_idle_when_no_file(self, client: TestClient) -> None:
+        resp = client.get("/api/evolve/state")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "idle"
+        # Idle skeleton has the same top-level keys as a running state so
+        # the frontend can destructure without null-coalescing every field.
+        for key in (
+            "parent_start",
+            "parent_current",
+            "started_at",
+            "wall_budget_hours",
+            "rounds_completed",
+            "rounds_promoted",
+            "no_progress_streak",
+            "pool_remaining_count",
+            "last_result",
+        ):
+            assert key in data
+            assert data[key] is None
+
+    def test_get_state_returns_file_content(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        state = {
+            "status": "running",
+            "parent_start": "v0",
+            "parent_current": "v0",
+            "started_at": "2026-04-19T10:00:00+00:00",
+            "wall_budget_hours": 4.0,
+            "rounds_completed": 3,
+            "rounds_promoted": 1,
+            "no_progress_streak": 0,
+            "pool_remaining_count": 6,
+            "last_result": None,
+        }
+        (tmp_path / "data" / "evolve_run_state.json").write_text(
+            json.dumps(state)
+        )
+        resp = client.get("/api/evolve/state")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "running"
+        assert data["parent_start"] == "v0"
+        assert data["rounds_completed"] == 3
+
+    def test_get_state_returns_idle_on_corrupt_file(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        (tmp_path / "data" / "evolve_run_state.json").write_text("not json!")
+        resp = client.get("/api/evolve/state")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "idle"
+
+    def test_get_control_defaults_when_no_file(self, client: TestClient) -> None:
+        resp = client.get("/api/evolve/control")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data == {"stop_run": False, "pause_after_round": False}
+
+    def test_put_control_stop_run_creates_file(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        resp = client.put("/api/evolve/control", json={"stop_run": True})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["stop_run"] is True
+        assert data["pause_after_round"] is False
+
+        # Verify file was created atomically
+        path = tmp_path / "data" / "evolve_run_control.json"
+        assert path.exists()
+        content = json.loads(path.read_text(encoding="utf-8"))
+        assert content["stop_run"] is True
+
+    def test_put_control_pause_after_round(self, client: TestClient) -> None:
+        resp = client.put(
+            "/api/evolve/control", json={"pause_after_round": True}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["pause_after_round"] is True
+
+    def test_put_control_merges_with_existing(self, client: TestClient) -> None:
+        client.put("/api/evolve/control", json={"pause_after_round": True})
+        resp = client.put("/api/evolve/control", json={"stop_run": True})
+        data = resp.json()
+        # Previous pause flag should be preserved, new stop flag added.
+        assert data["pause_after_round"] is True
+        assert data["stop_run"] is True
+
+    def test_put_control_rejects_unknown_field(self, client: TestClient) -> None:
+        resp = client.put(
+            "/api/evolve/control", json={"stop_run": True, "bogus": 1}
+        )
+        assert resp.status_code == 400
+
+    def test_put_control_rejects_non_bool(self, client: TestClient) -> None:
+        resp = client.put("/api/evolve/control", json={"stop_run": "yes"})
+        assert resp.status_code == 400
+
+    def test_get_pool_empty_when_no_file(self, client: TestClient) -> None:
+        resp = client.get("/api/evolve/pool")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data == {"parent": None, "generated_at": None, "pool": []}
+
+    def test_get_pool_returns_file_content(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        pool = {
+            "parent": "v0",
+            "generated_at": "2026-04-19T10:00:00+00:00",
+            "pool": [
+                {
+                    "rank": 1,
+                    "title": "Reward scouting",
+                    "type": "training",
+                    "description": "...",
+                    "principle_ids": [],
+                    "expected_impact": "...",
+                    "concrete_change": "{}",
+                    "status": "active",
+                },
+            ],
+        }
+        (tmp_path / "data" / "evolve_pool.json").write_text(json.dumps(pool))
+        resp = client.get("/api/evolve/pool")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["parent"] == "v0"
+        assert len(data["pool"]) == 1
+        assert data["pool"][0]["title"] == "Reward scouting"
+
+    def test_get_results_empty_when_no_file(self, client: TestClient) -> None:
+        resp = client.get("/api/evolve/results")
+        assert resp.status_code == 200
+        assert resp.json() == {"rounds": []}
+
+    def test_get_results_returns_jsonl_lines(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        lines = [
+            json.dumps({"round_index": 1, "winner": "v0-abc", "promoted": True}),
+            json.dumps({"round_index": 2, "winner": None, "promoted": False}),
+        ]
+        (tmp_path / "data" / "evolve_results.jsonl").write_text(
+            "\n".join(lines) + "\n"
+        )
+        resp = client.get("/api/evolve/results")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["rounds"]) == 2
+        assert data["rounds"][0]["round_index"] == 1
+        assert data["rounds"][1]["promoted"] is False
+
+    def test_get_results_truncates_to_last_50(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        lines = [json.dumps({"round_index": i}) for i in range(75)]
+        (tmp_path / "data" / "evolve_results.jsonl").write_text(
+            "\n".join(lines) + "\n"
+        )
+        resp = client.get("/api/evolve/results")
+        data = resp.json()
+        assert len(data["rounds"]) == 50
+        # Should be the tail 50: round_index 25..74.
+        assert data["rounds"][0]["round_index"] == 25
+        assert data["rounds"][-1]["round_index"] == 74
+
+    def test_get_results_skips_malformed_lines(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "data" / "evolve_results.jsonl"
+        path.write_text(
+            json.dumps({"round_index": 1}) + "\n"
+            "not-json\n"
+            + json.dumps({"round_index": 2}) + "\n"
+        )
+        resp = client.get("/api/evolve/results")
+        data = resp.json()
+        assert len(data["rounds"]) == 2
+        assert [r["round_index"] for r in data["rounds"]] == [1, 2]
+
+
 class TestRewardRulesEndpoints:
     def test_get_empty_rules(self, client: TestClient) -> None:
         resp = client.get("/api/reward-rules")

@@ -356,6 +356,7 @@ operators can opt in with `--viewer` for debugging.
   writes the control file; no regressions on existing dashboard tabs per
   `/a4g-dashboard-check`.
 - **Depends on:** Step 5.
+- **Status:** DONE (2026-04-20) — code shipped with `--reviewers code`; Playwright/runtime UI evidence deferred to `/a4g-dashboard-check` before Step 7 smoke gate.
 
 ### Step 7: Smoke gate — one-round end-to-end
 
