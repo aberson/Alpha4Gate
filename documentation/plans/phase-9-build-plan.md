@@ -317,6 +317,7 @@ operators can opt in with `--viewer` for debugging.
 - **Done when:** `python scripts/evolve.py --hours 0 --pool-size 2` runs end-to-end
   with mocked inner calls and writes the expected state files.
 - **Depends on:** Step 3.
+- **Status:** DONE (2026-04-20)
 
 ### Step 5: Skill definition
 
