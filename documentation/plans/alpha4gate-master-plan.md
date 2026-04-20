@@ -1000,7 +1000,7 @@ can be built in any order and don't block numbered phases.
 Embed the two SC2 windows spawned during self-play into a single themed
 container window (side-by-side, 1024×768 each, 200px buffer). Uses Win32
 `SetParent` reparenting after `a_run_multiple_games` spawns the
-processes. Background image from `img_backgrounds/`. Local developer
+processes. Background image from `src/selfplay_viewer/assets/`. Local developer
 experience only (no dashboard integration). Plan:
 `documentation/plans/selfplay-viewer-plan.md`.
 

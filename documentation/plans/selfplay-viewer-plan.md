@@ -48,10 +48,11 @@ burnysc2 v7.1.3, FastAPI + React dashboard. Production bot lives in
 - `scripts/selfplay.py` is the CLI front-end: `--p1 v3 --p2 v5 --games 20
   --map Simple64 [--sample pfsp --pool v0,v1,v2,v3]`.
 
-**Assets already in place.** [`img_backgrounds/`](../img_backgrounds/)
-contains two SF2-themed PNGs (`protoss_themed_sf2_brazil_background.png`,
-`protoss_themed_sf2_china_background.png`). The user plans to generate
-more at 2560×1600.
+**Assets already in place.** [`src/selfplay_viewer/assets/`](../../src/selfplay_viewer/assets/)
+contains four SF2-themed WebPs (`brazil.webp`, `china.webp`, `japan.webp`,
+`spain.webp`) — originally dropped as 2624×1632 PNGs under `img_backgrounds/`
+at the repo root; relocated + re-encoded to WebP 1920×1194 q85 on
+2026-04-19 (commit `70d2ced`, 33MB → 1.7MB).
 
 **Windows platform constraints.**
 
@@ -119,7 +120,7 @@ more at 2560×1600.
 | `src/selfplay_viewer/__init__.py` | **NEW** | Package init, re-exports public API (`SelfPlayViewer`, `run_with_viewer`). |
 | `src/selfplay_viewer/container.py` | **NEW** | pygame window, layout engine, background loader, overlay renderer, event loop, hotkey handling. |
 | `src/selfplay_viewer/reparent.py` | **NEW** | Win32 primitive: `attach_window(pid, container_hwnd, rect, timeout_s) -> hwnd`; `detach_window(hwnd)`; `move_window(hwnd, rect)`. Isolated so it can be unit-tested against `notepad.exe`. |
-| `src/selfplay_viewer/backgrounds.py` | **NEW** | Enumerate `img_backgrounds/*.png`, derive key from filename (strip `protoss_themed_sf2_` / `_background` boilerplate, else use stem), pick random or by key. |
+| `src/selfplay_viewer/backgrounds.py` | **NEW** | Enumerate `src/selfplay_viewer/assets/*.{webp,png}`, derive key from filename (strip `protoss_themed_sf2_` / `_background` boilerplate, else use stem), pick random or by key. |
 | `src/selfplay_viewer/overlay.py` | **NEW** | Stats bar renderer (top-bar + side-bar layouts), placeholder-paint renderer with message pool, font loading. |
 | `src/selfplay_viewer/demo.py` | **NEW** | `python -m selfplay_viewer.demo` — opens the container with placeholders, no SC2, for visual smoke-testing during development. |
 | `tests/test_reparent.py` | **NEW** | pytest marker `win32` — spawn `notepad.exe`, attach/detach/move, verify HWND belongs to that PID, verify `WS_CHILD` style flag set, cleanup on test teardown. |
@@ -127,7 +128,7 @@ more at 2560×1600.
 | `tests/test_overlay.py` | **NEW** | Layout math — `large + top-bar`, `small + top-bar`, `large + side-bar`, `small + side-bar` produce expected container size and pane rects. Renders against an off-screen pygame surface, inspects pixels only for presence (not exact text). |
 | `tests/test_selfplay_callbacks.py` | **NEW** | `run_batch` fires `on_game_start(idx, p1_pid, p2_pid)` and `on_game_end(result)` in order; both `None` is accepted (back-compat); exceptions in callbacks don't abort the batch. |
 | `pyproject.toml` | **Extend** | Add `[project.optional-dependencies] viewer = ["pygame>=2.5", "pywin32>=306"]`. Keep base deps Linux-safe. `pytest` marker `win32` added to `[tool.pytest.ini_options]`. |
-| `img_backgrounds/` | **Read-only** | No schema changes; directory contents are asset-only. |
+| `src/selfplay_viewer/assets/` | **Read-only** | No schema changes; directory contents are asset-only. |
 
 No changes to `bots/v0/`, the Phase 3 port-collision patch, the dashboard,
 `data/selfplay_results.jsonl`, the registry, or the Elo ladder.
@@ -200,10 +201,10 @@ invoking them from the pygame main thread (enforced by assertion).
 ### `src/selfplay_viewer/backgrounds.py`
 
 ```python
-BACKGROUND_DIR = Path(__file__).resolve().parents[2] / "img_backgrounds"
+BACKGROUND_DIR = Path(__file__).parent / "assets"
 
 def list_backgrounds() -> dict[str, Path]:
-    """Enumerate *.png; derive key via:
+    """Enumerate *.webp and *.png; derive key via:
        stem = path.stem
        if stem starts with 'protoss_themed_sf2_' and ends with '_background':
            key = stem[len('protoss_themed_sf2_'):-len('_background')]
@@ -330,9 +331,9 @@ windows sit.
 
 ### D11. Background discovery — filename-to-key, random default
 
-Enumerate `img_backgrounds/*.png`. Key extraction: strip
+Enumerate `src/selfplay_viewer/assets/*.{webp,png}`. Key extraction: strip
 `protoss_themed_sf2_` prefix and `_background` suffix if both present;
-else use stem. Accepts future drops like `japan.png`, `tokyo.png`
+else use stem. Accepts future drops like `japan.webp`, `tokyo.webp`
 without code changes. `--background random` picks uniformly from the
 discovered pool; `--background <key>` selects by derived key; unknown
 key raises a clear `KeyError` listing the available options.
@@ -342,8 +343,8 @@ key raises a clear `KeyError` listing the available options.
 ### Step 1: Scaffold pygame container + background loader
 - **Status:** DONE (2026-04-18)
 - **Problem:** Build the `selfplay_viewer` package skeleton: pygame
-  window with configurable bar (top/side) and size (large/small), PNG
-  background loading from `img_backgrounds/`, and a `demo.py` entry
+  window with configurable bar (top/side) and size (large/small),
+  background loading from `src/selfplay_viewer/assets/`, and a `demo.py` entry
   point that opens the window with placeholder grey rects where the SC2
   panes will go. No SC2, no reparenting. The layout math in D4 is
   authoritative. Add `pygame` and `pywin32` under a `[viewer]` optional
@@ -473,7 +474,7 @@ key raises a clear `KeyError` listing the available options.
 - **Problem:** Wire `--background {brazil,china,random,...}` in
   `scripts/selfplay.py` into `SelfPlayViewer(background=...)`. Default
   is `random`. Unknown key prints the list of available keys (derived
-  from `img_backgrounds/`) and exits with code 2. `backgrounds.py`
+  from `src/selfplay_viewer/assets/`) and exits with code 2. `backgrounds.py`
   was already implemented in Step 1 — this step is wiring + CLI
   error-message quality + a couple of CLI-parsing tests.
 - **Issue:** #144

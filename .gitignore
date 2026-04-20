@@ -21,6 +21,9 @@ venv/
 *.swp
 *.swo
 
+# Claude Code local settings (per-developer permission overrides)
+.claude/settings.local.json
+
 # OS
 Thumbs.db
 Desktop.ini
