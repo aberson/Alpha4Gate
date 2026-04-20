@@ -16,6 +16,7 @@ dependencies = [
     "sb3-contrib>=2.0",
     "numpy>=1.24",
     "gymnasium>=0.29",
+    "portpicker>=1.6",
 ]
 
 [project.optional-dependencies]
