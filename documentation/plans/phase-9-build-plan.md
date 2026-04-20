@@ -374,6 +374,7 @@ operators can opt in with `--viewer` for debugging.
   with `[evo-auto]` marker and passes pre-commit; if it discarded, no commit lands
   and the `no_progress_streak` counter increments by 1.
 - **Depends on:** Step 6.
+- **Status:** DONE (2026-04-20) — operator PASS; Evolution dashboard tab verified populating live.
 
 ### Step 8: Extended soak — multi-round overnight observation
 
