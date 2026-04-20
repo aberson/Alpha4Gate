@@ -52,6 +52,7 @@ here because they operate on different things.
 
 | Page | Best for |
 |------|----------|
+| [Project History](project-history.md) | Narrative "how we got here" — the story of the project so far |
 | [FAQ](faq.md) | First-time visitors — "what is this?", "what's happening?", "what's next?" |
 | [improve-bot-advised-architecture](improve-bot-advised-architecture.md) | How the outer loop teaches itself |
 | [Monitoring & Observability](monitoring.md) | How to watch the loop run |

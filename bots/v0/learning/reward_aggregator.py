@@ -42,7 +42,7 @@ def aggregate_reward_trends(
 
     Returns:
         A dict matching design decision D8 in
-        ``documentation/plans/phase-4-transparency-dashboard-plan.md``::
+        ``documentation/archived/phase-4-transparency-dashboard-plan.md``::
 
             {
                 "rules": [

@@ -224,7 +224,7 @@ class TestBuildTrainingPrompt:
 
     def test_real_principles_file(self) -> None:
         """Integration test: use the actual principles file if it exists."""
-        real_path = Path("documentation/protoss_sc2_guiding_principles.md")
+        real_path = Path("documentation/sc2/protoss/guiding-principles.md")
         if not real_path.exists():
             pytest.skip("Principles file not found")
         lookup = PrinciplesLookup(real_path)

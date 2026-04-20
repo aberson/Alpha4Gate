@@ -30,7 +30,7 @@ from bots.v0.claude_advisor import (
 _log = logging.getLogger(__name__)
 
 # Default path to the principles file (relative to project root).
-_DEFAULT_PRINCIPLES_PATH = Path("documentation/protoss_sc2_guiding_principles.md")
+_DEFAULT_PRINCIPLES_PATH = Path("documentation/sc2/protoss/guiding-principles.md")
 
 # Maximum lines of principles text injected into a single prompt.
 _MAX_PRINCIPLES_LINES = 150

@@ -2,7 +2,7 @@
 name: improve-bot-advised
 description: Autonomous advisor-driven improvement loop. Runs games, reviews replays with Claude strategic analysis against Protoss guiding principles, prioritizes improvements, and executes them via /improve-bot — repeating for hours to iteratively strengthen the bot. Designed for overnight unattended runs.
 user-invocable: true
-argument: Optional flags only — no free-text suggestion needed. Flags: `--mode training|dev|both` (default training), `--observe replay|live` (default replay), `--games N` (default 10), `--hours N` (default 4), `--difficulty N` (default current), `--fresh` (discard prior iteration context), `--self-improve-code` (implies --mode both if --mode not set).
+argument: Optional flags only — no free-text suggestion needed. Flags: `--mode training|dev|both` (default training), `--observe replay|live` (default replay), `--games N` (default 10), `--hours N` (default 4), `--difficulty N` (default current), `--fresh` (discard prior iteration context), `--self-improve-code` (implies --mode both if --mode not set), `--backlog [path]` (pull candidates from a triaged backlog file/section instead of running fresh strategic analysis; default path is the master plan's "Tactical refinements backlog" section).
 ---
 
 # /improve-bot-advised
@@ -26,6 +26,7 @@ Autonomous improvement loop that combines Claude strategic analysis with the exi
 | `--difficulty` | integer | current curriculum | SC2 AI difficulty level |
 | `--fresh` | flag | off | Discard prior iteration context; start analysis fresh each cycle |
 | `--self-improve-code` | flag | off | Enables autonomous source-code changes. Implies `--mode both` if `--mode` is not explicitly set. |
+| `--backlog` | optional path | off | Pull candidates from a triaged backlog instead of running fresh strategic analysis (Phase 2). Default path `documentation/plans/alpha4gate-master-plan.md`, parsing the `## Tactical refinements backlog` section. Implies `--self-improve-code` (backlog items are code-change work). See §Backlog Mode. |
 | `--fail-threshold` | integer (%) | `30` | Win rate drop % that triggers a fail. Highly tunable — see §Validation Philosophy |
 
 **Flag resolution (no user interaction — resolve automatically):**
@@ -33,6 +34,8 @@ Autonomous improvement loop that combines Claude strategic analysis with the exi
 - `--self-improve-code` without explicit `--mode` → `--mode both` (auto-upgrade)
 - `--self-improve-code` with `--mode training` → ignore the flag, stay training-only (no conflict, just redundant)
 - `--mode dev` or `--mode both` without `--self-improve-code` → **auto-downgrade to `--mode training`**, log: "dev/both mode requires --self-improve-code, falling back to training-only". Do NOT ask the user.
+- `--backlog` set → auto-enable `--self-improve-code` (backlog items are code-change work) and resolve `--mode` per the `--self-improve-code` rules above. Log: "backlog mode implies --self-improve-code". If `--backlog` has no value, use default path `documentation/plans/alpha4gate-master-plan.md` and look for the `## Tactical refinements backlog` section; if an explicit path is given, read that file whole (no section filter).
+- `--backlog` set but no open (non-SHIPPED) items found → log "backlog exhausted, falling back to fresh strategic analysis" and proceed as if `--backlog` were unset. Do NOT stop the run.
 - Ambiguous difficulty → read current curriculum level from `data/checkpoints/manifest.json`, fall back to 1 if not found
 
 ---
@@ -207,13 +210,45 @@ Parse each game log via `replay_parser.parse_replay_from_log` to get structured 
 
 ## Phase 2: Strategic Analysis
 
+### 2.0 Backlog mode (only if `--backlog` is set)
+
+When `--backlog` is set, **replace** the fresh strategic-analysis step (2.1/2.2) with a parse of the triaged backlog file. Items in the backlog are already human-triaged, so re-running LLM analysis on top dilutes the priority.
+
+**Parse rules:**
+
+1. Read the backlog source:
+   - Default: `documentation/plans/alpha4gate-master-plan.md`, extract the section bounded by `## Tactical refinements backlog` and the next `## ` heading.
+   - Explicit path: read the file whole, no section filter.
+2. Split the region on `### ` headings. Each heading starts one backlog item. The heading text (e.g. `T.3 — Tech structures placed on low ground`) is the item's `title`.
+3. Within each item body, look for a `**Status:**` line.
+   - If present and its value starts with `SHIPPED` (case-insensitive), **skip the item** — it's already done.
+   - Otherwise (no status line, or status is anything else like "In progress", "Observed", etc.) the item is **open**.
+4. Rank open items by their order of appearance in the file (top = highest priority — this matches the existing "top 3 + random pick" behavior in Phase 3).
+5. For each open item, construct the improvement record:
+   ```json
+   {
+     "rank": <1-based order>,
+     "title": "<heading text>",
+     "type": "dev",
+     "description": "<entire item body, verbatim>",
+     "principle_ids": [],
+     "expected_impact": "medium",
+     "concrete_change": "<item body, verbatim — the downstream /improve-bot call will use this>"
+   }
+   ```
+   All backlog items are treated as `type: "dev"` — they're tactical code fixes, not reward/config edits. If you encounter a backlog item that obviously targets `reward_rules.json` or `hyperparams.json`, flag it in the iteration log but still treat it as dev (the downstream /improve-bot worker can decide).
+6. If zero open items remain, fall back to fresh strategic analysis (Phase 2.1) per the flag resolution rule. Log "backlog exhausted, falling back".
+7. Skip Phase 2.1 and 2.2 entirely. Apply Phase 2.3 (mode filter) — since all items are `type: "dev"` and `--backlog` forced `--self-improve-code`+`--mode both`, all items pass the filter.
+
+**Log for observability:** after parsing, print to `$LOGFILE` the list of open items in rank order (title + one-line summary). This makes the backlog state visible in the run log without having to open the plan doc.
+
 ### 2.1 Build the analysis prompt
 
 Construct a Claude prompt that includes:
 
 1. **Game data summary:** Win/loss record, average game duration, per-game timeline highlights, aggregate stats
 2. **Decision log entries** (if available from live mode): What the advisor suggested, what the bot did
-3. **The full guiding principles document** (`documentation/protoss_sc2_guiding_principles.md` — all 32 sections)
+3. **The full guiding principles document** (`documentation/sc2/protoss/guiding-principles.md` — all 32 sections)
 4. **Iteration context** (unless `--fresh`): What was tried in prior iterations and outcomes
 
 The prompt asks Claude to:

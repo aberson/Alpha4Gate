@@ -1,6 +1,6 @@
 # Phase 3 Build Plan — Subprocess self-play runner
 
-**Parent plan:** [alpha4gate-master-plan.md](plans/alpha4gate-master-plan.md) Phase 3 (lines 514–578)
+**Parent plan:** [alpha4gate-master-plan.md](alpha4gate-master-plan.md) — Phase 3 (line numbers stale after 2026-04-19 refactor; search "Phase 3 — Subprocess self-play")
 **Parent issue:** #109
 **Branch:** `master-plan/3/selfplay-runner` (cut from master at `f26bb55`)
 **Baseline tag:** `master-plan/3/baseline`

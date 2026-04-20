@@ -582,7 +582,7 @@ async def debug_raise_error(
     message that ``ErrorLogBuffer`` will capture and the frontend
     alerts rule will fire on. Used during soak-test pre-flight to
     verify the alerts pipeline is alive end-to-end before committing
-    four hours to a run (see ``documentation/soak-test.md`` Section 3.5).
+    four hours to a run (see ``documentation/soak-test-runs/README.md`` Section 3.5).
     """
     if os.environ.get("DEBUG_ENDPOINTS", "").lower() not in ("1", "true", "yes"):
         raise HTTPException(status_code=404, detail="Debug endpoints disabled")

@@ -1,6 +1,6 @@
 # Phase 2 Build Plan — Registry + full-stack snapshot tool
 
-**Parent plan:** [alpha4gate-master-plan.md](plans/alpha4gate-master-plan.md) Phase 2 (lines 457–503)
+**Parent plan:** [alpha4gate-master-plan.md](alpha4gate-master-plan.md) — Phase 2 (line numbers stale after 2026-04-19 refactor; search "Phase 2 — Registry")
 **Parent issue:** #108
 **Branch:** `master-plan/2/registry-snapshot` (cut from master at `531b1b2`)
 **Baseline tag:** `master-plan/2/baseline`

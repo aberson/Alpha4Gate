@@ -274,4 +274,4 @@ They operate purely on code, config, and data.
 | Evaluator | `bots/v0/learning/evaluator.py` | Deterministic eval (no gradients) |
 | Promotion Gate | `bots/v0/learning/promotion.py` | Compare checkpoints, promote if better |
 | Rollback Monitor | `bots/v0/learning/rollback.py` | Detect regression, revert |
-| Strategy Reference | `documentation/protoss_sc2_guiding_principles.md` | What Claude judges games against |
+| Strategy Reference | `documentation/sc2/protoss/guiding-principles.md` | What Claude judges games against |

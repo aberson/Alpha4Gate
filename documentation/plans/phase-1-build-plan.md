@@ -1,6 +1,6 @@
 # Phase 1 Build Plan — Move full stack to `bots/v0/` + scaffold orchestrator
 
-**Parent plan:** [alpha4gate-master-plan.md](plans/alpha4gate-master-plan.md) Phase 1 (lines 331–446)
+**Parent plan:** [alpha4gate-master-plan.md](alpha4gate-master-plan.md) — Phase 1 (line numbers in master plan are stale after the 2026-04-19 plan/build-doc refactor; search "Phase 1 — Move full stack")
 **Parent issue:** #107
 **Branch:** `master-plan/1/bots-v0-migration` (cut from master at `0b67b30`)
 **Baseline tag:** `master-plan/1/baseline`

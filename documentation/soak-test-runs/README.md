@@ -44,23 +44,26 @@ test against a half-set-up environment — the findings will be noise.
 The daemon reads and writes several files inside `data/`. A soak test should start
 from a known state so that the postmortem can attribute every change to the run.
 
-Conventions used in this repo:
+Conventions used in this repo (see `data-snapshots/README.md` for the full table):
 
-- `data-pre-soak-<YYYY-MM-DD>/` — a cold snapshot taken before a run. One such
-  snapshot already exists at the repo root: `data-pre-soak-2026-04-10/`.
+- `data-snapshots/data-pre-soak-<YYYY-MM-DD>/` — a cold snapshot taken before a
+  run. As of 2026-04-19 all snapshots live under `/data-snapshots/` rather than
+  the project root.
 - `data-soak-test-<YYYY-MM-DD>.zip` — the full `data/` directory captured after a
   run, for postmortem (see Section 5).
 
 Choose one of these two starting states:
 
-**Option A — Start from the existing `data-pre-soak-2026-04-10/` snapshot.**
-Copy its contents over `data/` (replacing everything) so the run begins from the
-same baseline as any other run that used this snapshot.
+**Option A — Start from a recent `data-snapshots/data-pre-soak-<DATE>/` snapshot.**
+Pick the most recent matching snapshot in `data-snapshots/` (or one tied to a
+specific run record you want to reproduce). Copy its contents over `data/`
+(replacing everything) so the run begins from the same baseline as that prior run.
 
 **Option B — Start from a fresh clean `data/`.**
-Move the current `data/` aside to `data-pre-soak-<today>/` first, then let the
-daemon recreate what it needs. Use this option if the existing snapshot is stale or
-if a config/schema change has invalidated the old data.
+Move the current `data/` aside via
+`mkdir -p data-snapshots && mv data data-snapshots/data-pre-soak-<today> && mkdir data`,
+then let the daemon recreate what it needs. Use this option if the existing
+snapshots are stale or if a config/schema change has invalidated the old data.
 
 "Fresh clean `data/`" means an **empty directory** (`data/`) with nothing inside
 it. The daemon and trainer create the following files and subdirectories lazily
@@ -210,7 +213,7 @@ Create the run log file with this template before starting the backend:
 
 - Start time (T0): <HH:MM local, <HH:MM> UTC>
 - Stop condition chosen: <4h | N promotions | hard blocker>
-- Starting `data/` state: <Option A: data-pre-soak-2026-04-10 | Option B: fresh empty>
+- Starting `data/` state: <Option A: data-snapshots/data-pre-soak-<DATE> | Option B: fresh empty>
 - Daemon config effective values:
   - check_interval_seconds: <value>
   - min_transitions: <value>

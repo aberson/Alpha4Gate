@@ -1,6 +1,6 @@
 # Phase 5 Build Plan — Sandbox enforcement + skill integration
 
-**Parent plan:** [alpha4gate-master-plan.md](plans/alpha4gate-master-plan.md) Phase 5 (lines 659–709)
+**Parent plan:** [alpha4gate-master-plan.md](alpha4gate-master-plan.md) — Phase 5 (line numbers stale after 2026-04-19 refactor; search "Phase 5 — Sandbox enforcement")
 **Parent issue:** #105 (umbrella)
 **Branch:** `master-plan/5/sandbox-enforcement` (cut from master at `070f267`)
 **Baseline tag:** `master-plan/5/baseline`

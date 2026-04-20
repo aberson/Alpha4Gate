@@ -146,27 +146,29 @@ Track 1 — Validation   [Phase A]   on current src/alpha4gate/
 Track 2 — Versioning   [0–5]       subprocess spike → move+data migration → registry → self-play → ladder → sandbox
 Track 3 — Capability   [B, D, E]   per-version improvements inside bots/current/**
 Track 4 — Capability-F [F]         deferred; only if B/D/E insufficient
-Track 5 — Operational  [6, 7]      cross-version self-play loop (6) + advised-loop stale-policy detection (7); both enhance the self-improvement regime
+Track 5 — Operational  [6, 7, 8]   cross-version PPO loop (6) + advised stale-policy detection (7) + improve-bot-evolve sibling-tournament loop (8); orthogonal mechanisms that all share run_batch
+Track 6 — Multi-race   [G]         post-Phase-6; Zerg then Terran via per-race bots/<race>_v0/ stacks
 ```
 
 ## Decision graph
 
 ```
-Phase A (validate PR) ── gate: ≥ baseline WR → merge
-    │
-    └─ Phase 0 (subprocess spike) ── BLOCKING
-            │
-            ├─ pass ──→ Phase 1 (bots/v0/ + data migration) ──→ Phase 2 (registry) ──→ Phase 3 (self-play) ──→ Phase 4 (ladder) ──→ Phase 5 (sandbox) ──→ Phase 7 (advised auto-soak, standalone)
-            │                                                                                                                │
-            │                                                                                   ┌────────────┬────────────┬──┘
-            │                                                                                   ▼            ▼            ▼
-            │                                                                              Phase B       Phase D      Phase E
-            │                                                                              (obs)         (z-stat)     (autoreg)
-            │                                                                                   │            │            │
-            │                                                                                   └────────────┴─ Phase 6 (loop) ── hungry? ──→ Phase F (transformer)
-            │
-            └─ fail ──→ escalate. Options: shared-process self-play (shrinks plan), or drop self-play entirely and keep versioning for manual curation.
+Phase A ✅ ──→ Phase 0 ✅ ──→ Phase 1 ✅ ──→ Phase 2 ✅ ──→ Phase 3 ✅ ──→ Phase 4 ✅ ──→ Phase 5 ✅
+                                                                                                  │
+              ┌───────────────────┬─────────────────┬─────────────────┬───────────────┬───────────┤
+              ▼                   ▼                 ▼                 ▼               ▼           ▼
+         Phase B             Phase D           Phase E           Phase 7         Phase 8     Phase G
+         (obs)               (z-stat)          (autoreg)         (advised        (evolve     (multi-race;
+                                                                  staleness;     sibling     after Phase 6)
+                                                                  standalone)    tournament;
+                                                                                 standalone)
+              │                   │                 │
+              └───────────────────┴─────────────────┴─→ Phase 6 (PPO-driven loop) ── hungry? ──→ Phase F (transformer)
 ```
+
+Operational tracks (6, 7, 8) are independent of each other and of the
+capability tracks (B/D/E/F); each can ship without the others. Phase G is
+gated on Phase 6 operational maturity.
 
 ## Baseline (as of 2026-04-17)
 
@@ -200,7 +202,7 @@ Phase A (validate PR) ── gate: ≥ baseline WR → merge
   crash/timeout handling, PFSP-lite opponent sampling. Results to
   `data/selfplay_results.jsonl`. CLI: `scripts/selfplay.py` (head-to-head
   + PFSP modes). Gate: 4-game live batch PASS. 967 tests.
-- **Phase 4 COMPLETE 2026-04-17** (tag `master-plan/4/final`):
+- **Phase 4 COMPLETE 2026-04-17** (tag `master-plan/4/final` on `dba2d40`):
   Elo ladder in `src/orchestrator/ladder.py`. Standard Elo K=32, seeding
   from manifest/parent/1000. Round-robin `ladder_update()`, JSONL replay,
   cross-version promotion gate (`check_promotion()` → `snapshot_current()`).
@@ -208,6 +210,14 @@ Phase A (validate PR) ── gate: ≥ baseline WR → merge
   endpoint. Ladder tab (10th dashboard tab) with standings + head-to-head
   grid. `LadderEntry` + `PromotionResult` contracts. Gate: v0-vs-v0
   produces Elo delta 0 → correctly rejected. 1011 tests, 129 vitest.
+- **Phase 5 COMPLETE 2026-04-17** (no tag cut; latest sandbox docs
+  commit `0c9e273`): `scripts/check_sandbox.py` pre-commit hook +
+  `tests/test_sandbox_hook.py` (9 cases) wired via
+  `.pre-commit-config.yaml`. `/improve-bot-advised` SKILL.md updated with
+  run-start banner, `[advised-auto]` commit tag, `ADVISED_AUTO=1` env,
+  `check_promotion()` Elo gate, `--self-improve-code` path restriction.
+  1020 tests, zero mypy/ruff. Sandbox-modes table lives in the Phase 5
+  section; Phase 8 will extend it with `EVO_AUTO=1`.
 
 **Autonomous platform (from completed always-up Phases 1–4.5):**
 
@@ -222,9 +232,10 @@ Phase A (validate PR) ── gate: ≥ baseline WR → merge
   per-model WR queries, source of truth for intra-version promotion.
 - `data/reward_logs/` — always-on per-game JSONL; aggregated via
   `learning/reward_aggregator.py` for the dashboard Reward Trends card.
-- Dashboard (9 tabs): Live, Stats, Decisions, Training, Loop, Advisor,
-  Improvements, Processes, Alerts. Client-side alert engine with a
-  backend ERROR ring buffer.
+- Dashboard (10 tabs today; will be 11 when Phase 8 ships its Evolution
+  tab): Live, Stats, Decisions, Training, Loop, Advisor, Improvements,
+  Processes, Alerts, Ladder. Client-side alert engine with a backend
+  ERROR ring buffer.
 - 46 API endpoints for daemon/trigger/evaluate/promote/rollback/
   curriculum/advised-run control.
 - 48 reward rules in `data/reward_rules.json` (only affect PPO under
@@ -233,495 +244,143 @@ Phase A (validate PR) ── gate: ≥ baseline WR → merge
 - Four `/improve-bot-advised` runs completed; run-4 code improvements
   landed (anti-float expansion override, warp-in forward pylon
   selection, bot wins 100% at difficulty 3).
-- **Outstanding findings.** `phase-4-5-backlog.md` holds the
-  dashboard-polish / daemon-tuning / docs-gaps carryover. Finding #11
-  (unconditional bootstrap promotion) is picked up as a Phase 1 cleanup
-  line item. Finding #12 (daemon idle deadlock) is resolved by Phase 3.
+- **Outstanding findings.** `documentation/archived/phase-4-5-backlog.md`
+  holds the dashboard-polish / daemon-tuning / docs-gaps carryover.
+  Finding #11 (unconditional bootstrap promotion) is picked up as a
+  Phase 1 cleanup line item. Finding #12 (daemon idle deadlock) is
+  resolved by Phase 3.
 
 See `documentation/archived/always-up-plan.md` for the full
 phase-by-phase history of how this baseline was built.
 
 ---
 
-## Phase A — Validate the pending PR
+## Phase A — Validate the pending PR ✅
 
-**Track:** Validation. **Goal:** Prove LSTM + KL-to-rules + imitation-init
-does not regress baseline before anything else is layered on.
+**Status: COMPLETE** (tag `alphastar/A/final` on `cfeeb99`, 2026-04-15).
+Full-stack LSTM + KL-to-rules + imitation-init validated at **19/20 = 95% WR**
+at difficulty 3 hybrid in the A.6 soak. Validation procedure (six-step
+PowerShell harness, known-failure diagnostic table) preserved in
+`documentation/archived/alphastar-upgrade-plan.md` — read it before reopening
+this phase.
 
-**Location:** runs on current `src/alpha4gate/` (pre-versioning).
-
-**Prerequisites:** none.
-
-### Scope
-
-| Step | Description |
-|------|-------------|
-| A.0 | Checkout `feat/lstm-kl-imitation`; confirm 829 unit tests pass |
-| A.1 | **No-op regression** — all flags at safe defaults. Confirms patch is a true no-op when off |
-| A.2 | **Imitation init alone** — `use_imitation_init: true`, `--ensure-pretrain`. Verify `v0_pretrain.zip` created + loaded |
-| A.3 | **KL-to-rules alone** — `kl_rules_coef: 0.1`, keep `MlpPolicy`. Verify no NaN, extra-pass overhead bounded |
-| A.4 | **LSTM alone** — `policy_type: MlpLstmPolicy`. Watch `net_arch` dict-shape error |
-| A.5 | **All three together** |
-| A.6 | **Validation soak** — 20 games at difficulty 3, `--decision-mode hybrid`, compare vs 75% baseline |
-
-### Testing procedure
-
-See `documentation/archived/alphastar-upgrade-plan.md` Phase A section for
-the full PowerShell command set (step-by-step with pass/fail criteria).
-Those commands are unchanged; they run against current `src/alpha4gate/`.
-
-### Known-failure diagnostic table
-
-| Symptom | Likely cause | Fix |
-|---------|--------------|-----|
-| `lstm_states` / `RNNStates` error at model build | `net_arch: [128,128]` flat, LSTM wants dict | Change to `{"pi":[128],"vf":[128]}` |
-| `cross_entropy` NaN during KL pass | coef too high or obs decode broken | Drop to 0.05; probe `rule_actions_for_batch` |
-| Imitation agreement ≈ 0.17 (1/6) | DB transitions empty or mono-action | `uv run python -c "from alpha4gate.learning.database import TrainingDB; print(TrainingDB('data/training.db').get_transition_count())"` |
-| Trainer loads wrong class on resume | Pre-existing checkpoint from different `policy_type` | Clear `data/checkpoints/` or start fresh dir |
-
-### Tests
-
-Existing: `tests/test_rules_policy.py`, `tests/test_ppo_kl.py`,
-`tests/test_imitation_init.py`, `tests/test_imitation.py`.
-No new tests required — runtime validation phase.
-
-### Effort
-
-~1 day (mostly SC2 wall-clock).
-
-### Validation
-
-At least one of A.2–A.5 produces win-rate ≥ baseline over 20 validation
-games at difficulty 3 (A.6).
-
-### Gate
-
-`(combo_passed & no_crashes & tests_green) → merge branch to master`.
-
-### Kill criterion
-
-All four configurations regress >10% win rate. Investigate root cause
-before proceeding (see archived alphastar plan's Phase A for candidate
-hypotheses).
-
-### Rollback
-
-Branch unmerged until gate passes. Post-merge regret: `git revert` the merge.
+Shipped defaults on master are still MlpPolicy / kl=0 / imitation=false; the
+winning full-stack hyperparams are in `git stash` awaiting Phase 1
+reactivation.
 
 ---
 
-## Phase 0 — Subprocess self-play orchestration spike (BLOCKING)
+## Phase 0 — Subprocess self-play orchestration spike ✅
 
-**Track:** Versioning. **Goal:** Confirm two Python subprocesses can each
-host a Bot and play each other headlessly on Simple64, coordinated by an
-external orchestrator.
-
-**Prerequisites:** Phase A merged (keeps current stack as the spike target).
-
-### Scope
-
-1. `scripts/spike_subprocess_selfplay.py` — launches two subprocesses from
-   two minimal bot stubs, brokers SC2 connection, collects results.
-2. Verify: both sides produce actions, game completes with a winner, no
-   hangs, results file well-formed.
-3. Investigate burnysc2's ladder / AI-arena protocol — confirm which
-   mechanism lets two separate processes play. Document the approach in
-   `documentation/wiki/subprocess-selfplay.md`.
-
-### Effort
-
-2 hours.
-
-### Gate
-
-All three spike deliverables pass within a single 30-min session.
-
-### Kill criterion
-
-Subprocess self-play requires unreasonable plumbing (custom SC2 replay
-server, paid AI-Arena infra, etc.). Options:
-
-- (a) Drop self-play entirely; keep versioning for manual curation (Elo
-  replaced by SC2-AI difficulty ladder). Phases 3, 4, 6 shrink drastically.
-- (b) Accept shared-process self-play with architecture constraints
-  (revisit Phase C from the archived AlphaStar plan). This reintroduces
-  the checkpoint-compatibility problem discussed in the merge rationale.
-
-### Rollback
-
-Spike script is throwaway; no state to undo.
+**Status: COMPLETE** (tag `master-plan/0/final` on `0b67b30`, 2026-04-16).
+Two `python -m bots.vN` subprocesses played a 1v1 on Simple64 in 22.4s
+end-to-end. burnysc2 7.1.3 port-collision and Py3.14 asyncio patches were
+captured in `documentation/wiki/subprocess-selfplay.md` and absorbed into
+Phase 3's `selfplay.py`. Spike script was throwaway; no rollback artifact.
 
 ---
 
 ## Phase 1 — Move full stack + data to `bots/v0/`; scaffold orchestrator ✅
 
-**Status: COMPLETE** (tag `master-plan/1/final`, 2026-04-16). See `documentation/phase-1-build-plan.md` for step-by-step details.
+**Status: COMPLETE** (tag `master-plan/1/final` on `e477235`, 2026-04-16).
+Build detail in `documentation/plans/phase-1-build-plan.md` — read it before
+reopening this phase.
 
-**Track:** Versioning. **Goal:** `src/alpha4gate/` becomes `bots/v0/`.
-`data/` splits: per-version state moves into `bots/v0/data/`, shared
-cross-version state stays at the repo root. Orchestrator scaffolded.
-Everything — including the daemon, dashboard, and every existing script —
-works exactly as before, just loaded via the registry.
-
-**Prerequisites:** Phase 0 pass.
-
-**Effort estimate is intentionally larger than the prior draft.** This
-phase does the code move AND the data migration AND fixes Finding #11 in
-one shot; interim broken state on a move of this size is worse than a
-bigger single commit.
-
-### Scope
-
-1. Scaffold `src/orchestrator/` with `registry.py`, `contracts.py`,
-   `snapshot.py`, `selfplay.py`, `ladder.py` stubs.
-2. Move `src/alpha4gate/` → `bots/v0/` wholesale. Update imports
-   (`from alpha4gate.bot import Bot` → `from bots.v0.bot import Bot`).
-3. Entry-point wrapper: `python -m bots.v0` implements the bot-spawn
-   contract.
-4. Write `bots/v0/VERSION`, `bots/v0/manifest.json`.
-5. Symlink or copy `bots/v0/` → `bots/current/` so dashboard, daemon,
-   existing scripts keep working.
-6. Update `pyproject.toml` entry points to include `bots/` and
-   `orchestrator/`.
-7. Update `runner.py` invocations in scripts to go through the
-   orchestrator for spawning.
-8. **Data migration (per-version vs shared split):**
-   - **Move to `bots/v0/data/`:** `training.db`, `checkpoints/`,
-     `reward_rules.json`, `hyperparams.json`, `reward_logs/`,
-     `daemon_config.json`, `diagnostic_states.json`,
-     `promotion_history.json`, `advised_run_state.json`,
-     `advised_run_control.json`.
-   - **Keep at repo-root `data/`:** future `selfplay_results.jsonl`
-     (Phase 3), `bot_ladder.json` (Phase 4). Nothing else.
-   - Update every API endpoint, every script, every frontend fetch to
-     resolve paths through the registry rather than hardcoding
-     `data/…`. The dashboard's `ProcessMonitor` state-file readers and
-     the advised-run bridge are the highest-churn touch points.
-9. **Finding #11 cleanup (promotion-gate bootstrap).** The current
-   `PromotionManager` short-circuits to "promote" when `manifest.best`
-   is null, which means the comparison code path was never exercised
-   in the soak runs. Pre-seed `bots/v0/manifest.json` with `best` and
-   `previous_best` set to the current best-known checkpoint during the
-   migration so that the first post-merge promotion goes through the
-   real comparison path. Add a `bootstrap_promotion` test that fails
-   if an unseeded manifest is passed to the gate.
-
-### Contracts (frozen under `src/orchestrator/contracts.py`)
-
-**Bot-spawn:**
-
-```
-python -m bots.vN --role {p1|p2|solo} \
-                  --map Simple64 \
-                  --sc2-connect <protocol-arg> \
-                  --result-out bots/vN/data/selfplay/<match-id>.json \
-                  --seed <int>
-```
-
-**Result-reporting JSON:**
-
-```json
-{
-  "version": "vN",
-  "match_id": "...",
-  "outcome": "win|loss|draw|crash",
-  "duration_s": 612,
-  "error": null
-}
-```
-
-Breaking either contract requires a human PR.
-
-### Risks
-
-- **Import graph churn.** ~47 modules to rename. Largest mechanical task
-  in the plan.
-- **Daemon/API pathing.** The daemon, API endpoints, and frontend all
-  hardcode `data/…`. Each needs to resolve through the registry.
-- **Test imports.** `tests/` imports from `alpha4gate.*` — update to
-  `bots.current.*` or a test-time alias.
-- **Frontend path churn.** File-based bridges (`advised_run_state.json`,
-  `advised_run_control.json`) move from `data/` to `bots/current/data/`.
-
-### Tests
-
-Full existing suite runs green against the moved tree. Add
-`tests/test_bootstrap_promotion.py` for Finding #11.
-
-### Effort
-
-12–16 h (was 8–12 h; data migration + Finding #11 folded in).
-
-### Gate
-
-- `uv run pytest` green (all 829 + new bootstrap test).
-- Full SC2 game runs via `python -m bots.current`.
-- Dashboard connects to `bots/current/` API and renders normally across
-  all 9 tabs.
-- Daemon starts, triggers, completes a training cycle, promotes via the
-  non-bootstrap code path.
-
-### Kill criterion
-
-Import graph rewrite reveals hidden tight coupling that cannot be broken
-without touching the orchestrator contract. Extend Phase 1 by one week
-before escalating; if still blocked, redesign contracts before proceeding.
-
-### Rollback
-
-`git revert` the move commit. Entire suite lives on master untouched until
-this phase is merged.
+`src/alpha4gate/` deleted, full bot stack at `bots/v0/`. Per-version data
+dir at `bots/v0/data/` (training.db, checkpoints, reward_rules.json,
+hyperparams.json, reward_logs/, etc.). `bots/current/` MetaPathFinder
+alias. `src/orchestrator/` scaffolded with `registry.py`, `contracts.py`
+(frozen bot-spawn + result-reporting JSON contracts), `snapshot.py`,
+`selfplay.py`, `ladder.py` stubs. Finding #11 (promotion-gate bootstrap)
+closed via pre-seeded manifest + `tests/test_bootstrap_promotion.py`. 916
+tests green.
 
 ---
 
 ## Phase 2 — Registry + full-stack snapshot tool ✅
 
-**Status: COMPLETE** (tag `master-plan/2/final`, 2026-04-16). See `documentation/phase-2-build-plan.md` for step-by-step details.
+**Status: COMPLETE** (tag `master-plan/2/final` on `f26bb55`, 2026-04-16).
+Build detail in `documentation/plans/phase-2-build-plan.md` — read it before
+reopening this phase.
 
-**Track:** Versioning. **Prerequisites:** Phase 1.
-
-### Scope
-
-1. `src/orchestrator/registry.py`:
-   - `list_versions() -> list[str]`
-   - `get_version_dir(v) -> Path`
-   - `get_manifest(v) -> Manifest`
-2. `src/orchestrator/snapshot.py` + `scripts/snapshot_bot.py` CLI:
-   - Copies `bots/current/` → `bots/vN/` (full tree, including
-     `data/checkpoints/best.zip`).
-   - Writes `VERSION`, `manifest.json` with parent, git SHA, timestamp,
-     Elo snapshot, feature-dim and action-space fingerprints.
-3. Registry CLI: `python -m orchestrator.registry list`,
-   `python -m orchestrator.registry show vN`.
-4. `bots/current/` semantics: working copy, either a fork of some
-   `bots/vN/` or the pre-snapshot working tree. Snapshot promotes current
-   to the next `vN+1` and re-forks current off of it.
-
-### Tests
-
-- `tests/test_registry.py` — list/get/manifest round-trip.
-- `tests/test_snapshot.py` — snapshot produces self-contained tree,
-  manifest fingerprints match source.
-
-### Effort
-
-3–4 h.
-
-### Gate
-
-- `scripts/snapshot_bot.py --name v1` produces a self-contained dir.
-- `python -m bots.v1` boots and plays a game.
-- `bots/v0/` and `bots/v1/` can both run, independently.
-
-### Kill criterion
-
-Snapshot tool cannot preserve all runtime state (e.g., checkpoint formats
-break across Python restarts, or per-version data dirs leak). Fix with
-explicit serialization discipline before proceeding.
-
-### Rollback
-
-`git revert`; orphan `bots/vN/` dirs are safely deletable.
+`registry.list_versions()`, `registry.get_version_dir()`,
+`registry.get_manifest()`. Full-stack `snapshot_current()` copies
+`bots/current/` → `bots/vN+1/` with manifest lineage, git SHA,
+feature-dim + action-space fingerprints. CLIs: `python -m orchestrator
+list/show`, `scripts/snapshot_bot.py`. Gate verified: snapshot → boot →
+SC2 game on the snapshotted version. 943 tests, mypy strict (62 files).
 
 ---
 
-## Phase 3 — Subprocess self-play runner
+## Phase 3 — Subprocess self-play runner ✅
 
-**Track:** Versioning. **Prerequisites:** Phase 0 + Phase 2.
+**Status: COMPLETE** (tag `master-plan/3/final` on `85d5fb2`, 2026-04-17).
+Build detail in `documentation/plans/phase-3-build-plan.md` — read it before
+reopening this phase.
 
-Absorbs AlphaStar Phase C's opponent-pool concept: PFSP-lite weights live
-inside `selfplay.py` as a sampler option; the opponent list comes from the
-registry rather than a standalone pool.
-
-**Structural note — resolves always-up Finding #12.** When the daemon is
-"idle" vs SC2 AI (no games in flight, `transitions_since_last=0`), the
-self-play runner can produce transitions against prior `bots/vN/`
-opponents. This removes the idle-deadlock hard cap at ~1 cycle/hour that
-soak run #1 hit. The daemon's trigger logic stays unchanged; the new
-transition supply comes from self-play subprocess runs that don't
-require the daemon to be "active."
-
-### Scope
-
-1. `src/orchestrator/selfplay.py` + `scripts/selfplay.py`:
-   `--p1 v3 --p2 v5 --games 20 --map Simple64`.
-2. Two subprocesses per game, each implementing the bot-spawn contract.
-   Orchestrator coordinates SC2 handshake (exact mechanism from Phase 0).
-3. Per-game result → `data/selfplay_results.jsonl` (shared JSONL, not
-   per-version; one line per match). Readable via `pd.read_json(..., lines=True)`.
-4. Alternating P1/P2 seats across the batch to control for side bias.
-5. Crash handling: subprocess timeout → draw or excluded, logged. No
-   orphan SC2 processes.
-6. Sampling: plain `--p1 X --p2 Y` for head-to-head; optional
-   `--sample pfsp --pool v0,v1,v2,v3 --games 40` uses PFSP-lite weights
-   against a trainee.
-7. Transition hand-off: self-play games write their transitions into the
-   `p1` version's `bots/vN/data/training.db` (or both versions' DBs if
-   configured). This is what feeds the daemon during otherwise-idle
-   windows.
-
-### Tests
-
-- `tests/test_selfplay.py` — 20-game batch completes, seats alternate,
-  crash of one side doesn't leak SC2, results line-valid JSONL.
-- `tests/test_pfsp_sampling.py` — PFSP-lite weights normalize, win-rate-0
-  opponent gets zero weight, cold-start uniform.
-- `tests/test_selfplay_transition_hand_off.py` — self-play games produce
-  rows in the per-version training.db, resolving Finding #12.
-
-### Effort
-
-4–6 h.
-
-### Gate
-
-- 20-game self-play batch completes without hangs.
-- Results well-formed and seat-alternated.
-- One side crashes → other cleaned up; no orphan SC2.
-- Daemon "idle" state no longer blocks transition production when
-  self-play is running.
-
-### Kill criterion
-
-Cannot reliably clean up subprocesses on crash (SC2 processes leak). If
-hygiene fails, self-play is not production-ready — escalate to manual
-curation per Phase 0's kill options.
-
-### Rollback
-
-`git revert`; shared `data/selfplay_results.jsonl` is append-only and can
-be truncated or deleted.
+`src/orchestrator/selfplay.py` + `scripts/selfplay.py`: subprocess batch
+runner via burnysc2 `BotProcess`, port-collision patch absorbed from
+Phase 0, seat alternation, crash/timeout handling, PFSP-lite opponent
+sampling. Results → `data/selfplay_results.jsonl` (one line per match,
+`pd.read_json(..., lines=True)`-compatible). Self-play games can write
+transitions back into the per-version `training.db`, structurally
+resolving always-up Finding #12 (daemon idle deadlock — self-play
+produces transitions during otherwise-idle daemon windows). Gate: 4-game
+live batch PASS, 20-game soak clean. 967 tests.
 
 ---
 
-## Phase 4 — Elo ladder + cross-version promotion
+## Phase 4 — Elo ladder + cross-version promotion ✅
 
-**Track:** Versioning. **Prerequisites:** Phase 3.
+**Status: COMPLETE** (tag `master-plan/4/final` on `dba2d40`, 2026-04-17).
+Build detail in `documentation/plans/phase-4-build-plan.md` — read it before
+reopening this phase.
 
-Introduces the **cross-version promotion signal**. The intra-version
-`PromotionManager` from always-up Phase 3 keeps running on WR delta
-inside `bots/current/`; this phase adds the Elo gate for promoting
-`bots/current/` → `bots/vN+1/`.
-
-### Scope
-
-1. `data/bot_ladder.json`: `{version: {elo, games_played, last_updated}}`.
-2. `src/orchestrator/ladder.py` + `scripts/ladder.py`:
-   - `update` — round-robin between top-N + current.
-   - `show` — standings.
-   - `compare vA vB --games 20`.
-3. Standard Elo, K=32, new versions start at parent's Elo.
-4. Dashboard: **Ladder becomes the 10th tab** (sibling to Training,
-   Improvements, etc.). Shows standings + head-to-head grid. Frontend
-   reads `data/bot_ladder.json` (shared data, schema-stable).
-5. Analytics: any downstream queries use
-   `pd.read_json('data/selfplay_results.jsonl', lines=True)`.
-6. **Cross-version promotion gate.** Snapshot `bots/current/` → `bots/vN+1/`
-   requires:
-   - Elo gain ≥ +10 vs parent `bots/vN/` over ≥ 20 self-play games, AND
-   - WR non-regression vs SC2 AI at the current curriculum difficulty
-     (sanity check — a 100-Elo gain that also drops WR 30% is suspect).
-   The intra-version `PromotionManager` continues to run independently
-   on WR delta inside `bots/current/`; cross-version is a second level.
-
-### Tests
-
-- `tests/test_ladder.py` — Elo math correct, known-scenario reproducible,
-  promotion threshold configurable.
-- `tests/test_cross_version_gate.py` — WR sanity check rejects
-  suspicious Elo gains.
-
-### Effort
-
-3–4 h (was 3–4 h; 10th-tab scope is small — reuses existing dashboard
-patterns).
-
-### Gate
-
-- Ladder updates reproducibly on a known scenario.
-- Ladder tab renders alongside the existing 9.
-- Ladder JSON schema documented in `src/orchestrator/contracts.py`.
-- Cross-version promotion can be triggered end-to-end and respects both
-  Elo and WR gates.
-
-### Kill criterion
-
-Elo signal is too noisy at 20-game batches to distinguish adjacent
-versions. Mitigation: increase batch size to 40; if still noisy, promotion
-gate shifts to win-rate-vs-SC2-AI as primary, Elo as secondary.
-
-### Rollback
-
-`git revert`; `data/bot_ladder.json` is regenerable from the matches JSONL.
+`src/orchestrator/ladder.py`: standard Elo K=32, seeding from
+manifest/parent/1000, round-robin `ladder_update()`, JSONL replay.
+**Cross-version promotion gate** (`check_promotion()` → `snapshot_current()`):
+requires Elo gain ≥ +10 vs parent over ≥ 20 self-play games AND WR
+non-regression vs SC2 AI. Intra-version `PromotionManager` (always-up
+Phase 3) keeps running independently on WR delta inside `bots/current/`;
+cross-version Elo is the second tier. CLI: `scripts/ladder.py`
+(update/show/compare/replay). `GET /api/ladder` endpoint. Ladder tab
+(10th dashboard tab) with standings + head-to-head grid. `LadderEntry` +
+`PromotionResult` contracts in `contracts.py`. Gate: v0-vs-v0 produces
+Elo delta 0 → correctly rejected. 1011 tests, 129 vitest.
 
 ---
 
-## Phase 5 — Sandbox enforcement + skill integration
+## Phase 5 — Sandbox enforcement + skill integration ✅
 
-**Track:** Versioning. **Prerequisites:** Phases 2, 3, 4.
+**Status: COMPLETE** (commits land via #118–#122 closures; no
+`master-plan/5/final` tag was cut; latest sandbox docs commit `0c9e273`,
+2026-04-17). 1020 tests, zero mypy/ruff. Build detail in
+`documentation/plans/phase-5-build-plan.md` — read it before reopening this
+phase.
 
-### Scope
+`scripts/check_sandbox.py` pre-commit hook + `tests/test_sandbox_hook.py`
+(9 cases) wired via `.pre-commit-config.yaml` (`repo: local` + `language:
+system`). `pre-commit` added to dev deps. `/improve-bot-advised` SKILL.md
+updated: run-start banner, `[advised-auto]` commit tag, `ADVISED_AUTO=1`
+env var, `check_promotion()` Elo gate wired in, `--self-improve-code`
+path restriction. Gate verified: forbidden file blocked, allowed file
+passed, banner matches sandbox scope.
 
-1. **Sandbox hook** (`scripts/check_sandbox.py`, wired pre-commit):
-   Commits tagged `[advised-auto]` may touch:
-   - `bots/current/**` — freely.
-   - Nothing else. Not `src/orchestrator/`, `pyproject.toml`, `tests/`,
-     `frontend/`, `scripts/`.
-   Hard fail if violated.
-2. **`/improve-bot-advised` updates:**
-   - Only edits `bots/current/**`.
-   - Proposing orchestrator/dep changes → opens PR with label
-     `advised-proposed-substrate`; no auto-merge.
-   - After a passing iteration: snapshot to `vN+1`, commit tagged
-     `[advised-auto]`, push.
-3. **Validation rewire:** new `current` plays prior best via
-   `selfplay.py`. Cross-version promotion on Elo gain ≥ threshold
-   (default +10 Elo over 20 games, configurable in hyperparams) AND
-   intra-version WR non-regression.
-4. **Run-start banner:** skill prints at session start:
-   > I can edit: bots/current/**.
-   > I cannot edit: src/orchestrator/, pyproject.toml, tests/, frontend/, scripts/.
+### Sandbox modes (current and planned)
 
-### Tests
+The pre-commit hook recognises two autonomous-commit modes plus the
+default human-PR mode. Both autonomous modes share the same hard-deny set;
+only the allowed-write path widens for evolve, since a round produces two
+sibling `bots/vN/` snapshots in one round.
 
-- `tests/test_sandbox_hook.py` — hook blocks forbidden paths, allows
-  `bots/current/**`, detects missing `[advised-auto]` tag, passes
-  human-PR commits through untouched.
+| Env var | Commit marker | Allowed write paths | Hard deny (always) | Status |
+|---------|---------------|--------------------|--------------------|--------|
+| (none) | (any) | unrestricted (human PR) | (none) | Default |
+| `ADVISED_AUTO=1` | `[advised-auto]` | `bots/current/**` | `src/orchestrator/**`, `tests/**`, `scripts/**`, `pyproject.toml`, `frontend/**` | SHIPPED Phase 5 |
+| `EVO_AUTO=1` | `[evo-auto]` | `bots/**` (any version dir) | (same hard-deny set as above) | PENDING Phase 8 |
 
-### Effort
-
-3–5 h.
-
-### Gate
-
-- Skill editing `pyproject.toml` → hook blocks.
-- Skill editing `bots/current/learning/trainer.py` → allowed; snapshot
-  happens; Elo validates.
-
-### Kill criterion
-
-Sandbox hook cannot be reliably enforced on Windows pre-commit (line
-endings, path-separator bugs). Fallback: server-side hook on the remote
-(less immediate but unbypassable).
-
-### Rollback
-
-`git revert`; hook disables by removing its entry from `.pre-commit-config.yaml`.
-
-### Result — COMPLETE (2026-04-17)
-
-**All 5 issues closed (#118–#122). 1020/1020 tests passing. Zero type errors. Zero lint violations.**
-
-What was built:
-- `scripts/check_sandbox.py` — pre-commit hook enforcing `bots/current/`-only sandbox for `ADVISED_AUTO=1` commits
-- `tests/test_sandbox_hook.py` — 9 test cases (passthrough, allowed/forbidden paths, path traversal, mixed, edge cases)
-- `.pre-commit-config.yaml` — `repo: local` + `language: system` wiring
-- `pre-commit` added to dev dependencies
-- `/improve-bot-advised` SKILL.md updated: run-start banner, `[advised-auto]` commit tag, `ADVISED_AUTO=1` env var, `check_promotion()` Elo gate, `--self-improve-code` path restriction
-
-Gate verified: forbidden file blocked, allowed file passed, banner matches sandbox scope.
-
-Build plan: `documentation/phase-5-build-plan.md`
+If a future autonomous mode is added, extend this table — do not split
+the hook spec across multiple plan sections.
 
 ---
 
@@ -731,28 +390,29 @@ Build plan: `documentation/phase-5-build-plan.md`
 sandbox as a skill-driven improvement, or as a human PR on
 `bots/current/**`).
 
-**Goal:** Answer "is observation signal the binding constraint on win rate?"
+> **Build detail lives in
+> `documentation/plans/phase-b-build-plan.md`. Read it before starting
+> work on this phase.**
 
-### Scope
+**Goal:** Answer "is observation signal the binding constraint on win
+rate?" by appending ~23 unit-type histogram slots (15 own-army by type +
+~8 enemy-seen) to the PPO observation vector and re-training from
+`v0_pretrain`.
 
-| Step | Description |
-|------|-------------|
-| B.1 | Append ~15 own-army unit-type slots to `bots/current/learning/features.py` `_FEATURE_SPEC`: Zealot, Stalker, Sentry, Immortal, Colossus, Archon, HighTemplar, DarkTemplar, Phoenix, VoidRay, Carrier, Tempest, Disruptor, WarpPrism, Observer. Normalization: 40 worker, 20 core army. |
-| B.2 | Append ~8 enemy-unit-seen slots driven by scouting memory. |
-| B.3 | Bump `FEATURE_DIM`, add `FEATURE_DIM_V2` marker. Verify padding path in `imitation.py` handles the new width within this version. |
-| B.4 | Add diagnostic-state entries covering typical mid-game compositions. |
-| B.5 | Train 2 cycles from `v0_pretrain`, compare to Phase A end-state. |
-| B.6 | Snapshot to `v1` on promotion. |
+### Scope summary
+
+Six build steps (B.1–B.6) covering: own-army histogram → enemy-seen slots
+→ `FEATURE_DIM_V2` bump + within-version padding → diagnostic-state
+entries → 2-cycle re-train from pretrain → snapshot to `v1` on promotion.
 
 ### Tests
 
-- `tests/test_features_v2.py` — new slots produce expected values for
-  synthetic snapshots; old DB rows round-trip via padding.
-- `tests/test_imitation.py` — padding test covers 17 → V2 width.
+`tests/test_features_v2.py`, `tests/test_imitation.py` (padding for
+17 → V2 width).
 
 ### Effort
 
-~1 day + cycle wall-clock.
+~1 day code + cycle wall-clock.
 
 ### Validation
 
@@ -761,7 +421,7 @@ Win rate at difficulty 3 equal-or-better across 20 games AND Elo vs prior
 
 ### Gate
 
-Both win-rate hold AND Elo gain. Either failure → kill.
+Both WR-hold AND Elo gain. Either failure → kill.
 
 ### Kill criterion
 
@@ -772,308 +432,15 @@ Skip to Phase D or E.
 
 Delete `bots/v1/` if it existed; `current` re-forks from `v0`.
 
----
+### Related: tactical-bugs backlog
 
-## Tactical refinements backlog (surfaced during Phase B eval)
-
-Bugs observed during Phase B Step 5 eval that are tactical, not observational.
-These block Phase B Step 6 (v1 snapshot) because win-rate numbers are inflated
-(games take 40+ min due to passivity). Not formal phases — handle via
-`/improve-bot --self-improve-code` or standalone `/build-step` fixes.
-
-### T.1 — Soften max-supply ATTACK override
-
-**Status:** Hard override shipped as commit `0bc2f90` (#134). `MAX_SUPPLY_ATTACK_THRESHOLD=180`
-forces ATTACK regardless of DEFEND/FORTIFY/EXPAND/OPENING state. **Deliberately
-heavy-handed for now — get it working, tune later.**
-
-**Problem with the current fix:** At higher difficulties (4-5), a legitimate
-defensive stand (e.g., enemy doom-drop into main while own army is across the
-map at 180+ supply) would be incorrectly preempted into ATTACK, losing the
-defender's advantage. The 180-supply check fires even when defending is the
-correct play.
-
-**Softer solution candidates (pick one when tuning):**
-- Require `army_supply >= enemy_army_supply_visible * k` before ATTACK fires,
-  so max-supply doesn't override when outgunned in the engagement area.
-- Add a cooldown: override fires only if `supply_used >= 180` has held for
-  N seconds, preventing flip-flop with a visible enemy raid.
-- Scale the threshold by difficulty (180 at diff 3, 190 at diff 4, 195 at diff 5).
-- Replace with a "production saturation" signal: override when no new units
-  can be produced (all warp-gates on cooldown + all production full) AND
-  supply at cap — captures the actual "waste" condition without false-firing.
-
-**When to tune:** After re-eval at diff 3 confirms win-rate hold, before pushing
-to diff 4-5. The hard fix is safe for diff 1-3 where opponents rarely doom-drop.
-
-### T.2 — Low-ground bleeding (rally below ramps)
-
-**Status:** SHIPPED as commit `c5bd90d` (#138).
-
-Reactive detection instead of elevation awareness: when army centroid moves
-< 2.0 tiles AND HP drops for >= 3.0 seconds, force attack-move on enemy main.
-Same primitive as `FINISHER_SUPPLY` override. Reuses `_should_reissue_attack_to_position`
-from T.7. `_bleeding_since` timer resets unconditionally after commit fires.
-
-Elevation-aware rally-point selection (proactive version) deferred — the
-reactive fix addresses the observable bad behavior directly.
-
-### T.3 — Tech structures placed on low ground
-
-**Observed (2026-04-17):** Twilight Council and Forge placed on low ground
-outside the main base ramp, with no expansion or defensive structures nearby.
-Creates free-kill targets for enemy raids — losing a Twilight Council resets
-the tech path and is game-ending at higher difficulties.
-
-**Rule of thumb the bot should follow:**
-- **Pylons** — low ground is fine (cheap, power grid coverage, vision).
-- **Tech structures** (Twilight, Robotics Bay, Cybernetics Core, Forge,
-  Templar Archives, Fleet Beacon) — place inside the main base perimeter
-  OR adjacent to an established expansion with cannons. Never alone on
-  low ground.
-- **Gateways / Robotics / Stargates** — generally inside main, occasionally
-  at natural for warp-in proxy, but only when defended.
-
-**Candidate fixes:**
-- Add a `structure_placement_priority` map: each building type gets a preferred
-  placement zone (main / natural / proxy / any-powered). Default placement
-  logic respects the zone.
-- Placement query: before committing to a low-ground pylon-powered spot for a
-  tech structure, check if any townhall is within N tiles. Reject if not.
-- Look at `build_manager.py` / wherever `build_structure` or pylon-adjacent
-  placement search lives.
-
-**Related observation:** Repeated "red placement location" error messages in
-the log suggest the placement search is retrying invalid spots. May be a
-symptom of the same bug (trying to place tech on an already-taken low-ground
-spot) or a separate retry-storm issue worth grepping for.
-
-**Re-observed (2026-04-18, 6:23 game time):** Screenshot shows entire
-production complex (multiple Gateways + CyberCore + Robo) built on the low
-ground *below* the ramp. User note: "the main buildings you want to protect
-on the high ground or next to the natural." This confirms T.3 is still live
-post T.2/T.5/T.6/T.7 fixes. Three stacked "Can't find placement location"
-errors visible → retry-storm likely firing again.
-
-### T.4 — Target priority: engage producers, not their spawns
-
-**Observed (2026-04-17):** Against Broodlord composition, bot units engage
-the ground-spawned Broodlings instead of the flying Broodlords that produce
-them. Broodlings respawn continuously as long as the Broodlord lives; killing
-the Broodlord collapses the entire threat. Wasting DPS on Broodlings is a
-positive-feedback loss (more time spent on Broodlings = more Broodlings spawn).
-
-**General principle:** For "producer + spawn" enemy unit pairs, target the
-producer. Cases:
-- Broodlord (air) → produces Broodlings (ground). Kill Broodlord.
-- Carrier → produces Interceptors. Kill Carrier.
-- Swarm Host (burrowed) → spawns Locusts. Kill Swarm Host.
-- Warp Prism (air) + Zealots (warped in) → kill Warp Prism first.
-
-**Candidate fixes:**
-- Target priority table in `micro_controller.py` or `tactics/`:
-  `{UnitTypeId.BROODLORD: priority_high, UnitTypeId.BROODLING: priority_low}`,
-  `{UnitTypeId.CARRIER: priority_high, UnitTypeId.INTERCEPTOR: priority_low}`.
-- When selecting attack targets, filter the enemy list by `priority_high`
-  first; fall back to closest-enemy only if no high-priority targets are in range.
-- Unit capability constraint: ground-only units (Zealot, Stalker without blink,
-  Immortal) can still hit Broodlord since it's low-ground air — but ensure
-  anti-air units (Stalker, Phoenix, Void Ray) prioritize flying producers.
-
-### T.5 — Attack-walking regression still live
-
-Observed again (2026-04-17) during same game. Units move past enemies instead
-of attack-moving. This is a known bug (`feedback_attack_walking_vs_moving.md`)
-but evidence shows it persists. When T.4 (target priority) is fixed, make sure
-the issued command is `.attack()` not `.move()`, closing this gap together.
-
-**Status:** SHIPPED as commit `e0ae944` (#135). `_run_micro` now unconditionally
-attack-moves in all combat states since it's only dispatched when state is
-ATTACK/DEFEND/FORTIFY/LATE_GAME.
-
-### T.6 — Hybrid DEFEND override too aggressive (ROOT CAUSE of passivity)
-
-**Status:** SHIPPED as commit `65d854c` (#136).
-
-The `neural_engine.py::predict` hybrid-mode override fired unconditionally
-whenever `enemy_army_near_base=True`, forcing DEFEND even when PPO was 97.8%
-confident on ATTACK with overwhelming supply. This was THE root cause of the
-max-supply passivity bug — the earlier 180-supply override (T.1) was a
-band-aid that only kicked in above 180.
-
-New logic: override only fires when:
-- Enemy near base AND
-- Not a trivial raid (enemy_vis >= 8 or hidden near base) AND
-- Can't safely counterattack (army < 12 OR army < enemy_vis * 1.5)
-
-Otherwise trust PPO. Constants imported from `DecisionEngine` to prevent drift.
-"Suppressed" log moved to DEBUG to prevent per-tick INFO spam.
-
-**Found via:** log-reading during eval, not code review —
-`feedback_check_logs_during_debug.md`.
-
-### T.7 — Units in melee don't deal damage proportional to count
-
-**Observed (2026-04-17, game time 13:16):** Large Protoss army intermixed with
-Zerg in full melee. Units visibly engaged but the engagement drags — bot loses
-what should be winning fights. User described it as "move, attack move, don't
-really attack."
-
-**Candidate root causes (need log evidence to diagnose):**
-1. **Target priority (duplicate of T.4):** units engage nearest trash (Roaches,
-   Zerglings, Banelings) instead of Broodlords/Ravagers/priority targets.
-2. **Command churn:** `_run_micro` runs every tick, issues attack-move every
-   tick, interrupting the unit's current attack animation before damage lands.
-   Check: does DispatchGuard (shipped 2026-04-14) apply to unit commands or only
-   build commands?
-3. **Target switching:** units chase closer enemies mid-attack, never finishing
-   a kill.
-
-**Next step:** grab log snippet around game time 13:16 from an eval run to see
-which code path is firing. Likely needs T.4 fix + possibly command-rate-limit
-on attack commands.
-
-### T.8 — Production structures placed inside the mineral line
-
-**Observed (2026-04-18, ~6:10 game time):** Screenshot shows a Robotics
-Facility, Stargate, Forge, and Gateway warp-gated directly on top of mineral
-patches. Probes are trying to path through the buildings to mine. A "Can't
-find placement location" error is visible. Nexus is hidden behind the
-production complex, and the main Robotics Facility (selected) is sitting
-where Probe pathing expects crystals.
-
-**Impact:** worker mining throttled, pylon/production placement futures
-constrained, cannons/batteries have no room when they're actually needed,
-worker rally confused.
-
-**Rule:** only defensive structures belong in the mineral line —
-**PhotonCannon** and **ShieldBattery**. Everything else (Gateway,
-CyberneticsCore, Forge, Robotics Facility, Stargate, Nexus, Pylon except
-worker-rally Pylons) must be placed in the back of the main or at natural
-choke points / behind the Nexus.
-
-**Candidate root causes:**
-1. `bot._build_structure()` falls back to "any powered Pylon radius" when
-   primary placement fails — includes the Nexus-adjacent Pylon that covers
-   the mineral line.
-2. No keep-out zone around mineral patches / vespene geysers for
-   non-defensive structures.
-
-**Next step:** find the placement routine, add a filter that excludes build
-positions within N tiles of any `self.mineral_field` or `self.vespene_geyser`
-for structures ∉ {PhotonCannon, ShieldBattery, Pylon-for-expansion}.
-Probably in `bot.py._build_structure` or `macro_manager` → `MacroDecision`
-execution path.
-
-### T.11 — Split army: engaged force + still-rallying force in parallel
-
-**Observed (2026-04-18, 7:52 game time):** Screenshot shows a Protoss force
-(Stalkers + Sentries) engaging Zerg Roaches at the top-right, while a
-second group (Zealots) is standing on a rally point lower-middle, not
-moving. Game shows 14 in F2 (probably the engaged squad). Two forces fight
-at partial strength against the same enemy, so trades are worse than they
-need to be.
-
-**Rule (guiding principles §12 coherence, §10 engagement):** when any
-owned army unit is in combat, subsequent unit production from Gateway /
-WarpGate / Robo must **join the engagement**, not continue to a stale
-rally point. Rally targets should be invalidated by a combat event.
-
-**Candidate touch points:**
-1. `army_coherence.py` — probably already computes a center-of-mass;
-   see whether rally points derive from it.
-2. `commands/executor.py` — when a new unit warps in during combat, is it
-   issued an attack-move toward the fight, or just inherits a stale rally?
-3. `bot.py._produce_army` after `wg.warp_in(...)` — maybe issue an immediate
-   `newest_unit.attack(engagement_target)` before returning.
-
-**Next step:** read `army_coherence.py` and the warp-in path; determine
-whether stragglers get an explicit "move to fight" order or rely on the
-WarpGate rally. If the latter, add a post-warp hook that routes new units
-to the nearest ally-in-combat.
-
-### T.10 — Army idles inside enemy base instead of finishing the game
-
-**Observed (2026-04-18, 12:42 game time):** Screenshot shows a full Protoss
-army (Stalkers + Zealots + at least 2 Archons visible) standing dispersed
-among enemy Zerg structures in the Zerg main base. Supply 85/86, 4270
-minerals / 478 gas floating. Three "Can't find placement location" errors
-stacked on the left — bot is still trying to place buildings (probably
-a Pylon to break supply cap) instead of ordering the army to clean up.
-
-User note: "It could win in a few seconds if it would attack walk around."
-
-**Relationship to T.5:** T.5 (`e0ae944`) made `_run_micro` always attack-move
-in combat states. This screenshot suggests the problem is not "move vs
-attack" — the units are simply **not being issued any order this tick**.
-They are inside attack range of buildings/units but stand idle. Either:
-1. `_run_micro` is not running (strategic_state not in ATTACK/DEFEND/
-   FORTIFY/LATE_GAME despite visually being in combat), or
-2. `_run_micro` runs but targets are filtered out (e.g., T.4-style priority
-   picks an out-of-range target), or
-3. DispatchGuard is rate-limiting attack re-issues from T.7 too aggressively
-   and no new command arrives when the current target dies — the unit
-   goes idle.
-
-**Test path:** pull the game log around 12:42 and grep for
-`Hybrid override:`, `strategic_state`, and the unit-command dispatch
-lines. Compare to a winning game's log at the same phase.
-
-**Rule:** if units are in vision of enemy structures AND have not
-received a command in the last N ticks AND are idle, issue attack-move
-on the nearest enemy structure — regardless of strategic_state.
-
-**Next step:** identify which of the 3 root causes above fires, fix
-accordingly. Candidate is (3) — DispatchGuard window may be too wide when
-the held target has just died.
-
-### T.9 — Natural expansion undefended; fall-back point is softer than main
-
-**Observed (2026-04-18, ~5:48 game time):** Screenshot shows main with a
-cluster of production structures (acceptable fortification given the
-stacked gateways/robo/stargate near the Nexus), while the natural
-(bottom-right Nexus) has only probes mining. No cannons, no shield
-batteries, no units parked. If the bot is pushed off the main or needs a
-pull-back, the natural is the logical fall-back — but it's softer than
-the main.
-
-**Impact:** a timing attack that forces a retreat has nowhere safe to
-retreat to. User called out that the natural is "usually a better
-fall-back point than the main" — Protoss tradition is to fortify the
-natural because the main ramp funnels but the natural is where the army
-lives.
-
-**Rule:** once the natural Nexus is up, queue **at least one**
-ShieldBattery next to it, and add a PhotonCannon covering the mineral
-line / rally path when Forge is ready. Don't touch the main's existing
-fortification logic — per the user, it's "sort of fine for now." Scope
-is purely: seed a minimum defense at base #2.
-
-**Candidate touch points:**
-1. `fortification.py` — if it runs per-base, extend to include natural
-   with a lower target count than main.
-2. `macro_manager._check_shield_batteries` — if it only considers main,
-   widen to include any Nexus owned ≥ 45 seconds.
-
-**Next step:** read `fortification.py` + `macro_manager._check_shield_batteries`
-to see whether the current logic is base-indexed or hard-coded to main.
-Simplest fix: add a "natural defense" check that fires once the 2nd Nexus
-has been standing for ~45s and no ShieldBattery is within 10 tiles of it.
-
-### T.12 — Re-validate Archon morph fix in hybrid mode
-
-**Status:** Debug instrumentation shipped 2026-04-18 at
-`bot.py::_produce_army` morph branch. First diagnostic run was done in
-**rules** mode at diff 3 (simpler, removes the policy variable while
-isolating the engine-level morph dispatch).
-
-Once the root cause is identified and the fix lands, the morph behaviour
-must be re-validated in **hybrid mode** (`--decision-mode hybrid
---model-path bots/v0/data/checkpoints/v3.zip --no-claude`) to confirm
-the PPO policy doesn't suppress HT warp-ins or starve the gas economy
-enough to skip the morph branch in realistic deployment. Archon count
-must be non-zero across a 5-game hybrid sample before we consider the
-fix shipped.
+The T.1–T.12 tactical bugs surfaced during Phase B Step 5 eval (placement,
+target priority, idle armies, attack-walking) are NOT observation work
+and live in their own tracker:
+**`documentation/sc2/protoss/tactical-bugs.md`**. Several block Phase B Step 6 (v1
+snapshot) because games drag out and inflate WR numbers; address those
+via `/improve-bot --self-improve-code` or standalone `/build-step` fixes
+before the Phase B Validation gate.
 
 ---
 
@@ -1081,28 +448,24 @@ fix shipped.
 
 **Track:** Capability. **Prerequisites:** Phase 5. B and D are orthogonal.
 
-**Goal:** Collapse implicit build-order reward rules into an explicit `z`
-target vector with edit-distance pseudo-reward.
+> **Build detail lives in
+> `documentation/plans/phase-d-build-plan.md`. Read it before starting
+> work on this phase.**
 
-### Scope
+**Goal:** Collapse implicit build-order reward rules into an explicit
+`z` target vector with edit-distance pseudo-reward, dropping early-game
+reward variance.
 
-| Step | Description |
-|------|-------------|
-| D.1 | Audit `bots/current/data/reward_rules.json`: tag each rule as (a) build-order, (b) tactical, (c) economy, (d) other. Edge cases tagged by primary purpose. |
-| D.2 | `z` schema: `bots/current/data/build_orders/<label>.json` = `{"name": str, "targets": [{"action": str, "time_seconds": int, "weight": float}], "tolerance_seconds": int}`. |
-| D.3 | `bots/current/learning/build_order_reward.py` — edit-distance between executed and target; per-step reward = `-α * edit_distance_delta`. |
-| D.4 | Migrate (a) rules into build-order files; keep (b)(c)(d) as shaped rewards. |
-| D.5 | Append `z` identifier as optional obs slot so policy can condition on chosen build. |
-| D.6 | Backwards-compat: existing rules keep working; `use_build_order_reward: false` default. |
-| D.7 | Train 3 cycles, measure early-game reward variance + win rate. |
-| D.8 | Snapshot to `vN+1` on promotion. |
+### Scope summary
+
+8 steps (D.1–D.8): audit reward_rules.json → define `z` schema → write
+edit-distance reward module → migrate build-order rules → optional
+`z`-as-obs slot → backwards-compat default-off → 3 train cycles →
+snapshot on promotion.
 
 ### Tests
 
-- `tests/test_build_order_reward.py` — edit distance correct, reward
-  monotonic in progress, empty target list handled.
-- `tests/test_reward_migration.py` — pre/post migration reward totals on
-  known game logs agree within 5%.
+`tests/test_build_order_reward.py`, `tests/test_reward_migration.py`.
 
 ### Effort
 
@@ -1115,7 +478,7 @@ difficulty 3 AND Elo gain ≥ +10 over 20 games.
 
 ### Gate
 
-All three.
+All three validation criteria.
 
 ### Kill criterion
 
@@ -1134,43 +497,26 @@ promoted `vN` if already snapshotted.
 **Track:** Capability. **Prerequisites:** Phase 5. Ideally B done (more
 interesting ATTACK decisions to differentiate).
 
-**Goal:** Unlock tactical variety by making ATTACK / EXPAND conditional on
-target choice rather than flat `Discrete(6)`.
+> **Build detail lives in
+> `documentation/plans/phase-e-build-plan.md`. Read it before starting
+> work on this phase.**
 
-### Scope
+**Goal:** Unlock tactical variety by making ATTACK / EXPAND conditional
+on target choice rather than flat `Discrete(6)`. New action space size 12.
 
-| Step | Description |
-|------|-------------|
-| E.1 | Structured action space: `(strategic_state, target)` — ATTACK → {main, natural, third}, EXPAND → {own_natural, own_third, own_fourth}, others unchanged. Effective size = 12. |
-| E.2 | Custom `ActorCriticPolicy` subclass: two sequential softmax heads, `p(strategic)` then `p(target \| strategic)`. |
-| E.3 | `bots/current/learning/database.py` — add `action_space_version INT`; `1` legacy, `2` Phase E. |
-| E.4 | `_compute_next_state` also picks a target. Cascade into `rules_policy.py` KL teacher. |
-| E.5 | Migration: 6-way DB rows infer target from game log when possible, else `*_main`. |
-| E.6 | Snapshot to `vN+1` on promotion. |
+### Scope summary
 
-### Impact matrix (within `bots/current/**`)
-
-| Module | Change |
-|--------|--------|
-| `decision_engine.py` | `ACTION_TO_STATE` → new 12-way `ActionTarget` |
-| `learning/environment.py` | `SC2Env.action_space` = `Discrete(12)` |
-| `learning/rules_policy.py` | `rule_actions_for_batch` returns 12-way |
-| `learning/features.py` | No change |
-| `learning/imitation.py` | DB re-labeling migration |
-| `learning/database.py` | `action_space_version` column |
-| `learning/checkpoints.py` | Reject mismatched-action-space loads unless `--force` |
-| `data/diagnostic_states.json` | Expected-action expands to 12-way |
-
-Cross-version concern is gone: `v0` / `v1` keep their 6-way space
-forever; the new `vN+1` uses 12-way. Self-play just works because each
-subprocess loads its own stack.
+6 steps (E.1–E.6): structured `(strategic_state, target)` action space →
+custom `ActorCriticPolicy` with two sequential softmax heads → DB
+`action_space_version` column → cascade target picking into rules KL
+teacher → 6-way → 12-way migration with target inference → snapshot on
+promotion. Cross-version concern is none: `v0`/`v1` keep 6-way; the new
+version uses 12-way; self-play works because each subprocess loads its
+own stack.
 
 ### Tests
 
-- `tests/test_autoreg_policy.py` — two-head forward pass, target head
-  gated by strategic head, gradients flow to both.
-- `tests/test_action_migration.py` — 6-way DB migrates cleanly; old
-  checkpoints rejected explicitly.
+`tests/test_autoreg_policy.py`, `tests/test_action_migration.py`.
 
 ### Effort
 
@@ -1201,26 +547,25 @@ Delete promoted `vN`; prior versions unaffected by design.
 **Track:** Operational. **Prerequisites:** Phase 5 + at least one of
 {B, D, E} promoted (so there's a non-trivial starting point).
 
-This phase does not rebuild the intra-version loop — the existing
-`TrainingDaemon` / `PromotionManager` / `RollbackMonitor` (from always-up
-Phase 3) continues to run inside `bots/current/`. Phase 6 adds the
-**cross-version** self-play layer on top.
+> **Build detail lives in
+> `documentation/plans/phase-6-build-plan.md`. Read it before starting
+> work on this phase.**
 
-### Scope
+**Goal:** Add a cross-version self-play layer on top of the existing
+intra-version `TrainingDaemon` loop. PPO-training-driven cross-version
+improvement: use H2H self-play results as the RL signal for the
+trainee. This is the operational regime that drives B/D/E/F autonomously
+once they ship; it's an ongoing mode, not a one-shot phase.
 
-1. `/improve-bot-advised --self-improve-code --opponent v5` — curriculum
-   opponent selection (advance when +N Elo cleared).
-2. Stretch: pool sampling from top-K versions for mixed-style validation
-   (AlphaStar-lite league at single-box scale) using PFSP-lite sampler.
-3. Operational mode — this is how B / D / E / F are driven autonomously
-   once shipped. Not a one-shot phase; an ongoing regime.
-4. Dashboard surfacing: Ladder tab (from Phase 4) shows cross-version
-   progress; Improvements tab continues to show intra-version
-   promotions/rollbacks from the existing daemon.
+### Scope summary
+
+Wire `/improve-bot-advised --self-improve-code --opponent vN` for
+curriculum opponent selection; optional PFSP-lite pool sampling stretch;
+dashboard surfacing via existing Ladder + Improvements tabs.
 
 ### Tests
 
-N/A (operational phase, not infrastructure).
+N/A — operational phase. Primitives tested in their own phases.
 
 ### Effort
 
@@ -1242,6 +587,13 @@ rules and curriculum opponent selection before iterating further.
 
 Operational phase — rollback is "stop running the skill." No code to revert.
 
+### Relationship to Phase 8 (improve-bot-evolve)
+
+Both consume `run_batch`; orthogonal mechanisms. Phase 6 = PPO-training
+signal extension; Phase 8 = discrete A/B improvement-pool selection.
+Mutually exclusive on the same `bots/current/` working tree (pre-flight
+check).
+
 ---
 
 ## Phase 7 — Advised loop stale-policy detection
@@ -1249,34 +601,25 @@ Operational phase — rollback is "stop running the skill." No code to revert.
 **Track:** Operational. **Prerequisites:** Phase 5 (sandbox + skill integration).
 Independent of B/D/E/6 — ships standalone.
 
-**Goal:** Teach `/improve-bot-advised` to recognize when the PPO policy is
-stale relative to the current reward/hyperparam config and schedule an
-extended training soak as a first-class improvement type, rather than
-relying on the user to switch to `/improve-bot --mode training` manually.
+> **Build detail lives in
+> `documentation/plans/phase-7-build-plan.md`. Read it before starting
+> work on this phase.**
 
-Today the advised loop's `training` path only does a 2-game sync soak
-(Phase 6.3) — enough to create a checkpoint, not enough to actually
-train PPO against new rewards. The loop can iterate on reward rules
-forever without the policy ever catching up. This phase closes that gap.
+**Goal:** Teach `/improve-bot-advised` to recognize when the PPO policy
+is stale relative to the current reward/hyperparam config and to
+schedule an extended training soak as a first-class improvement type
+(rather than relying on the user to switch to `/improve-bot --mode
+training` manually).
 
-### Scope
+### Scope summary
 
-| Step | Description |
-|------|-------------|
-| 7.1 | `src/orchestrator/staleness.py` — compute `eval_wr_trend` over last 3 deterministic evals (from Phase 4 Elo ladder) + `checkpoint_age_since_last_reward_edit` (mtime of `bots/current/data/checkpoints/*.zip` vs. `reward_rules.json`). Return `StalenessReport` dataclass. |
-| 7.2 | Extend Phase 2 Claude analysis prompt in `/improve-bot-advised` to accept a `staleness_report` block and allow a third improvement type: `{type: "soak", soak_hours: N, decision_mode: "hybrid", rationale: "..."}`. Update response-format example in SKILL.md. |
-| 7.3 | Phase 4 routing for `type: "soak"`: shut down API-only backend, spawn daemon with `--decision-mode hybrid` for N hours, graceful shutdown, API-only restart. Reuse the existing Phase 6.3 daemon-lifecycle pattern verbatim. |
-| 7.4 | Budget guard: soak hours debit the `--hours` wall-clock budget; cap single soak at `min(remaining_budget / 2, 4h)` so the loop can't consume itself. Emit warning if analyzer requests more. |
-| 7.5 | Tests: `tests/test_staleness_signal.py` (staleness heuristic with synthetic eval history), `tests/test_advised_soak_routing.py` (Phase 4 dispatch of soak-type improvements, mocked daemon). |
+5 steps (7.1–7.5): `staleness.py` module → extend Claude analysis
+prompt with `type: "soak"` improvement → Phase 4 daemon-lifecycle
+routing → wall-clock budget guard → tests.
 
 ### Tests
 
-- `tests/test_staleness_signal.py` — fixtures for flat/rising/falling WR trends
-  and varying checkpoint ages; confirm `is_stale` fires only when trend flat
-  AND checkpoint older than last reward edit.
-- `tests/test_advised_soak_routing.py` — mock Claude response with `type: "soak"`;
-  confirm Phase 4 invokes daemon with `--decision-mode hybrid` for requested
-  hours and respects budget cap.
+`tests/test_staleness_signal.py`, `tests/test_advised_soak_routing.py`.
 
 ### Effort
 
@@ -1284,32 +627,119 @@ forever without the policy ever catching up. This phase closes that gap.
 
 ### Validation
 
-Run `/improve-bot-advised --self-improve-code --hours 8` with reward rules
-recently edited. Loop must:
-
-1. Detect staleness on first iteration (reward edit newer than checkpoint).
-2. Emit a `soak` improvement.
-3. Run the soak to completion (2–4h).
-4. Post-soak deterministic eval shows measurable Elo delta (sign doesn't matter
-   for the gate — just proves the path works end-to-end).
-5. Loop resumes and completes remaining budget without starving other iterations.
+8h advised run with recently-edited reward rules: detect staleness →
+emit `soak` improvement → run 2–4h soak → post-soak eval shows
+measurable Elo delta → loop resumes within budget.
 
 ### Gate
 
-All 5 validation steps pass in a single run. Soak-type improvements must not
-exceed 50% of the total `--hours` budget across the run.
+All 5 validation steps pass in a single run. Soak-type improvements
+must not exceed 50% of the total `--hours` budget across the run.
 
 ### Kill criterion
 
-Staleness signal fires on every iteration (false-positive storm) OR never fires
-across 3 runs with obviously stale policies (false-negative). Either means the
-heuristic is wrong — revisit step 7.1 before shipping.
+Staleness signal fires on every iteration (false-positive storm) OR
+never fires across 3 runs with obviously stale policies. Heuristic is
+wrong — revisit step 7.1 before shipping.
 
 ### Rollback
 
-Revert the phase's commits on `bots/current/` and `src/orchestrator/staleness.py`.
-SKILL.md change is self-contained in `.claude/skills/improve-bot-advised/SKILL.md`.
+Revert the phase's commits on `bots/current/` and
+`src/orchestrator/staleness.py`. SKILL.md change is self-contained.
 No data migrations.
+
+---
+
+## Phase 8 — improve-bot-evolve (sibling-tournament evolutionary loop)
+
+**Track:** Operational. **Prerequisites:** Phase 5 (sandbox + skill
+integration). Independent of B/D/E/6/7 — ships standalone.
+
+> **Build detail and step issues (#154–#161) live in
+> `documentation/plans/improve-bot-evolve-plan.md`. Read that document
+> before starting work on this phase — the per-step problem statements,
+> impact tables, design decisions, risks/open questions, and testing
+> strategy are canonical there, not summarised here.**
+
+**Goal:** Drive cross-version improvement via discrete A/B selection
+between two sibling snapshots of the parent, with Claude-generated
+improvement-pool items applied one per snapshot, and a parent safety gate
+before promotion. Removes the SC2-built-in-AI fitness signal that
+`/improve-bot-advised` relies on.
+
+The loop: snapshot parent twice → apply improvement A to one, B to the
+other → 10 head-to-head games → if decisive, winner plays parent for 5
+games → promote winner if it beats parent ≥ 3/5; otherwise discard both
+improvements. Repeat until 10-item pool exhausted, wall-clock budget
+expires (default 4h), or 3 consecutive no-progress rounds.
+
+This phase sits **alongside** Phase 6, not inside it. Phase 6 is
+PPO-training-driven self-play (use H2H results as the RL signal). Phase 8
+is improvement-pool-driven A/B selection (discrete edits, no PPO update
+per round). Both consume `run_batch` from `src/orchestrator/selfplay.py`.
+
+### Scope summary
+
+Eight build steps, mapped to issues #154–#161:
+
+| # | Issue | Deliverable |
+|---|-------|-------------|
+| 1 | #154 | Sandbox hook recognises `EVO_AUTO=1` + `[evo-auto]` (see Phase 5 sandbox-modes table) |
+| 2 | #155 | `src/orchestrator/evolve.py`: `Improvement` + `RoundResult` dataclasses, `apply_improvement()` (training + dev paths), `run_round()` |
+| 3 | #156 | `generate_pool()`: mirror-seed games + Claude prompt → 10 typed `Improvement` objects |
+| 4 | #157 | `scripts/evolve.py` CLI: pool-sample loop, wall-clock guard, state-file writes, commit on promote |
+| 5 | #158 | `.claude/skills/improve-bot-evolve/SKILL.md` (sibling skill to `/improve-bot-advised`) |
+| 6 | #159 | Backend `/api/evolve/state` + `/api/evolve/control` endpoints + `EvolutionTab.tsx` (the **11th dashboard tab**) |
+| 7 | #160 | Operator smoke gate: one round end-to-end with real SC2, `--pool-size 2 --ab-games 3 --gate-games 3` |
+| 8 | #161 | Operator extended soak: full `--hours 4` overnight, dev + training improvements both allowed |
+
+### Tests
+
+Per the build doc — covered exhaustively there. Headline:
+
+- `tests/test_evolve.py`: ≥10 cases for `run_round` / `apply_improvement` /
+  `generate_pool` with mocked `run_batch` + Claude responses.
+- `tests/test_evolve_cli.py`: argparse, wall-clock early-stop,
+  pool-exhaustion, state-file writes.
+- `tests/test_check_sandbox.py` extended: `EVO_AUTO=1` allow/deny cases.
+- `EvolutionTab.test.tsx` (vitest): idle / mid-round / completed views.
+- `tests/test_evolve_sc2.py::test_single_round_smoke` (`@pytest.mark.sc2`):
+  end-to-end real-SC2 round.
+
+### Effort
+
+Steps 1–6: ~3–5 days code. Steps 7–8: operator wall-clock (1h smoke +
+overnight 4h soak).
+
+### Validation
+
+Step 8 morning report contains ≥3 completed rounds with at least one of
+each outcome (promote, tie-discard, gate-discard); no orphaned processes
+on port 8765 after the run; the pre-commit hook correctly allowed
+per-round promotes while blocking any out-of-sandbox edits.
+
+### Gate
+
+- All 8 build steps green per their per-step "Done when" criteria.
+- No regression on `/improve-bot-advised` (mutual-exclusion pre-flight
+  prevents concurrent runs of the two skills).
+- Sandbox hook tests pass for both `ADVISED_AUTO` and `EVO_AUTO` modes.
+
+### Kill criterion
+
+Step 8 soak shows pool exhaustion before any promote across two attempts
+with regenerated pools — indicates Claude's pool generation is not
+producing sibling-decisive improvements at this codebase's maturity. Pause
+Phase 8, return to `/improve-bot-advised` for capability gains, revisit
+once Phase B/D/E land more measurable headroom.
+
+### Rollback
+
+Revert the orchestrator + scripts + skill commits. Sandbox hook stays
+extended (the `EVO_AUTO` path is no-op without the skill driving it; cost
+of leaving is one extra deny-list code path to maintain). Dashboard tab
+disable: remove the `EvolutionTab.tsx` route registration. `bots/vN/`
+directories accumulated during runs are safe to `rm -rf`.
 
 ---
 
@@ -1320,22 +750,25 @@ landed and the bot is clearly bottlenecked by loss of per-unit information.
 
 **Prerequisites:** Phases A, B, E merged and promoted. D preferred.
 
-### Scope
+> **Build detail lives in
+> `documentation/plans/phase-f-build-plan.md`. Read it before starting
+> work on this phase.**
 
-| Step | Description |
-|------|-------------|
-| F.1 | Custom `BaseFeaturesExtractor` taking variable-length unit list with pad/mask. |
-| F.2 | Transformer: 2 layers, 4 heads, 64-dim embedding, 128-dim FFN. ~100k params. `torch.nn.TransformerEncoder`, no new dep. |
-| F.3 | Per-unit features: unit_type (embedding), health_pct, shield_pct, is_own, is_flying, is_cloaked, position_relative_to_main. |
-| F.4 | Integrate via feature concat: transformer output + existing scalar features → MLP trunk. |
-| F.5 | Train from scratch in a new `bots/vN+1/` — cannot use `vN`'s `v0_pretrain`. Build `v0_pretrain_transformer` via fresh imitation run. |
-| F.6 | A/B against the best B/E version. |
+**Goal:** Replace scalar feature trunk with a transformer over a
+variable-length unit list to preserve per-unit info (health, shields,
+position, type) that the histogram throws away.
+
+### Scope summary
+
+6 steps (F.1–F.6): variable-length pad/mask `BaseFeaturesExtractor` →
+2-layer 4-head 64-dim transformer (~100k params, no new dep) →
+per-unit feature spec → concat with scalar trunk → fresh
+`v0_pretrain_transformer` (cannot reuse prior pretrain — input shape
+differs) → A/B vs best B/E version.
 
 ### Tests
 
-- `tests/test_entity_transformer.py` — variable unit counts, pad/mask
-  correctness, gradient flow.
-- `tests/test_imitation_transformer.py` — fresh pretrain builds + loads.
+`tests/test_entity_transformer.py`, `tests/test_imitation_transformer.py`.
 
 ### Effort
 
@@ -1343,8 +776,8 @@ landed and the bot is clearly bottlenecked by loss of per-unit information.
 
 ### Validation
 
-Beat best B/E version by ≥ 5% win rate over 20 games at difficulty 3 AND
-show lower loss variance AND Elo gain ≥ +20 over 20 self-play games.
+Beat best B/E version by ≥ 5% WR over 20 games at difficulty 3 AND
+lower loss variance AND Elo gain ≥ +20 over 20 self-play games.
 
 ### Gate
 
@@ -1352,96 +785,65 @@ All three.
 
 ### Kill criterion
 
-Training diverges (NaN, policy collapse) OR no win-rate improvement after
-the full 2-week build. Scalar histogram was sufficient — delete the
+Training diverges (NaN, policy collapse) OR no WR improvement after the
+full 2-week build. Scalar histogram was sufficient — delete the
 transformer version; keep A–E promoted versions.
 
 ### Rollback
 
-Versioning makes this trivial: `rm -rf bots/vN+1/` where N+1 was the
-transformer version. Prior stacks untouched.
+Trivial: `rm -rf bots/vN+1/`. Prior stacks untouched.
 
 ---
 
 ## Phase G — Multi-race support (Zerg, then Terran)
 
-**Track:** Capability. **Status:** Future. **Prerequisites:** Phase 6
+**Track:** Multi-race. **Status:** Future. **Prerequisites:** Phase 6
 operational (the autonomous loop works end-to-end for Protoss first).
 
+> **Build detail (G.1–G.4 sub-phases, per-race scope, evolve interaction)
+> lives in `documentation/plans/phase-g-build-plan.md`. Read it before
+> starting work on this phase.**
+
 **Goal:** Extend the bot from Protoss-only to all three SC2 races. Each
-race is a separate `bots/` version line sharing infrastructure but with
-its own gameplay code.
+race is a separate `bots/<race>_vN/` version line sharing infrastructure
+but with its own gameplay code.
 
-This is a large effort — the gameplay layer (macro, micro, production,
-abilities, build orders, reward rules, feature encoding) is deeply
-Protoss-specific today. The architecture (decision engine, command system,
-PPO pipeline, dashboard, ladder, sandbox) is already race-agnostic.
+### Scope summary (4 sub-phases)
 
-### Phased approach
+- **G.1** Race interface extraction (RaceConfig / ProductionAdapter /
+  MicroAdapter / FeatureSpec / RewardTemplate). Refactor `bots/v0/` to
+  use the interfaces with zero behavior change.
+- **G.2** Zerg (`bots/zerg_v0/`) — first new race; validates the
+  interface deeply.
+- **G.3** Terran (`bots/terran_v0/`) — second new race; benefits from
+  proven interface.
+- **G.4** Cross-race ladder — within-race promotion, cross-race
+  informational.
 
-**Phase G.1 — Race interface extraction.** Before adding new races,
-extract a race-agnostic interface from the Protoss code:
-- `RaceConfig`: unit roster, production tree, ability set, macro mechanic
-  (Chronoboost vs Inject vs MULE), worker type, supply structure
-- `ProductionAdapter`: abstract over Warp Gate vs Larva vs Add-On
-- `MicroAdapter`: abstract over race-specific abilities
-- `FeatureSpec`: race-parameterized unit-type slots
-- `RewardTemplate`: race-parameterized reward rules
-- Refactor `bots/v0/` (Protoss) to use these interfaces — no behavior
-  change, just structural extraction. All 1020+ tests must still pass.
+Phase 8 (improve-bot-evolve) gains a `--race` flag and per-race parent
+chains when G.2 ships — see Phase G build doc for details.
 
-**Phase G.2 — Zerg.** First new race (most different from Protoss —
-validates the interface deeply):
-- `bots/zerg_v0/`: Larva/Inject economy, Creep spread, Overlord supply,
-  morph-based production (Roach, Hydra, Lurker, Mutalisk, Corruptor,
-  Brood Lord, Viper, Infestor, Ultralisk, Baneling, Zergling)
-- Zerg-specific micro: Bile, Fungal, Burrow, Abduct
-- Zerg build orders (hatch-first, pool-first, 12-pool)
-- Zerg reward rules (~40 rules, adapted from Protoss patterns)
-- Zerg feature encoding (unit-type slots, larva count, inject timers)
-- Train from scratch, promote via Elo ladder (vs SC2 AI, not vs Protoss)
+### Effort
 
-**Phase G.3 — Terran.** Second new race:
-- `bots/terran_v0/`: SCV economy, MULEs, Supply Depot walls, Add-On
-  production (Reactor/Tech Lab), Siege mode, Stim, Medivac healing
-- Terran-specific micro: Siege/Unsiege, Stim, Snipe, EMP, Nuke
-- Terran build orders (1-1-1, 2-1-1, mech, bio)
-- Terran reward rules and feature encoding
-- Train from scratch, promote via Elo ladder
+~7–10 weeks total: G.1 = 1–2 w, G.2 = 3–4 w, G.3 = 2–3 w, G.4 = 2–3 d.
 
-**Phase G.4 — Cross-race ladder.** Once all three races have promoted
-versions, enable cross-race self-play in the ladder. Each race's version
-line competes within-race for promotion; cross-race matches are
-informational (Elo tracked separately).
+### Gates (per sub-phase)
 
-### Effort estimate
-
-| Sub-phase | Estimate |
-|-----------|----------|
-| G.1 (interface extraction) | 1–2 weeks |
-| G.2 (Zerg) | 3–4 weeks |
-| G.3 (Terran) | 2–3 weeks (interface proven) |
-| G.4 (cross-race ladder) | 2–3 days |
-| **Total** | **~7–10 weeks** |
-
-### Gate
-
-Each sub-phase gates independently:
-- G.1: All existing Protoss tests pass, interface coverage for 3 races
-- G.2: Zerg wins ≥50% at difficulty 3 over 20 games
-- G.3: Terran wins ≥50% at difficulty 3 over 20 games
-- G.4: Cross-race Elo ladder produces stable rankings
+- G.1: All existing Protoss tests pass, interface covers 3 races.
+- G.2: Zerg wins ≥50% at difficulty 3 over 20 games.
+- G.3: Terran wins ≥50% at difficulty 3 over 20 games.
+- G.4: Cross-race Elo ladder produces stable rankings.
 
 ### Kill criterion
 
 G.1 interface extraction proves too invasive (breaks >5% of tests or
-requires >500 lines of adapter code). Indicates the gameplay layer is
-more tightly coupled than expected — defer and revisit after more
+requires >500 lines of adapter code). Defer and revisit after more
 capability phases mature the Protoss codebase.
 
 ### Rollback
 
-Each race is its own `bots/` directory — delete and ladder is unaffected.
+Each race is its own `bots/` directory — delete and ladder is
+unaffected.
 
 ---
 
@@ -1466,10 +868,12 @@ signal. GPU support explicitly out of scope.
 | D | 2 d | 3 d | 1 w (rule audit tangled) |
 | E | 1 w | 1 w | 2 w (SB3 override painful) |
 | 6 | 2 h code | open-ended soak | ongoing |
+| 7 | 1 d build | 1 d build + 1 overnight validation | 3 d (heuristic tuning) |
+| 8 | 3 d code (steps 1–6) | 3–5 d code + 1 h smoke + overnight soak | 1 w (dev-apply sub-agent edge cases) |
 | F | 1.5 w | 2 w | 3 w (training destabilizes) |
-| **Sub-total (A–E + 0–5 + 6 wire-up)** | **~3.5 w** | **~5.5–6.5 w** | **~10–11 w** |
-| **+ 20% integration buffer** | +0.7 w | +1.3 w | +2.2 w |
-| **Total (excl. F)** | **~4 w** | **~7–8 w** | **~12–13 w** |
+| **Sub-total (A–E + 0–5 + 6 wire-up + 7 + 8)** | **~5 w** | **~7–8 w** | **~12–13 w** |
+| **+ 20% integration buffer** | +1.0 w | +1.6 w | +2.6 w |
+| **Total (excl. F)** | **~6 w** | **~9–10 w** | **~15 w** |
 | **+ F if chased** | +1.5 w | +2 w | +3 w |
 | **+ G (multi-race)** | +6 w | +8–10 w | +14 w |
 
@@ -1548,6 +952,104 @@ experience only (no dashboard integration). Plan:
 ## Plan history
 
 Append-only — do not edit prior entries.
+
+- *2026-04-19* — **data-snapshots consolidation + improvements/ cleanup.**
+  Project root had 13 root-level `data-*` and `data.bak-*` snapshot dirs
+  (untracked but not gitignored — defensive gap). Consolidated all
+  current snapshots into a new `data-snapshots/` parent dir, added
+  `/data-snapshots/` to `.gitignore`, updated the
+  `.claude/skills/improve-bot/SKILL.md` convention so future
+  `data.bak-$TS` and `data.demo-snapshot-$TS` writes land under
+  `data-snapshots/` instead of the project root. Tossed 7 pre-2026-04-14
+  snapshots (corresponding runs closed). Kept 5 snapshots from
+  2026-04-14 onward. Added `data-snapshots/README.md` documenting the
+  convention. Updated `documentation/soak-test-runs/README.md` (the
+  procedure doc) to reference new snapshot paths. Also moved the orphan
+  `documentation/improvements/self-improve/20260414-1127-retry-storm-dedup.md`
+  → `documentation/soak-test-runs/improve-2026-04-14-retry-storm-dedup.md`
+  (pairs with originating run record) and removed the now-empty
+  `documentation/improvements/` subtree.
+
+- *2026-04-19* — **doc-tree platform/domain split.** Established the
+  `documentation/sc2/<race>/` convention so platform docs (master plan,
+  build plans, wiki, soak-test) stay separable from game-specific docs.
+  Moved `protoss_sc2_guiding_principles.md` → `sc2/protoss/guiding-principles.md`,
+  `protoss_tech_tree.md` → `sc2/protoss/tech-tree.md`,
+  `tactical-bugs.md` → `sc2/protoss/tactical-bugs.md` (filenames
+  normalised to kebab-case; redundant `protoss_` prefix dropped since
+  the directory carries the race). Phase G's race-specific docs land
+  under sibling `sc2/zerg/` and `sc2/terran/`. Co-located the soak-test
+  procedure with its run records: `documentation/soak-test.md` →
+  `documentation/soak-test-runs/README.md`. Moved the narrative
+  `project-history.md` → `wiki/project-history.md` and registered it in
+  the Start Here table. Updated 8 live inbound references (advisor
+  bridge, advisor test, two SKILL.md files, wiki architecture page,
+  master plan, evolve plan, api docstring).
+
+- *2026-04-19* — **plan/build-doc cleanup pass.** Applied the
+  pointer-extraction pattern uniformly across every phase:
+
+  - **Tier 1 file moves.** All `phase-N-build-plan.md` (1–5) moved from
+    `documentation/` → `documentation/plans/` for path consistency with
+    the master plan and `improve-bot-evolve-plan.md`. Renamed
+    `documentation/unit-type-histogram-plan.md` →
+    `documentation/plans/phase-b-build-plan.md` (this was the Phase B
+    build doc all along, just under a non-conforming name). Archived
+    completed always-up-era plans (`phase-4-5-backlog.md`,
+    `phase-4-7-eval-pipeline-fixes.md`,
+    `phase-4-transparency-dashboard-plan.md`,
+    `phase-a-buildphase-runbook.md`, `soak-2026-04-11-fixes.md`) →
+    `documentation/archived/`. Moved `soak-2026-04-18-selfplay-viewer.md`
+    → `documentation/soak-test-runs/`.
+
+  - **Tier 2 pointer extraction.** Created build docs for every
+    previously-inline phase: `phase-d-build-plan.md`, `phase-e-build-plan.md`,
+    `phase-6-build-plan.md`, `phase-7-build-plan.md`,
+    `phase-f-build-plan.md`, `phase-g-build-plan.md`. Each phase in the
+    master plan is now a pointer-style summary (Goal, Track, Prereqs,
+    Scope summary, Tests, Effort, Validation, Gate, Kill criterion,
+    Rollback) with a "read the build doc first" instruction. Phase B
+    pointer-ized to reference the existing `phase-b-build-plan.md`.
+
+  - **Tactical bugs extracted.** The T.1–T.12 backlog wedged inside
+    Phase B was extracted to `documentation/sc2/protoss/tactical-bugs.md`
+    (preserves item numbering and content verbatim, organised into
+    Resolved / Open). T.1–T.12 were not master-plan phases and don't
+    belong in the strategic plan.
+
+  - **Effect.** Master plan went 1373 → ~1010 lines. Every phase now
+    has a single canonical build-doc location. Every parent-plan back
+    reference in the moved phase-1..5 build docs was updated.
+
+- *2026-04-19* — merged `documentation/improve-bot-evolve-plan.md` (was a
+  freestanding feature plan) into this master plan as **Phase 8** in the
+  Operational track. Pointer-style merge: Phase 8 carries the canonical
+  fields (Goal, Track, Prereqs, Scope summary, Tests, Effort, Validation,
+  Gate, Kill criterion, Rollback) plus a strong pointer back to the
+  build doc, which moved to `documentation/plans/improve-bot-evolve-plan.md`
+  and stays live as the build-detail source of truth (not archived).
+
+  In the same pass, completed phases A, 0, 1, 2, 3, 4, 5 were compressed
+  to one-paragraph summary + pointer to their respective build docs
+  (`documentation/phase-N-build-plan.md`, `documentation/wiki/subprocess-selfplay.md`,
+  or `documentation/archived/alphastar-upgrade-plan.md`). Master plan
+  shrunk from 1574 → ~1340 lines despite adding Phase 8.
+
+  Sandbox spec moved to a single mode-table in the Phase 5 section
+  covering both `ADVISED_AUTO=1` (shipped, `bots/current/**`) and
+  `EVO_AUTO=1` (Phase 8, `bots/**`) — replacing the prior single-mode
+  spec. Phase G picked up an addendum about per-race parent chains for
+  evolve once a second race ships. Track structure gained a Track 6
+  (Multi-race) and Track 5 grew to include Phase 8. Decision graph
+  redrawn to show all completed phases consolidated and operational
+  phases (6, 7, 8) as parallel branches off the Phase 5 gate. Time
+  budget table gained Phase 7 and Phase 8 rows with corresponding total
+  adjustments.
+
+  Recurring rule extracted to memory: any plan past ~2000 lines / 40K
+  tokens should refactor completed phases and fully-scoped sub-features
+  to summary+pointer, since the Read tool refuses single reads at 25K
+  tokens.
 
 - *2026-04-17* — Phase 4 (Elo ladder + cross-version promotion) complete.
   All 7 build steps shipped. `src/orchestrator/ladder.py`, `scripts/ladder.py`,

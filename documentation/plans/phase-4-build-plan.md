@@ -1,6 +1,6 @@
 # Phase 4 Build Plan — Elo ladder + cross-version promotion
 
-**Parent plan:** [alpha4gate-master-plan.md](plans/alpha4gate-master-plan.md) Phase 4 (lines 589–648)
+**Parent plan:** [alpha4gate-master-plan.md](alpha4gate-master-plan.md) — Phase 4 (line numbers stale after 2026-04-19 refactor; search "Phase 4 — Elo ladder")
 **Parent issue:** #105 (umbrella)
 **Branch:** `master-plan/4/elo-ladder` (cut from master at `39b11e9`)
 **Baseline tag:** `master-plan/4/baseline`
