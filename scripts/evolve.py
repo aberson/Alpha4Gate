@@ -112,6 +112,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="SC2 map name (default: Simple64)",
     )
     parser.add_argument(
+        "--game-time-limit",
+        type=int,
+        default=1800,
+        help=(
+            "SC2 in-game time limit per game, in seconds (default: 1800 = "
+            "30 min). Project-wide selfplay default is 300s, which cuts "
+            "mirror matches short — evolve bumps it so games can resolve "
+            "naturally."
+        ),
+    )
+    parser.add_argument(
+        "--hard-timeout",
+        type=float,
+        default=2700.0,
+        help=(
+            "Wall-clock timeout per game in seconds (default: 2700 = 45 "
+            "min). Must be >= game-time-limit plus some buffer for SC2 "
+            "spin-up and scoring."
+        ),
+    )
+    parser.add_argument(
         "--no-commit",
         action="store_true",
         help="Skip the auto-commit on promote (dev / test use).",
@@ -686,6 +707,8 @@ def run_loop(
         pool_kwargs: dict[str, Any] = {
             "pool_size": args.pool_size,
             "map_name": args.map,
+            "game_time_limit": args.game_time_limit,
+            "hard_timeout": args.hard_timeout,
         }
         if claude_fn is not None:
             pool_kwargs["claude_fn"] = claude_fn
@@ -770,6 +793,8 @@ def run_loop(
             "ab_games": args.ab_games,
             "gate_games": args.gate_games,
             "map_name": args.map,
+            "game_time_limit": args.game_time_limit,
+            "hard_timeout": args.hard_timeout,
         }
         if run_batch_fn is not None:
             round_kwargs["run_batch_fn"] = run_batch_fn

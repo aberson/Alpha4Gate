@@ -173,7 +173,12 @@ class _BatchRecorder:
         self.calls: list[tuple[str, str, int, str]] = []
 
     def __call__(
-        self, p1: str, p2: str, games: int, map_name: str
+        self,
+        p1: str,
+        p2: str,
+        games: int,
+        map_name: str,
+        **kwargs: Any,
     ) -> list[SelfPlayRecord]:
         self.calls.append((p1, p2, games, map_name))
         if not self._specs:
@@ -807,7 +812,7 @@ class TestRunRound:
         _seed_pointer(tmp_path, "v0")
 
         def exploding_batch(
-            p1: str, p2: str, games: int, map_name: str
+            p1: str, p2: str, games: int, map_name: str, **kwargs: Any
         ) -> list[SelfPlayRecord]:
             raise RuntimeError("selfplay blew up")
 
@@ -841,7 +846,7 @@ class TestRunRound:
         call_count = {"n": 0}
 
         def partly_exploding_batch(
-            p1: str, p2: str, games: int, map_name: str
+            p1: str, p2: str, games: int, map_name: str, **kwargs: Any
         ) -> list[SelfPlayRecord]:
             call_count["n"] += 1
             if call_count["n"] == 1:

@@ -142,6 +142,8 @@ def _build_args(
     seed: int = 42,
     map_name: str = "Simple64",
     run_log: Path | None = None,
+    game_time_limit: int = 1800,
+    hard_timeout: float = 2700.0,
 ) -> argparse.Namespace:
     """Construct an argparse.Namespace pointing at tmp_path for all state."""
     return argparse.Namespace(
@@ -150,6 +152,8 @@ def _build_args(
         gate_games=gate_games,
         hours=hours,
         map=map_name,
+        game_time_limit=game_time_limit,
+        hard_timeout=hard_timeout,
         no_commit=no_commit,
         results_path=tmp_path / "evolve_results.jsonl",
         pool_path=tmp_path / "evolve_pool.json",

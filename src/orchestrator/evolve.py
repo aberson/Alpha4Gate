@@ -358,6 +358,8 @@ def run_round(
     ab_games: int = 10,
     gate_games: int = 5,
     map_name: str = "Simple64",
+    game_time_limit: int = 1800,
+    hard_timeout: float = 2700.0,
     run_batch_fn: Callable[..., list[SelfPlayRecord]] | None = None,
     dev_apply_fn: Callable[[Path, Improvement], None] | None = None,
     candidate_namer: Callable[[], tuple[str, str]] | None = None,
@@ -449,7 +451,14 @@ def run_round(
             ab_games,
             parent,
         )
-        ab_record = run_batch_fn(cand_a, cand_b, ab_games, map_name)
+        ab_record = run_batch_fn(
+            cand_a,
+            cand_b,
+            ab_games,
+            map_name,
+            game_time_limit=game_time_limit,
+            hard_timeout=hard_timeout,
+        )
         ab_wins_a, ab_wins_b = _count_wins(ab_record, cand_a, cand_b)
 
         if ab_wins_a == ab_wins_b:
@@ -491,7 +500,14 @@ def run_round(
             parent,
             gate_games,
         )
-        gate_record = run_batch_fn(ab_winner, parent, gate_games, map_name)
+        gate_record = run_batch_fn(
+            ab_winner,
+            parent,
+            gate_games,
+            map_name,
+            game_time_limit=game_time_limit,
+            hard_timeout=hard_timeout,
+        )
         gate_wins_cand, gate_wins_parent = _count_wins(
             gate_record, ab_winner, parent
         )
@@ -990,6 +1006,8 @@ def generate_pool(
     mirror_games: int = 3,
     pool_size: int = 10,
     map_name: str = "Simple64",
+    game_time_limit: int = 1800,
+    hard_timeout: float = 2700.0,
     run_batch_fn: Callable[..., list[SelfPlayRecord]] | None = None,
     claude_fn: Callable[[str], str] | None = None,
 ) -> list[Improvement]:
@@ -1051,7 +1069,14 @@ def generate_pool(
         parent,
         map_name,
     )
-    records = run_batch_fn(parent, parent, mirror_games, map_name)
+    records = run_batch_fn(
+        parent,
+        parent,
+        mirror_games,
+        map_name,
+        game_time_limit=game_time_limit,
+        hard_timeout=hard_timeout,
+    )
 
     # 2. Summary stats for the prompt.
     summary = _summarize_records(records, parent)
