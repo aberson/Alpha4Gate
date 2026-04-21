@@ -430,23 +430,41 @@ class TestRunRound:
 
         assert isinstance(result, RoundResult)
         assert result.promoted is True
+        # winner retains the A/B winner's cand name so imp identification
+        # in scripts/evolve.py still matches SelfPlayRecord.winner entries.
         assert result.winner == "cand_promo_a"
+        # promoted_version is the permanent vN — snapshot_current picks
+        # v1 because the only existing numeric version is v0.
+        assert result.promoted_version == "v1"
         assert result.gate_record is not None
         assert len(result.gate_record) == 5
         assert "promoted" in result.reason
+        assert "v1" in result.reason
 
-        # current.txt updated to the new winner.
+        # current.txt updated to the permanent vN, not the cand name.
         pointer = tmp_path / "bots" / "current" / "current.txt"
-        assert pointer.read_text(encoding="utf-8") == "cand_promo_a"
+        assert pointer.read_text(encoding="utf-8") == "v1"
 
-        # Winner dir preserved, loser dir gone.
-        assert (tmp_path / "bots" / "cand_promo_a").is_dir()
+        # Permanent vN dir exists; both scratch cand dirs are gone.
+        assert (tmp_path / "bots" / "v1").is_dir()
+        assert not (tmp_path / "bots" / "cand_promo_a").exists()
         assert not (tmp_path / "bots" / "cand_promo_b").exists()
 
-        # Confirm the candidate actually carries the applied training imp.
+        # v1 manifest lineage names the real parent (v0), not the
+        # scratch cand dir that snapshot_current happened to see.
+        manifest = json.loads(
+            (tmp_path / "bots" / "v1" / "manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert manifest["parent"] == "v0"
+
+        # Confirm the promoted vN carries the applied training imp — the
+        # reward rule was patched in cand_promo_a before snapshot, so the
+        # copy at bots/v1/data/ must show the patched value.
         post = json.loads(
             (
-                tmp_path / "bots" / "cand_promo_a" / "data" / "reward_rules.json"
+                tmp_path / "bots" / "v1" / "data" / "reward_rules.json"
             ).read_text(encoding="utf-8")
         )
         assert post["expansion_bonus"] == 2.0
@@ -648,17 +666,18 @@ class TestRunRound:
     def test_parent_snapshot_is_v0_for_cand_b(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Follow-on check: the second snapshot's manifest.parent is v0.
+        """Follow-on check: the promoted vN's manifest.parent is v0.
 
-        This proves the pointer restoration between the two snapshots is
-        actually taking effect — if it weren't, cand_b's parent would be
-        cand_a.
+        This proves both (a) the pointer restoration between the two
+        snapshots is taking effect and (b) ``_rewrite_manifest_parent``
+        fixed up the cand-intermediate name that ``snapshot_current``
+        would otherwise have recorded as the lineage parent.
         """
         _redirect_repo_root(tmp_path, monkeypatch)
         _seed_version(tmp_path, "v0")
         _seed_pointer(tmp_path, "v0")
 
-        # Gate passes so candidates survive for inspection.
+        # Gate passes so the promoted vN survives for inspection.
         batch = _BatchRecorder([(6, 4, 0), (4, 1, 0)])
         result = run_round(
             parent="v0",
@@ -670,10 +689,10 @@ class TestRunRound:
             candidate_namer=lambda: ("cand_parent_a", "cand_parent_b"),
         )
         assert result.promoted is True
-        assert result.winner is not None  # narrow for type checker
-        # Winner kept on disk — verify its manifest lists v0 as parent.
+        assert result.promoted_version is not None  # narrow for type checker
+        # The permanent vN's manifest lists the real v parent.
         winner_manifest = Manifest.from_json(
-            (tmp_path / "bots" / result.winner / "manifest.json")
+            (tmp_path / "bots" / result.promoted_version / "manifest.json")
             .read_text(encoding="utf-8")
         )
         assert winner_manifest.parent == "v0"

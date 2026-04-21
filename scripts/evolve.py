@@ -384,19 +384,31 @@ def start_post_training_daemon(
         )
         result["config_status"] = cfg_resp.status_code
         # 2. Fire it up. Backend resets ``_runs_completed`` to 0 on start.
+        #    Route is ``/api/training/start`` (not ``/daemon/start``) per
+        #    bots/v0/api.py:738.
         start_resp = httpx.post(
-            f"{backend_url}/api/training/daemon/start",
+            f"{backend_url}/api/training/start",
             timeout=10.0,
         )
         result["start_status"] = start_resp.status_code
-        _log.info(
-            "post-training: daemon started for %d cycles on %s "
-            "(config rc=%d, start rc=%d)",
-            cycles,
-            new_parent,
-            cfg_resp.status_code,
-            start_resp.status_code,
-        )
+        if cfg_resp.status_code == 200 and start_resp.status_code == 200:
+            _log.info(
+                "post-training: daemon started for %d cycles on %s "
+                "(config rc=%d, start rc=%d)",
+                cycles,
+                new_parent,
+                cfg_resp.status_code,
+                start_resp.status_code,
+            )
+        else:
+            _log.warning(
+                "post-training: daemon did NOT start on %s — config rc=%d, "
+                "start rc=%d. Promotion is still on disk; kick the daemon "
+                "off manually from the Loop tab.",
+                new_parent,
+                cfg_resp.status_code,
+                start_resp.status_code,
+            )
     except Exception as exc:
         result["error"] = f"{type(exc).__name__}: {exc}"
         _log.warning(
@@ -1434,14 +1446,21 @@ def run_loop(
             try:
                 parent_current = current_version_fn()
             except Exception:
-                parent_current = result.winner or parent_current
+                parent_current = (
+                    result.promoted_version or result.winner or parent_current
+                )
             if not args.no_commit:
+                # imp identification still uses the cand-name winner —
+                # result.winner matches candidate_a or candidate_b because
+                # that is what run_batch recorded in SelfPlayRecord.winner.
                 winning_imp = (
                     result.imp_a
                     if result.winner == result.candidate_a
                     else result.imp_b
                 )
-                winner_name = result.winner or parent_current
+                # Commit + git add must reference the permanent vN dir
+                # (the scratch cand_* dir was rmtree'd during promote).
+                winner_name = result.promoted_version or parent_current
                 commit_ok = commit_fn(
                     winner_name, round_index, winning_imp.title
                 )

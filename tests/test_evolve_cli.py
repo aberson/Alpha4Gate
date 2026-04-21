@@ -99,6 +99,7 @@ def _make_round(
     cand_a: str = "cand_x_a",
     cand_b: str = "cand_x_b",
     winner: str | None = None,
+    promoted_version: str | None = None,
     ab_score: tuple[int, int] = (6, 4),
     gate_score: tuple[int, int] = (3, 2),
 ) -> RoundResult:
@@ -127,6 +128,7 @@ def _make_round(
         winner=winner,
         promoted=promoted,
         reason=reason,
+        promoted_version=promoted_version,
     )
 
 
@@ -210,6 +212,7 @@ class _ScriptedRoundRunner:
             winner=out.winner,
             promoted=out.promoted,
             reason=out.reason,
+            promoted_version=out.promoted_version,
         )
 
 
@@ -521,7 +524,7 @@ def test_state_files_written_after_one_round(
 
 
 def test_promote_triggers_commit(cli: ModuleType, tmp_path: Path) -> None:
-    """Promote -> commit called with EVO_AUTO=1 and [evo-auto] in message."""
+    """Promote -> commit called with the promoted vN (not the cand hash)."""
     pool = _make_pool(4)
     round_runner = _ScriptedRoundRunner(
         [
@@ -530,10 +533,11 @@ def test_promote_triggers_commit(cli: ModuleType, tmp_path: Path) -> None:
                 imp_b=pool[1],
                 promoted=True,
                 reason=(
-                    "promoted: cand_x_a beat cand_x_b 6-4, "
+                    "promoted: v1 (was cand_x_a) beat cand_x_b 6-4, "
                     "then beat parent v0 3-2"
                 ),
                 winner="cand_x_a",
+                promoted_version="v1",
             ),
         ]
     )
@@ -552,10 +556,9 @@ def test_promote_triggers_commit(cli: ModuleType, tmp_path: Path) -> None:
         )
         return True
 
-    # current_version_fn should flip after promote to reflect the new
-    # pointer — first call = parent (at startup), subsequent calls =
-    # new version (after run_round swapped the pointer).
-    cv_seq = iter(["v0", "cand_x_a", "cand_x_a"])
+    # current_version_fn flips after promote — real run_round's promote
+    # branch now updates current.txt to the vN, not the scratch cand hash.
+    cv_seq = iter(["v0", "v1", "v1"])
 
     args = _build_args(tmp_path, hours=0.0, pool_size=4, no_commit=False)
 
@@ -568,7 +571,7 @@ def test_promote_triggers_commit(cli: ModuleType, tmp_path: Path) -> None:
     )
     assert rc == 0
     assert len(commit_calls) == 1
-    assert commit_calls[0]["new_version"] == "cand_x_a"
+    assert commit_calls[0]["new_version"] == "v1"
     assert commit_calls[0]["round_index"] == 1
 
 
@@ -1055,6 +1058,58 @@ def test_start_post_training_daemon_swallows_backend_errors(
 
     assert result["error"] is not None
     assert "ConnectError" in result["error"]
+
+
+def test_start_post_training_daemon_hits_correct_urls(
+    cli: ModuleType,
+) -> None:
+    """Sanity-check the two URLs start_post_training_daemon POSTs to.
+
+    Regression guard: the backend exposes ``PUT /api/training/daemon/config``
+    and ``POST /api/training/start`` (not ``/api/training/daemon/start``).
+    A typo on either would 404 and silently skip auto-training.
+    """
+    import httpx
+
+    captured: list[tuple[str, str, dict[str, Any]]] = []
+
+    class _Resp:
+        status_code = 200
+
+    def fake_put(url: str, **kwargs: Any) -> _Resp:
+        captured.append(("PUT", url, kwargs))
+        return _Resp()
+
+    def fake_post(url: str, **kwargs: Any) -> _Resp:
+        captured.append(("POST", url, kwargs))
+        return _Resp()
+
+    orig_put = httpx.put
+    orig_post = httpx.post
+    httpx.put = fake_put  # type: ignore[assignment]
+    httpx.post = fake_post  # type: ignore[assignment]
+    try:
+        result = cli.start_post_training_daemon(
+            cycles=5,
+            backend_url="http://localhost:8765",
+            new_parent="v3",
+        )
+    finally:
+        httpx.put = orig_put  # type: ignore[assignment]
+        httpx.post = orig_post  # type: ignore[assignment]
+
+    assert result["config_status"] == 200
+    assert result["start_status"] == 200
+    assert captured[0] == (
+        "PUT",
+        "http://localhost:8765/api/training/daemon/config",
+        {"json": {"max_runs": 5}, "timeout": 10.0},
+    )
+    assert captured[1] == (
+        "POST",
+        "http://localhost:8765/api/training/start",
+        {"timeout": 10.0},
+    )
 
 
 def test_sc2_not_installed_returns_1(

@@ -30,7 +30,10 @@ Design notes
   so the second candidate is snapshotted from the parent, not from candidate A.
 * The round is always idempotent on ``current.txt``: at exit it either still
   points at *parent* (discard or gate failure) or at the newly-promoted
-  candidate (gate pass).
+  ``vN`` (gate pass). On gate pass the winning scratch ``cand_*`` directory
+  is snapshotted to a fresh sequential ``vN`` (via ``snapshot_current``) and
+  both scratch dirs are rmtree'd — the resulting pointer is the permanent
+  version name, never a ``cand_*`` hash.
 * ``dev``-type improvements are dispatched to a caller-supplied
   ``dev_apply_fn``; production will inject a sub-agent spawner in a later
   step. Without one, ``dev`` imps raise :class:`NotImplementedError` so the
@@ -127,10 +130,14 @@ class Improvement:
 class RoundResult:
     """Outcome of one :func:`run_round` call.
 
-    ``candidate_a`` / ``candidate_b`` are version NAMES (strings); callers
-    derive paths via :func:`orchestrator.registry.get_version_dir`.
-    ``winner`` is the name of the surviving candidate when
-    ``promoted=True``; ``None`` otherwise (tie or gate failure).
+    ``candidate_a`` / ``candidate_b`` are the scratch ``cand_*`` version
+    names the round was fought under. ``winner`` is the name of the
+    ``cand_*`` that won A/B (kept in cand form so record winner strings
+    line up for :func:`_count_wins`); ``None`` on tie / gate failure.
+    ``promoted_version`` is the permanent ``vN`` name produced by the
+    post-gate snapshot — the value that should be fed to commit,
+    ladder logging, and ``current.txt`` reads. ``None`` unless
+    ``promoted=True``.
     """
 
     parent: str
@@ -143,6 +150,7 @@ class RoundResult:
     winner: str | None
     promoted: bool
     reason: str
+    promoted_version: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +283,40 @@ def _restore_pointer(parent_name: str) -> None:
     """
     pointer = _repo_root() / "bots" / "current" / "current.txt"
     pointer.write_text(parent_name, encoding="utf-8")
+
+
+def _rewrite_manifest_parent(version_dir: Path, parent_name: str) -> None:
+    """Rewrite the ``parent`` field in ``version_dir/manifest.json``.
+
+    ``snapshot_current`` naturally records its immediate source — in the
+    promote flow that is the scratch ``cand_*`` dir, not the real parent
+    ``vN``. We overwrite the parent field post-snapshot so the lineage
+    chain is readable even after the scratch dirs are rmtree'd. Missing
+    or malformed manifests are logged at WARNING and left alone — the
+    promoted ``vN`` dir is still usable without a well-formed manifest.
+    """
+    manifest_path = version_dir / "manifest.json"
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        _log.warning(
+            "could not read %s after promotion; skipping parent rewrite",
+            manifest_path,
+            exc_info=True,
+        )
+        return
+    payload["parent"] = parent_name
+    try:
+        manifest_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        _log.warning(
+            "could not write %s after promotion; lineage may be stale",
+            manifest_path,
+            exc_info=True,
+        )
 
 
 def _count_wins(records: list[SelfPlayRecord], a: str, b: str) -> tuple[int, int]:
@@ -543,7 +585,6 @@ def run_round(
 
         ab_winner = cand_a if ab_wins_a > ab_wins_b else cand_b
         ab_loser = cand_b if ab_winner == cand_a else cand_a
-        ab_loser_dir = cand_b_dir if ab_loser == cand_b else cand_a_dir
 
         _log.info(
             "evolve round: %s vs parent %s (%d games)",
@@ -598,12 +639,19 @@ def run_round(
         # candidate.
         needed = gate_games // 2 + 1
         if gate_wins_cand >= needed:
-            # Promote the winner: replace the pointer (the version dir already
-            # exists from the earlier snapshot). Clean up the loser.
+            # Promote: point current at the winning cand, snapshot to the
+            # next sequential vN (rewrites imports + writes VERSION /
+            # manifest + flips current.txt), rewrite manifest.parent so
+            # vN's lineage names the real parent vN rather than the
+            # transient cand hash, then rmtree both scratch cand dirs.
             _restore_pointer(ab_winner)
-            _safe_rmtree(ab_loser_dir)
+            new_version_dir = _snapshot_mod.snapshot_current()
+            new_version = new_version_dir.name
+            _rewrite_manifest_parent(new_version_dir, parent)
+            _safe_rmtree(cand_a_dir)
+            _safe_rmtree(cand_b_dir)
             reason = (
-                f"promoted: {ab_winner} beat {ab_loser} "
+                f"promoted: {new_version} (was {ab_winner}) beat {ab_loser} "
                 f"{max(ab_wins_a, ab_wins_b)}-{min(ab_wins_a, ab_wins_b)}, "
                 f"then beat parent {parent} "
                 f"{gate_wins_cand}-{gate_wins_parent}"
@@ -620,6 +668,7 @@ def run_round(
                 winner=ab_winner,
                 promoted=True,
                 reason=reason,
+                promoted_version=new_version,
             )
 
         # Gate failed: discard BOTH candidates, pointer stays at parent.
