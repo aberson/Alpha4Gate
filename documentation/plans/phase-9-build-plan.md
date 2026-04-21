@@ -539,6 +539,82 @@ operators can opt in with `--viewer` for debugging.
     the `project_ppo_only_dead_end` memory), consider gating it behind
     a min-baseline-change threshold rather than firing on every promotion.
 
+### Step 11: Outer evolve→train cycle
+
+- **Status:** PENDING (not urgent; tracked for future long-run sessions)
+- **Problem:** After Step 10 shipped, a single invocation of
+  `scripts/evolve.py` does ONE evolve pass (up to N rounds on the
+  starting parent) + optionally one bounded training burst, then exits.
+  Chaining **evolve → train → evolve → train → ...** across multiple
+  outer iterations currently requires the operator to re-run the
+  command manually after each training burst completes. For overnight /
+  multi-day runs where the goal is "keep improving until progress
+  stalls," this is friction + attention-tax.
+- **Done when:**
+  - New flag `--outer-cycles N` on `scripts/evolve.py` (default 1 =
+    current single-pass behaviour, backwards-compatible).
+  - When `N > 1`, after each `run_loop()` iteration:
+    - If `rounds_promoted >= 1` AND `--post-training-cycles > 0`:
+      kick off the bounded daemon (existing Step 10 hook), then
+      **poll** `/api/training/daemon` every 30s until `running=false`
+      (new helper `_wait_for_daemon_idle(backend_url, poll_interval_s=30,
+      timeout_s=...)`). Timeout default is generous (e.g. 4h per wait)
+      so a stuck daemon eventually breaks the outer loop with a clear
+      error rather than hanging forever.
+    - If `rounds_promoted == 0`: exit the outer loop early — no point
+      re-evolving off the same un-retrained baseline. Log a clear
+      "outer loop stopped: iteration N produced 0 promotions."
+    - Otherwise: re-enter `run_loop()` on the new parent
+      (`current_version()` is re-queried at the top of each iteration,
+      so fresh pool-gen fires against the newly-promoted baseline).
+  - Error propagation: if any inner `run_loop()` returns non-zero,
+    surface it and stop the outer loop.
+  - Rename `--post-training-cycles` → `--post-training-runs` at the
+    same time (fixes naming-vs-semantics bug: the flag maps to
+    `DaemonConfig.max_runs`, which counts daemon *runs*, each of which
+    is `cycles_per_run=5` cycles. "Cycles" in the flag name is
+    misleading). Keep the old name as a deprecated alias for one
+    release if needed.
+  - Dashboard: Evolution tab's `CurrentPhaseCard` gains a new
+    `post_training` phase that renders while `_wait_for_daemon_idle`
+    is polling — shows "Waiting for post-evolve training — run X/N on
+    parent <version>" with an indefinite progress bar. Falls back to
+    the existing phases when the daemon returns to idle.
+  - Stats surface iteration progress: either a new `outer_iteration`
+    field on `evolve_run_state.json` OR a dedicated
+    `evolve_outer_state.json` file that the run-stats grid shows as
+    "Iteration X/N" when `--outer-cycles > 1`.
+  - Tests: `_wait_for_daemon_idle` unit test (mocked `httpx`), outer
+    loop integration test (injected fakes for run_loop + daemon
+    polling), early-exit test on no-promotion, timeout test.
+- **Files to modify/create:**
+  - `scripts/evolve.py` — new flag, outer-loop wrapper around
+    existing run_loop, `_wait_for_daemon_idle` helper, rename of
+    `--post-training-cycles`.
+  - `bots/v0/api.py` — possibly add `outer_iteration` to
+    `/api/evolve/state` response (or new endpoint).
+  - `frontend/src/components/EvolutionTab.tsx` — new `post_training`
+    phase rendering, iteration-progress display.
+  - `tests/test_evolve_cli.py` — outer-loop + wait-for-daemon tests.
+- **Depends on:** Step 10 (shipped).
+- **Effort:** ~1 session of code + tests + dashboard polish.
+- **Why this is deferred:** Step 10's wins are enough for the next
+  overnight run. Running 4 outer iterations × (~2.5h evolve + ~5h
+  training) = ~30h wall-clock — a real investment. Worth validating
+  Step 10's dev-only + retry-with-feedback actually produces
+  promotions consistently before layering this on top. If the next
+  long run shows 0 promotions from a well-generated dev-only pool,
+  outer cycles won't rescue it — the kill-criterion debate (plan §
+  "Kill criterion") kicks in first.
+- **Not in scope for this step:**
+  - Branching / exploration across multiple parent lineages (keep one
+    current baseline; one outer loop).
+  - Auto-tuning `--pool-size` or `--post-training-runs` between
+    iterations based on observed metrics.
+  - Persisting an outer-loop resume state file (if the outer loop
+    is interrupted mid-iteration, the operator just re-runs — the
+    inner-loop `--resume` already handles in-flight pool state).
+
 ## 8. Risks and Open Questions
 
 | Item | Risk | Mitigation |
