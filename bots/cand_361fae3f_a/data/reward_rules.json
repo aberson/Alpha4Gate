@@ -1,0 +1,936 @@
+{
+  "rules": [
+    {
+      "id": "scout-early",
+      "description": "Reward scouting before 3:00",
+      "condition": {
+        "field": "game_time_seconds",
+        "op": "<",
+        "value": 180
+      },
+      "requires": {
+        "field": "has_scouted",
+        "op": "==",
+        "value": true
+      },
+      "reward": 0.01,
+      "active": true
+    },
+    {
+      "id": "defend-rush",
+      "description": "Reward having army near base when enemy structures detected early",
+      "condition": {
+        "field": "enemy_structure_near_base_early",
+        "op": "==",
+        "value": true
+      },
+      "requires": {
+        "field": "army_supply",
+        "op": ">=",
+        "value": 6
+      },
+      "reward": 0.03,
+      "active": true
+    },
+    {
+      "id": "no-supply-block",
+      "description": "Penalize being supply blocked (strengthened: was -0.005)",
+      "condition": {
+        "field": "supply_used",
+        "op": "==",
+        "value_field": "supply_cap"
+      },
+      "requires": null,
+      "reward": -0.02,
+      "active": true
+    },
+    {
+      "id": "worker-saturation",
+      "description": "Reward reaching 22+ workers per base",
+      "condition": {
+        "field": "worker_count",
+        "op": ">=",
+        "value": 22
+      },
+      "requires": null,
+      "reward": 0.002,
+      "active": true
+    },
+    {
+      "id": "expand-on-time",
+      "description": "Reward expanding before 5:00",
+      "condition": {
+        "field": "base_count",
+        "op": ">=",
+        "value": 2
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": "<",
+        "value": 300
+      },
+      "reward": 0.02,
+      "active": true
+    },
+    {
+      "id": "mineral-floating-moderate",
+      "description": "Penalize banking over 500 minerals (new: address chronic floating)",
+      "condition": {
+        "field": "minerals",
+        "op": ">",
+        "value": 500
+      },
+      "requires": null,
+      "reward": -0.01,
+      "active": true
+    },
+    {
+      "id": "mineral-floating",
+      "description": "Penalize banking over 1000 minerals (strengthened: was -0.02)",
+      "condition": {
+        "field": "minerals",
+        "op": ">",
+        "value": 1000
+      },
+      "requires": null,
+      "reward": -0.04,
+      "active": true
+    },
+    {
+      "id": "mineral-floating-severe",
+      "description": "Stronger penalty for banking over 2000 minerals (strengthened: was -0.04)",
+      "condition": {
+        "field": "minerals",
+        "op": ">",
+        "value": 2000
+      },
+      "requires": null,
+      "reward": -0.06,
+      "active": true
+    },
+    {
+      "id": "mineral-floating-extreme",
+      "description": "Heavy penalty for banking over 3000 minerals (strengthened: was -0.025)",
+      "condition": {
+        "field": "minerals",
+        "op": ">",
+        "value": 3000
+      },
+      "requires": null,
+      "reward": -0.06,
+      "active": true
+    },
+    {
+      "id": "gas-floating",
+      "description": "Penalize banking over 500 gas (strengthened: was -0.005)",
+      "condition": {
+        "field": "vespene",
+        "op": ">",
+        "value": 500
+      },
+      "requires": null,
+      "reward": -0.015,
+      "active": true
+    },
+    {
+      "id": "excess-workers-50",
+      "description": "Penalize having more than 50 workers (strengthened: was -0.004)",
+      "condition": {
+        "field": "worker_count",
+        "op": ">",
+        "value": 50
+      },
+      "requires": null,
+      "reward": -0.015,
+      "active": true
+    },
+    {
+      "id": "excess-workers-65",
+      "description": "Stronger penalty for 65+ workers (strengthened: was -0.008)",
+      "condition": {
+        "field": "worker_count",
+        "op": ">",
+        "value": 65
+      },
+      "requires": null,
+      "reward": -0.03,
+      "active": true
+    },
+    {
+      "id": "worker-production",
+      "description": "Reward having 16+ workers before 2:00",
+      "condition": {
+        "field": "worker_count",
+        "op": ">=",
+        "value": 16
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": "<",
+        "value": 120
+      },
+      "reward": 0.003,
+      "active": true
+    },
+    {
+      "id": "army-buildup",
+      "description": "Reward maintaining minimum fighting force",
+      "condition": {
+        "field": "army_supply",
+        "op": ">=",
+        "value": 15
+      },
+      "requires": null,
+      "reward": 0.002,
+      "active": true
+    },
+    {
+      "id": "army-ratio",
+      "description": "Reward having stronger army than visible enemy",
+      "condition": {
+        "field": "army_stronger_than_enemy",
+        "op": "==",
+        "value": true
+      },
+      "requires": null,
+      "reward": 0.005,
+      "active": true
+    },
+    {
+      "id": "tech-progress",
+      "description": "Reward building robo facility before 6:00",
+      "condition": {
+        "field": "robo_count",
+        "op": ">=",
+        "value": 1
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": "<",
+        "value": 360
+      },
+      "reward": 0.005,
+      "active": true
+    },
+    {
+      "id": "forge-built",
+      "description": "Reward building a Forge before 5 minutes",
+      "condition": {
+        "field": "forge_count",
+        "op": ">=",
+        "value": 1
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": "<",
+        "value": 300
+      },
+      "reward": 0.005,
+      "active": true
+    },
+    {
+      "id": "upgrade-started",
+      "description": "Reward having at least 1 upgrade",
+      "condition": {
+        "field": "upgrade_count",
+        "op": ">=",
+        "value": 1
+      },
+      "requires": null,
+      "reward": 0.004,
+      "active": true
+    },
+    {
+      "id": "upgrade-progression",
+      "description": "Reward having 3+ upgrades (strong tech progression)",
+      "condition": {
+        "field": "upgrade_count",
+        "op": ">=",
+        "value": 3
+      },
+      "requires": null,
+      "reward": 0.006,
+      "active": true
+    },
+    {
+      "id": "no-upgrades-late",
+      "description": "Penalize having zero upgrades after 6 minutes",
+      "condition": {
+        "field": "upgrade_count",
+        "op": "==",
+        "value": 0
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 360
+      },
+      "reward": -0.005,
+      "active": true
+    },
+    {
+      "id": "gateway-efficiency",
+      "description": "Reward having enough production gateways",
+      "condition": {
+        "field": "gateway_count",
+        "op": ">=",
+        "value": 3
+      },
+      "requires": null,
+      "reward": 0.003,
+      "active": true
+    },
+    {
+      "id": "gateway-scaling-6",
+      "description": "Reward 6+ gateways for multi-base economy (strengthened: was 0.005)",
+      "condition": {
+        "field": "gateway_count",
+        "op": ">=",
+        "value": 6
+      },
+      "requires": {
+        "field": "base_count",
+        "op": ">=",
+        "value": 2
+      },
+      "reward": 0.015,
+      "active": true
+    },
+    {
+      "id": "gateway-scaling-8",
+      "description": "Reward 8+ gateways for 3-base economy",
+      "condition": {
+        "field": "gateway_count",
+        "op": ">=",
+        "value": 8
+      },
+      "requires": {
+        "field": "base_count",
+        "op": ">=",
+        "value": 3
+      },
+      "reward": 0.006,
+      "active": true
+    },
+    {
+      "id": "too-few-gateways-5",
+      "description": "Penalize having < 5 gateways with 2+ bases after 5 minutes (new)",
+      "condition": {
+        "field": "gateway_count",
+        "op": "<",
+        "value": 5
+      },
+      "requires": {
+        "field": "base_count",
+        "op": ">=",
+        "value": 2
+      },
+      "reward": -0.01,
+      "active": true
+    },
+    {
+      "id": "too-few-gateways",
+      "description": "Penalize having fewer than 4 gateways after 4 minutes (strengthened: was -0.005)",
+      "condition": {
+        "field": "gateway_count",
+        "op": "<",
+        "value": 4
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 240
+      },
+      "reward": -0.01,
+      "active": true
+    },
+    {
+      "id": "early-scout-tight",
+      "description": "Reward scouting before 2:00 (tighter window)",
+      "condition": {
+        "field": "game_time_seconds",
+        "op": "<",
+        "value": 120
+      },
+      "requires": {
+        "field": "has_scouted",
+        "op": "==",
+        "value": true
+      },
+      "reward": 0.015,
+      "active": true
+    },
+    {
+      "id": "react-to-rush",
+      "description": "Reward defending when enemy is near base",
+      "condition": {
+        "field": "is_defending_rush",
+        "op": "==",
+        "value": true
+      },
+      "requires": null,
+      "reward": 0.03,
+      "active": true
+    },
+    {
+      "id": "map-awareness",
+      "description": "Reward finding enemy structures",
+      "condition": {
+        "field": "enemy_structure_count",
+        "op": ">",
+        "value": 0
+      },
+      "requires": null,
+      "reward": 0.005,
+      "active": true
+    },
+    {
+      "id": "attack-state-mid",
+      "description": "Reward choosing ATTACK state after 4 minutes (raised to 0.12 from 0.08, advised run 20260413-2145 to route around bot.py:872 move-vs-attack bug)",
+      "condition": {
+        "field": "current_state",
+        "op": "==",
+        "value": "attack"
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 240
+      },
+      "reward": 0.12,
+      "active": true
+    },
+    {
+      "id": "attack-state-late",
+      "description": "Reward choosing ATTACK state after 6 minutes (raised to 0.15 from 0.1, advised run 20260413-2145)",
+      "condition": {
+        "field": "current_state",
+        "op": "==",
+        "value": "attack"
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 360
+      },
+      "reward": 0.15,
+      "active": true
+    },
+    {
+      "id": "passive-army-idle",
+      "description": "Penalize idle army not in attack state (lowered: was army>=40)",
+      "condition": {
+        "field": "current_state",
+        "op": "!=",
+        "value": "attack"
+      },
+      "requires": {
+        "field": "army_supply",
+        "op": ">=",
+        "value": 20
+      },
+      "reward": -0.015,
+      "active": true
+    },
+    {
+      "id": "defend-too-long",
+      "description": "Penalize staying in defend state after 8 minutes (raised: was -0.03, advised iter 3)",
+      "condition": {
+        "field": "current_state",
+        "op": "==",
+        "value": "defend"
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 480
+      },
+      "reward": -0.05,
+      "active": true
+    },
+    {
+      "id": "defend-with-army",
+      "description": "Penalize defending with army >= 15 supply (raised: was -0.02, advised iter 4)",
+      "condition": {
+        "field": "current_state",
+        "op": "==",
+        "value": "defend"
+      },
+      "requires": {
+        "field": "army_supply",
+        "op": ">=",
+        "value": 15
+      },
+      "reward": -0.02,
+      "active": true
+    },
+    {
+      "id": "defend-with-strong-army",
+      "description": "Heavy penalty for defending with army >= 30 supply (advised iter 4)",
+      "condition": {
+        "field": "current_state",
+        "op": "==",
+        "value": "defend"
+      },
+      "requires": {
+        "field": "army_supply",
+        "op": ">=",
+        "value": 30
+      },
+      "reward": -0.06,
+      "active": true
+    },
+    {
+      "id": "aggressive-finish",
+      "description": "Reward attacking with a strong army (60+ supply) (raised to 0.05 from 0.03, advised run 20260413-2145)",
+      "condition": {
+        "field": "current_state",
+        "op": "==",
+        "value": "attack"
+      },
+      "requires": {
+        "field": "army_supply",
+        "op": ">=",
+        "value": 60
+      },
+      "reward": 0.05,
+      "active": true
+    },
+    {
+      "id": "early-attack-timing",
+      "description": "Reward attacking before 5 minutes with decent army",
+      "condition": {
+        "field": "current_state",
+        "op": "==",
+        "value": "attack"
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": "<",
+        "value": 300
+      },
+      "reward": 0.02,
+      "active": true
+    },
+    {
+      "id": "late-game-stall",
+      "description": "Penalize being in late_game state for too long (after 10 min, strengthened: was -0.01)",
+      "condition": {
+        "field": "current_state",
+        "op": "==",
+        "value": "late_game"
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 600
+      },
+      "reward": -0.03,
+      "active": true
+    },
+    {
+      "id": "army-worker-balance",
+      "description": "Reward army supply >= worker count after 3 minutes",
+      "condition": {
+        "field": "army_supply",
+        "op": ">=",
+        "value_field": "worker_count"
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 180
+      },
+      "reward": 0.008,
+      "active": true
+    },
+    {
+      "id": "army-scaling-25",
+      "description": "Reward building army to 25+ supply",
+      "condition": {
+        "field": "army_supply",
+        "op": ">=",
+        "value": 25
+      },
+      "requires": null,
+      "reward": 0.004,
+      "active": true
+    },
+    {
+      "id": "army-scaling-40",
+      "description": "Reward building army to 40+ supply",
+      "condition": {
+        "field": "army_supply",
+        "op": ">=",
+        "value": 40
+      },
+      "requires": null,
+      "reward": 0.006,
+      "active": true
+    },
+    {
+      "id": "expand-stall-penalty",
+      "description": "Penalize staying in EXPAND state after 5 minutes",
+      "condition": {
+        "field": "current_state",
+        "op": "==",
+        "value": "expand"
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 300
+      },
+      "reward": -0.02,
+      "active": true
+    },
+    {
+      "id": "passive-late-penalty",
+      "description": "Penalize having < 10 army supply after 5 minutes",
+      "condition": {
+        "field": "army_supply",
+        "op": "<",
+        "value": 10
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 300
+      },
+      "reward": -0.006,
+      "active": true
+    },
+    {
+      "id": "low-army-4min",
+      "description": "Penalize army < 20 supply after 4 minutes (advised iteration 1)",
+      "condition": {
+        "field": "army_supply",
+        "op": "<",
+        "value": 20
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 240
+      },
+      "reward": -0.02,
+      "active": true
+    },
+    {
+      "id": "low-army-6min",
+      "description": "Penalize army < 30 supply after 6 minutes (advised iteration 1)",
+      "condition": {
+        "field": "army_supply",
+        "op": "<",
+        "value": 30
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 360
+      },
+      "reward": -0.025,
+      "active": true
+    },
+    {
+      "id": "low-army-8min",
+      "description": "Penalize army < 40 supply after 8 minutes (advised iteration 1)",
+      "condition": {
+        "field": "army_supply",
+        "op": "<",
+        "value": 40
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 480
+      },
+      "reward": -0.03,
+      "active": true
+    },
+    {
+      "id": "low-supply-cap-4min",
+      "description": "Penalize supply cap < 60 after 4 minutes (advised iteration 2)",
+      "condition": {
+        "field": "supply_cap",
+        "op": "<",
+        "value": 60
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 240
+      },
+      "reward": -0.02,
+      "active": true
+    },
+    {
+      "id": "low-supply-cap-6min",
+      "description": "Penalize supply cap < 80 after 6 minutes (advised iteration 2)",
+      "condition": {
+        "field": "supply_cap",
+        "op": "<",
+        "value": 80
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 360
+      },
+      "reward": -0.025,
+      "active": true
+    },
+    {
+      "id": "low-supply-cap-8min",
+      "description": "Penalize supply cap < 100 after 8 minutes (advised iteration 2)",
+      "condition": {
+        "field": "supply_cap",
+        "op": "<",
+        "value": 100
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 480
+      },
+      "reward": -0.03,
+      "active": true
+    },
+    {
+      "id": "low-supply-cap-12min",
+      "description": "Penalize supply cap < 140 after 12 minutes (advised run 20260413-2110)",
+      "condition": {
+        "field": "supply_cap",
+        "op": "<",
+        "value": 140
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 720
+      },
+      "reward": -0.035,
+      "active": true
+    },
+    {
+      "id": "low-supply-cap-15min",
+      "description": "Penalize supply cap < 180 after 15 minutes (advised run 20260413-2110)",
+      "condition": {
+        "field": "supply_cap",
+        "op": "<",
+        "value": 180
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 900
+      },
+      "reward": -0.04,
+      "active": true
+    },
+    {
+      "id": "attack-state-early",
+      "description": "Reward choosing ATTACK state after 3 minutes with 15+ army supply (added advised run 20260413-2145)",
+      "condition": {
+        "field": "strategic_state",
+        "op": "==",
+        "value": "ATTACK"
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 180
+      },
+      "reward": 0.06,
+      "active": true
+    },
+    {
+      "id": "tech-progress-tight",
+      "description": "Reward having robo before 5:00 (tighter than tech-progress, advised 20260414-0017)",
+      "condition": {
+        "field": "robo_count",
+        "op": ">=",
+        "value": 1
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": "<",
+        "value": 300
+      },
+      "reward": 0.008,
+      "active": true
+    },
+    {
+      "id": "tech-progress-strong",
+      "description": "Reward 2+ robo for multi-line Colossus/Immortal production (advised 20260414-0017)",
+      "condition": {
+        "field": "robo_count",
+        "op": ">=",
+        "value": 2
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": "<",
+        "value": 480
+      },
+      "reward": 0.012,
+      "active": true
+    },
+    {
+      "id": "upgrade-progression-strong",
+      "description": "Reward 5+ upgrades (deep tech, advised 20260414-0017)",
+      "condition": {
+        "field": "upgrade_count",
+        "op": ">=",
+        "value": 5
+      },
+      "requires": null,
+      "reward": 0.01,
+      "active": true
+    },
+    {
+      "id": "three-base-economy",
+      "description": "Reward reaching 3+ bases after 6:00 (economic ceiling for diff 5+, advised 20260414-0017 iter 2)",
+      "condition": {
+        "field": "base_count",
+        "op": ">=",
+        "value": 3
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 360
+      },
+      "reward": 0.015,
+      "active": true
+    },
+    {
+      "id": "three-base-early",
+      "description": "Reward 3+ bases before 8:00 (fast eco, advised 20260414-0017 iter 2)",
+      "condition": {
+        "field": "base_count",
+        "op": ">=",
+        "value": 3
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": "<",
+        "value": 480
+      },
+      "reward": 0.02,
+      "active": true
+    },
+    {
+      "id": "army-oversupply-idle",
+      "description": "Heavy penalty for 40+ army not attacking (targets retry-storm stall observed in iter 1 timeouts, advised 20260414-0017 iter 3)",
+      "condition": {
+        "field": "current_state",
+        "op": "!=",
+        "value": "attack"
+      },
+      "requires": {
+        "field": "army_supply",
+        "op": ">=",
+        "value": 40
+      },
+      "reward": -0.04,
+      "active": true
+    },
+    {
+      "id": "army-oversupply-idle-late",
+      "description": "Extreme penalty for 60+ army idle (decisive force should push, advised 20260414-0017 iter 3)",
+      "condition": {
+        "field": "current_state",
+        "op": "!=",
+        "value": "attack"
+      },
+      "requires": {
+        "field": "army_supply",
+        "op": ">=",
+        "value": 60
+      },
+      "reward": -0.06,
+      "active": true
+    },
+    {
+      "id": "enemy-visibility-midgame",
+      "description": "Reward tracking 3+ enemy structures after 4:00 (midgame tech-detection proxy, advised 20260414-0017 iter 4)",
+      "condition": {
+        "field": "enemy_structure_count",
+        "op": ">=",
+        "value": 3
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 240
+      },
+      "reward": 0.008,
+      "active": true
+    },
+    {
+      "id": "enemy-visibility-late",
+      "description": "Reward tracking 5+ enemy structures after 7:00 (late-game scouting, advised 20260414-0017 iter 4)",
+      "condition": {
+        "field": "enemy_structure_count",
+        "op": ">=",
+        "value": 5
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 420
+      },
+      "reward": 0.012,
+      "active": true
+    },
+    {
+      "id": "natural-defense-cannons",
+      "description": "Reward 2+ cannons with 2+ bases (natural denial, advised 20260414-0017 iter 5)",
+      "condition": {
+        "field": "cannon_count",
+        "op": ">=",
+        "value": 2
+      },
+      "requires": {
+        "field": "base_count",
+        "op": ">=",
+        "value": 2
+      },
+      "reward": 0.01,
+      "active": true
+    },
+    {
+      "id": "defensive-batteries",
+      "description": "Reward 1+ shield battery after 4:00 (sustained defense, advised 20260414-0017 iter 5)",
+      "condition": {
+        "field": "battery_count",
+        "op": ">=",
+        "value": 1
+      },
+      "requires": {
+        "field": "game_time_seconds",
+        "op": ">=",
+        "value": 240
+      },
+      "reward": 0.006,
+      "active": true
+    },
+    {
+      "id": "supply-block-with-minerals",
+      "description": "Compound penalty: supply-blocked while holding 300+ minerals (could have built supply) (advised 20260414-0017 iter 6)",
+      "condition": {
+        "field": "minerals",
+        "op": ">=",
+        "value": 300
+      },
+      "requires": {
+        "field": "supply_used",
+        "op": "==",
+        "value_field": "supply_cap"
+      },
+      "reward": -0.03,
+      "active": true
+    }
+  ]
+}
