@@ -26,6 +26,14 @@ class DaemonConfig:
     current_difficulty: int = 1
     max_difficulty: int = 10
     win_rate_threshold: float = 0.8
+    # Optional bound on total training runs (one run = one trigger firing
+    # and completing). When non-None, the daemon self-stops after the
+    # N-th run completes. ``None`` (default) preserves the historical
+    # unbounded-daemon behaviour — set a concrete value when starting
+    # the daemon for a specific bounded task (e.g. the evolve
+    # post-promotion training step). The counter persists across pause
+    # but is reset to zero on ``start``.
+    max_runs: int | None = None
     # Issue #73: per-cycle crash visibility watchdog.
     # While TrainingOrchestrator.run(...) is blocked inside SB3's
     # ``.learn()`` loop, the post-orchestrator bookkeeping that sets
@@ -106,17 +114,25 @@ class TrainingDaemon:
     def start(self) -> None:
         """Start the daemon loop in a background thread.
 
-        No-op if already running.
+        No-op if already running. Resets ``_runs_completed`` to zero so
+        the ``max_runs`` bound is interpreted relative to this start
+        rather than the process's lifetime total. Callers that want
+        cumulative-across-restarts semantics should track their own
+        counter.
         """
         if self.is_running():
             return
         self._stop_event.clear()
+        # Start fresh — see docstring.
+        self._runs_completed = 0
         self._thread = threading.Thread(
             target=self._loop, daemon=True, name="training-daemon"
         )
         self._thread.start()
         _log.info(
-            "Training daemon started (interval=%ds)", self._config.check_interval_seconds
+            "Training daemon started (interval=%ds, max_runs=%s)",
+            self._config.check_interval_seconds,
+            self._config.max_runs,
         )
 
     def stop(self) -> None:
@@ -156,7 +172,14 @@ class TrainingDaemon:
     # ------------------------------------------------------------------
 
     def _loop(self) -> None:
-        """Main daemon loop: sleep -> check -> maybe train -> repeat."""
+        """Main daemon loop: sleep -> check -> maybe train -> repeat.
+
+        When ``config.max_runs`` is non-None the loop self-terminates as
+        soon as ``_runs_completed >= max_runs`` — used by the evolve
+        post-promotion hook to bound an automatic training burst. The
+        check fires *after* each training attempt so the very last run
+        is allowed to finish before the daemon stops.
+        """
         while not self._stop_event.is_set():
             with self._lock:
                 self._next_check = datetime.now(UTC)
@@ -169,6 +192,20 @@ class TrainingDaemon:
 
             if self._should_train():
                 self._run_training()
+                # Bounded-run self-stop. We check AFTER the run so the
+                # daemon honours the exact count the caller requested.
+                max_runs = self._config.max_runs
+                if max_runs is not None and self._runs_completed >= max_runs:
+                    _log.info(
+                        "Daemon: reached max_runs=%d (runs_completed=%d); "
+                        "stopping",
+                        max_runs,
+                        self._runs_completed,
+                    )
+                    self._stop_event.set()
+                    with self._lock:
+                        self._state = "idle"
+                    break
 
             with self._lock:
                 self._state = "idle"

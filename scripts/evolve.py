@@ -23,11 +23,15 @@ The CLI is a thin wrapper around :mod:`orchestrator.evolve`. Per round it:
 4. On promote, commits ``bots/<new_current>/`` with ``EVO_AUTO=1`` and a
    commit message containing ``[evo-auto]`` (unless ``--no-commit``).
 
-The loop stops when any of three conditions trip:
+The loop stops when either condition trips:
 
 * The wall-clock budget is exhausted (``--hours``; 0 disables the check).
 * The pool has fewer than two remaining active items (pool exhausted).
-* Three consecutive rounds discard without a promote (no-progress).
+
+``no_progress_streak`` is still tracked and surfaced in the run state for
+the dashboard, but it is no longer a stop condition — the user explicitly
+opted for "exhaust the pool" semantics so crashed or discarded rounds
+can't silently truncate a run.
 
 See ``documentation/plans/phase-9-build-plan.md`` Step 4 for the design
 rationale.
@@ -44,6 +48,7 @@ import random
 import subprocess
 import sys
 import time
+import traceback
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -159,6 +164,28 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--current-round-path",
+        type=Path,
+        default=_REPO_ROOT / "data" / "evolve_current_round.json",
+        help=(
+            "Live per-game progress file written inside each round "
+            "(default: data/evolve_current_round.json). Set to /dev/null "
+            "or similar to disable."
+        ),
+    )
+    parser.add_argument(
+        "--crash-log-path",
+        type=Path,
+        default=_REPO_ROOT / "data" / "evolve_crashes.jsonl",
+        help=(
+            "JSONL log of crashed rounds with full tracebacks "
+            "(default: data/evolve_crashes.jsonl). Each entry records the "
+            "round index, both improvements' titles/types, error type, "
+            "message, and full traceback. Separate from the results JSONL "
+            "so multi-KB traceback strings don't bloat every dashboard poll."
+        ),
+    )
+    parser.add_argument(
         "--run-log",
         type=Path,
         default=None,
@@ -179,6 +206,37 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "RESERVED for v2 — returns the AB loser to the pool. "
             "Raises NotImplementedError in v1."
+        ),
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Skip pool generation and reload the pool + per-item statuses "
+            "from --pool-path. Only items with status='active' are sampled. "
+            "The on-disk parent must equal current_version(). Useful after "
+            "a crash or external kill."
+        ),
+    )
+    parser.add_argument(
+        "--post-training-cycles",
+        type=int,
+        default=0,
+        help=(
+            "If a run completes with at least one promotion, start the "
+            "training daemon on the newly-promoted parent for exactly N "
+            "cycles (bounded via DaemonConfig.max_runs). Default 0 = "
+            "disabled. The daemon self-stops after the N-th cycle; "
+            "evolve itself does not block waiting for training to finish."
+        ),
+    )
+    parser.add_argument(
+        "--backend-url",
+        default="http://localhost:8765",
+        help=(
+            "Base URL of the Alpha4Gate backend API. Used by the "
+            "--post-training-cycles hook to reach the daemon endpoints. "
+            "Default: http://localhost:8765."
         ),
     )
     return parser
@@ -283,6 +341,74 @@ def _now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
+def start_post_training_daemon(
+    *,
+    cycles: int,
+    backend_url: str,
+    new_parent: str,
+) -> dict[str, Any]:
+    """Start the training daemon for exactly *cycles* runs on *new_parent*.
+
+    Called once at the end of :func:`run_loop` when an evolve run ends
+    with at least one promotion and the user requested a post-training
+    burst via ``--post-training-cycles``. The daemon's
+    :class:`DaemonConfig.max_runs` bound means it self-stops after the
+    N-th cycle completes — no auto-restart, no runaway training. The
+    evolve process does NOT block waiting for training to finish; the
+    daemon runs in the backend process's background thread.
+
+    Returns a diagnostic dict with the two HTTP status codes we
+    collected along the way, so the caller can log a useful breadcrumb.
+
+    Failures (backend unreachable, non-2xx response) are swallowed with
+    a WARNING log — we don't want to fail the whole evolve run because
+    the post-run training didn't kick off. The user can always start
+    the daemon manually from the dashboard Loop tab.
+    """
+    import httpx
+
+    result: dict[str, Any] = {
+        "new_parent": new_parent,
+        "cycles": cycles,
+        "backend_url": backend_url,
+        "config_status": None,
+        "start_status": None,
+        "error": None,
+    }
+    try:
+        # 1. Point the daemon's config at the exact cycle count we want.
+        cfg_resp = httpx.put(
+            f"{backend_url}/api/training/daemon/config",
+            json={"max_runs": cycles},
+            timeout=10.0,
+        )
+        result["config_status"] = cfg_resp.status_code
+        # 2. Fire it up. Backend resets ``_runs_completed`` to 0 on start.
+        start_resp = httpx.post(
+            f"{backend_url}/api/training/daemon/start",
+            timeout=10.0,
+        )
+        result["start_status"] = start_resp.status_code
+        _log.info(
+            "post-training: daemon started for %d cycles on %s "
+            "(config rc=%d, start rc=%d)",
+            cycles,
+            new_parent,
+            cfg_resp.status_code,
+            start_resp.status_code,
+        )
+    except Exception as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        _log.warning(
+            "post-training: failed to auto-start daemon on %s — the run's "
+            "promotion is still on disk, just kick the daemon off manually "
+            "from the Loop tab. error: %s",
+            new_parent,
+            exc,
+        )
+    return result
+
+
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     """Write *payload* as pretty-printed, sorted JSON, atomically.
 
@@ -327,6 +453,28 @@ def write_pool_state(
     _atomic_write_json(pool_path, payload)
 
 
+def load_pool_state(
+    pool_path: Path,
+) -> tuple[list[Improvement], dict[int, PoolItemStatus], str, str]:
+    """Reload a pool file written by :func:`write_pool_state`.
+
+    Returns ``(pool, statuses, parent, generated_at)``. Raises
+    ``FileNotFoundError`` or ``ValueError`` on a missing / malformed file —
+    callers typically fall through to pool generation in that case.
+    """
+    from orchestrator.evolve import Improvement as _Improvement
+
+    payload = json.loads(pool_path.read_text(encoding="utf-8"))
+    items = payload["pool"]
+    pool: list[_Improvement] = []
+    statuses: dict[int, PoolItemStatus] = {}
+    for i, entry in enumerate(items):
+        status = entry.pop("status", "active")
+        pool.append(_Improvement(**entry))
+        statuses[i] = status
+    return pool, statuses, payload["parent"], payload.get("generated_at") or _now_iso()
+
+
 def append_round_result(results_path: Path, result: RoundResult) -> None:
     """Append a single RoundResult as one JSON line."""
     results_path.parent.mkdir(parents=True, exist_ok=True)
@@ -357,6 +505,89 @@ def _last_result_snapshot(
         "outcome": outcome,
         "reason": result.reason,
     }
+
+
+def write_current_round_state(
+    path: Path,
+    *,
+    round_index: int,
+    imp_a_title: str,
+    imp_b_title: str,
+    phase: str,
+    cand_a: str | None,
+    cand_b: str | None,
+    games_played: int,
+    games_total: int,
+    score_a: int,
+    score_b: int,
+    gate_candidate: str | None = None,
+) -> None:
+    """Write the live per-game progress file read by the Evolution tab.
+
+    Called once at round start (with phase ``"starting"``) and on every
+    ``on_round_event`` from :func:`orchestrator.evolve.run_round`.
+    """
+    payload: dict[str, Any] = {
+        "active": True,
+        "round_index": round_index,
+        "imp_a_title": imp_a_title,
+        "imp_b_title": imp_b_title,
+        "phase": phase,
+        "cand_a": cand_a,
+        "cand_b": cand_b,
+        "games_played": games_played,
+        "games_total": games_total,
+        "score_a": score_a,
+        "score_b": score_b,
+        "gate_candidate": gate_candidate,
+        "updated_at": _now_iso(),
+    }
+    _atomic_write_json(path, payload)
+
+
+def clear_current_round_state(path: Path) -> None:
+    """Mark the current-round file inactive between rounds."""
+    _atomic_write_json(
+        path, {"active": False, "updated_at": _now_iso()}
+    )
+
+
+def _clear_fresh_run_state(
+    *,
+    results_path: Path,
+    pool_path: Path,
+    current_round_path: Path | None,
+    parent: str,
+) -> None:
+    """Wipe leftover per-run state files at the start of a fresh (non-resume)
+    run so the dashboard shows a clean slate while pool-gen is in flight.
+
+    - ``results_path`` (JSONL) is truncated to empty so the Round History
+      list doesn't flash the previous run's discards.
+    - ``pool_path`` is overwritten with an empty pool + fresh ``generated_at``
+      so the Pool section shows "Pool not yet generated" until Claude returns.
+    - ``current_round_path`` gets an ``active: false`` marker so any stale
+      "round in progress" state from a prior crash is cleared.
+
+    Resume runs skip all of this — the whole point of --resume is to keep
+    the existing pool + statuses.
+    """
+    try:
+        # Truncate JSONL. Missing file is fine — nothing to clear.
+        if results_path.exists():
+            results_path.write_text("", encoding="utf-8")
+    except OSError as exc:
+        _log.warning(
+            "evolve: failed to truncate %s on fresh run: %s", results_path, exc
+        )
+
+    _atomic_write_json(
+        pool_path,
+        {"parent": parent, "generated_at": _now_iso(), "pool": []},
+    )
+
+    if current_round_path is not None:
+        clear_current_round_state(current_round_path)
 
 
 def write_run_state(
@@ -550,12 +781,116 @@ def _classify_outcome(result: RoundResult) -> str:
       "promoted"       — gate passed
       "discarded-tie"  — A/B tied (reason string starts with "discarded")
       "discarded-gate" — gate failed
+
+    The fourth label ``"discarded-crash"`` is produced by
+    :func:`_crash_round_snapshot` on the exception path, not by this
+    helper — the round never produces a ``RoundResult`` to classify.
     """
     if result.promoted:
         return "promoted"
     if "lost to parent" in result.reason:
         return "discarded-gate"
     return "discarded-tie"
+
+
+def _crash_round_snapshot(
+    round_index: int,
+    imp_a: Improvement,
+    imp_b: Improvement,
+    exc: BaseException,
+) -> dict[str, Any]:
+    """Build a last-result snapshot for a round that crashed before returning.
+
+    Matches the schema produced by :func:`_last_result_snapshot` so the
+    dashboard's Last Round card and the run-log table can render both paths
+    uniformly. ``ab_score`` and ``gate_score`` are zero pairs because no
+    games ran; the outcome string is ``"discarded-crash"`` so the
+    frontend's ``OutcomeBadge`` picks up the crash palette.
+    """
+    reason = f"crashed: {type(exc).__name__}: {exc}"
+    return {
+        "round_index": round_index,
+        "candidate_a": "(crash — no candidate)",
+        "candidate_b": "(crash — no candidate)",
+        "imp_a_title": imp_a.title,
+        "imp_b_title": imp_b.title,
+        "ab_score": [0, 0],
+        "gate_score": [0, 0],
+        "outcome": "discarded-crash",
+        "reason": reason,
+    }
+
+
+def append_crash_round_result(
+    results_path: Path,
+    *,
+    parent: str,
+    imp_a: Improvement,
+    imp_b: Improvement,
+    exc: BaseException,
+    traceback_str: str,
+) -> None:
+    """Append a RoundResult-shaped JSON line to ``evolve_results.jsonl`` for a
+    round that crashed before returning.
+
+    The shape mirrors :func:`orchestrator.evolve.RoundResult` so the existing
+    ``/api/evolve/results`` endpoint and Round History UI treat crashes the
+    same as normal rounds — with ``ab_record=[]``, ``gate_record=null``,
+    ``winner=null``, ``promoted=false``, and an ``error`` field carrying the
+    truncated traceback for quick diagnosis in the dashboard. The full
+    traceback goes to the separate ``evolve_crashes.jsonl`` log.
+    """
+    entry: dict[str, Any] = {
+        "parent": parent,
+        "candidate_a": "(crash — no candidate)",
+        "candidate_b": "(crash — no candidate)",
+        "imp_a": _imp_asdict(imp_a),
+        "imp_b": _imp_asdict(imp_b),
+        "ab_record": [],
+        "gate_record": None,
+        "winner": None,
+        "promoted": False,
+        "reason": f"crashed: {type(exc).__name__}: {exc}",
+        # Extra field — schema extension. The dashboard's EvolveRoundResult
+        # type treats this as optional so the column is safe to omit.
+        "error": traceback_str.splitlines()[-1] if traceback_str else str(exc),
+    }
+    results_path.parent.mkdir(parents=True, exist_ok=True)
+    with results_path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry) + "\n")
+
+
+def append_crash_log(
+    crash_log_path: Path,
+    *,
+    round_index: int,
+    imp_a: Improvement,
+    imp_b: Improvement,
+    exc: BaseException,
+    traceback_str: str,
+) -> None:
+    """Append a full-traceback JSON line to ``data/evolve_crashes.jsonl``.
+
+    This is the durable diagnostic record for a crashed round — stderr
+    scrollback is ephemeral, and the dashboard's one-line ``error`` field
+    is enough to spot a pattern but not enough to fix the underlying bug.
+    Separate from ``evolve_results.jsonl`` so dashboard readers don't have
+    to page through multi-KB traceback strings on every refresh.
+    """
+    entry: dict[str, Any] = {
+        "timestamp": _now_iso(),
+        "round_index": round_index,
+        "imp_a_title": imp_a.title,
+        "imp_a_type": imp_a.type,
+        "imp_b_title": imp_b.title,
+        "imp_b_type": imp_b.type,
+        "error_type": type(exc).__name__,
+        "error_message": str(exc),
+        "traceback": traceback_str,
+    }
+    crash_log_path.parent.mkdir(parents=True, exist_ok=True)
+    with crash_log_path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry) + "\n")
 
 
 def _update_pool_statuses_after_round(
@@ -639,6 +974,7 @@ def run_loop(
     run_batch_fn: Callable[..., list[SelfPlayRecord]] | None = None,
     dev_apply_fn: Any = None,
     time_fn: Callable[[], float] = time.monotonic,
+    post_training_fn: Callable[..., dict[str, Any]] | None = None,
 ) -> int:
     """The actual evolve loop.
 
@@ -706,21 +1042,8 @@ def run_loop(
         last_result=None,
     )
 
-    # --- Pool generation ---
-    try:
-        pool_kwargs: dict[str, Any] = {
-            "pool_size": args.pool_size,
-            "map_name": args.map,
-            "game_time_limit": args.game_time_limit,
-            "hard_timeout": args.hard_timeout,
-        }
-        if claude_fn is not None:
-            pool_kwargs["claude_fn"] = claude_fn
-        if run_batch_fn is not None:
-            pool_kwargs["run_batch_fn"] = run_batch_fn
-        pool = generate_pool_fn(parent_start, **pool_kwargs)
-    except Exception as exc:
-        _log.error("evolve: pool generation failed: %s", exc, exc_info=True)
+    # --- Pool generation (or resume) ---
+    def _write_failed_and_return() -> int:
         write_run_state(
             args.state_path,
             status="failed",
@@ -736,15 +1059,139 @@ def run_loop(
         )
         return 1
 
-    statuses: dict[int, PoolItemStatus] = {}
-    pool_generated_at = _now_iso()
-    write_pool_state(
-        args.pool_path,
-        pool,
-        parent=parent_start,
-        statuses=statuses,
-        generated_at=pool_generated_at,
-    )
+    current_round_path = getattr(args, "current_round_path", None)
+
+    resume_loaded = False
+    if getattr(args, "resume", False) and args.pool_path.exists():
+        try:
+            pool, statuses, pool_parent, pool_generated_at = load_pool_state(
+                args.pool_path
+            )
+        except Exception as exc:
+            _log.error(
+                "evolve: --resume failed to read %s: %s; aborting rather "
+                "than silently regenerating the pool",
+                args.pool_path,
+                exc,
+            )
+            return _write_failed_and_return()
+        if pool_parent != parent_start:
+            _log.error(
+                "evolve: --resume parent mismatch (pool file says %r, "
+                "current_version() is %r); refusing to continue",
+                pool_parent,
+                parent_start,
+            )
+            return _write_failed_and_return()
+        active = sum(1 for s in statuses.values() if s == "active")
+        _log.info(
+            "evolve: resumed from %s (%d items, %d active)",
+            args.pool_path,
+            len(pool),
+            active,
+        )
+        resume_loaded = True
+    else:
+        # Fresh run — wipe any stale per-run files so the dashboard doesn't
+        # flash the previous run's pool / round history while this run's
+        # pool-gen is in flight. The pool file itself gets overwritten after
+        # Claude returns; we stomp it here with an empty placeholder so the
+        # UI's "Pool Remaining" and pool list render clean immediately.
+        _clear_fresh_run_state(
+            results_path=args.results_path,
+            pool_path=args.pool_path,
+            current_round_path=current_round_path,
+            parent=parent_start,
+        )
+
+        # Pool-gen progress writer: updates evolve_current_round.json with
+        # phase="mirror_games" / "claude_prompt" so the Evolution tab can
+        # show what's happening before the real AB rounds start.
+        pool_gen_state: dict[str, Any] = {
+            "round_index": 0,
+            "imp_a_title": "parent-vs-parent mirror games",
+            "imp_b_title": "Claude advisor",
+            "phase": "mirror_games",
+            "cand_a": parent_start,
+            "cand_b": parent_start,
+            "games_played": 0,
+            "games_total": 3,  # overwritten by mirror_start event
+            "score_a": 0,
+            "score_b": 0,
+            "gate_candidate": None,
+        }
+
+        def _on_pool_gen_event(
+            event: dict[str, Any],
+            _state: dict[str, Any] = pool_gen_state,
+            _path: Path | None = current_round_path,
+            _parent: str = parent_start,
+        ) -> None:
+            etype = event.get("type")
+            if etype == "mirror_start":
+                _state["phase"] = "mirror_games"
+                _state["imp_a_title"] = "parent-vs-parent mirror games"
+                _state["imp_b_title"] = "Claude advisor"
+                _state["cand_a"] = _parent
+                _state["cand_b"] = _parent
+                _state["games_played"] = 0
+                _state["games_total"] = event.get("total", _state["games_total"])
+            elif etype == "mirror_game_end":
+                _state["games_played"] = event.get(
+                    "games_played", _state["games_played"] + 1
+                )
+                if "total" in event:
+                    _state["games_total"] = event["total"]
+            elif etype == "claude_start":
+                _state["phase"] = "claude_prompt"
+                _state["games_played"] = 0
+                _state["games_total"] = event.get("pool_size", 0)
+            elif etype == "pool_ready":
+                # Leave the card active but phase=claude_prompt until the
+                # round loop takes over; the round loop will rewrite the
+                # file with phase="starting" immediately.
+                pass
+            if _path is not None:
+                write_current_round_state(_path, **_state)
+
+        # Seed an initial "mirror_games" card before generate_pool even
+        # starts so the UI flips to the seeding view on the first poll.
+        if current_round_path is not None:
+            write_current_round_state(current_round_path, **pool_gen_state)
+
+        try:
+            pool_kwargs: dict[str, Any] = {
+                "pool_size": args.pool_size,
+                "map_name": args.map,
+                "game_time_limit": args.game_time_limit,
+                "hard_timeout": args.hard_timeout,
+                "on_pool_gen_event": _on_pool_gen_event,
+            }
+            if claude_fn is not None:
+                pool_kwargs["claude_fn"] = claude_fn
+            if run_batch_fn is not None:
+                pool_kwargs["run_batch_fn"] = run_batch_fn
+            pool = generate_pool_fn(parent_start, **pool_kwargs)
+        except Exception as exc:
+            _log.error("evolve: pool generation failed: %s", exc, exc_info=True)
+            if current_round_path is not None:
+                clear_current_round_state(current_round_path)
+            return _write_failed_and_return()
+
+        statuses = {}
+        pool_generated_at = _now_iso()
+
+    # Always re-write the pool file so the dashboard picks up the (possibly
+    # refreshed) generated_at and, on a fresh run, the initial all-active
+    # statuses.
+    if not resume_loaded:
+        write_pool_state(
+            args.pool_path,
+            pool,
+            parent=parent_start,
+            statuses=statuses,
+            generated_at=pool_generated_at,
+        )
 
     # --- Round loop ---
     rounds_completed = 0
@@ -771,12 +1218,6 @@ def run_loop(
                 len(active_indexes),
             )
             break
-        if no_progress_streak >= 3:
-            stop_reason = "no-progress"
-            _log.info(
-                "evolve: 3 consecutive discards; stopping for no-progress"
-            )
-            break
 
         imp_a_idx, imp_b_idx = sample_two(active_indexes, rng)
         imp_a = pool[imp_a_idx]
@@ -793,12 +1234,71 @@ def run_loop(
         )
 
         # --- Execute the round ---
+        # Mutable snapshot mutated by the on_round_event callback below.
+        round_state: dict[str, Any] = {
+            "round_index": round_index,
+            "imp_a_title": imp_a.title,
+            "imp_b_title": imp_b.title,
+            "phase": "starting",
+            "cand_a": None,
+            "cand_b": None,
+            "games_played": 0,
+            "games_total": args.ab_games,
+            "score_a": 0,
+            "score_b": 0,
+            "gate_candidate": None,
+        }
+        if current_round_path is not None:
+            write_current_round_state(current_round_path, **round_state)
+
+        # Bind loop vars as defaults so the callback stays safe if it ever
+        # outlives the current iteration (ruff B023).
+        def _on_round_event(
+            event: dict[str, Any],
+            _state: dict[str, Any] = round_state,
+            _path: Path | None = current_round_path,
+            _ab_games: int = args.ab_games,
+            _gate_games: int = args.gate_games,
+        ) -> None:
+            etype = event.get("type")
+            if etype == "ab_start":
+                _state["phase"] = "ab"
+                _state["cand_a"] = event.get("cand_a")
+                _state["cand_b"] = event.get("cand_b")
+                _state["games_total"] = event.get("total", _ab_games)
+                _state["games_played"] = 0
+                _state["score_a"] = 0
+                _state["score_b"] = 0
+                _state["gate_candidate"] = None
+            elif etype == "ab_game_end":
+                _state["games_played"] += 1
+                _state["score_a"] = event.get("wins_a", _state["score_a"])
+                _state["score_b"] = event.get("wins_b", _state["score_b"])
+            elif etype == "gate_start":
+                _state["phase"] = "gate"
+                _state["gate_candidate"] = event.get("candidate")
+                _state["games_total"] = event.get("total", _gate_games)
+                _state["games_played"] = 0
+                _state["score_a"] = 0
+                _state["score_b"] = 0
+            elif etype == "gate_game_end":
+                _state["games_played"] += 1
+                _state["score_a"] = event.get(
+                    "wins_cand", _state["score_a"]
+                )
+                _state["score_b"] = event.get(
+                    "wins_parent", _state["score_b"]
+                )
+            if _path is not None:
+                write_current_round_state(_path, **_state)
+
         round_kwargs: dict[str, Any] = {
             "ab_games": args.ab_games,
             "gate_games": args.gate_games,
             "map_name": args.map,
             "game_time_limit": args.game_time_limit,
             "hard_timeout": args.hard_timeout,
+            "on_round_event": _on_round_event,
         }
         if run_batch_fn is not None:
             round_kwargs["run_batch_fn"] = run_batch_fn
@@ -808,9 +1308,51 @@ def run_loop(
         try:
             result = run_round_fn(parent_current, imp_a, imp_b, **round_kwargs)
         except Exception as exc:
+            traceback_str = traceback.format_exc()
             _log.error(
                 "evolve: round %d crashed: %s", round_index, exc, exc_info=True
             )
+            # Durable diagnostics: every crashed round gets a row in
+            # evolve_results.jsonl (so the Round History UI shows it) plus a
+            # full-traceback entry in evolve_crashes.jsonl (for post-mortem).
+            crash_snap = _crash_round_snapshot(
+                round_index, imp_a, imp_b, exc
+            )
+            round_entries.append(crash_snap)
+            last_result_snap = crash_snap
+            try:
+                append_crash_round_result(
+                    args.results_path,
+                    parent=parent_current,
+                    imp_a=imp_a,
+                    imp_b=imp_b,
+                    exc=exc,
+                    traceback_str=traceback_str,
+                )
+            except Exception:
+                _log.warning(
+                    "evolve: failed to append crash entry to %s",
+                    args.results_path,
+                    exc_info=True,
+                )
+            crash_log_path = getattr(args, "crash_log_path", None)
+            if crash_log_path is not None:
+                try:
+                    append_crash_log(
+                        crash_log_path,
+                        round_index=round_index,
+                        imp_a=imp_a,
+                        imp_b=imp_b,
+                        exc=exc,
+                        traceback_str=traceback_str,
+                    )
+                except Exception:
+                    _log.warning(
+                        "evolve: failed to append crash traceback to %s",
+                        crash_log_path,
+                        exc_info=True,
+                    )
+
             # Treat a crash as a consumed-tie so the loop keeps moving but
             # doesn't silently re-use the two improvements.
             statuses[imp_a_idx] = "consumed-tie"
@@ -822,8 +1364,28 @@ def run_loop(
                 statuses=statuses,
                 generated_at=pool_generated_at,
             )
+            if current_round_path is not None:
+                clear_current_round_state(current_round_path)
             no_progress_streak += 1
             rounds_completed += 1
+            # Mirror the normal round write so rounds_completed and the
+            # crashed last_result flow to the dashboard immediately.
+            active_remaining = sum(
+                1 for i in range(len(pool)) if statuses.get(i, "active") == "active"
+            )
+            write_run_state(
+                args.state_path,
+                status="running",
+                parent_start=parent_start,
+                parent_current=parent_current,
+                started_at=started_at_iso,
+                wall_budget_hours=args.hours,
+                rounds_completed=rounds_completed,
+                rounds_promoted=rounds_promoted,
+                no_progress_streak=no_progress_streak,
+                pool_remaining_count=active_remaining,
+                last_result=last_result_snap,
+            )
             continue
 
         # --- Score/outcome bookkeeping ---
@@ -908,6 +1470,8 @@ def run_loop(
             pool_remaining_count=active_remaining,
             last_result=last_result_snap,
         )
+        if current_round_path is not None:
+            clear_current_round_state(current_round_path)
 
     # --- Finalise ---
     active_remaining = sum(
@@ -926,6 +1490,8 @@ def run_loop(
         pool_remaining_count=active_remaining,
         last_result=last_result_snap,
     )
+    if current_round_path is not None:
+        clear_current_round_state(current_round_path)
 
     # Default run-log path uses the started_at timestamp, with colons
     # replaced so Windows-unsafe chars aren't in the filename.
@@ -959,6 +1525,29 @@ def run_loop(
         rounds_promoted,
         stop_reason,
     )
+
+    # --- Post-promotion auto-training (opt-in via --post-training-cycles) ---
+    # Only fires when: (a) at least one round promoted (so parent_current
+    # differs from v0), AND (b) the user asked for N > 0 training cycles.
+    # Uses DaemonConfig.max_runs so the daemon self-stops after N — no
+    # runaway training. Evolve itself does NOT block on this; the daemon
+    # runs inside the backend process's thread.
+    post_cycles = getattr(args, "post_training_cycles", 0)
+    if rounds_promoted >= 1 and post_cycles > 0:
+        fn = post_training_fn or start_post_training_daemon
+        fn(
+            cycles=post_cycles,
+            backend_url=getattr(args, "backend_url", "http://localhost:8765"),
+            new_parent=parent_current,
+        )
+    elif rounds_promoted >= 1:
+        _log.info(
+            "evolve: run promoted to %s; --post-training-cycles not set so "
+            "no daemon was started. Kick off training manually from the "
+            "Loop tab if you want PPO to see the new baseline.",
+            parent_current,
+        )
+
     return 0
 
 

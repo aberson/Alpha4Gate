@@ -78,7 +78,17 @@ class DevApplyOutOfScopeError(DevApplyError):
 
 
 class DevApplyValidationError(DevApplyError):
-    """Post-edit ruff or mypy gate failed; the round is unusable."""
+    """Post-edit ruff or mypy gate failed; the round is unusable.
+
+    Carries the raw validator stdout as ``self.detail`` so the retry
+    loop in :func:`spawn_dev_subagent` can feed it back to the sub-agent
+    verbatim — a 500-char summary in the error message isn't enough for
+    the model to self-correct a multi-line mypy trace.
+    """
+
+    def __init__(self, msg: str, *, detail: str = "") -> None:
+        super().__init__(msg)
+        self.detail = detail
 
 
 # ---------------------------------------------------------------------------
@@ -101,15 +111,42 @@ Python SC2 Protoss bot codebase. Rules:
 3. Keep the change minimal. If the improvement references a line or
    function that does not exist, do not invent a workaround — exit
    without edits.
-4. Do not run shell commands. You have Read, Edit, Write, Grep, and
-   Glob only. Verify with Grep/Read; do not attempt Bash/pytest/mypy.
-5. When the change is complete, produce a one-line summary of the
-   files you modified. No prose before or after.
+4. You have Read, Edit, Write, Grep, Glob, AND a narrowly-scoped Bash
+   tool — only `mypy`, `ruff`, and `uv` commands are pre-approved. Use
+   Bash ONLY to validate your own edits against the project's gates:
+
+       uv run ruff check <files-you-changed>
+       uv run mypy --strict <files-you-changed>
+
+   The project runs under `mypy --strict`, so every function/variable
+   must be fully typed, no implicit `Any`, and numeric-to-int casts
+   must be explicit (e.g. `range(int(x))` not `range(x)` when `x` is
+   a `float`). Common mypy-strict pitfalls to avoid:
+     - `range()`, slicing, and indexing require `int`, not `float`.
+     - `sum()` and arithmetic over mixed int/float may need an explicit
+       cast on the result.
+     - Returning from a function annotated `-> None` with an expression
+       is an error.
+     - `dict.get(k)` returns `Optional[V]` — check `is not None` before
+       using.
+     - Adding new public attributes on frozen dataclasses / NamedTuples
+       won't type-check — pass them in or add them via a subclass.
+     - New callables need type annotations on all parameters AND return.
+
+   If your initial edit fails either validator, read the error output,
+   fix the specific line it points at, and re-run. Iterate up to a few
+   times if needed. Do NOT disable or suppress a check (no `# type:
+   ignore`, no `# noqa`) — those cost the round.
+
+5. When the change is complete AND both `ruff check` and
+   `mypy --strict` exit 0 on the files you changed, produce a one-line
+   summary of the files you modified. No prose before or after.
 
 Scoping is enforced externally: the caller will revert any out-of-scope
-edit and discard the round. Syntactic correctness is gated externally
-via ruff + mypy --strict on the changed files; passing both is a hard
-pre-condition for the round to proceed.
+edit and discard the round. The caller ALSO re-runs ruff + mypy after
+you exit — if either fails there (e.g. because you skipped validation)
+the round is consumed-tie and your work is wasted. Better to spend the
+extra minute validating.
 """
 
 
@@ -144,6 +181,7 @@ def spawn_dev_subagent(
     model: str = "opus",
     timeout: float = 900.0,
     validate: bool = True,
+    max_attempts: int = 3,
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> None:
     """Apply *imp* to *version_dir* by shelling out to a Claude Code sub-agent.
@@ -170,11 +208,19 @@ def spawn_dev_subagent(
         Wall-clock budget for the sub-agent process, in seconds.
         Default 900s (15 min). A dev-apply that blows this budget is
         almost certainly stuck; timing out and discarding the round is
-        safer than letting the soak hang.
+        safer than letting the soak hang. Applies to each attempt
+        individually — the retry loop can consume up to
+        ``timeout * max_attempts`` wall-clock in the worst case.
     validate:
         If True (default), runs ruff + mypy --strict on the changed
         ``.py`` files after the sub-agent exits. Set False in tests that
         only want to exercise the spawn path.
+    max_attempts:
+        Total number of sub-agent invocations allowed (initial + retries).
+        Default 3: if the first attempt's edit fails ruff or mypy, we
+        re-invoke the sub-agent with the validator error appended to the
+        prompt, up to two more times. A :class:`DevApplyOutOfScopeError`
+        is NOT retried — that's a safety violation, not a type error.
     run:
         Injected subprocess runner so tests can mock the CLI boundary
         without touching the real ``claude`` binary. Same pattern as
@@ -187,42 +233,134 @@ def spawn_dev_subagent(
         raise DevApplySubagentError(
             f"version_dir does not exist: {version_dir}"
         )
+    if max_attempts < 1:
+        raise ValueError(f"max_attempts must be >= 1, got {max_attempts}")
 
-    # SCOPE CHECK uses git status: captures tracked-file edits AND new
-    # untracked files anywhere in the repo. It intentionally does NOT see
-    # file-level edits inside the already-untracked candidate dir (git
-    # collapses that dir), which is fine — those are all in-scope by
-    # construction. See `_collect_candidate_py_snapshot` below for the
-    # validation-target discovery that DOES see in-dir edits.
+    # SCOPE CHECK baseline uses git status: captures tracked-file edits
+    # AND new untracked files anywhere in the repo. It intentionally does
+    # NOT see file-level edits inside the already-untracked candidate dir
+    # (git collapses that dir), which is fine — those are all in-scope by
+    # construction. `py_before` (see `_collect_candidate_py_snapshot`) is
+    # what detects those in-dir edits for the validation target list.
+    #
+    # We take the baseline ONCE before the retry loop — every attempt's
+    # scope check compares back to the same pre-dev-apply state, so a
+    # previous-attempt edit that's been kept doesn't trip out-of-scope.
     git_before = _snapshot_repo_state(repo_root, run=run)
     py_before = _collect_candidate_py_snapshot(version_dir)
 
-    _invoke_subagent(version_dir, imp, model=model, timeout=timeout, run=run)
+    last_validation_error: DevApplyValidationError | None = None
+    feedback: str | None = None
 
-    git_after = _snapshot_repo_state(repo_root, run=run)
-    py_after = _collect_candidate_py_snapshot(version_dir)
+    for attempt in range(1, max_attempts + 1):
+        _invoke_subagent(
+            version_dir,
+            imp,
+            model=model,
+            timeout=timeout,
+            run=run,
+            feedback=feedback,
+        )
 
-    repo_changed = sorted(git_after - git_before)
-    _log.info(
-        "dev-apply: sub-agent exited; %d repo-wide path(s) changed",
-        len(repo_changed),
+        git_after = _snapshot_repo_state(repo_root, run=run)
+        py_after = _collect_candidate_py_snapshot(version_dir)
+
+        repo_changed = sorted(git_after - git_before)
+        _log.info(
+            "dev-apply: sub-agent attempt %d/%d exited; "
+            "%d repo-wide path(s) changed",
+            attempt,
+            max_attempts,
+            len(repo_changed),
+        )
+        # Out-of-scope is terminal — don't retry a rule violation.
+        _assert_scope(repo_root, version_dir, repo_changed, run=run)
+
+        changed_py = sorted(_diff_py_snapshots(py_before, py_after))
+        _log.info(
+            "dev-apply: attempt %d/%d — %d .py file(s) changed under "
+            "candidate dir",
+            attempt,
+            max_attempts,
+            len(changed_py),
+        )
+
+        if not validate or not changed_py:
+            # Nothing to validate — either the caller disabled gating
+            # (tests) or the sub-agent made no .py edits (trivial imp or
+            # bailed). Treat as success; the round will play as-is.
+            return
+
+        try:
+            _run_ruff(changed_py, run=run)
+            _run_mypy(repo_root, changed_py, run=run)
+            if attempt > 1:
+                _log.info(
+                    "dev-apply: validation passed on retry attempt %d/%d",
+                    attempt,
+                    max_attempts,
+                )
+            return
+        except DevApplyValidationError as exc:
+            last_validation_error = exc
+            if attempt == max_attempts:
+                # Out of retries — let the final error propagate.
+                break
+            _log.warning(
+                "dev-apply: validation failed on attempt %d/%d; "
+                "retrying with feedback (%s)",
+                attempt,
+                max_attempts,
+                str(exc).splitlines()[0][:200],
+            )
+            feedback = _format_retry_feedback(
+                exc.detail or str(exc), attempt + 1, max_attempts
+            )
+
+    # All retries exhausted.
+    assert last_validation_error is not None, (
+        "retry loop exited without a validation error — this is a bug"
     )
-    _assert_scope(repo_root, version_dir, repo_changed, run=run)
-
-    changed_py = sorted(_diff_py_snapshots(py_before, py_after))
-    _log.info(
-        "dev-apply: %d .py file(s) changed under candidate dir",
-        len(changed_py),
-    )
-
-    if validate and changed_py:
-        _run_ruff(changed_py, run=run)
-        _run_mypy(repo_root, changed_py, run=run)
+    raise last_validation_error
 
 
 # ---------------------------------------------------------------------------
 # Sub-agent invocation
 # ---------------------------------------------------------------------------
+
+
+# Bash commands the sub-agent may run for self-validation. Mypy/ruff
+# cover the gates the external caller re-runs; `uv` covers the project's
+# canonical invocation (`uv run mypy`, `uv run ruff`); `python` covers
+# fallback invocations (`python -m mypy`). Scope is still restricted by
+# `--add-dir` + the external out-of-scope check, so a rogue Bash call
+# can't escape the candidate dir — but widening beyond this list would
+# weaken the defence-in-depth posture.
+_SUBAGENT_ALLOWED_BASH = (
+    "Bash(mypy:*) Bash(ruff:*) Bash(uv:*) Bash(python:*)"
+)
+
+
+def _format_retry_feedback(detail: str, attempt: int, max_attempts: int) -> str:
+    """Build the retry-prompt addendum shown to the sub-agent on attempt 2+.
+
+    The detail string is the raw stdout from whichever validator failed
+    (ruff or mypy); it can be multi-line and multi-KB. We cap it to stay
+    well under Windows' argv + stdin limits while preserving enough of
+    the top of the output to be actionable.
+    """
+    truncated = detail.strip()
+    if len(truncated) > 4000:
+        truncated = truncated[:4000] + "\n... [truncated]"
+    return (
+        f"YOUR PREVIOUS ATTEMPT FAILED VALIDATION (attempt {attempt - 1} of "
+        f"{max_attempts}). The validator output was:\n\n"
+        f"```\n{truncated}\n```\n\n"
+        "Fix ONLY the errors above. Keep the rest of your earlier edit. "
+        "Re-run the validator via Bash to confirm before exiting. If you "
+        "cannot fix the errors without violating the rules, exit without "
+        "further edits — the round will be discarded cleanly."
+    )
 
 
 def _invoke_subagent(
@@ -232,12 +370,18 @@ def _invoke_subagent(
     model: str,
     timeout: float,
     run: Callable[..., subprocess.CompletedProcess[str]],
+    feedback: str | None = None,
 ) -> None:
     """Shell out to ``claude -p`` and let the sub-agent do the edits.
 
     The prompt is piped via stdin (same lesson as commit 533a02a — Windows
     CreateProcess rejects cmdlines > ~32 KiB, and long concrete_change
     descriptions can approach that).
+
+    *feedback* is prepended to the user prompt on retry attempts — the
+    retry loop in :func:`spawn_dev_subagent` builds it from the failed
+    validator's stdout so the sub-agent has the exact error message to
+    self-correct from.
     """
     user_prompt = _USER_PROMPT_TEMPLATE.format(
         title=imp.title,
@@ -246,12 +390,19 @@ def _invoke_subagent(
         description=imp.description,
         concrete_change=imp.concrete_change,
     )
+    if feedback:
+        user_prompt = f"{feedback}\n\n---\n\n{user_prompt}"
 
     argv = [
         "claude",
         "-p",
         "--model", model,
-        "--tools", "Read,Edit,Write,Grep,Glob",
+        # Bash joins the tool set so the sub-agent can self-validate with
+        # ruff + mypy before exiting. The `--allowed-tools` allowlist
+        # below scopes which Bash commands are pre-approved, so
+        # permission-mode=acceptEdits doesn't have to prompt for them.
+        "--tools", "Read,Edit,Write,Grep,Glob,Bash",
+        "--allowed-tools", _SUBAGENT_ALLOWED_BASH,
         "--permission-mode", "acceptEdits",
         "--add-dir", str(version_dir),
         "--output-format", "text",
@@ -261,11 +412,12 @@ def _invoke_subagent(
 
     _log.info(
         "dev-apply: spawning sub-agent (model=%s, cwd=%s, timeout=%.0fs, "
-        "imp=%r)",
+        "imp=%r, retry=%s)",
         model,
         version_dir,
         timeout,
         imp.title,
+        "yes" if feedback else "no",
     )
 
     try:
@@ -457,7 +609,8 @@ def _run_ruff(
     if result.returncode != 0:
         raise DevApplyValidationError(
             f"ruff check failed on {len(changed_py)} file(s); "
-            f"stdout: {result.stdout.strip()[:500]!r}"
+            f"stdout: {result.stdout.strip()[:500]!r}",
+            detail=f"# ruff check\n{result.stdout}\n{result.stderr}".strip(),
         )
 
 
@@ -485,5 +638,6 @@ def _run_mypy(
     if result.returncode != 0:
         raise DevApplyValidationError(
             f"mypy --strict failed on {len(changed_py)} file(s); "
-            f"stdout: {result.stdout.strip()[:500]!r}"
+            f"stdout: {result.stdout.strip()[:500]!r}",
+            detail=f"# mypy --strict\n{result.stdout}\n{result.stderr}".strip(),
         )

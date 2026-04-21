@@ -729,8 +729,8 @@ before promotion. Removes the SC2-built-in-AI fitness signal that
 The loop: snapshot parent twice → apply improvement A to one, B to the
 other → 10 head-to-head games → if decisive, winner plays parent for 5
 games → promote winner if it beats parent ≥ 3/5; otherwise discard both
-improvements. Repeat until 10-item pool exhausted, wall-clock budget
-expires (default 4h), or 3 consecutive no-progress rounds.
+improvements. Repeat until 10-item pool exhausted or wall-clock budget
+expires (default 4h).
 
 This phase sits **alongside** Phase 6, not inside it. Phase 6 is
 PPO-training-driven self-play (use H2H results as the RL signal). Phase 9

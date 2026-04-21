@@ -31,7 +31,6 @@ from orchestrator.evolve_dev_apply import (
     spawn_dev_subagent,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -408,10 +407,20 @@ class TestSpawnDevSubagent:
         ]
         assert len(claude_calls) == 1
         argv, kwargs = claude_calls[0]
-        assert imp.concrete_change not in argv
-        for token in argv:
+        # The concrete_change (which carries the large imp payload) must
+        # go through stdin, never argv. Check substring membership on
+        # every argv token except the one we deliberately pass as the
+        # system prompt.
+        sys_prompt_idx = argv.index("--append-system-prompt") + 1
+        for i, token in enumerate(argv):
+            if i == sys_prompt_idx:
+                # The static system prompt is intentionally long.
+                continue
+            assert imp.concrete_change not in token, (
+                f"concrete_change leaked into argv token {i}: {token[:80]!r}"
+            )
             assert len(token) < 2000, (
-                f"argv token length {len(token)} suggests prompt leaked"
+                f"argv token {i} length {len(token)} suggests prompt leaked"
             )
         assert imp.concrete_change in kwargs["input"]
         assert kwargs["cwd"] == str(version_dir)
@@ -423,6 +432,10 @@ class TestSpawnDevSubagent:
 
         If either of these slips we'd either hang on a permission prompt
         (no Bash approval) or let the sub-agent run arbitrary commands.
+
+        Bash is now in the tool set (so the sub-agent can self-validate
+        with ruff/mypy before exiting) but ``--allowed-tools`` scopes
+        which Bash commands are pre-approved.
         """
         fake = FakeRun()
         spawn_dev_subagent(
@@ -433,10 +446,156 @@ class TestSpawnDevSubagent:
         argv = claude_calls[0][0]
         assert "--tools" in argv
         tools_idx = argv.index("--tools")
-        assert argv[tools_idx + 1] == "Read,Edit,Write,Grep,Glob"
+        assert argv[tools_idx + 1] == "Read,Edit,Write,Grep,Glob,Bash"
+        assert "--allowed-tools" in argv
+        allowed_idx = argv.index("--allowed-tools")
+        allowed = argv[allowed_idx + 1]
+        # Only mypy/ruff/uv/python Bash invocations are pre-approved.
+        assert "Bash(mypy:*)" in allowed
+        assert "Bash(ruff:*)" in allowed
+        assert "Bash(uv:*)" in allowed
+        assert "Bash(python:*)" in allowed
+        # Must NOT pre-approve broad Bash (git, curl, rm, etc.).
+        assert "Bash(git:*)" not in allowed
+        assert "Bash(*)" not in allowed
         assert "--permission-mode" in argv
         pm_idx = argv.index("--permission-mode")
         assert argv[pm_idx + 1] == "acceptEdits"
         assert "--add-dir" in argv
         ad_idx = argv.index("--add-dir")
         assert argv[ad_idx + 1] == str(version_dir)
+
+    def test_retry_with_feedback_recovers_on_second_attempt(
+        self, version_dir: Path
+    ) -> None:
+        """Mypy fails on attempt 1; sub-agent re-runs with feedback and
+        attempt 2's edit validates clean."""
+        fake = FakeRun()
+        mypy_results = [
+            _CompletedProc(
+                returncode=1,
+                stdout=(
+                    "foo.py:5: error: No overload variant of \"range\" "
+                    "matches argument type \"float\""
+                ),
+            ),
+            _CompletedProc(returncode=0),  # retry passes
+        ]
+        mypy_idx = {"n": 0}
+
+        def routed(argv: list[str], **kwargs: Any) -> _CompletedProc:
+            if argv and argv[0] == "claude":
+                (version_dir / "foo.py").write_text(
+                    f"x = 1\ny = {mypy_idx['n'] + 2}\n", encoding="utf-8"
+                )
+            if argv[:3] == ["uv", "run", "mypy"]:
+                idx = mypy_idx["n"]
+                mypy_idx["n"] += 1
+                res = mypy_results[idx]
+                fake.calls.append((list(argv), dict(kwargs)))
+                return res
+            return fake(argv, **kwargs)
+
+        # Should NOT raise — the second attempt fixes it.
+        spawn_dev_subagent(
+            version_dir, _make_improvement(), run=routed
+        )
+
+        # Two sub-agent calls (initial + 1 retry), two mypy runs.
+        claude_calls = [
+            c for c in fake.calls if c[0] and c[0][0] == "claude"
+        ]
+        assert len(claude_calls) == 2
+        mypy_calls = [
+            c for c in fake.calls if c[0][:3] == ["uv", "run", "mypy"]
+        ]
+        assert len(mypy_calls) == 2
+
+        # The second sub-agent invocation must carry the failed validator
+        # output in its stdin prompt so the model can self-correct.
+        retry_stdin = claude_calls[1][1]["input"]
+        assert "YOUR PREVIOUS ATTEMPT FAILED VALIDATION" in retry_stdin
+        assert "No overload variant of \"range\"" in retry_stdin
+
+    def test_retry_exhaustion_raises_last_validation_error(
+        self, version_dir: Path
+    ) -> None:
+        """All 3 attempts fail mypy — raise the final DevApplyValidationError
+        and stop hammering the sub-agent."""
+        fake = FakeRun()
+        fake.mypy_result = _CompletedProc(
+            returncode=1, stdout="persistent type error"
+        )
+
+        def routed(argv: list[str], **kwargs: Any) -> _CompletedProc:
+            if argv and argv[0] == "claude":
+                # Mutate size each attempt so the diff still sees a change.
+                call_n = sum(
+                    1 for c in fake.calls if c[0] and c[0][0] == "claude"
+                )
+                (version_dir / "foo.py").write_text(
+                    "x = 1\n" + "y\n" * (call_n + 1), encoding="utf-8"
+                )
+            return fake(argv, **kwargs)
+
+        with pytest.raises(DevApplyValidationError, match="mypy"):
+            spawn_dev_subagent(
+                version_dir, _make_improvement(), run=routed
+            )
+        claude_calls = [
+            c for c in fake.calls if c[0] and c[0][0] == "claude"
+        ]
+        assert len(claude_calls) == 3  # default max_attempts=3
+
+    def test_max_attempts_one_disables_retry(
+        self, version_dir: Path
+    ) -> None:
+        """``max_attempts=1`` gives back the old single-shot behaviour."""
+        fake = FakeRun()
+        fake.mypy_result = _CompletedProc(
+            returncode=1, stdout="type error"
+        )
+
+        def routed(argv: list[str], **kwargs: Any) -> _CompletedProc:
+            if argv and argv[0] == "claude":
+                # Size must differ from the fixture's foo.py ("x = 1\n")
+                # so _diff_py_snapshots detects the edit and validation
+                # runs. Same-length writes on sub-second mtime would skip
+                # validation and spuriously return success here.
+                (version_dir / "foo.py").write_text(
+                    "x = 2\nextra_content_to_change_size\n",
+                    encoding="utf-8",
+                )
+            return fake(argv, **kwargs)
+
+        with pytest.raises(DevApplyValidationError):
+            spawn_dev_subagent(
+                version_dir,
+                _make_improvement(),
+                run=routed,
+                max_attempts=1,
+            )
+        claude_calls = [
+            c for c in fake.calls if c[0] and c[0][0] == "claude"
+        ]
+        assert len(claude_calls) == 1
+
+    def test_out_of_scope_edit_not_retried(
+        self, version_dir: Path
+    ) -> None:
+        """Scope violations are a safety issue, not a type error — they
+        must NOT trigger the retry path."""
+        fake = FakeRun()
+        fake.git_status_sequence = [
+            _CompletedProc(stdout=""),
+            _CompletedProc(stdout=" M src/unrelated.py\n"),
+        ]
+        with pytest.raises(DevApplyOutOfScopeError):
+            spawn_dev_subagent(
+                version_dir, _make_improvement(), run=fake
+            )
+        claude_calls = [
+            c for c in fake.calls if c[0] and c[0][0] == "claude"
+        ]
+        # Only the initial invocation — no retries for scope violations.
+        assert len(claude_calls) == 1

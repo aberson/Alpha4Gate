@@ -872,6 +872,136 @@ class TestRunRound:
         assert pointer.read_text(encoding="utf-8") == "v0"
         assert call_count["n"] == 2
 
+    def test_on_round_event_fires_ab_then_gate_phases(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """run_round emits ab_start/ab_game_end/gate_start/gate_game_end
+        events in order, with incrementing win counts, when a candidate
+        reaches the gate phase."""
+        _redirect_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_pointer(tmp_path, "v0")
+
+        events: list[dict[str, Any]] = []
+
+        def recording_callback(event: dict[str, Any]) -> None:
+            events.append(dict(event))
+
+        # Batch fn that invokes on_game_end for each record in order,
+        # matching the production run_batch behaviour.
+        def fake_batch(
+            p1: str,
+            p2: str,
+            games: int,
+            map_name: str,
+            **kwargs: Any,
+        ) -> list[SelfPlayRecord]:
+            on_game_end = kwargs.get("on_game_end")
+            # AB: 3-1 A wins; Gate: 3-0 candidate wins (over 3 games).
+            if games == 4:
+                records = [
+                    _record(p1, p2, p1, "ab-0"),
+                    _record(p1, p2, p1, "ab-1"),
+                    _record(p1, p2, p2, "ab-2"),
+                    _record(p1, p2, p1, "ab-3"),
+                ]
+            else:
+                records = [_record(p1, p2, p1, f"gate-{i}") for i in range(games)]
+            if on_game_end is not None:
+                for r in records:
+                    on_game_end(r)
+            return records
+
+        result = run_round(
+            parent="v0",
+            imp_a=_simple_training_imp("expansion_bonus", 2.0),
+            imp_b=_simple_training_imp("army_supply_bonus", 1.5),
+            ab_games=4,
+            gate_games=3,
+            run_batch_fn=fake_batch,
+            candidate_namer=lambda: ("cand_evt_a", "cand_evt_b"),
+            on_round_event=recording_callback,
+        )
+
+        assert result.promoted is True
+
+        # Event sequence: ab_start, 4x ab_game_end, gate_start, 3x gate_game_end.
+        types = [e["type"] for e in events]
+        assert types == [
+            "ab_start",
+            "ab_game_end",
+            "ab_game_end",
+            "ab_game_end",
+            "ab_game_end",
+            "gate_start",
+            "gate_game_end",
+            "gate_game_end",
+            "gate_game_end",
+        ]
+
+        # ab_start payload
+        assert events[0]["cand_a"] == "cand_evt_a"
+        assert events[0]["cand_b"] == "cand_evt_b"
+        assert events[0]["total"] == 4
+
+        # Running score after each AB game: (1,0) (2,0) (2,1) (3,1)
+        assert (events[1]["wins_a"], events[1]["wins_b"]) == (1, 0)
+        assert (events[2]["wins_a"], events[2]["wins_b"]) == (2, 0)
+        assert (events[3]["wins_a"], events[3]["wins_b"]) == (2, 1)
+        assert (events[4]["wins_a"], events[4]["wins_b"]) == (3, 1)
+
+        # gate_start payload
+        assert events[5]["candidate"] == "cand_evt_a"
+        assert events[5]["parent"] == "v0"
+        assert events[5]["total"] == 3
+
+        # Running gate score: (1,0) (2,0) (3,0)
+        assert (events[6]["wins_cand"], events[6]["wins_parent"]) == (1, 0)
+        assert (events[7]["wins_cand"], events[7]["wins_parent"]) == (2, 0)
+        assert (events[8]["wins_cand"], events[8]["wins_parent"]) == (3, 0)
+
+    def test_on_round_event_callback_error_does_not_abort_round(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A raising on_round_event must be swallowed so cosmetic dashboard
+        writers never tank a round."""
+        _redirect_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_pointer(tmp_path, "v0")
+
+        def exploding_callback(event: dict[str, Any]) -> None:
+            raise RuntimeError(f"dashboard write failed on {event['type']}")
+
+        def fake_batch(
+            p1: str,
+            p2: str,
+            games: int,
+            map_name: str,
+            **kwargs: Any,
+        ) -> list[SelfPlayRecord]:
+            on_game_end = kwargs.get("on_game_end")
+            # All crashes: ab wins 0-0 -> tie -> round short-circuits (no
+            # gate phase), which keeps the test focused on the AB callbacks.
+            records = [_record(p1, p2, None, f"crash-{i}") for i in range(games)]
+            if on_game_end is not None:
+                for r in records:
+                    on_game_end(r)
+            return records
+
+        result = run_round(
+            parent="v0",
+            imp_a=_simple_training_imp("expansion_bonus", 2.0),
+            imp_b=_simple_training_imp("army_supply_bonus", 1.5),
+            ab_games=4,
+            gate_games=3,
+            run_batch_fn=fake_batch,
+            candidate_namer=lambda: ("cand_boom_a", "cand_boom_b"),
+            on_round_event=exploding_callback,
+        )
+        assert result.promoted is False
+        assert result.winner is None
+        assert "discarded" in result.reason
+
 
 # ---------------------------------------------------------------------------
 # generate_pool
@@ -903,13 +1033,20 @@ def _well_formed_imp_dict(
 
 
 def _well_formed_pool(n: int) -> list[dict[str, Any]]:
-    """Return n well-formed imp dicts with alternating training/dev types."""
+    """Return n well-formed imp dicts, all dev-type.
+
+    Dev-only matches the post-filter applied by :func:`generate_pool`
+    (training imps are dropped). Tests that want to exercise the filter
+    itself should construct a mixed pool inline — the default is
+    dev-only so the round-trip through ``generate_pool`` doesn't get
+    short-circuited by the filter unexpectedly.
+    """
     out: list[dict[str, Any]] = []
     for i in range(1, n + 1):
         out.append(
             _well_formed_imp_dict(
                 rank=i,
-                type_="training" if i % 2 == 1 else "dev",
+                type_="dev",
                 title=f"pool-imp-{i}",
             )
         )
@@ -1000,8 +1137,10 @@ class TestGeneratePool:
         # Ranks preserved from the scripted response.
         assert [imp.rank for imp in pool] == list(range(1, 11))
         # Alternating training / dev.
-        assert pool[0].type == "training"
-        assert pool[1].type == "dev"
+        # Pool is dev-only after the filter: training-type imps are
+        # dropped in generate_pool and handled by the post-evolve PPO
+        # training step instead.
+        assert all(imp.type == "dev" for imp in pool)
         # principle_ids is a list of strings (schema compliance).
         assert pool[0].principle_ids == [
             "core-strategic-objective",
@@ -1098,7 +1237,7 @@ class TestGeneratePool:
         )
         batch = _BatchRecorder([(1, 1, 1)])
 
-        with pytest.raises(ValueError, match="5 improvements on retry"):
+        with pytest.raises(ValueError, match="5 dev improvements on retry"):
             generate_pool(
                 "v0",
                 mirror_games=3,
@@ -1107,6 +1246,153 @@ class TestGeneratePool:
                 claude_fn=claude,
             )
         assert claude.call_count == 2
+
+    def test_training_imps_are_filtered_out(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Claude occasionally emits training imps despite the prompt —
+        the filter drops them and the caller retries to hit ``pool_size``."""
+        self._setup(tmp_path, monkeypatch)
+        # Mixed: 5 training + 5 dev. After filter → only 5 dev → retry fires.
+        mixed = []
+        for i in range(1, 11):
+            mixed.append(
+                _well_formed_imp_dict(
+                    rank=i,
+                    type_="training" if i % 2 == 1 else "dev",
+                    title=f"mix-{i}",
+                )
+            )
+        # Retry returns 10 dev imps — this clears the shortfall.
+        retry_pool = _well_formed_pool(10)
+        claude = _ScriptedClaude(
+            [json.dumps(mixed), json.dumps(retry_pool)]
+        )
+        batch = _BatchRecorder([(1, 1, 1)])
+
+        pool = generate_pool(
+            "v0",
+            mirror_games=3,
+            pool_size=10,
+            run_batch_fn=batch,
+            claude_fn=claude,
+        )
+        assert len(pool) == 10
+        assert all(imp.type == "dev" for imp in pool)
+        # Retry was needed because the filter cut the first response to 5.
+        assert claude.call_count == 2
+
+    def test_training_imps_filtered_even_after_retry(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If both the initial AND retry responses are mixed such that
+        dev count < pool_size, the final raise fires."""
+        self._setup(tmp_path, monkeypatch)
+        mixed_first = [
+            _well_formed_imp_dict(
+                rank=i,
+                type_="training" if i % 2 == 1 else "dev",
+                title=f"a-{i}",
+            )
+            for i in range(1, 11)
+        ]
+        mixed_second = [
+            _well_formed_imp_dict(
+                rank=i,
+                type_="training" if i % 2 == 1 else "dev",
+                title=f"b-{i}",
+            )
+            for i in range(1, 11)
+        ]
+        claude = _ScriptedClaude(
+            [json.dumps(mixed_first), json.dumps(mixed_second)]
+        )
+        batch = _BatchRecorder([(1, 1, 1)])
+
+        with pytest.raises(ValueError, match="5 dev improvements on retry"):
+            generate_pool(
+                "v0",
+                mirror_games=3,
+                pool_size=10,
+                run_batch_fn=batch,
+                claude_fn=claude,
+            )
+
+    def test_on_pool_gen_event_emits_mirror_and_claude_lifecycle(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """generate_pool fires mirror_start / mirror_game_end / claude_start
+        / pool_ready in order, with running game counts from run_batch's
+        on_game_end hook."""
+        self._setup(tmp_path, monkeypatch)
+        claude = _ScriptedClaude([json.dumps(_well_formed_pool(10))])
+        events: list[dict[str, Any]] = []
+
+        # Custom batch fn that fires on_game_end like the real run_batch.
+        def fake_batch(
+            p1: str,
+            p2: str,
+            games: int,
+            map_name: str,
+            **kwargs: Any,
+        ) -> list[SelfPlayRecord]:
+            on_game_end = kwargs.get("on_game_end")
+            records = [_record(p1, p2, p1, f"mirror-{i}") for i in range(games)]
+            if on_game_end is not None:
+                for r in records:
+                    on_game_end(r)
+            return records
+
+        pool = generate_pool(
+            "v0",
+            mirror_games=3,
+            pool_size=10,
+            run_batch_fn=fake_batch,
+            claude_fn=claude,
+            on_pool_gen_event=lambda e: events.append(dict(e)),
+        )
+        assert len(pool) == 10
+
+        types = [e["type"] for e in events]
+        assert types == [
+            "mirror_start",
+            "mirror_game_end",
+            "mirror_game_end",
+            "mirror_game_end",
+            "claude_start",
+            "pool_ready",
+        ]
+
+        assert events[0]["total"] == 3
+        assert events[0]["parent"] == "v0"
+        # Running game count after each mirror game.
+        assert events[1]["games_played"] == 1
+        assert events[2]["games_played"] == 2
+        assert events[3]["games_played"] == 3
+        assert events[4]["pool_size"] == 10
+        assert events[5]["pool_size"] == 10
+
+    def test_on_pool_gen_event_callback_error_does_not_abort_generation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A raising on_pool_gen_event must be swallowed; the pool is still
+        returned so a broken dashboard writer can't tank pool generation."""
+        self._setup(tmp_path, monkeypatch)
+        claude = _ScriptedClaude([json.dumps(_well_formed_pool(10))])
+        batch = _BatchRecorder([(1, 1, 1)])
+
+        def exploding_cb(event: dict[str, Any]) -> None:
+            raise RuntimeError(f"dashboard write failed on {event['type']}")
+
+        pool = generate_pool(
+            "v0",
+            mirror_games=3,
+            pool_size=10,
+            run_batch_fn=batch,
+            claude_fn=claude,
+            on_pool_gen_event=exploding_cb,
+        )
+        assert len(pool) == 10
 
     def test_malformed_json_raises(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

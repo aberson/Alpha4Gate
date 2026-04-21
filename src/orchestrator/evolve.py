@@ -350,6 +350,25 @@ def _resolve_candidate_names(
     )
 
 
+def _safe_emit(
+    cb: Callable[[dict[str, Any]], None], event: dict[str, Any]
+) -> None:
+    """Invoke *cb* with *event*, swallowing any exception it raises.
+
+    Progress callbacks are strictly cosmetic — a broken dashboard writer
+    must never abort the round. Mirrors the defensive posture used by
+    ``orchestrator.selfplay._run_one_with_snapshot`` around its own callbacks.
+    """
+    try:
+        cb(event)
+    except Exception:
+        _log.warning(
+            "evolve on_round_event callback raised (%s); continuing",
+            event.get("type"),
+            exc_info=True,
+        )
+
+
 def run_round(
     parent: str,
     imp_a: Improvement,
@@ -363,6 +382,7 @@ def run_round(
     run_batch_fn: Callable[..., list[SelfPlayRecord]] | None = None,
     dev_apply_fn: Callable[[Path, Improvement], None] | None = None,
     candidate_namer: Callable[[], tuple[str, str]] | None = None,
+    on_round_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> RoundResult:
     """Execute one sibling-tournament evolve round.
 
@@ -451,13 +471,44 @@ def run_round(
             ab_games,
             parent,
         )
+        if on_round_event is not None:
+            _safe_emit(
+                on_round_event,
+                {
+                    "type": "ab_start",
+                    "cand_a": cand_a,
+                    "cand_b": cand_b,
+                    "total": ab_games,
+                },
+            )
+        ab_batch_kwargs: dict[str, Any] = {
+            "game_time_limit": game_time_limit,
+            "hard_timeout": hard_timeout,
+        }
+        if on_round_event is not None:
+            ab_live = [0, 0]  # [wins_a, wins_b, games_played is len of sum]
+
+            def _on_ab_game_end(record: SelfPlayRecord) -> None:
+                if record.winner == cand_a:
+                    ab_live[0] += 1
+                elif record.winner == cand_b:
+                    ab_live[1] += 1
+                _safe_emit(
+                    on_round_event,
+                    {
+                        "type": "ab_game_end",
+                        "wins_a": ab_live[0],
+                        "wins_b": ab_live[1],
+                    },
+                )
+
+            ab_batch_kwargs["on_game_end"] = _on_ab_game_end
         ab_record = run_batch_fn(
             cand_a,
             cand_b,
             ab_games,
             map_name,
-            game_time_limit=game_time_limit,
-            hard_timeout=hard_timeout,
+            **ab_batch_kwargs,
         )
         ab_wins_a, ab_wins_b = _count_wins(ab_record, cand_a, cand_b)
 
@@ -500,13 +551,44 @@ def run_round(
             parent,
             gate_games,
         )
+        if on_round_event is not None:
+            _safe_emit(
+                on_round_event,
+                {
+                    "type": "gate_start",
+                    "candidate": ab_winner,
+                    "parent": parent,
+                    "total": gate_games,
+                },
+            )
+        gate_batch_kwargs: dict[str, Any] = {
+            "game_time_limit": game_time_limit,
+            "hard_timeout": hard_timeout,
+        }
+        if on_round_event is not None:
+            gate_live = [0, 0]  # [wins_cand, wins_parent]
+
+            def _on_gate_game_end(record: SelfPlayRecord) -> None:
+                if record.winner == ab_winner:
+                    gate_live[0] += 1
+                elif record.winner == parent:
+                    gate_live[1] += 1
+                _safe_emit(
+                    on_round_event,
+                    {
+                        "type": "gate_game_end",
+                        "wins_cand": gate_live[0],
+                        "wins_parent": gate_live[1],
+                    },
+                )
+
+            gate_batch_kwargs["on_game_end"] = _on_gate_game_end
         gate_record = run_batch_fn(
             ab_winner,
             parent,
             gate_games,
             map_name,
-            game_time_limit=game_time_limit,
-            hard_timeout=hard_timeout,
+            **gate_batch_kwargs,
         )
         gate_wins_cand, gate_wins_parent = _count_wins(
             gate_record, ab_winner, parent
@@ -725,6 +807,34 @@ def _validate_improvement_item(item: Any, index: int) -> Improvement:
     )
 
 
+def _filter_dev_only(pool: list[Improvement]) -> list[Improvement]:
+    """Drop any ``training``-type improvements from *pool*.
+
+    Evolve's head-to-head games only measure behavioural differences. A
+    training-type imp is a JSON patch to reward_rules.json / hyperparams.json;
+    those files only affect PPO's reward signal during training and are
+    irrelevant during a non-training game, so a training imp's "win" is
+    pure statistical noise. Training-type improvements are handled out-of-
+    band by the post-evolve PPO step (``--post-training-cycles`` on
+    ``scripts/evolve.py``).
+
+    Logs at INFO for each dropped item so the operator can see what
+    Claude tried to sneak past the prompt.
+    """
+    kept: list[Improvement] = []
+    for imp in pool:
+        if imp.type == "training":
+            _log.info(
+                "generate_pool: dropping training-type imp %r "
+                "(rank=%d) — pool is dev-only",
+                imp.title,
+                imp.rank,
+            )
+            continue
+        kept.append(imp)
+    return kept
+
+
 def _parse_claude_pool(raw: str) -> list[Improvement]:
     """Parse Claude's response string into a list of Improvement objects.
 
@@ -875,24 +985,28 @@ these seven fields:
 
   - rank: positive int (1 is best)
   - title: short human label (string)
-  - type: "training" or "dev" (exactly one of these two strings)
+  - type: MUST be "dev". (Training-type reward-rule / hyperparameter \
+improvements are handled by a separate post-evolve PPO training step, so \
+they don't belong in the evolve pool — the pool only carries dev-type \
+code changes whose behaviour can be validated by head-to-head games.)
   - description: long-form rationale (string)
   - principle_ids: list of principle ID strings from the guiding principles \
 above
   - expected_impact: free-text prediction (string)
-  - concrete_change: string. For "training" imps it must be JSON-encoded with \
-shape {{"file": "reward_rules.json" | "hyperparams.json", "patch": \
-{{"<key>": <value>, ...}}}} — flat top-level keys only. For "dev" imps it is \
-a free-text instruction for a sub-agent that edits Python source under \
-bots/{parent}/ .
+  - concrete_change: free-text instruction for a sub-agent that edits \
+Python source under bots/{parent}/ . Name the file and the specific \
+function or line the change targets. Keep it minimal and implementable.
 
 ## Constraints
 
-- type must be exactly "training" or "dev". No other values.
-- training improvements edit reward_rules.json or hyperparams.json inside \
-the version's data/ dir. They do NOT edit Python.
-- dev improvements edit Python source under bots/{parent}/. They do NOT \
-touch data files.
+- type MUST be exactly "dev" on every item. Do NOT emit "training" items; \
+they will be dropped by the caller and force a retry.
+- Dev improvements edit Python source under bots/{parent}/ only. They do \
+NOT touch data/ files (reward_rules.json, hyperparams.json) and they do \
+NOT edit files outside bots/{parent}/.
+- Every improvement must type-check under `mypy --strict` and lint-clean \
+under `ruff check`. If a change would require loosening either (e.g. via \
+`# type: ignore` or a new `Any` cast), propose a different change instead.
 - Every principle_ids entry should cite a real section or rule from the \
 guiding-principles document above.
 - Return ONLY the JSON array. No prose, no markdown fences.
@@ -1029,6 +1143,7 @@ def generate_pool(
     hard_timeout: float = 2700.0,
     run_batch_fn: Callable[..., list[SelfPlayRecord]] | None = None,
     claude_fn: Callable[[str], str] | None = None,
+    on_pool_gen_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> list[Improvement]:
     """Generate a pool of improvements via mirror self-play + Claude advisor.
 
@@ -1088,13 +1203,36 @@ def generate_pool(
         parent,
         map_name,
     )
+    if on_pool_gen_event is not None:
+        _safe_emit(
+            on_pool_gen_event,
+            {"type": "mirror_start", "total": mirror_games, "parent": parent},
+        )
+    mirror_batch_kwargs: dict[str, Any] = {
+        "game_time_limit": game_time_limit,
+        "hard_timeout": hard_timeout,
+    }
+    if on_pool_gen_event is not None:
+        mirror_played = [0]
+
+        def _on_mirror_game_end(record: SelfPlayRecord) -> None:
+            mirror_played[0] += 1
+            _safe_emit(
+                on_pool_gen_event,
+                {
+                    "type": "mirror_game_end",
+                    "games_played": mirror_played[0],
+                    "total": mirror_games,
+                },
+            )
+
+        mirror_batch_kwargs["on_game_end"] = _on_mirror_game_end
     records = run_batch_fn(
         parent,
         parent,
         mirror_games,
         map_name,
-        game_time_limit=game_time_limit,
-        hard_timeout=hard_timeout,
+        **mirror_batch_kwargs,
     )
 
     # 2. Summary stats for the prompt.
@@ -1135,13 +1273,20 @@ def generate_pool(
         len(prompt),
         pool_size,
     )
+    if on_pool_gen_event is not None:
+        _safe_emit(
+            on_pool_gen_event,
+            {"type": "claude_start", "pool_size": pool_size},
+        )
     raw = claude_fn(prompt)
-    pool = _parse_claude_pool(raw)
+    pool = _filter_dev_only(_parse_claude_pool(raw))
 
-    # 7. Retry once if Claude under-delivered.
+    # 7. Retry once if Claude under-delivered (including items dropped
+    # because they were training-type — the prompt forbids those, but
+    # Claude occasionally emits them anyway and the filter strips them).
     if len(pool) < pool_size:
         _log.warning(
-            "generate_pool: got %d items, expected %d; retrying once",
+            "generate_pool: got %d dev items, expected %d; retrying once",
             len(pool),
             pool_size,
         )
@@ -1149,13 +1294,19 @@ def generate_pool(
             _PROMPT_RETRY_PREFIX.format(got=len(pool), want=pool_size) + prompt
         )
         raw_retry = claude_fn(retry_prompt)
-        pool = _parse_claude_pool(raw_retry)
+        pool = _filter_dev_only(_parse_claude_pool(raw_retry))
         if len(pool) < pool_size:
             raise ValueError(
-                f"Claude returned {len(pool)} improvements on retry; need "
-                f"exactly {pool_size}. Aborting."
+                f"Claude returned {len(pool)} dev improvements on retry; "
+                f"need exactly {pool_size}. Aborting."
             )
 
     # Truncate if Claude over-delivered so the caller always gets exactly
     # pool_size — ordering is preserved (highest-rank first).
-    return pool[:pool_size]
+    final_pool = pool[:pool_size]
+    if on_pool_gen_event is not None:
+        _safe_emit(
+            on_pool_gen_event,
+            {"type": "pool_ready", "pool_size": len(final_pool)},
+        )
+    return final_pool

@@ -1,10 +1,9 @@
 """CLI-level tests for ``scripts/evolve.py``.
 
 Exercises the orchestration loop's control flow (budget, pool exhaustion,
-no-progress, commit-on-promote, state-file writes) with every heavy
-boundary mocked out. The production ``orchestrator.evolve.run_round``,
-Claude invocation, and git subprocess calls are all replaced with
-scripted fakes.
+commit-on-promote, state-file writes) with every heavy boundary mocked
+out. The production ``orchestrator.evolve.run_round``, Claude invocation,
+and git subprocess calls are all replaced with scripted fakes.
 """
 
 from __future__ import annotations
@@ -158,9 +157,14 @@ def _build_args(
         results_path=tmp_path / "evolve_results.jsonl",
         pool_path=tmp_path / "evolve_pool.json",
         state_path=tmp_path / "evolve_run_state.json",
+        current_round_path=tmp_path / "evolve_current_round.json",
+        crash_log_path=tmp_path / "evolve_crashes.jsonl",
         run_log=run_log if run_log is not None else tmp_path / "run.md",
         seed=seed,
         return_loser=False,
+        resume=False,
+        post_training_cycles=0,
+        backend_url="http://localhost:8765",
     )
 
 
@@ -243,6 +247,10 @@ def test_default_flags(cli: ModuleType) -> None:
     assert args.map == "Simple64"
     assert args.no_commit is False
     assert args.return_loser is False
+    assert args.resume is False
+    assert args.current_round_path.name == "evolve_current_round.json"
+    assert args.post_training_cycles == 0
+    assert args.backend_url == "http://localhost:8765"
 
 
 # ---------------------------------------------------------------------------
@@ -359,18 +367,22 @@ def test_pool_exhaustion_stop(
 
 
 # ---------------------------------------------------------------------------
-# 5. Consecutive no-progress stop
+# 5. Discards keep running until pool exhaustion (no no-progress stop)
 # ---------------------------------------------------------------------------
 
 
-def test_no_progress_stop_after_three_discards(
+def test_consecutive_discards_do_not_stop_the_run(
     cli: ModuleType, tmp_path: Path
 ) -> None:
-    """Three consecutive discards trip the no-progress break."""
+    """The loop stops only on wall-clock or pool exhaustion — consecutive
+    discards (or crashes) never short-circuit a run.
+
+    Regression test for a rule that was removed after it silently truncated
+    a run at 3 rounds when most of the pool was still active. The user's
+    intent is "exhaust the pool" — 10 items / 2 per round = 5 rounds max.
+    """
     pool = _make_pool(10)
-    # All three discards — reason uses AB-tie language so
-    # _classify_outcome returns 'discarded-tie' and the sandbox-free
-    # status-update marks both imps consumed-tie.
+    # 5 scripted discards — one per possible round at pool_size=10.
     round_runner = _ScriptedRoundRunner(
         [
             _make_round(
@@ -379,7 +391,7 @@ def test_no_progress_stop_after_three_discards(
                 promoted=False,
                 reason="discarded: A/B was 2-2 tie; both improvements consumed",
             )
-            for _ in range(3)
+            for _ in range(5)
         ]
     )
 
@@ -393,8 +405,13 @@ def test_no_progress_stop_after_three_discards(
     )
     assert rc == 0
     state = json.loads(args.state_path.read_text(encoding="utf-8"))
-    assert state["no_progress_streak"] == 3
-    assert state["rounds_completed"] == 3
+    # All 5 rounds ran; no_progress_streak is still tracked but no longer
+    # a stop condition.
+    assert state["rounds_completed"] == 5
+    assert state["no_progress_streak"] == 5
+    assert state["pool_remaining_count"] == 0
+    # Every scripted round was consumed — no early return.
+    assert len(round_runner.calls) == 5
 
 
 # ---------------------------------------------------------------------------
@@ -877,6 +894,169 @@ def test_pool_generation_failure_returns_1(
 # ---------------------------------------------------------------------------
 
 
+def test_post_training_fires_on_promotion_when_flag_set(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """If a round promotes AND --post-training-cycles > 0, the CLI calls
+    the injected post_training_fn with the new parent version."""
+    pool = _make_pool(2)
+    args = _build_args(tmp_path, hours=0.0, pool_size=2)
+    args.post_training_cycles = 3
+
+    round_runner = _ScriptedRoundRunner(
+        [
+            _make_round(
+                imp_a=pool[0],
+                imp_b=pool[1],
+                promoted=True,
+                reason="promoted: winner beat parent 3-0",
+                cand_a="cand_promo_a",
+                cand_b="cand_promo_b",
+                winner="cand_promo_a",
+            )
+        ]
+    )
+
+    calls: list[dict[str, Any]] = []
+
+    def fake_post_training(**kw: Any) -> dict[str, Any]:
+        calls.append(kw)
+        return {"ok": True}
+
+    # Simulate the post-promote pointer flip: the first
+    # current_version_fn() call (at pre-flight) returns v0; every call
+    # after the round's promote branch returns the winner. Production's
+    # run_round updates bots/current/current.txt; the mocked run_round
+    # does not, so we fake it via call count.
+    version_call_count = {"n": 0}
+
+    def version_fn() -> str:
+        version_call_count["n"] += 1
+        return "v0" if version_call_count["n"] <= 1 else "cand_promo_a"
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=lambda *a, **k: pool,
+        run_round_fn=round_runner,
+        current_version_fn=version_fn,
+        post_training_fn=fake_post_training,
+    )
+    assert rc == 0
+    assert len(calls) == 1
+    assert calls[0]["cycles"] == 3
+    assert calls[0]["new_parent"] == "cand_promo_a"
+    assert calls[0]["backend_url"] == "http://localhost:8765"
+
+
+def test_post_training_does_not_fire_on_no_promotion(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """Run ends without a promotion → post-training NOT invoked even if
+    --post-training-cycles is set (no point training on the same baseline)."""
+    pool = _make_pool(2)
+    args = _build_args(tmp_path, hours=0.0, pool_size=2)
+    args.post_training_cycles = 3
+
+    round_runner = _ScriptedRoundRunner(
+        [
+            _make_round(
+                imp_a=pool[0],
+                imp_b=pool[1],
+                promoted=False,
+                reason="discarded: A/B 0-0 tie",
+                ab_score=(0, 0),
+            )
+        ]
+    )
+
+    calls: list[dict[str, Any]] = []
+
+    def fake_post_training(**kw: Any) -> dict[str, Any]:
+        calls.append(kw)
+        return {"ok": True}
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=lambda *a, **k: pool,
+        run_round_fn=round_runner,
+        current_version_fn=lambda: "v0",
+        post_training_fn=fake_post_training,
+    )
+    assert rc == 0
+    assert calls == []
+
+
+def test_post_training_does_not_fire_when_flag_zero(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """Default --post-training-cycles=0 means never start the daemon,
+    even on promotion."""
+    pool = _make_pool(2)
+    args = _build_args(tmp_path, hours=0.0, pool_size=2)
+    assert args.post_training_cycles == 0
+
+    round_runner = _ScriptedRoundRunner(
+        [
+            _make_round(
+                imp_a=pool[0],
+                imp_b=pool[1],
+                promoted=True,
+                reason="promoted",
+                cand_a="cand_x_a",
+                cand_b="cand_x_b",
+                winner="cand_x_a",
+            )
+        ]
+    )
+
+    calls: list[dict[str, Any]] = []
+
+    def fake_post_training(**kw: Any) -> dict[str, Any]:
+        calls.append(kw)
+        return {"ok": True}
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=lambda *a, **k: pool,
+        run_round_fn=round_runner,
+        current_version_fn=lambda: ("cand_x_a" if calls else "v0"),
+        post_training_fn=fake_post_training,
+    )
+    assert rc == 0
+    assert calls == []
+
+
+def test_start_post_training_daemon_swallows_backend_errors(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """A backend-down / unreachable error must NOT bubble up — the
+    evolve run's promotion is already on disk; we just log a warning."""
+    # httpx isn't available under some minimal configs; grab whatever
+    # the CLI module imported lazily inside the function.
+    import httpx
+
+    def boom(*a: Any, **k: Any) -> Any:
+        raise httpx.ConnectError("backend down")
+
+    # Patch both httpx methods to raise.
+    orig_put = httpx.put
+    orig_post = httpx.post
+    httpx.put = boom  # type: ignore[assignment]
+    httpx.post = boom  # type: ignore[assignment]
+    try:
+        result = cli.start_post_training_daemon(
+            cycles=3,
+            backend_url="http://localhost:9999",
+            new_parent="cand_xyz",
+        )
+    finally:
+        httpx.put = orig_put  # type: ignore[assignment]
+        httpx.post = orig_post  # type: ignore[assignment]
+
+    assert result["error"] is not None
+    assert "ConnectError" in result["error"]
+
+
 def test_sc2_not_installed_returns_1(
     cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -891,3 +1071,605 @@ def test_sc2_not_installed_returns_1(
         current_version_fn=lambda: "v0",
     )
     assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# 4. --resume — load existing pool instead of regenerating
+# ---------------------------------------------------------------------------
+
+
+def _seed_pool_file(
+    cli: ModuleType,
+    pool_path: Path,
+    *,
+    parent: str,
+    pool: list[Improvement],
+    statuses: dict[int, str] | None = None,
+) -> None:
+    """Shortcut for writing a pool file via the CLI's write helper."""
+    cli.write_pool_state(
+        pool_path,
+        pool,
+        parent=parent,
+        statuses=statuses or {},
+        generated_at="2026-04-20T18:48:41+00:00",
+    )
+
+
+def test_resume_loads_existing_pool_and_skips_generation(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """With --resume and an existing pool file, generate_pool_fn is NOT called
+    and statuses (consumed-*) on disk are honoured."""
+    pool = _make_pool(4)
+    args = _build_args(tmp_path, hours=0.0, pool_size=4)
+    args.resume = True
+    # Two consumed-tie items mirror the real-world state we saw on disk
+    # after the 11:48 run crashed mid-round 1.
+    _seed_pool_file(
+        cli,
+        args.pool_path,
+        parent="v0",
+        pool=pool,
+        statuses={0: "consumed-tie", 1: "consumed-tie"},
+    )
+
+    gen_calls: list[Any] = []
+
+    def no_pool_gen(*a: Any, **k: Any) -> list[Improvement]:
+        gen_calls.append((a, k))
+        raise AssertionError("generate_pool_fn must not be called on --resume")
+
+    round_runner = _ScriptedRoundRunner(
+        [
+            _make_round(
+                imp_a=pool[2],
+                imp_b=pool[3],
+                promoted=True,
+                reason="promoted: cand_x_a won",
+                cand_a="cand_resume_a",
+                cand_b="cand_resume_b",
+                winner="cand_resume_a",
+            )
+        ]
+    )
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=no_pool_gen,
+        run_round_fn=round_runner,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+    assert gen_calls == []
+
+    # The round runner was called exactly once with imps drawn only from
+    # the remaining active slots (indexes 2 and 3).
+    assert len(round_runner.calls) == 1
+    sampled_titles = {
+        round_runner.calls[0]["imp_a"].title,
+        round_runner.calls[0]["imp_b"].title,
+    }
+    assert sampled_titles == {"imp-2", "imp-3"}
+
+
+def test_resume_parent_mismatch_returns_1(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """A pool file whose parent doesn't match current_version() is refused."""
+    pool = _make_pool(2)
+    args = _build_args(tmp_path, hours=0.0, pool_size=2)
+    args.resume = True
+    _seed_pool_file(cli, args.pool_path, parent="v7", pool=pool)
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=lambda *a, **k: _fail("must not generate"),
+        run_round_fn=lambda *a, **k: _fail("must not run"),
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 1
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["status"] == "failed"
+
+
+def test_resume_missing_file_falls_through_to_generation(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """--resume with no pool file on disk behaves like a fresh run."""
+    pool = _make_pool(2)
+    args = _build_args(tmp_path, hours=0.0, pool_size=2)
+    args.resume = True
+    assert not args.pool_path.exists()
+
+    gen_calls: list[tuple[Any, Any]] = []
+
+    def gen(*a: Any, **k: Any) -> list[Improvement]:
+        gen_calls.append((a, k))
+        return pool
+
+    round_runner = _ScriptedRoundRunner(
+        [
+            _make_round(
+                imp_a=pool[0],
+                imp_b=pool[1],
+                promoted=False,
+                reason="discarded: A/B 0-0 all-crash",
+                ab_score=(0, 0),
+            )
+        ]
+    )
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=gen,
+        run_round_fn=round_runner,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+    assert len(gen_calls) == 1
+
+
+def _fail(msg: str) -> Any:
+    raise AssertionError(msg)
+
+
+# ---------------------------------------------------------------------------
+# 5. Current-round live state — written by on_round_event callback
+# ---------------------------------------------------------------------------
+
+
+def test_current_round_written_on_events_and_cleared_between_rounds(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """The CLI builds an on_round_event callback that updates
+    evolve_current_round.json on ab_start / ab_game_end / gate_start /
+    gate_game_end, and clears the file at round end."""
+    pool = _make_pool(2)
+    args = _build_args(tmp_path, hours=0.0, pool_size=2)
+    captured_events: list[dict[str, Any]] = []
+
+    def round_runner(
+        parent: str,
+        imp_a: Improvement,
+        imp_b: Improvement,
+        **kwargs: Any,
+    ) -> RoundResult:
+        on_event = kwargs.get("on_round_event")
+        assert on_event is not None, "CLI must wire on_round_event"
+        # Simulate a full round's worth of progress events, asserting the
+        # file updates visibly between them so the dashboard UI would see
+        # the same snapshots.
+        on_event({"type": "ab_start", "cand_a": "x_a", "cand_b": "x_b", "total": 4})
+        after_ab_start = json.loads(
+            args.current_round_path.read_text(encoding="utf-8")
+        )
+        captured_events.append(after_ab_start)
+
+        on_event({"type": "ab_game_end", "wins_a": 1, "wins_b": 0})
+        after_g1 = json.loads(
+            args.current_round_path.read_text(encoding="utf-8")
+        )
+        captured_events.append(after_g1)
+
+        on_event({"type": "gate_start", "candidate": "x_a", "parent": "v0", "total": 3})
+        after_gate_start = json.loads(
+            args.current_round_path.read_text(encoding="utf-8")
+        )
+        captured_events.append(after_gate_start)
+
+        on_event({"type": "gate_game_end", "wins_cand": 1, "wins_parent": 0})
+        after_gg1 = json.loads(
+            args.current_round_path.read_text(encoding="utf-8")
+        )
+        captured_events.append(after_gg1)
+
+        return _make_round(
+            imp_a=imp_a,
+            imp_b=imp_b,
+            promoted=False,
+            reason="discarded: A/B 2-2 tie",
+        )
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=lambda *a, **k: pool,
+        run_round_fn=round_runner,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+
+    # Four in-flight snapshots + one cleared snapshot after round-end.
+    ab_start_snap, g1_snap, gate_start_snap, gg1_snap = captured_events
+    assert ab_start_snap["active"] is True
+    assert ab_start_snap["phase"] == "ab"
+    assert ab_start_snap["cand_a"] == "x_a"
+    assert ab_start_snap["games_total"] == 4
+    assert ab_start_snap["games_played"] == 0
+
+    assert g1_snap["games_played"] == 1
+    assert g1_snap["score_a"] == 1 and g1_snap["score_b"] == 0
+
+    assert gate_start_snap["phase"] == "gate"
+    assert gate_start_snap["gate_candidate"] == "x_a"
+    assert gate_start_snap["games_total"] == 3
+    assert gate_start_snap["games_played"] == 0
+    assert gate_start_snap["score_a"] == 0 and gate_start_snap["score_b"] == 0
+
+    assert gg1_snap["games_played"] == 1
+    assert gg1_snap["score_a"] == 1 and gg1_snap["score_b"] == 0
+
+    # After the round completes the CLI should have cleared the file.
+    final = json.loads(args.current_round_path.read_text(encoding="utf-8"))
+    assert final["active"] is False
+
+
+def test_fresh_run_clears_stale_state_files(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """A fresh (non-resume) run wipes the prior run's evolve_results.jsonl,
+    overwrites evolve_pool.json with an empty placeholder, and clears
+    evolve_current_round.json BEFORE pool generation begins — so the
+    dashboard doesn't flash stale data while seeding is in flight."""
+    args = _build_args(tmp_path, hours=0.0, pool_size=2)
+    # Seed stale files that look like leftovers from a previous run.
+    args.results_path.write_text(
+        json.dumps({"round_index": 99, "winner": "old-v5", "promoted": True})
+        + "\n",
+        encoding="utf-8",
+    )
+    old_pool = {
+        "parent": "v0",
+        "generated_at": "2026-04-18T00:00:00+00:00",
+        "pool": [
+            {
+                "rank": 1,
+                "title": "stale improvement",
+                "type": "training",
+                "description": "old",
+                "principle_ids": [],
+                "expected_impact": "",
+                "concrete_change": "{}",
+                "status": "consumed-lost",
+            }
+        ],
+    }
+    args.pool_path.write_text(json.dumps(old_pool), encoding="utf-8")
+    args.current_round_path.write_text(
+        json.dumps({"active": True, "phase": "ab", "round_index": 99}),
+        encoding="utf-8",
+    )
+
+    pool = _make_pool(2)
+    captured: dict[str, Any] = {}
+
+    def gen(*a: Any, **k: Any) -> list[Improvement]:
+        captured["pool_file_at_gen"] = json.loads(
+            args.pool_path.read_text(encoding="utf-8")
+        )
+        captured["results_file_at_gen"] = args.results_path.read_text(
+            encoding="utf-8"
+        )
+        captured["current_round_at_gen"] = json.loads(
+            args.current_round_path.read_text(encoding="utf-8")
+        )
+        return pool
+
+    round_runner = _ScriptedRoundRunner(
+        [
+            _make_round(
+                imp_a=pool[0],
+                imp_b=pool[1],
+                promoted=False,
+                reason="discarded: 0-0 tie",
+                ab_score=(0, 0),
+            )
+        ]
+    )
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=gen,
+        run_round_fn=round_runner,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+
+    # At the moment generate_pool_fn was called, the stale files should have
+    # been wiped (not the seeded "mirror_games" state the CLI writes right
+    # after _clear_fresh_run_state — that happens just before generate_pool,
+    # so current_round may already show phase=mirror_games here).
+    assert captured["pool_file_at_gen"]["pool"] == []
+    assert captured["pool_file_at_gen"]["parent"] == "v0"
+    assert captured["results_file_at_gen"] == ""
+    current_snap = captured["current_round_at_gen"]
+    # Either the clear happened (active=False) OR the mirror-seeding write
+    # just overwrote it with a FRESH round_index (0), imp_a_title referring
+    # to mirror games — never the stale round_index=99 ab snapshot.
+    assert current_snap.get("round_index") != 99
+
+
+def test_resume_does_not_clear_stale_state(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """--resume must NOT wipe the pool file — that would defeat the point."""
+    pool = _make_pool(4)
+    args = _build_args(tmp_path, hours=0.0, pool_size=4)
+    args.resume = True
+    _seed_pool_file(
+        cli,
+        args.pool_path,
+        parent="v0",
+        pool=pool,
+        statuses={0: "consumed-tie", 1: "consumed-tie"},
+    )
+
+    round_runner = _ScriptedRoundRunner(
+        [
+            _make_round(
+                imp_a=pool[2],
+                imp_b=pool[3],
+                promoted=False,
+                reason="discarded",
+            )
+        ]
+    )
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=lambda *a, **k: _fail("must not generate"),
+        run_round_fn=round_runner,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+    # The pool file gets rewritten at the end of the round with updated
+    # statuses, but every item from the original must still be present.
+    final_pool = json.loads(args.pool_path.read_text(encoding="utf-8"))
+    assert len(final_pool["pool"]) == 4  # not an empty placeholder
+    # The original consumed-tie statuses survive the rewrite — the round
+    # only touched indexes 2 and 3.
+    assert final_pool["pool"][0]["status"] == "consumed-tie"
+    assert final_pool["pool"][1]["status"] == "consumed-tie"
+
+
+def test_pool_gen_events_written_to_current_round_file(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """The CLI wires on_pool_gen_event into generate_pool_fn; mirror_start /
+    mirror_game_end / claude_start events each update evolve_current_round.json
+    with the right phase + progress."""
+    args = _build_args(tmp_path, hours=0.0, pool_size=2)
+    captured_during_gen: list[dict[str, Any]] = []
+
+    def gen(
+        parent: str, *, on_pool_gen_event: Any = None, **_: Any
+    ) -> list[Improvement]:
+        assert on_pool_gen_event is not None, (
+            "CLI must pass on_pool_gen_event into generate_pool"
+        )
+        on_pool_gen_event(
+            {"type": "mirror_start", "total": 3, "parent": parent}
+        )
+        captured_during_gen.append(
+            json.loads(args.current_round_path.read_text(encoding="utf-8"))
+        )
+        on_pool_gen_event(
+            {"type": "mirror_game_end", "games_played": 1, "total": 3}
+        )
+        captured_during_gen.append(
+            json.loads(args.current_round_path.read_text(encoding="utf-8"))
+        )
+        on_pool_gen_event(
+            {"type": "mirror_game_end", "games_played": 2, "total": 3}
+        )
+        on_pool_gen_event(
+            {"type": "mirror_game_end", "games_played": 3, "total": 3}
+        )
+        on_pool_gen_event({"type": "claude_start", "pool_size": 2})
+        captured_during_gen.append(
+            json.loads(args.current_round_path.read_text(encoding="utf-8"))
+        )
+        return _make_pool(2)
+
+    round_runner = _ScriptedRoundRunner(
+        [
+            _make_round(
+                imp_a=_make_imp(title="a"),
+                imp_b=_make_imp(title="b"),
+                promoted=False,
+                reason="discarded",
+                ab_score=(0, 0),
+            )
+        ]
+    )
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=gen,
+        run_round_fn=round_runner,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+
+    mirror_start_snap, mirror_g1_snap, claude_start_snap = captured_during_gen
+    assert mirror_start_snap["phase"] == "mirror_games"
+    assert mirror_start_snap["games_total"] == 3
+    assert mirror_start_snap["games_played"] == 0
+    assert mirror_start_snap["cand_a"] == "v0"
+    assert mirror_start_snap["cand_b"] == "v0"
+
+    assert mirror_g1_snap["phase"] == "mirror_games"
+    assert mirror_g1_snap["games_played"] == 1
+
+    assert claude_start_snap["phase"] == "claude_prompt"
+
+
+def test_crashed_round_appends_results_jsonl_and_crash_log(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """A round that raises must produce (a) a row in evolve_results.jsonl
+    with outcome='discarded-crash' + error field and (b) a full-traceback
+    entry in evolve_crashes.jsonl so operators can diagnose without
+    needing stderr scrollback."""
+    pool = _make_pool(2)
+    args = _build_args(tmp_path, hours=0.0, pool_size=2)
+
+    def round_runner(*a: Any, **k: Any) -> RoundResult:
+        raise RuntimeError("dev sub-agent timed out after 900s")
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=lambda *a, **k: pool,
+        run_round_fn=round_runner,
+        current_version_fn=lambda: "v0",
+    )
+    # With a 2-item pool and 1 crash, both items get consumed-tie ->
+    # pool-exhausted -> normal exit.
+    assert rc == 0
+
+    # evolve_results.jsonl should have one crash entry with:
+    #  - promoted=false, winner=null, ab_record=[], gate_record=null
+    #  - error field (truncated traceback)
+    #  - reason beginning with "crashed:"
+    results_lines = args.results_path.read_text(encoding="utf-8").splitlines()
+    assert len(results_lines) == 1, (
+        f"expected 1 crash entry, got {len(results_lines)}"
+    )
+    crash_entry = json.loads(results_lines[0])
+    assert crash_entry["promoted"] is False
+    assert crash_entry["winner"] is None
+    assert crash_entry["ab_record"] == []
+    assert crash_entry["gate_record"] is None
+    assert crash_entry["reason"].startswith("crashed:")
+    assert "RuntimeError" in crash_entry["reason"]
+    assert "dev sub-agent timed out" in crash_entry["reason"]
+    assert "error" in crash_entry
+    assert crash_entry["error"]  # non-empty
+
+    # evolve_crashes.jsonl gets the full diagnostic payload.
+    crash_log_lines = args.crash_log_path.read_text(
+        encoding="utf-8"
+    ).splitlines()
+    assert len(crash_log_lines) == 1
+    crash_log = json.loads(crash_log_lines[0])
+    assert crash_log["round_index"] == 1
+    assert crash_log["error_type"] == "RuntimeError"
+    assert "dev sub-agent timed out" in crash_log["error_message"]
+    assert "Traceback" in crash_log["traceback"]
+    assert crash_log["imp_a_title"] in {"imp-0", "imp-1"}
+    assert crash_log["imp_b_title"] in {"imp-0", "imp-1"}
+
+
+def test_crashed_round_appears_in_run_log_markdown(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """The run-log markdown table should include crashed rounds with
+    outcome='discarded-crash' so the operator's post-run forensics aren't
+    missing the rounds that never produced games."""
+    pool = _make_pool(2)
+    args = _build_args(tmp_path, hours=0.0, pool_size=2)
+
+    def round_runner(*a: Any, **k: Any) -> RoundResult:
+        raise ValueError("candidate snapshot failed: disk full")
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=lambda *a, **k: pool,
+        run_round_fn=round_runner,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+
+    run_log_text = args.run_log.read_text(encoding="utf-8")
+    assert "discarded-crash" in run_log_text
+    assert "ValueError" in run_log_text
+    assert "disk full" in run_log_text
+    # Rounds-completed counter includes the crash.
+    assert "Rounds completed: 1" in run_log_text
+
+
+def test_crashed_round_updates_last_result_and_increments_state(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """The run state file's last_result and rounds_completed must reflect
+    a crash so the dashboard's Last Round card + Stats section update
+    immediately (not just at the end of the run)."""
+    pool = _make_pool(4)
+    args = _build_args(tmp_path, hours=0.0, pool_size=4)
+
+    # First round crashes, second returns a normal tie so we can verify
+    # ordering / state survival across mixed outcomes.
+    call_count = {"n": 0}
+
+    def round_runner(
+        parent: str,
+        imp_a: Improvement,
+        imp_b: Improvement,
+        **kwargs: Any,
+    ) -> RoundResult:
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise RuntimeError("first round blew up")
+        return _make_round(
+            imp_a=imp_a,
+            imp_b=imp_b,
+            promoted=False,
+            reason="discarded: A/B 0-0",
+            ab_score=(0, 0),
+        )
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=lambda *a, **k: pool,
+        run_round_fn=round_runner,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+    assert call_count["n"] == 2  # crash + real tie
+
+    # Final state reflects BOTH rounds; last_result is the tie (most recent).
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["rounds_completed"] == 2
+
+    # results.jsonl has the crash row + the normal tie row, in order.
+    results_lines = args.results_path.read_text(encoding="utf-8").splitlines()
+    assert len(results_lines) == 2
+    first = json.loads(results_lines[0])
+    second = json.loads(results_lines[1])
+    assert first["reason"].startswith("crashed:")
+    assert "first round blew up" in first["reason"]
+    assert second["reason"] == "discarded: A/B 0-0"
+    assert "error" not in second or not second.get("error")
+
+
+def test_current_round_cleared_when_round_crashes(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """A round that raises still clears the current-round file so the
+    dashboard doesn't show stale progress from the dead round."""
+    pool = _make_pool(2)
+    args = _build_args(tmp_path, hours=0.0, pool_size=2)
+
+    def round_runner(
+        parent: str,
+        imp_a: Improvement,
+        imp_b: Improvement,
+        **kwargs: Any,
+    ) -> RoundResult:
+        on_event = kwargs.get("on_round_event")
+        assert on_event is not None
+        on_event({"type": "ab_start", "cand_a": "x_a", "cand_b": "x_b", "total": 4})
+        raise RuntimeError("snapshot failed mid-flight")
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=lambda *a, **k: pool,
+        run_round_fn=round_runner,
+        current_version_fn=lambda: "v0",
+    )
+    # Crashes are consumed as ties; with 2-item pool we then exit
+    # pool-exhausted.
+    assert rc == 0
+
+    final = json.loads(args.current_round_path.read_text(encoding="utf-8"))
+    assert final["active"] is False

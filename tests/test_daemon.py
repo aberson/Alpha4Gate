@@ -58,6 +58,9 @@ class TestDaemonConfig:
         assert cfg.current_difficulty == 1
         assert cfg.max_difficulty == 10
         assert cfg.win_rate_threshold == 0.8
+        # max_runs defaults to None (unbounded) — the bounded bound is
+        # opt-in from the caller (e.g. evolve's --post-training-cycles).
+        assert cfg.max_runs is None
 
     def test_custom_values(self) -> None:
         cfg = DaemonConfig(check_interval_seconds=30, min_transitions=100)
@@ -164,6 +167,58 @@ class TestTrainingDaemon:
         assert status["runs_completed"] == 1
         assert status["last_result"] == {"cycles_completed": 1}
         assert status["last_error"] is None
+
+    def test_max_runs_self_stops_after_n_runs(self, tmp_path: Path) -> None:
+        """Daemon with max_runs=N stops itself after the N-th completed run.
+
+        Mirrors the evolve post-promotion use case: start a bounded
+        training burst, let it self-terminate, no runaway daemon.
+        """
+        settings = _make_settings(tmp_path)
+        daemon = TrainingDaemon(
+            settings,
+            DaemonConfig(check_interval_seconds=1, max_runs=2),
+        )
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.run.return_value = {"cycles_completed": 1}
+
+        # Always returns True so the daemon would train on every check.
+        # The max_runs bound is what stops it.
+        def always_train() -> bool:
+            return True
+
+        with patch(
+            "bots.v0.learning.trainer.TrainingOrchestrator",
+            return_value=mock_orchestrator,
+        ):
+            daemon._should_train = always_train  # type: ignore[assignment]
+            daemon.start()
+            # Allow more than 2 check intervals so the bound has to kick
+            # in — without max_runs, the daemon would keep going.
+            time.sleep(5)
+
+        # Daemon should have stopped itself without a .stop() call.
+        assert not daemon.is_running(), (
+            "daemon with max_runs=2 failed to self-stop"
+        )
+        status = daemon.get_status()
+        assert status["runs_completed"] == 2, (
+            f"expected 2 runs, got {status['runs_completed']}"
+        )
+
+    def test_start_resets_runs_completed(self, tmp_path: Path) -> None:
+        """``start()`` zeroes ``_runs_completed`` so max_runs bounds are
+        interpreted relative to this start, not process lifetime."""
+        settings = _make_settings(tmp_path)
+        daemon = TrainingDaemon(settings, DaemonConfig(check_interval_seconds=60))
+        # Simulate a prior run leaving the counter non-zero.
+        daemon._runs_completed = 7
+        daemon.start()
+        try:
+            assert daemon._runs_completed == 0
+        finally:
+            daemon.stop()
 
     def test_run_training_exception_does_not_crash_daemon(self, tmp_path: Path) -> None:
         """Daemon survives a training exception and keeps running."""

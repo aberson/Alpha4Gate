@@ -1169,6 +1169,23 @@ _EVOLVE_STATE_FILE = "evolve_run_state.json"
 _EVOLVE_CONTROL_FILE = "evolve_run_control.json"
 _EVOLVE_POOL_FILE = "evolve_pool.json"
 _EVOLVE_RESULTS_FILE = "evolve_results.jsonl"
+_EVOLVE_CURRENT_ROUND_FILE = "evolve_current_round.json"
+
+_EVOLVE_CURRENT_ROUND_IDLE: dict[str, Any] = {
+    "active": False,
+    "round_index": None,
+    "imp_a_title": None,
+    "imp_b_title": None,
+    "phase": None,
+    "cand_a": None,
+    "cand_b": None,
+    "games_played": None,
+    "games_total": None,
+    "score_a": None,
+    "score_b": None,
+    "gate_candidate": None,
+    "updated_at": None,
+}
 
 _EVOLVE_IDLE_STATE: dict[str, Any] = {
     "status": "idle",
@@ -1263,6 +1280,27 @@ async def update_evolve_control(request: dict[str, Any]) -> dict[str, Any]:
     tmp.replace(path)
 
     return existing
+
+
+@app.get("/api/evolve/current-round")
+async def get_evolve_current_round() -> dict[str, Any]:
+    """Read the live per-game progress file for the active round.
+
+    Written by ``scripts/evolve.py`` inside each round — updates every
+    ``on_round_event`` (ab_start, ab_game_end, gate_start, gate_game_end).
+    Returns the idle skeleton ``{"active": False, ...}`` when no round is
+    in progress / no file exists. The Evolution dashboard tab polls this
+    at ~2s cadence so operators see score changes between round-boundary
+    writes.
+    """
+    data = _read_json_file(_evolve_dir / _EVOLVE_CURRENT_ROUND_FILE)
+    if data is None:
+        return dict(_EVOLVE_CURRENT_ROUND_IDLE)
+    # Merge over the idle skeleton so callers can always destructure the
+    # full shape, even if the on-disk file is missing a field.
+    merged = dict(_EVOLVE_CURRENT_ROUND_IDLE)
+    merged.update(data)
+    return merged
 
 
 @app.get("/api/evolve/pool")

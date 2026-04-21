@@ -659,6 +659,78 @@ class TestEvolveEndpoints:
         assert len(data["rounds"]) == 2
         assert [r["round_index"] for r in data["rounds"]] == [1, 2]
 
+    def test_get_current_round_idle_when_no_file(
+        self, client: TestClient
+    ) -> None:
+        resp = client.get("/api/evolve/current-round")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["active"] is False
+        # Full skeleton so the frontend can destructure without
+        # null-coalescing every field.
+        for key in (
+            "round_index",
+            "imp_a_title",
+            "imp_b_title",
+            "phase",
+            "cand_a",
+            "cand_b",
+            "games_played",
+            "games_total",
+            "score_a",
+            "score_b",
+            "gate_candidate",
+            "updated_at",
+        ):
+            assert key in data
+            assert data[key] is None
+
+    def test_get_current_round_returns_file_content(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        live = {
+            "active": True,
+            "round_index": 2,
+            "imp_a_title": "Chrono Boost",
+            "imp_b_title": "Blink micro",
+            "phase": "ab",
+            "cand_a": "cand_abc_a",
+            "cand_b": "cand_abc_b",
+            "games_played": 3,
+            "games_total": 10,
+            "score_a": 2,
+            "score_b": 1,
+            "gate_candidate": None,
+            "updated_at": "2026-04-20T19:15:00+00:00",
+        }
+        (tmp_path / "data" / "evolve_current_round.json").write_text(
+            json.dumps(live)
+        )
+        resp = client.get("/api/evolve/current-round")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["active"] is True
+        assert data["round_index"] == 2
+        assert data["phase"] == "ab"
+        assert data["score_a"] == 2
+        assert data["score_b"] == 1
+
+    def test_get_current_round_merges_partial_payload_with_skeleton(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """Older writers might omit fields added later — the endpoint backfills
+        from the idle skeleton so the response shape is always stable."""
+        partial = {"active": True, "round_index": 7}
+        (tmp_path / "data" / "evolve_current_round.json").write_text(
+            json.dumps(partial)
+        )
+        resp = client.get("/api/evolve/current-round")
+        data = resp.json()
+        assert data["active"] is True
+        assert data["round_index"] == 7
+        assert data["phase"] is None
+        assert data["games_played"] is None
+
 
 class TestRewardRulesEndpoints:
     def test_get_empty_rules(self, client: TestClient) -> None:

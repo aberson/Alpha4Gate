@@ -41,7 +41,7 @@ The outer phase shape (pre-flight → seed → loop → decision → report) is 
 
 **Flag resolution (no user interaction — resolve automatically):**
 - No flags at all → defaults above. Proceed immediately.
-- `--hours 0` → wall-clock disabled; the loop can still stop on pool-exhaustion or no-progress. Log the override.
+- `--hours 0` → wall-clock disabled; the loop can still stop on pool-exhaustion. Log the override.
 - `--return-loser` → hard fail with exit 2 (`NotImplementedError`). Do NOT silently ignore; the user explicitly asked for an unimplemented feature.
 - Conflicting results/pool/state paths that point at an in-flight advised run's directory → refuse and stop (pre-flight check 0.2 below).
 
@@ -313,11 +313,12 @@ The `scripts/evolve.py` loop exits when ANY of the following trips, checked in p
 
 1. **Wall-clock budget exceeded** — `elapsed_seconds >= hours * 3600`. Disabled when `--hours 0`.
 2. **Pool exhausted** — fewer than 2 items with `status: "active"` remain.
-3. **No-progress streak** — `no_progress_streak >= 3` (three consecutive rounds ended in discard).
-4. **Dashboard stop request** — `data/evolve_run_control.json.stop_run == true` (see Dashboard Control Panel Bridge).
-5. **Dashboard pause request** — `data/evolve_run_control.json.pause_after_round == true` — the script finishes the current round, then enters a paused state. Resume by clearing the flag.
+3. **Dashboard stop request** — `data/evolve_run_control.json.stop_run == true` (see Dashboard Control Panel Bridge).
+4. **Dashboard pause request** — `data/evolve_run_control.json.pause_after_round == true` — the script finishes the current round, then enters a paused state. Resume by clearing the flag.
 
-`stop_reason` in the final run log will be one of `"wall-clock"`, `"pool-exhausted"`, `"no-progress"`, `"dashboard-stop"`, or `"dashboard-pause-timeout"`.
+`stop_reason` in the final run log will be one of `"wall-clock"`, `"pool-exhausted"`, `"dashboard-stop"`, or `"dashboard-pause-timeout"`.
+
+`no_progress_streak` is still tracked in the run state (so the dashboard can surface it as a "warning: many discards in a row" signal) but it is **not** a stop condition — crashed or discarded rounds can't silently truncate a run.
 
 ---
 
@@ -531,7 +532,7 @@ Both `ADVISED_AUTO` and `EVO_AUTO` are set. The fix is to unset whichever one yo
 Expected outcome when the pool is low-quality or the parent is already strong. Check the `outcome` column in the round log:
 
 - Many `discarded-tie` (AB ties): the pool items are too similar to each other or too weak to break the mirror. Consider regenerating the pool with a different seed or on a different map.
-- Many `discarded-gate` (AB winner loses to parent): improvements are local regressions. The `no-progress` stop condition (3 in a row) exists for exactly this case.
+- Many `discarded-gate` (AB winner loses to parent): improvements are local regressions. The run will still exhaust the pool — watch `no_progress_streak` on the dashboard as a warning signal and abort via the Stop button if all N remaining rounds are also likely to regress.
 - Many `discarded-crash`: the improvements are breaking the bot's runtime. Check `logs/` for traceback patterns and consider raising `--pool-size` so the crashers get consumed faster.
 
 ### Stale `data/evolve_run_state.json` blocks a fresh run
@@ -617,7 +618,7 @@ git push origin master --force-with-lease
   ├── Phase 1: Seed + Pool (mirror games, generate_pool via Claude)
   ├── Phase 2: Round loop (sample, run_round, commit-or-discard)
   │     └── run_round = snapshot × 2 + apply × 2 + run_batch(A,B) + optional gate
-  ├── Phase 3: Loop decision (wall-clock, pool-exhausted, no-progress, dashboard-stop)
+  ├── Phase 3: Loop decision (wall-clock, pool-exhausted, dashboard-stop)
   └── Phase 4: Morning Report (final tag, GitHub issue, promotion chain)
 ```
 

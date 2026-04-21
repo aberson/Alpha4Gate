@@ -23,6 +23,7 @@ interface MockFixture {
   control?: Record<string, unknown>;
   pool?: Record<string, unknown>;
   results?: Record<string, unknown>;
+  currentRound?: Record<string, unknown>;
 }
 
 // Capture every PUT /api/evolve/control call for assertion.
@@ -46,12 +47,30 @@ function mockFetch(
     pool: [],
   };
   const results = fixture.results ?? { rounds: [] };
+  const currentRound = fixture.currentRound ?? {
+    active: false,
+    round_index: null,
+    imp_a_title: null,
+    imp_b_title: null,
+    phase: null,
+    cand_a: null,
+    cand_b: null,
+    games_played: null,
+    games_total: null,
+    score_a: null,
+    score_b: null,
+    gate_candidate: null,
+    updated_at: null,
+  };
 
   return async (
     input: RequestInfo | URL,
     init?: RequestInit,
   ): Promise<Response> => {
     const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("/api/evolve/current-round")) {
+      return jsonResponse(currentRound);
+    }
     if (url.includes("/api/evolve/state")) {
       return jsonResponse(state);
     }
@@ -436,5 +455,249 @@ describe("EvolutionTab", () => {
     expect(
       screen.getAllByTestId("pool-status-consumed-tie").length,
     ).toBeGreaterThanOrEqual(1);
+  });
+
+  it("hides the Current Round card when no round is active", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      mockFetch({
+        state: runningState,
+        control: defaultControl,
+        pool: runningPool,
+        results: runningResults,
+        // Default currentRound is active:false.
+      }),
+    );
+    render(<EvolutionTab />);
+    await waitFor(() => {
+      expect(screen.getByText("Robo first")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("current-round-card")).not.toBeInTheDocument();
+  });
+
+  it("shows Current Round card with phase, score, and progress during an AB phase", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      mockFetch({
+        state: runningState,
+        control: defaultControl,
+        pool: runningPool,
+        results: runningResults,
+        currentRound: {
+          active: true,
+          round_index: 2,
+          imp_a_title: "Chrono Boost",
+          imp_b_title: "Blink micro",
+          phase: "ab",
+          cand_a: "cand_abc_a",
+          cand_b: "cand_abc_b",
+          games_played: 3,
+          games_total: 10,
+          score_a: 2,
+          score_b: 1,
+          gate_candidate: null,
+          updated_at: "2026-04-20T19:15:00+00:00",
+        },
+      }),
+    );
+    render(<EvolutionTab />);
+    await waitFor(() => {
+      expect(screen.getByTestId("current-round-card")).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Chrono Boost/)).toBeInTheDocument();
+    expect(screen.getByText(/Blink micro/)).toBeInTheDocument();
+    expect(screen.getByTestId("round-phase-ab")).toBeInTheDocument();
+    // Score uses an en-dash visual separator; match both digits regardless.
+    expect(screen.getByTestId("current-round-score")).toHaveTextContent(
+      /^\s*2\s*[–-]\s*1\s*$/,
+    );
+    expect(screen.getByTestId("current-round-progress")).toHaveTextContent(
+      "3/10",
+    );
+  });
+
+  it("labels gate phase with candidate vs parent", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      mockFetch({
+        state: runningState,
+        control: defaultControl,
+        pool: runningPool,
+        results: runningResults,
+        currentRound: {
+          active: true,
+          round_index: 2,
+          imp_a_title: "Chrono Boost",
+          imp_b_title: "Blink micro",
+          phase: "gate",
+          cand_a: "cand_abc_a",
+          cand_b: "cand_abc_b",
+          games_played: 1,
+          games_total: 5,
+          score_a: 1,
+          score_b: 0,
+          gate_candidate: "cand_abc_a",
+          updated_at: "2026-04-20T19:18:00+00:00",
+        },
+      }),
+    );
+    render(<EvolutionTab />);
+    await waitFor(() => {
+      expect(screen.getByTestId("round-phase-gate")).toBeInTheDocument();
+    });
+    // Both labels should live inside the round card, not elsewhere on the page.
+    const card = screen.getByTestId("current-round-card");
+    expect(card.textContent).toContain("cand_abc_a");
+    expect(card.textContent).toContain("parent");
+  });
+
+  it("shows mirror_games phase with X/Y progress during pool seeding", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      mockFetch({
+        state: runningState,
+        control: defaultControl,
+        pool: runningPool,
+        results: runningResults,
+        currentRound: {
+          active: true,
+          round_index: 0,
+          imp_a_title: "parent-vs-parent mirror games",
+          imp_b_title: "Claude advisor",
+          phase: "mirror_games",
+          cand_a: "v0",
+          cand_b: "v0",
+          games_played: 1,
+          games_total: 3,
+          score_a: 0,
+          score_b: 0,
+          gate_candidate: null,
+          updated_at: "2026-04-20T23:10:00+00:00",
+        },
+      }),
+    );
+    render(<EvolutionTab />);
+    await waitFor(() => {
+      expect(screen.getByTestId("round-phase-mirror_games")).toBeInTheDocument();
+    });
+    const card = screen.getByTestId("current-round-card");
+    expect(card.textContent).toMatch(/Seeding Claude advisor/i);
+    expect(card.textContent).toMatch(/mirror games/i);
+    expect(screen.getByTestId("current-round-progress")).toHaveTextContent(
+      "1/3",
+    );
+  });
+
+  it("shows claude_prompt phase with indefinite progress indicator", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      mockFetch({
+        state: runningState,
+        control: defaultControl,
+        pool: runningPool,
+        results: runningResults,
+        currentRound: {
+          active: true,
+          round_index: 0,
+          imp_a_title: "parent-vs-parent mirror games",
+          imp_b_title: "Claude advisor",
+          phase: "claude_prompt",
+          cand_a: "v0",
+          cand_b: "v0",
+          games_played: 0,
+          games_total: 10,
+          score_a: 0,
+          score_b: 0,
+          gate_candidate: null,
+          updated_at: "2026-04-20T23:22:00+00:00",
+        },
+      }),
+    );
+    render(<EvolutionTab />);
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("round-phase-claude_prompt"),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.getByTestId("current-round-indefinite-bar"),
+    ).toBeInTheDocument();
+    const card = screen.getByTestId("current-round-card");
+    expect(card.textContent).toMatch(/Claude advisor proposing/i);
+  });
+
+  it("renders a CRASH row in Round History for entries carrying an error field", async () => {
+    const crashResults = {
+      rounds: [
+        {
+          parent: "v0",
+          candidate_a: "(crash — no candidate)",
+          candidate_b: "(crash — no candidate)",
+          imp_a: {
+            rank: 1,
+            title: "Implement Chrono Boost",
+            type: "dev",
+            description: "",
+            principle_ids: [],
+            expected_impact: "",
+            concrete_change: "{}",
+          },
+          imp_b: {
+            rank: 2,
+            title: "Reward Chrono Boost usage",
+            type: "training",
+            description: "",
+            principle_ids: [],
+            expected_impact: "",
+            concrete_change: "{}",
+          },
+          ab_record: [],
+          gate_record: null,
+          winner: null,
+          promoted: false,
+          reason:
+            "crashed: RuntimeError: dev sub-agent timed out after 900s",
+          error:
+            "RuntimeError: dev sub-agent timed out after 900s",
+        },
+      ],
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      mockFetch({
+        state: runningState,
+        control: defaultControl,
+        pool: runningPool,
+        results: crashResults,
+      }),
+    );
+    render(<EvolutionTab />);
+    // Wait for the crash row to render.
+    const crashRow = await screen.findByTestId("round-history-row-crash");
+    expect(crashRow).toBeInTheDocument();
+    // The OutcomeBadge shows the "discarded-crash" label.
+    expect(crashRow.textContent).toMatch(/discarded-crash/);
+    // The error line is visible in red code styling.
+    const errorEl = screen.getByTestId("round-history-error");
+    expect(errorEl.textContent).toContain("dev sub-agent timed out");
+  });
+
+  it("renders Run Stats in inline 'Label: value' format below the pool", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      mockFetch({
+        state: runningState,
+        control: defaultControl,
+        pool: runningPool,
+        results: runningResults,
+      }),
+    );
+    render(<EvolutionTab />);
+    const statsList = await screen.findByTestId("run-stats-list");
+    // Inline format — strong label immediately followed by value.
+    expect(statsList.textContent).toMatch(/Rounds Completed:\s*1/);
+    expect(statsList.textContent).toMatch(/Rounds Promoted:\s*1/);
+    expect(statsList.textContent).toMatch(/Pool Remaining:\s*8/);
+    expect(statsList.textContent).toMatch(/Wall Budget:\s*4h/);
+
+    // Ordering: Pool section should appear BEFORE Run Stats in the DOM.
+    const poolHeading = screen.getByRole("heading", { name: /^Pool$/ });
+    const statsHeading = screen.getByRole("heading", { name: /^Run Stats$/ });
+    const order = poolHeading.compareDocumentPosition(statsHeading);
+    // DOCUMENT_POSITION_FOLLOWING === 0x04
+    expect(order & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

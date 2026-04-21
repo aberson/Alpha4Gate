@@ -95,6 +95,10 @@ export interface EvolveRoundResult {
   winner: string | null;
   promoted: boolean;
   reason: string;
+  // Present on crashed-round entries written by scripts/evolve.py's
+  // exception handler. Truncated to the last traceback line; the full
+  // traceback lives in data/evolve_crashes.jsonl.
+  error?: string | null;
 }
 
 export interface EvolveResultsData {
@@ -108,6 +112,31 @@ export interface EvolveRunControl {
   pause_after_round: boolean;
 }
 
+// --- Current round live state (from data/evolve_current_round.json) ---
+
+export type EvolveRoundPhase =
+  | "starting"
+  | "mirror_games"
+  | "claude_prompt"
+  | "ab"
+  | "gate";
+
+export interface EvolveCurrentRound {
+  active: boolean;
+  round_index: number | null;
+  imp_a_title: string | null;
+  imp_b_title: string | null;
+  phase: EvolveRoundPhase | string | null;
+  cand_a: string | null;
+  cand_b: string | null;
+  games_played: number | null;
+  games_total: number | null;
+  score_a: number | null;
+  score_b: number | null;
+  gate_candidate: string | null;
+  updated_at: string | null;
+}
+
 // --- Hook return type ---
 
 export interface UseEvolveRunResult {
@@ -115,6 +144,7 @@ export interface UseEvolveRunResult {
   control: UseApiResult<EvolveRunControl>;
   pool: UseApiResult<EvolvePoolData>;
   results: UseApiResult<EvolveResultsData>;
+  currentRound: UseApiResult<EvolveCurrentRound>;
   sendControl: (patch: Partial<EvolveRunControl>) => Promise<void>;
 }
 
@@ -135,6 +165,12 @@ export function useEvolveRun(): UseEvolveRunResult {
   const results = useApi<EvolveResultsData>("/api/evolve/results", {
     pollMs: 10000,
   });
+  // Live per-game progress — polled faster than state/pool so the score
+  // ticker feels responsive between round boundaries.
+  const currentRound = useApi<EvolveCurrentRound>(
+    "/api/evolve/current-round",
+    { pollMs: 2000 },
+  );
 
   const sendControl = useCallback(
     async (patch: Partial<EvolveRunControl>) => {
@@ -148,5 +184,5 @@ export function useEvolveRun(): UseEvolveRunResult {
     [control],
   );
 
-  return { state, control, pool, results, sendControl };
+  return { state, control, pool, results, currentRound, sendControl };
 }

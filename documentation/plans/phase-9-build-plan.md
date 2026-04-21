@@ -169,8 +169,10 @@ Phase-structured skill doc following the improve-bot-advised template:
   - On promote: commit with `EVO_AUTO=1 [evo-auto] evolve: round N promoted <imp>`.
   - On discard: log reason, no commit.
   - Mark both improvements consumed in `evolve_pool.json`.
-- **Phase 3 — Loop decision:** wall-clock check; pool-exhaustion check; consecutive
-  no-progress check (3 discards in a row → stop).
+- **Phase 3 — Loop decision:** wall-clock check; pool-exhaustion check.
+  (An earlier "no-progress" stop — 3 consecutive discards → stop — was
+  removed post-ship; it silently truncated runs and made crashed rounds
+  hard to diagnose.)
 - **Phase 4 — Morning Report:** `evolve/run/<ts>/final` tag, GitHub issue, report
   with promotion chain + consumed improvements.
 
@@ -308,7 +310,9 @@ operators can opt in with `--viewer` for debugging.
   (SC2 + git + quality gates), call `generate_pool()`, loop sampling 2 items uniform
   random, call `run_round()`, update `data/evolve_pool.json` + `data/evolve_run_state.json`
   after each round, commit on promote (`EVO_AUTO=1 [evo-auto]` message), respect
-  wall-clock budget, stop on pool-exhaustion or 3 consecutive no-progress rounds.
+  wall-clock budget, stop on pool-exhaustion. (A "no-progress after 3 consecutive
+  discards" stop was included in the initial ship and removed post-ship — see the
+  Phase 3 note above.)
   `--return-loser` flag defined but raises `NotImplementedError` if set.
 - **Flags:** `--reviewers code`
 - **Produces:** `scripts/evolve.py`, JSONL log writer helpers, tests in
@@ -451,7 +455,7 @@ operators can opt in with `--viewer` for debugging.
 | Sandbox hook edge cases | `EVO_AUTO=1` allows writes under `bots/**` — if a dev-type improvement accidentally touches `src/orchestrator/` or `tests/`, the hook still needs to block. | Hook logic: `EVO_AUTO=1` broadens the `bots/` allow-list but keeps `src/orchestrator/`, `tests/`, `scripts/`, `pyproject.toml` on the deny-list. Covered by Step 1 tests. |
 | False discards (both improvements actually good but lost on noise) | 10 games is high-variance; a 6-4 loss can be coin-flip. A good improvement might get consumed-lost. | Accepted as noise tax; mitigation is the larger pool context (many rounds) + the `--return-loser` option reserved for v2. |
 | Multi-race (OPEN QUESTION) | Currently the bot is Protoss-only. When Terran/Zerg bots land, the mirror-seed assumption ("parent vs same-race parent") still works, but improvements selected under Protoss-vs-Protoss evolution may not generalise to cross-race matchups. Experiment design for "evolve vs race X while validating vs Y" is unresolved. | **Flagged for future work.** Not in scope for v1. When second race lands, the skill may need a `--race` flag + separate parent chains per race, or a cross-race gate that runs a second safety check against a different-race parent. |
-| Pool exhaustion before any promote | If every round discards (bad pool + strict parent gate), 5 rounds consume the pool with no progress. | Consecutive-no-progress stop after 3 discards in a row — fail fast, let operator regenerate pool or adjust gate threshold. Report makes this outcome visible. |
+| Pool exhaustion before any promote | If every round discards (bad pool + strict parent gate), 5 rounds consume the pool with no progress. | Let the run exhaust the pool (wall-clock still bounds it); surface `no_progress_streak` on the dashboard as a warning signal so the operator can abort via the dashboard Stop button. (Originally shipped with an auto-stop after 3 consecutive discards — removed post-ship because it silently truncated runs and made crashed rounds hard to diagnose.) |
 | Overlap with `/improve-bot-advised` | Operators may conflate the two skills; running both concurrently on the same repo could stomp `bots/current/`. | Pre-flight check: refuse to start if `data/advised_run_state.json` exists with `status: running`; and vice-versa in `/improve-bot-advised`. |
 
 ## 9. Testing Strategy
