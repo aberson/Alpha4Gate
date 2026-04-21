@@ -444,6 +444,101 @@ operators can opt in with `--viewer` for debugging.
   patches, tune the ruff rule classes or switch mypy to non-strict. Tracked
   as an inline comment in `evolve_dev_apply.py:_run_ruff`.
 
+### Step 10: Post-Step-8 enhancements
+
+- **Surfaced:** 2026-04-21, from the Step 8 soak's aftermath: silent round
+  crashes (no visibility into which imp failed or why), a "promotion" whose
+  win was statistically indistinguishable from noise (training-type imp,
+  no PPO retrain — see `feedback_evolve_training_imps_variance_only`), and
+  a hard-coded no-progress stop that silently truncated runs at 3 discards.
+- **Problem:** After the first real 4h soak ran, three gaps in the loop
+  became obvious:
+  1. **Dev-apply sub-agent couldn't pass the mypy --strict gate** on first
+     try — the only code the sub-agent ever saw was the imp's
+     `concrete_change` field; it had no access to the validator and no
+     feedback from prior failed attempts. Every round that included a
+     dev-type imp in the first slot crashed with
+     `DevApplyValidationError` in ~50s.
+  2. **Those crashes were invisible** on the dashboard and in
+     `evolve_results.jsonl`. Operator saw "Rounds completed: 3" but only
+     one entry in the round log; the other two vanished.
+  3. **Training-type imps were flooding the pool** even though they can't
+     affect AB-game behaviour (reward_rules.json only feeds PPO training,
+     not inference; default `--decision-mode=rules` never loads a policy).
+     A training imp's "win" was ~1% variance, dressed as signal.
+  4. **The no-progress stop** (3 consecutive discards → abort) turned
+     recoverable runs into dead runs — especially once crashes fed the
+     streak counter.
+- **Done when:**
+  - **Dev-apply retry-with-feedback (option 2):** `spawn_dev_subagent`
+    now loops up to `max_attempts=3`. On
+    `DevApplyValidationError` from the post-edit ruff/mypy gate, the
+    validator's raw stdout (new `exc.detail` field) is formatted into the
+    next prompt. Scope-violation and toolchain errors are NOT retried.
+  - **Sub-agent self-validation (option 3):** `--tools` expanded to
+    include `Bash`; `--allowed-tools "Bash(mypy:*) Bash(ruff:*)
+    Bash(uv:*) Bash(python:*)"` scopes the shell to validators only.
+    System prompt expanded with a concrete list of mypy-strict pitfalls
+    (the `range(float)` bug that killed the 23:03 round-1 crash is
+    called out explicitly) and an instruction to run
+    `uv run ruff check` + `uv run mypy --strict` before exiting.
+  - **Crash logging:** every crashed round appends a synthetic
+    `RoundResult`-shaped entry to `evolve_results.jsonl` (with
+    `promoted=false, winner=null, ab_record=[], gate_record=null,
+    reason="crashed: ...", error="<last traceback line>"`) AND a
+    full-traceback entry to `data/evolve_crashes.jsonl` (new, path via
+    `--crash-log-path`). Run log markdown includes crashed rounds with
+    `discarded-crash` outcome. Run state file is written on the crash
+    path so `rounds_completed` + `last_result` flip immediately, not
+    just at end-of-round.
+  - **Dev-only pool:** `generate_pool` prompt demands `type=dev`;
+    `_filter_dev_only()` drops any training imps that slip through;
+    retries once if post-filter count < pool_size.
+  - **Daemon safety (`DaemonConfig.max_runs`):** new `max_runs: int |
+    None` field (default None = unbounded, backwards-compatible). When
+    set, daemon self-stops after the N-th run completes. `start()`
+    resets `_runs_completed` so bounds are per-start, not process-lifetime.
+  - **Post-promotion auto-training:** `scripts/evolve.py
+    --post-training-cycles N` (default 0 = disabled) + `--backend-url`.
+    At end of `run_loop`, if `rounds_promoted >= 1 AND N > 0`, PUT
+    `/api/training/daemon/config` with `max_runs=N`, then POST
+    `/api/training/daemon/start`. `start_post_training_daemon()`
+    swallows backend-unreachable errors with a WARNING log. Opt-in +
+    bounded, which keeps the spirit of the
+    `feedback_daemon_no_autostart.md` rule.
+  - **No-progress stop removed:** loop only exits on wall-clock or
+    pool-exhausted (or dashboard stop). `no_progress_streak` still
+    tracked + surfaced in the run-state file as a warning signal.
+  - **`--resume` flag:** reload existing pool + per-item statuses from
+    `--pool-path` instead of regenerating. Parent must match
+    `current_version()`.
+  - **Fresh-run state clearing:** at the start of a non-resume run,
+    truncate `evolve_results.jsonl`, overwrite `evolve_pool.json` with
+    empty-pool placeholder, clear `evolve_current_round.json` — dashboard
+    no longer flashes last run's data during pool-gen.
+  - **Evolution dashboard redesign:** `CurrentPhaseCard` (renamed from
+    `CurrentRoundCard`) with big phase-aware rendering for five phases
+    (`mirror_games`, `claude_prompt`, `starting`, `ab`, `gate`); layout
+    reorder (phase card → pool → run stats → history → actions); inline
+    "Label: value" stats; Round History renders `DISCARDED-CRASH`
+    badge + red traceback line when entry carries `error`. New
+    `GET /api/evolve/current-round` endpoint + `evolve_current_round.json`
+    state file; `on_round_event` + `on_pool_gen_event` callbacks write
+    live per-game progress.
+  - **Tests:** 1314 pytest + 141 vitest, all green. +16 new tests across
+    evolve, dev-apply, daemon, API, and dashboard covering retry loop,
+    Bash argv allowlist, dev-only filter, daemon max_runs, post-training
+    trigger, crash-path results/log, resume, current-round state,
+    discards-don't-stop, new UI phases.
+- **Commit:** `c5647cb` (19 files changed, +3194/-169).
+- **Follow-up (revisit during next long run):**
+  - If sub-agent still hits mypy pitfalls after the retry loop + Bash
+    self-validation, consider expanding the system prompt's pitfall list
+    with whatever new patterns the crash log reveals.
+  - If `--post-training-cycles` runs produce diminishing returns (per
+    the `project_ppo_only_dead_end` memory), consider gating it behind
+    a min-baseline-change threshold rather than firing on every promotion.
+
 ## 8. Risks and Open Questions
 
 | Item | Risk | Mitigation |
