@@ -26,7 +26,6 @@ interface MockFixture {
   currentRound?: Record<string, unknown>;
 }
 
-// Capture every PUT /api/evolve/control call for assertion.
 interface PutCapture {
   url: string;
   body: Record<string, unknown>;
@@ -44,22 +43,26 @@ function mockFetch(
   const pool = fixture.pool ?? {
     parent: null,
     generated_at: null,
+    generation: 0,
     pool: [],
   };
   const results = fixture.results ?? { rounds: [] };
   const currentRound = fixture.currentRound ?? {
     active: false,
-    round_index: null,
-    imp_a_title: null,
-    imp_b_title: null,
+    generation: null,
     phase: null,
-    cand_a: null,
-    cand_b: null,
+    imp_title: null,
+    imp_rank: null,
+    imp_index: null,
+    candidate: null,
+    stacked_titles: [],
+    is_fallback: false,
+    new_parent: null,
+    prior_parent: null,
     games_played: null,
     games_total: null,
-    score_a: null,
-    score_b: null,
-    gate_candidate: null,
+    score_cand: null,
+    score_parent: null,
     updated_at: null,
   };
 
@@ -90,7 +93,6 @@ function mockFetch(
     if (url.includes("/api/evolve/results")) {
       return jsonResponse(results);
     }
-    // Any other endpoint polled by ancillary hooks — return empty JSON.
     return jsonResponse({});
   };
 }
@@ -101,603 +103,521 @@ const idleState = {
   parent_current: null,
   started_at: null,
   wall_budget_hours: null,
-  rounds_completed: null,
-  rounds_promoted: null,
-  no_progress_streak: null,
+  generation_index: null,
+  generations_completed: null,
+  generations_promoted: null,
+  evictions: null,
+  resurrections_remaining: null,
   pool_remaining_count: null,
   last_result: null,
-};
-
-const runningLastResult = {
-  round_index: 1,
-  candidate_a: "v0-aaa",
-  candidate_b: "v0-bbb",
-  imp_a_title: "Reward scouting",
-  imp_b_title: "Fix supply block",
-  ab_score: [3, 2],
-  gate_score: [4, 1],
-  outcome: "promoted",
-  reason: "cand won gate 4-1",
 };
 
 const runningState = {
   status: "running",
   parent_start: "v0",
-  parent_current: "v0-aaa",
-  started_at: "2026-04-19T10:00:00+00:00",
+  parent_current: "v1",
+  started_at: "2026-04-21T21:33:00+00:00",
   wall_budget_hours: 4.0,
-  rounds_completed: 1,
-  rounds_promoted: 1,
-  no_progress_streak: 0,
-  pool_remaining_count: 8,
-  last_result: runningLastResult,
+  generation_index: 3,
+  generations_completed: 2,
+  generations_promoted: 1,
+  evictions: 4,
+  resurrections_remaining: 3,
+  pool_remaining_count: 6,
+  last_result: {
+    generation_index: 2,
+    phase: "composition",
+    imp_title: null,
+    stacked_titles: ["Chrono boost", "Forward pylon"],
+    is_fallback: false,
+    score: [3, 5],
+    outcome: "composition-pass",
+    reason: "composition pass: stacked_parent (v1, 2 imps) beat v0 3-2",
+  },
 };
 
 const completedState = {
   ...runningState,
   status: "completed",
   stop_reason: "wall-clock",
-  run_log_path: "documentation/evolve-runs/2026-04-19.md",
+  run_log_path: "documentation/soak-test-runs/evolve-2026-04-21.md",
 };
-
-const runningPool = {
-  parent: "v0",
-  generated_at: "2026-04-19T09:55:00+00:00",
-  pool: [
-    {
-      rank: 1,
-      title: "Reward scouting",
-      type: "training",
-      description: "…",
-      principle_ids: [],
-      expected_impact: "+5% WR",
-      concrete_change: "{}",
-      status: "consumed-won",
-    },
-    {
-      rank: 2,
-      title: "Fix supply block",
-      type: "training",
-      description: "…",
-      principle_ids: [],
-      expected_impact: "+3% WR",
-      concrete_change: "{}",
-      status: "consumed-lost",
-    },
-    {
-      rank: 3,
-      title: "Forward pylon",
-      type: "dev",
-      description: "…",
-      principle_ids: [],
-      expected_impact: "+2% WR",
-      concrete_change: "Place proxy pylon at 3:30",
-      status: "consumed-tie",
-    },
-    {
-      rank: 4,
-      title: "Robo first",
-      type: "training",
-      description: "…",
-      principle_ids: [],
-      expected_impact: "+4% WR",
-      concrete_change: "{}",
-      status: "active",
-    },
-    {
-      rank: 5,
-      title: "Blink upgrade",
-      type: "training",
-      description: "…",
-      principle_ids: [],
-      expected_impact: "+2% WR",
-      concrete_change: "{}",
-      status: "active",
-    },
-    {
-      rank: 6,
-      title: "Third base timing",
-      type: "training",
-      description: "…",
-      principle_ids: [],
-      expected_impact: "+1% WR",
-      concrete_change: "{}",
-      status: "active",
-    },
-    {
-      rank: 7,
-      title: "Archon morph",
-      type: "dev",
-      description: "…",
-      principle_ids: [],
-      expected_impact: "+2% WR",
-      concrete_change: "…",
-      status: "active",
-    },
-    {
-      rank: 8,
-      title: "Cannon defence",
-      type: "training",
-      description: "…",
-      principle_ids: [],
-      expected_impact: "+1% WR",
-      concrete_change: "{}",
-      status: "active",
-    },
-    {
-      rank: 9,
-      title: "Observer scouting",
-      type: "training",
-      description: "…",
-      principle_ids: [],
-      expected_impact: "+1% WR",
-      concrete_change: "{}",
-      status: "active",
-    },
-    {
-      rank: 10,
-      title: "Attack-walk tactic",
-      type: "dev",
-      description: "…",
-      principle_ids: [],
-      expected_impact: "+3% WR",
-      concrete_change: "…",
-      status: "active",
-    },
-  ],
-};
-
-const runningResults = {
-  rounds: [
-    {
-      parent: "v0",
-      candidate_a: "v0-aaa",
-      candidate_b: "v0-bbb",
-      imp_a: {
-        rank: 1,
-        title: "Reward scouting",
-        type: "training",
-        description: "",
-        principle_ids: [],
-        expected_impact: "",
-        concrete_change: "{}",
-      },
-      imp_b: {
-        rank: 2,
-        title: "Fix supply block",
-        type: "training",
-        description: "",
-        principle_ids: [],
-        expected_impact: "",
-        concrete_change: "{}",
-      },
-      ab_record: [],
-      gate_record: [],
-      winner: "v0-aaa",
-      promoted: true,
-      reason: "cand won gate 4-1",
-    },
-  ],
-};
-
-const defaultControl = { stop_run: false, pause_after_round: false };
-
-afterEach(() => {
-  cleanup();
-  vi.restoreAllMocks();
-});
-
-beforeEach(() => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(
-    async () => jsonResponse({}),
-  );
-});
 
 describe("EvolutionTab", () => {
-  it("renders idle state with launch guidance", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      mockFetch({ state: idleState, control: defaultControl }),
-    );
-    render(<EvolutionTab />);
-    await waitFor(() => {
-      expect(screen.getByText(/No evolve run active/i)).toBeInTheDocument();
-    });
-    // Launch hint mentions the CLI invocation and the evolve skill.
-    expect(
-      screen.getByText(/python scripts\/evolve\.py/),
-    ).toBeInTheDocument();
-    // The slash-command reference appears at least once (header text
-    // also mentions /improve-bot-evolve, so use getAllByText).
-    expect(
-      screen.getAllByText(/improve-bot-evolve/).length,
-    ).toBeGreaterThanOrEqual(1);
-    // Header badge is present in idle mode too.
-    expect(screen.getByText(/^idle$/i)).toBeInTheDocument();
+  let fetchSpy: ReturnType<typeof vi.spyOn> | null = null;
+
+  beforeEach(() => {
+    // Default fetch so hooks polling never-intercepted URLs don't throw.
+    fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => jsonResponse({}));
   });
 
-  it("renders running state with parent header, last result and pool", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      mockFetch({
-        state: runningState,
-        control: defaultControl,
-        pool: runningPool,
-        results: runningResults,
-      }),
-    );
+  afterEach(() => {
+    fetchSpy?.mockRestore();
+    fetchSpy = null;
+    cleanup();
+  });
+
+  function installFetch(
+    fixture: MockFixture,
+    putCapture?: PutCapture[],
+  ): void {
+    fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(mockFetch(fixture, putCapture));
+  }
+
+  // --- Basic rendering ---
+
+  it("renders idle state with launch guidance", async () => {
+    installFetch({ state: idleState });
     render(<EvolutionTab />);
     await waitFor(() => {
-      expect(screen.getByText(/^running$/i)).toBeInTheDocument();
+      expect(screen.getByText(/No evolve run active/i)).toBeTruthy();
     });
-    // Header shows parent versions; parent_current v0-aaa appears both
-    // in the header line and as candidate_a in the round history table.
-    expect(screen.getAllByText("v0").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("v0-aaa").length).toBeGreaterThanOrEqual(1);
-    // Last-result card shows both imp titles.
-    expect(screen.getAllByText("Reward scouting").length).toBeGreaterThanOrEqual(
-      1,
-    );
+    expect(screen.getByText(/scripts\/evolve.py/)).toBeTruthy();
+  });
+
+  it("renders running state with parent header and last-phase card", async () => {
+    installFetch({ state: runningState });
+    render(<EvolutionTab />);
+    await waitFor(() => {
+      expect(screen.getByText(/Started/)).toBeTruthy();
+    });
+    // Parent -> current line shows both versions.
+    const headerText = document.body.textContent ?? "";
+    expect(headerText).toContain("v0");
+    expect(headerText).toContain("v1");
+    // Last-phase card shows the generation index + phase.
     expect(
-      screen.getAllByText("Fix supply block").length,
-    ).toBeGreaterThanOrEqual(1);
-    // Pool view shows all 10 items by title.
-    expect(screen.getByText("Robo first")).toBeInTheDocument();
-    expect(screen.getByText("Attack-walk tactic")).toBeInTheDocument();
+      screen.getByText(/Generation #2/i, { exact: false }),
+    ).toBeTruthy();
   });
 
   it("renders completed state with run-ended reason and disabled stop button", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      mockFetch({
-        state: completedState,
-        control: defaultControl,
-        pool: runningPool,
-        results: runningResults,
-      }),
-    );
+    installFetch({ state: completedState });
     render(<EvolutionTab />);
     await waitFor(() => {
-      expect(screen.getByText(/^completed$/i)).toBeInTheDocument();
+      expect(screen.getByText(/wall-clock/i)).toBeTruthy();
     });
-    expect(screen.getByText(/Run ended/)).toBeInTheDocument();
-    expect(screen.getByText(/wall-clock/)).toBeInTheDocument();
-    // Stop button exists but is disabled when the run is no longer running.
-    const stopButton = screen.getByRole("button", { name: /Stop Run/i });
-    expect(stopButton).toBeDisabled();
+    const stopBtn = screen.getByRole("button", { name: /stop run/i });
+    expect(stopBtn.hasAttribute("disabled")).toBe(true);
   });
 
+  // --- Actions ---
+
   it("stop-run button opens confirm dialog and PUTs stop_run true on confirm", async () => {
-    const captured: PutCapture[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      mockFetch(
-        {
-          state: runningState,
-          control: defaultControl,
-          pool: runningPool,
-          results: runningResults,
-        },
-        captured,
-      ),
-    );
+    const puts: PutCapture[] = [];
+    installFetch({ state: runningState }, puts);
     render(<EvolutionTab />);
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /Stop Run/i })).toBeInTheDocument();
+      expect(screen.getByText(/Run Actions/i)).toBeTruthy();
     });
-    fireEvent.click(screen.getByRole("button", { name: /Stop Run/i }));
-    // Confirmation dialog opens.
+    fireEvent.click(screen.getByRole("button", { name: /stop run/i }));
+    // Confirm dialog appears; click Stop in dialog.
+    const confirm = await screen.findByRole("button", { name: /^stop$/i });
+    fireEvent.click(confirm);
     await waitFor(() => {
-      expect(screen.getByText("Stop evolve run?")).toBeInTheDocument();
-    });
-    fireEvent.click(screen.getByRole("button", { name: /^Stop$/ }));
-
-    await waitFor(() => {
-      const puts = captured.filter((c) => c.body.stop_run === true);
       expect(puts.length).toBeGreaterThan(0);
     });
-    const puts = captured.filter((c) => c.body.stop_run === true);
-    expect(puts[0]!.url).toContain("/api/evolve/control");
-    expect(puts[0]!.body).toEqual({ stop_run: true });
+    expect(puts.find((p) => p.body.stop_run === true)).toBeTruthy();
   });
 
   it("pause-after-round checkbox PUTs pause_after_round true when toggled on", async () => {
-    const captured: PutCapture[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      mockFetch(
+    const puts: PutCapture[] = [];
+    installFetch({ state: runningState }, puts);
+    render(<EvolutionTab />);
+    const checkbox = await screen.findByLabelText(
+      /Pause after current generation/i,
+    );
+    fireEvent.click(checkbox);
+    await waitFor(() => {
+      expect(
+        puts.find((p) => p.body.pause_after_round === true),
+      ).toBeTruthy();
+    });
+  });
+
+  // --- Pool status vocabulary ---
+
+  it("renders a pool-status badge for every status value in the new vocabulary", async () => {
+    const pool = {
+      parent: "v0",
+      generated_at: "2026-04-21T10:00:00+00:00",
+      generation: 3,
+      pool: [
         {
-          state: runningState,
-          control: defaultControl,
-          pool: runningPool,
-          results: runningResults,
+          rank: 1,
+          title: "Active imp",
+          type: "dev",
+          description: "",
+          principle_ids: [],
+          expected_impact: "",
+          concrete_change: "",
+          status: "active",
+          fitness_score: null,
+          retry_count: 0,
+          first_evaluated_against: null,
+          last_evaluated_against: null,
         },
-        captured,
-      ),
-    );
-    render(<EvolutionTab />);
-    await waitFor(() => {
-      expect(
-        screen.getByLabelText(/Pause after current round/i),
-      ).toBeInTheDocument();
-    });
-    fireEvent.click(screen.getByLabelText(/Pause after current round/i));
-    await waitFor(() => {
-      const puts = captured.filter(
-        (c) => c.body.pause_after_round === true,
-      );
-      expect(puts.length).toBeGreaterThan(0);
-    });
-    const puts = captured.filter((c) => c.body.pause_after_round === true);
-    expect(puts[0]!.body).toEqual({ pause_after_round: true });
-  });
-
-  it("renders a pool-status badge for every status value", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      mockFetch({
-        state: runningState,
-        control: defaultControl,
-        pool: runningPool,
-        results: runningResults,
-      }),
-    );
-    render(<EvolutionTab />);
-    await waitFor(() => {
-      // Wait for the pool to render.
-      expect(screen.getByText("Robo first")).toBeInTheDocument();
-    });
-    // The fixture pool contains one of each status, so each badge
-    // variant must appear at least once.
-    expect(
-      screen.getAllByTestId("pool-status-active").length,
-    ).toBeGreaterThanOrEqual(1);
-    expect(
-      screen.getAllByTestId("pool-status-consumed-won").length,
-    ).toBeGreaterThanOrEqual(1);
-    expect(
-      screen.getAllByTestId("pool-status-consumed-lost").length,
-    ).toBeGreaterThanOrEqual(1);
-    expect(
-      screen.getAllByTestId("pool-status-consumed-tie").length,
-    ).toBeGreaterThanOrEqual(1);
-  });
-
-  it("hides the Current Round card when no round is active", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      mockFetch({
-        state: runningState,
-        control: defaultControl,
-        pool: runningPool,
-        results: runningResults,
-        // Default currentRound is active:false.
-      }),
-    );
-    render(<EvolutionTab />);
-    await waitFor(() => {
-      expect(screen.getByText("Robo first")).toBeInTheDocument();
-    });
-    expect(screen.queryByTestId("current-round-card")).not.toBeInTheDocument();
-  });
-
-  it("shows Current Round card with phase, score, and progress during an AB phase", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      mockFetch({
-        state: runningState,
-        control: defaultControl,
-        pool: runningPool,
-        results: runningResults,
-        currentRound: {
-          active: true,
-          round_index: 2,
-          imp_a_title: "Chrono Boost",
-          imp_b_title: "Blink micro",
-          phase: "ab",
-          cand_a: "cand_abc_a",
-          cand_b: "cand_abc_b",
-          games_played: 3,
-          games_total: 10,
-          score_a: 2,
-          score_b: 1,
-          gate_candidate: null,
-          updated_at: "2026-04-20T19:15:00+00:00",
+        {
+          rank: 2,
+          title: "Passed fitness",
+          type: "dev",
+          description: "",
+          principle_ids: [],
+          expected_impact: "",
+          concrete_change: "",
+          status: "fitness-pass",
+          fitness_score: [3, 5],
+          retry_count: 1,
+          first_evaluated_against: "v0",
+          last_evaluated_against: "v0",
         },
-      }),
-    );
-    render(<EvolutionTab />);
-    await waitFor(() => {
-      expect(screen.getByTestId("current-round-card")).toBeInTheDocument();
-    });
-    expect(screen.getByText(/Chrono Boost/)).toBeInTheDocument();
-    expect(screen.getByText(/Blink micro/)).toBeInTheDocument();
-    expect(screen.getByTestId("round-phase-ab")).toBeInTheDocument();
-    // Score uses an en-dash visual separator; match both digits regardless.
-    expect(screen.getByTestId("current-round-score")).toHaveTextContent(
-      /^\s*2\s*[–-]\s*1\s*$/,
-    );
-    expect(screen.getByTestId("current-round-progress")).toHaveTextContent(
-      "3/10",
-    );
-  });
-
-  it("labels gate phase with candidate vs parent", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      mockFetch({
-        state: runningState,
-        control: defaultControl,
-        pool: runningPool,
-        results: runningResults,
-        currentRound: {
-          active: true,
-          round_index: 2,
-          imp_a_title: "Chrono Boost",
-          imp_b_title: "Blink micro",
-          phase: "gate",
-          cand_a: "cand_abc_a",
-          cand_b: "cand_abc_b",
-          games_played: 1,
-          games_total: 5,
-          score_a: 1,
-          score_b: 0,
-          gate_candidate: "cand_abc_a",
-          updated_at: "2026-04-20T19:18:00+00:00",
+        {
+          rank: 3,
+          title: "Close loss",
+          type: "dev",
+          description: "",
+          principle_ids: [],
+          expected_impact: "",
+          concrete_change: "",
+          status: "fitness-close",
+          fitness_score: [2, 5],
+          retry_count: 1,
+          first_evaluated_against: "v0",
+          last_evaluated_against: "v0",
         },
-      }),
-    );
-    render(<EvolutionTab />);
-    await waitFor(() => {
-      expect(screen.getByTestId("round-phase-gate")).toBeInTheDocument();
-    });
-    // Both labels should live inside the round card, not elsewhere on the page.
-    const card = screen.getByTestId("current-round-card");
-    expect(card.textContent).toContain("cand_abc_a");
-    expect(card.textContent).toContain("parent");
-  });
-
-  it("shows mirror_games phase with X/Y progress during pool seeding", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      mockFetch({
-        state: runningState,
-        control: defaultControl,
-        pool: runningPool,
-        results: runningResults,
-        currentRound: {
-          active: true,
-          round_index: 0,
-          imp_a_title: "parent-vs-parent mirror games",
-          imp_b_title: "Claude advisor",
-          phase: "mirror_games",
-          cand_a: "v0",
-          cand_b: "v0",
-          games_played: 1,
-          games_total: 3,
-          score_a: 0,
-          score_b: 0,
-          gate_candidate: null,
-          updated_at: "2026-04-20T23:10:00+00:00",
+        {
+          rank: 4,
+          title: "Blowout",
+          type: "dev",
+          description: "",
+          principle_ids: [],
+          expected_impact: "",
+          concrete_change: "",
+          status: "evicted",
+          fitness_score: [0, 5],
+          retry_count: 1,
+          first_evaluated_against: "v0",
+          last_evaluated_against: "v0",
         },
-      }),
-    );
-    render(<EvolutionTab />);
-    await waitFor(() => {
-      expect(screen.getByTestId("round-phase-mirror_games")).toBeInTheDocument();
-    });
-    const card = screen.getByTestId("current-round-card");
-    expect(card.textContent).toMatch(/Seeding Claude advisor/i);
-    expect(card.textContent).toMatch(/mirror games/i);
-    expect(screen.getByTestId("current-round-progress")).toHaveTextContent(
-      "1/3",
-    );
-  });
-
-  it("shows claude_prompt phase with indefinite progress indicator", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      mockFetch({
-        state: runningState,
-        control: defaultControl,
-        pool: runningPool,
-        results: runningResults,
-        currentRound: {
-          active: true,
-          round_index: 0,
-          imp_a_title: "parent-vs-parent mirror games",
-          imp_b_title: "Claude advisor",
-          phase: "claude_prompt",
-          cand_a: "v0",
-          cand_b: "v0",
-          games_played: 0,
-          games_total: 10,
-          score_a: 0,
-          score_b: 0,
-          gate_candidate: null,
-          updated_at: "2026-04-20T23:22:00+00:00",
+        {
+          rank: 5,
+          title: "Promoted in stack",
+          type: "dev",
+          description: "",
+          principle_ids: [],
+          expected_impact: "",
+          concrete_change: "",
+          status: "promoted-stack",
+          fitness_score: [3, 5],
+          retry_count: 1,
+          first_evaluated_against: "v0",
+          last_evaluated_against: "v0",
         },
-      }),
-    );
+        {
+          rank: 6,
+          title: "Promoted single",
+          type: "dev",
+          description: "",
+          principle_ids: [],
+          expected_impact: "",
+          concrete_change: "",
+          status: "promoted-single",
+          fitness_score: [3, 5],
+          retry_count: 1,
+          first_evaluated_against: "v0",
+          last_evaluated_against: "v0",
+        },
+        {
+          rank: 7,
+          title: "Rolled back",
+          type: "dev",
+          description: "",
+          principle_ids: [],
+          expected_impact: "",
+          concrete_change: "",
+          status: "regression-rollback",
+          fitness_score: [3, 5],
+          retry_count: 2,
+          first_evaluated_against: "v0",
+          last_evaluated_against: "v1",
+        },
+      ],
+    };
+    installFetch({ state: runningState, pool });
     render(<EvolutionTab />);
     await waitFor(() => {
-      expect(
-        screen.getByTestId("round-phase-claude_prompt"),
-      ).toBeInTheDocument();
+      expect(screen.getAllByTestId("pool-status-active").length).toBe(1);
     });
     expect(
-      screen.getByTestId("current-round-indefinite-bar"),
-    ).toBeInTheDocument();
-    const card = screen.getByTestId("current-round-card");
-    expect(card.textContent).toMatch(/Claude advisor proposing/i);
+      screen.getAllByTestId("pool-status-fitness-pass").length,
+    ).toBe(1);
+    expect(
+      screen.getAllByTestId("pool-status-fitness-close").length,
+    ).toBe(1);
+    expect(screen.getAllByTestId("pool-status-evicted").length).toBe(1);
+    expect(
+      screen.getAllByTestId("pool-status-promoted-stack").length,
+    ).toBe(1);
+    expect(
+      screen.getAllByTestId("pool-status-promoted-single").length,
+    ).toBe(1);
+    expect(
+      screen.getAllByTestId("pool-status-regression-rollback").length,
+    ).toBe(1);
   });
 
-  it("renders a CRASH row in Round History for entries carrying an error field", async () => {
-    const crashResults = {
+  // --- Current phase card ---
+
+  it("hides the Current Phase card when no phase is active", async () => {
+    installFetch({
+      state: runningState,
+      currentRound: {
+        active: false,
+        generation: null,
+        phase: null,
+        imp_title: null,
+        imp_rank: null,
+        imp_index: null,
+        candidate: null,
+        stacked_titles: [],
+        is_fallback: false,
+        new_parent: null,
+        prior_parent: null,
+        games_played: null,
+        games_total: null,
+        score_cand: null,
+        score_parent: null,
+        updated_at: null,
+      },
+    });
+    render(<EvolutionTab />);
+    await waitFor(() => {
+      expect(screen.getByText(/Run Stats/i)).toBeTruthy();
+    });
+    expect(screen.queryByTestId("current-round-card")).toBeNull();
+  });
+
+  it("shows the Current Phase card for a fitness phase with score + progress", async () => {
+    installFetch({
+      state: runningState,
+      currentRound: {
+        active: true,
+        generation: 3,
+        phase: "fitness",
+        imp_title: "Chrono Boost",
+        imp_rank: 1,
+        imp_index: 0,
+        candidate: "cand_abc",
+        stacked_titles: [],
+        is_fallback: false,
+        new_parent: null,
+        prior_parent: null,
+        games_played: 2,
+        games_total: 5,
+        score_cand: 1,
+        score_parent: 1,
+        updated_at: "2026-04-21T19:15:00+00:00",
+      },
+    });
+    render(<EvolutionTab />);
+    await waitFor(() => {
+      expect(screen.getByTestId("current-round-card")).toBeTruthy();
+    });
+    expect(screen.getByTestId("round-phase-fitness")).toBeTruthy();
+    expect(screen.getByTestId("current-round-progress").textContent).toContain(
+      "2/5",
+    );
+    expect(screen.getByTestId("current-round-score").textContent).toContain("1");
+    const matchup = screen.getByTestId("current-round-matchup");
+    expect(matchup.textContent).toContain("Chrono Boost");
+    expect(matchup.textContent).toContain("parent baseline");
+  });
+
+  it("shows the composition phase with a stacked-imps list", async () => {
+    installFetch({
+      state: runningState,
+      currentRound: {
+        active: true,
+        generation: 3,
+        phase: "composition",
+        imp_title: null,
+        imp_rank: null,
+        imp_index: null,
+        candidate: "cand_stk",
+        stacked_titles: ["Chrono", "Forward pylon", "Archon morph"],
+        is_fallback: false,
+        new_parent: null,
+        prior_parent: null,
+        games_played: 3,
+        games_total: 5,
+        score_cand: 2,
+        score_parent: 1,
+        updated_at: "2026-04-21T19:20:00+00:00",
+      },
+    });
+    render(<EvolutionTab />);
+    await waitFor(() => {
+      expect(screen.getByTestId("round-phase-composition")).toBeTruthy();
+    });
+    const stackList = screen.getByTestId("composition-stack-list");
+    expect(stackList.textContent).toContain("Chrono");
+    expect(stackList.textContent).toContain("Forward pylon");
+    expect(stackList.textContent).toContain("Archon morph");
+  });
+
+  it("shows the regression phase with new_parent vs prior_parent", async () => {
+    installFetch({
+      state: runningState,
+      currentRound: {
+        active: true,
+        generation: 3,
+        phase: "regression",
+        imp_title: null,
+        imp_rank: null,
+        imp_index: null,
+        candidate: null,
+        stacked_titles: [],
+        is_fallback: false,
+        new_parent: "v1",
+        prior_parent: "v0",
+        games_played: 4,
+        games_total: 5,
+        score_cand: 2,
+        score_parent: 2,
+        updated_at: "2026-04-21T19:25:00+00:00",
+      },
+    });
+    render(<EvolutionTab />);
+    await waitFor(() => {
+      expect(screen.getByTestId("round-phase-regression")).toBeTruthy();
+    });
+    const matchup = screen.getByTestId("current-round-matchup");
+    expect(matchup.textContent).toContain("new parent");
+    expect(matchup.textContent).toContain("prior parent");
+    expect(matchup.textContent).toContain("v1");
+    expect(matchup.textContent).toContain("v0");
+  });
+
+  it("shows the mirror_games phase with X/Y progress during pool seeding", async () => {
+    installFetch({
+      state: { ...runningState, parent_current: "v0" },
+      currentRound: {
+        active: true,
+        generation: 0,
+        phase: "mirror_games",
+        imp_title: "parent-vs-parent mirror games",
+        imp_rank: null,
+        imp_index: null,
+        candidate: "v0",
+        stacked_titles: [],
+        is_fallback: false,
+        new_parent: null,
+        prior_parent: null,
+        games_played: 2,
+        games_total: 3,
+        score_cand: 0,
+        score_parent: 0,
+        updated_at: "2026-04-21T19:00:00+00:00",
+      },
+    });
+    render(<EvolutionTab />);
+    await waitFor(() => {
+      expect(screen.getByTestId("round-phase-mirror_games")).toBeTruthy();
+    });
+    expect(screen.getByTestId("current-round-progress").textContent).toContain(
+      "2/3",
+    );
+  });
+
+  it("shows the claude_prompt phase with an indefinite progress indicator", async () => {
+    installFetch({
+      state: runningState,
+      currentRound: {
+        active: true,
+        generation: 0,
+        phase: "claude_prompt",
+        imp_title: "Claude advisor",
+        imp_rank: null,
+        imp_index: null,
+        candidate: null,
+        stacked_titles: [],
+        is_fallback: false,
+        new_parent: null,
+        prior_parent: null,
+        games_played: 0,
+        games_total: 10,
+        score_cand: 0,
+        score_parent: 0,
+        updated_at: "2026-04-21T19:05:00+00:00",
+      },
+    });
+    render(<EvolutionTab />);
+    await waitFor(() => {
+      expect(screen.getByTestId("round-phase-claude_prompt")).toBeTruthy();
+    });
+    expect(screen.getByTestId("current-round-indefinite-bar")).toBeTruthy();
+  });
+
+  // --- Phase history (results JSONL) ---
+
+  it("renders a CRASH row in Phase History for entries carrying an error field", async () => {
+    const results = {
       rounds: [
         {
+          phase: "fitness",
+          generation: 1,
           parent: "v0",
-          candidate_a: "(crash — no candidate)",
-          candidate_b: "(crash — no candidate)",
-          imp_a: {
+          imp: {
             rank: 1,
-            title: "Implement Chrono Boost",
+            title: "Boom imp",
             type: "dev",
             description: "",
             principle_ids: [],
             expected_impact: "",
-            concrete_change: "{}",
+            concrete_change: "",
           },
-          imp_b: {
-            rank: 2,
-            title: "Reward Chrono Boost usage",
-            type: "training",
-            description: "",
-            principle_ids: [],
-            expected_impact: "",
-            concrete_change: "{}",
-          },
-          ab_record: [],
-          gate_record: null,
-          winner: null,
-          promoted: false,
-          reason:
-            "crashed: RuntimeError: dev sub-agent timed out after 900s",
-          error:
-            "RuntimeError: dev sub-agent timed out after 900s",
+          candidate: "cand_boom",
+          record: [],
+          wins_cand: 0,
+          wins_parent: 0,
+          games: 5,
+          outcome: "crash",
+          reason: "crashed: RuntimeError: OOM",
+          error: "RuntimeError: OOM",
         },
       ],
     };
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      mockFetch({
-        state: runningState,
-        control: defaultControl,
-        pool: runningPool,
-        results: crashResults,
-      }),
-    );
+    installFetch({ state: runningState, results });
     render(<EvolutionTab />);
-    // Wait for the crash row to render.
-    const crashRow = await screen.findByTestId("round-history-row-crash");
-    expect(crashRow).toBeInTheDocument();
-    // The OutcomeBadge shows the "discarded-crash" label.
-    expect(crashRow.textContent).toMatch(/discarded-crash/);
-    // The error line is visible in red code styling.
-    const errorEl = screen.getByTestId("round-history-error");
-    expect(errorEl.textContent).toContain("dev sub-agent timed out");
+    await waitFor(() => {
+      expect(screen.getByText(/Phase History/i)).toBeTruthy();
+    });
+    const crashRow = screen.getByTestId("round-history-row-crash");
+    expect(crashRow.textContent).toContain("Boom imp");
+    expect(crashRow.textContent).toMatch(/crash/);
+    const err = screen.getByTestId("round-history-error");
+    expect(err.textContent).toContain("RuntimeError: OOM");
   });
 
-  it("renders Run Stats in inline 'Label: value' format below the pool", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      mockFetch({
-        state: runningState,
-        control: defaultControl,
-        pool: runningPool,
-        results: runningResults,
-      }),
-    );
-    render(<EvolutionTab />);
-    const statsList = await screen.findByTestId("run-stats-list");
-    // Inline format — strong label immediately followed by value.
-    expect(statsList.textContent).toMatch(/Rounds Completed:\s*1/);
-    expect(statsList.textContent).toMatch(/Rounds Promoted:\s*1/);
-    expect(statsList.textContent).toMatch(/Pool Remaining:\s*8/);
-    expect(statsList.textContent).toMatch(/Wall Budget:\s*4h/);
+  // --- Run Stats ---
 
-    // Ordering: Pool section should appear BEFORE Run Stats in the DOM.
-    const poolHeading = screen.getByRole("heading", { name: /^Pool$/ });
-    const statsHeading = screen.getByRole("heading", { name: /^Run Stats$/ });
-    const order = poolHeading.compareDocumentPosition(statsHeading);
-    // DOCUMENT_POSITION_FOLLOWING === 0x04
-    expect(order & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  it("renders the new Run Stats fields inline", async () => {
+    installFetch({ state: runningState });
+    render(<EvolutionTab />);
+    await waitFor(() => {
+      expect(screen.getByTestId("run-stats-list")).toBeTruthy();
+    });
+    const statsText = screen.getByTestId("run-stats-list").textContent ?? "";
+    expect(statsText).toContain("Generation:");
+    expect(statsText).toContain("Generations Completed:");
+    expect(statsText).toContain("Generations Promoted:");
+    expect(statsText).toContain("Evictions:");
+    expect(statsText).toContain("Resurrections Left:");
+    expect(statsText).toContain("Pool Active:");
+    expect(statsText).toContain("Wall Budget:");
   });
 });

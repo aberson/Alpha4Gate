@@ -42,9 +42,12 @@ function StatusBadge({ status }: { status: EvolveRunState["status"] }) {
 function PoolStatusBadge({ status }: { status: EvolvePoolStatus | string }) {
   const palette: Record<string, { bg: string; fg: string }> = {
     active: { bg: "rgba(46, 204, 113, 0.2)", fg: "#2ecc71" },
-    "consumed-won": { bg: "rgba(52, 152, 219, 0.2)", fg: "#3498db" },
-    "consumed-lost": { bg: "rgba(231, 76, 60, 0.2)", fg: "#e74c3c" },
-    "consumed-tie": { bg: "rgba(241, 196, 15, 0.2)", fg: "#f1c40f" },
+    "fitness-pass": { bg: "rgba(52, 152, 219, 0.2)", fg: "#3498db" },
+    "fitness-close": { bg: "rgba(241, 196, 15, 0.2)", fg: "#f1c40f" },
+    evicted: { bg: "rgba(127, 140, 141, 0.2)", fg: "#95a5a6" },
+    "promoted-stack": { bg: "rgba(46, 204, 113, 0.3)", fg: "#27ae60" },
+    "promoted-single": { bg: "rgba(26, 188, 156, 0.25)", fg: "#16a085" },
+    "regression-rollback": { bg: "rgba(231, 76, 60, 0.2)", fg: "#e74c3c" },
   };
   const tone = palette[status] ?? { bg: "rgba(136,136,136,0.2)", fg: "#888" };
   return (
@@ -69,14 +72,19 @@ function PoolStatusBadge({ status }: { status: EvolvePoolStatus | string }) {
 
 function OutcomeBadge({ outcome }: { outcome: string }) {
   const palette: Record<string, { bg: string; fg: string }> = {
-    promoted: { bg: "rgba(46, 204, 113, 0.2)", fg: "#2ecc71" },
-    "discarded-tie": { bg: "rgba(241, 196, 15, 0.2)", fg: "#f1c40f" },
-    "discarded-gate": { bg: "rgba(231, 76, 60, 0.2)", fg: "#e74c3c" },
-    "discarded-crash": { bg: "rgba(155, 89, 182, 0.2)", fg: "#9b59b6" },
+    "fitness-pass": { bg: "rgba(52, 152, 219, 0.2)", fg: "#3498db" },
+    "fitness-close": { bg: "rgba(241, 196, 15, 0.2)", fg: "#f1c40f" },
+    "fitness-fail": { bg: "rgba(127, 140, 141, 0.2)", fg: "#95a5a6" },
+    "composition-pass": { bg: "rgba(46, 204, 113, 0.3)", fg: "#27ae60" },
+    "composition-fail": { bg: "rgba(230, 126, 34, 0.25)", fg: "#e67e22" },
+    "regression-pass": { bg: "rgba(26, 188, 156, 0.25)", fg: "#16a085" },
+    "regression-rollback": { bg: "rgba(231, 76, 60, 0.2)", fg: "#e74c3c" },
+    crash: { bg: "rgba(155, 89, 182, 0.2)", fg: "#9b59b6" },
   };
   const tone = palette[outcome] ?? { bg: "rgba(136,136,136,0.2)", fg: "#888" };
   return (
     <span
+      data-testid={`outcome-${outcome}`}
       style={{
         display: "inline-block",
         padding: "2px 8px",
@@ -93,6 +101,32 @@ function OutcomeBadge({ outcome }: { outcome: string }) {
 }
 
 function LastResultCard({ last }: { last: EvolveLastResult }) {
+  const stackedTitles = Array.isArray(last.stacked_titles)
+    ? last.stacked_titles
+    : [];
+  const titleNode =
+    last.phase === "composition" && stackedTitles.length > 0
+      ? (
+          <>
+            <strong>
+              {last.is_fallback
+                ? `Fallback single: ${stackedTitles[0] ?? "?"}`
+                : `Stack of ${stackedTitles.length}`}
+            </strong>
+            {!last.is_fallback ? (
+              <span style={{ color: "#aaa", fontSize: "0.9em" }}>
+                {" "}— {stackedTitles.join(", ")}
+              </span>
+            ) : null}
+          </>
+        )
+      : last.phase === "regression"
+      ? <strong>Regression check</strong>
+      : <strong>{last.imp_title ?? "(unknown)"}</strong>;
+
+  // Defensive: cached payloads from pre-v2 schema may lack `score`.
+  const score = Array.isArray(last.score) ? last.score : null;
+
   return (
     <div
       className="stat-card"
@@ -102,19 +136,18 @@ function LastResultCard({ last }: { last: EvolveLastResult }) {
         paddingLeft: "12px",
       }}
     >
-      <label>Last Round (#{last.round_index})</label>
+      <label>
+        Last Phase — Generation #{last.generation_index ?? "?"} ({last.phase ?? "?"})
+      </label>
       <div style={{ marginTop: "4px" }}>
-        <div style={{ fontSize: "0.95em" }}>
-          <strong>{last.imp_a_title}</strong>
-          <span style={{ color: "#888" }}> vs </span>
-          <strong>{last.imp_b_title}</strong>
-        </div>
+        <div style={{ fontSize: "0.95em" }}>{titleNode}</div>
         <div style={{ fontSize: "0.85em", marginTop: "6px", color: "#aaa" }}>
-          AB score: <code>{last.ab_score[0]}-{last.ab_score[1]}</code>
+          Score:{" "}
+          <code>
+            {score !== null ? `${score[0]}-${score[1]}` : "—"}
+          </code>
           {" | "}
-          Gate score: <code>{last.gate_score[0]}-{last.gate_score[1]}</code>
-          {" | "}
-          Outcome: <OutcomeBadge outcome={last.outcome} />
+          Outcome: <OutcomeBadge outcome={last.outcome ?? "?"} />
         </div>
         {last.reason ? (
           <div style={{ fontSize: "0.85em", marginTop: "4px", color: "#888" }}>
@@ -128,9 +161,10 @@ function LastResultCard({ last }: { last: EvolveLastResult }) {
 
 function PhaseBadge({ phase }: { phase: string | null }) {
   const label = phase ?? "?";
-  const palette: Record<string, { bg: string; fg: string; display: string }> = {
-    ab: { bg: "rgba(52, 152, 219, 0.2)", fg: "#3498db", display: "A/B" },
-    gate: { bg: "rgba(230, 126, 34, 0.25)", fg: "#e67e22", display: "GATE" },
+  const palette: Record<
+    string,
+    { bg: string; fg: string; display: string }
+  > = {
     starting: {
       bg: "rgba(136,136,136,0.2)",
       fg: "#888",
@@ -145,6 +179,26 @@ function PhaseBadge({ phase }: { phase: string | null }) {
       bg: "rgba(46, 204, 113, 0.2)",
       fg: "#2ecc71",
       display: "ADVISOR",
+    },
+    fitness: {
+      bg: "rgba(52, 152, 219, 0.2)",
+      fg: "#3498db",
+      display: "FITNESS",
+    },
+    composition: {
+      bg: "rgba(26, 188, 156, 0.25)",
+      fg: "#16a085",
+      display: "COMPOSITION",
+    },
+    regression: {
+      bg: "rgba(230, 126, 34, 0.25)",
+      fg: "#e67e22",
+      display: "REGRESSION",
+    },
+    pool_refresh: {
+      bg: "rgba(155, 89, 182, 0.2)",
+      fg: "#8e44ad",
+      display: "POOL REFRESH",
     },
   };
   const tone = palette[label] ?? {
@@ -197,7 +251,6 @@ function ProgressBar({ pct, color }: { pct: number; color: string }) {
 }
 
 function IndefiniteBar({ color }: { color: string }) {
-  // Simple three-bar pulse indicator for "in flight, no per-step progress".
   return (
     <div
       data-testid="current-round-indefinite-bar"
@@ -230,6 +283,64 @@ function IndefiniteBar({ color }: { color: string }) {
   );
 }
 
+function MatchupGrid({
+  leftTitle,
+  leftId,
+  rightTitle,
+  rightId,
+  scoreLeft,
+  scoreRight,
+  accentColor,
+}: {
+  leftTitle: string;
+  leftId: string;
+  rightTitle: string;
+  rightId: string;
+  scoreLeft: number;
+  scoreRight: number;
+  accentColor: string;
+}) {
+  return (
+    <div
+      data-testid="current-round-matchup"
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1fr auto 1fr",
+        alignItems: "center",
+        gap: "16px",
+        marginTop: "10px",
+        fontSize: "1.1em",
+      }}
+    >
+      <div style={{ textAlign: "right" }}>
+        <div style={{ fontWeight: 700, fontSize: "1.15em" }}>{leftTitle}</div>
+        <div style={{ color: "#888", fontSize: "0.85em", marginTop: "2px" }}>
+          <code>{leftId}</code>
+        </div>
+      </div>
+      <div
+        style={{
+          fontSize: "2em",
+          fontWeight: 700,
+          color: accentColor,
+          whiteSpace: "nowrap",
+        }}
+        data-testid="current-round-score"
+      >
+        {scoreLeft}
+        <span style={{ color: "#555", margin: "0 8px" }}>–</span>
+        {scoreRight}
+      </div>
+      <div style={{ textAlign: "left" }}>
+        <div style={{ fontWeight: 700, fontSize: "1.15em" }}>{rightTitle}</div>
+        <div style={{ color: "#888", fontSize: "0.85em", marginTop: "2px" }}>
+          <code>{rightId}</code>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CurrentPhaseCard({
   round,
   runParent,
@@ -241,20 +352,20 @@ function CurrentPhaseCard({
   const total = round.games_total ?? 0;
   const played = round.games_played ?? 0;
   const pct = total > 0 ? Math.min(100, (played / total) * 100) : 0;
-  const scoreA = round.score_a ?? 0;
-  const scoreB = round.score_b ?? 0;
+  const scoreCand = round.score_cand ?? 0;
+  const scoreParent = round.score_parent ?? 0;
 
-  // Header colour + strip accent per phase so the state is obvious at a glance.
   const accent: Record<string, string> = {
     starting: "#888",
     mirror_games: "#9b59b6",
     claude_prompt: "#2ecc71",
-    ab: "#3498db",
-    gate: "#e67e22",
+    fitness: "#3498db",
+    composition: "#16a085",
+    regression: "#e67e22",
+    pool_refresh: "#8e44ad",
   };
   const accentColor = accent[phase] ?? "#888";
 
-  // --- Phase-specific body ---
   let headline: React.ReactNode;
   let subline: React.ReactNode = null;
   let progressNode: React.ReactNode = null;
@@ -268,8 +379,8 @@ function CurrentPhaseCard({
     );
     subline = (
       <span>
-        <code>{runParent ?? round.cand_a ?? "parent"}</code> vs{" "}
-        <code>{runParent ?? round.cand_a ?? "parent"}</code>
+        <code>{runParent ?? round.candidate ?? "parent"}</code> vs{" "}
+        <code>{runParent ?? round.candidate ?? "parent"}</code>
         {" · "}
         Game{" "}
         <code data-testid="current-round-progress">
@@ -292,82 +403,144 @@ function CurrentPhaseCard({
       </span>
     );
     progressNode = <IndefiniteBar color={accentColor} />;
-  } else if (phase === "starting") {
+  } else if (phase === "pool_refresh") {
     headline = (
       <span>
-        Preparing round{" "}
-        {round.round_index != null ? `#${round.round_index}` : ""} — applying
-        candidate changes via dev sub-agent…
-      </span>
-    );
-    subline =
-      round.imp_a_title || round.imp_b_title ? (
-        <span>
-          <strong>{round.imp_a_title ?? "imp A"}</strong> and{" "}
-          <strong>{round.imp_b_title ?? "imp B"}</strong>
-        </span>
-      ) : null;
-    progressNode = <IndefiniteBar color={accentColor} />;
-  } else if (phase === "ab" || phase === "gate") {
-    const isGate = phase === "gate";
-    const leftTitle = isGate
-      ? (round.imp_a_title ?? "winning candidate")
-      : (round.imp_a_title ?? "candidate A");
-    const rightTitle = isGate ? "parent baseline" : (round.imp_b_title ?? "candidate B");
-    const leftId = isGate
-      ? (round.gate_candidate ?? round.cand_a ?? "?")
-      : (round.cand_a ?? "?");
-    const rightId = isGate ? (runParent ?? "parent") : (round.cand_b ?? "?");
-
-    headline = (
-      <span>
-        Round{" "}
-        {round.round_index != null ? `#${round.round_index}` : ""} —{" "}
-        {isGate ? "Gate Check" : "Head-to-Head"}
+        Pool refresh — {round.imp_title ?? "generating replacement imps"}
       </span>
     );
     subline = (
-      <div
-        data-testid="current-round-matchup"
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr auto 1fr",
-          alignItems: "center",
-          gap: "16px",
-          marginTop: "10px",
-          fontSize: "1.1em",
-        }}
-      >
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontWeight: 700, fontSize: "1.15em" }}>
-            {leftTitle}
-          </div>
-          <div style={{ color: "#888", fontSize: "0.85em", marginTop: "2px" }}>
-            <code>{leftId}</code>
-          </div>
-        </div>
+      <span style={{ color: "#888" }}>
+        Generation {round.generation ?? "?"} — Claude is filling the pool back
+        to size. Typical latency 30–120s.
+      </span>
+    );
+    progressNode = <IndefiniteBar color={accentColor} />;
+  } else if (phase === "starting") {
+    headline = (
+      <span>
+        Preparing generation{" "}
+        {round.generation != null ? `#${round.generation}` : ""}…
+      </span>
+    );
+    progressNode = <IndefiniteBar color={accentColor} />;
+  } else if (phase === "fitness") {
+    const impTitle = round.imp_title ?? "(unknown imp)";
+    const candId = round.candidate ?? "?";
+    headline = (
+      <span>
+        Generation{" "}
+        {round.generation != null ? `#${round.generation}` : ""} — Fitness
+        eval
+      </span>
+    );
+    subline = (
+      <MatchupGrid
+        leftTitle={impTitle}
+        leftId={candId}
+        rightTitle="parent baseline"
+        rightId={runParent ?? "parent"}
+        scoreLeft={scoreCand}
+        scoreRight={scoreParent}
+        accentColor={accentColor}
+      />
+    );
+    progressNode = (
+      <>
         <div
           style={{
-            fontSize: "2em",
-            fontWeight: 700,
-            color: accentColor,
-            whiteSpace: "nowrap",
+            marginTop: "10px",
+            fontSize: "0.9em",
+            color: "#aaa",
+            textAlign: "center",
           }}
-          data-testid="current-round-score"
         >
-          {scoreA}
-          <span style={{ color: "#555", margin: "0 8px" }}>–</span>
-          {scoreB}
+          Game{" "}
+          <code data-testid="current-round-progress">
+            {played}/{total}
+          </code>
         </div>
-        <div style={{ textAlign: "left" }}>
-          <div style={{ fontWeight: 700, fontSize: "1.15em" }}>
-            {rightTitle}
-          </div>
-          <div style={{ color: "#888", fontSize: "0.85em", marginTop: "2px" }}>
-            <code>{rightId}</code>
-          </div>
+        <ProgressBar pct={pct} color={accentColor} />
+      </>
+    );
+  } else if (phase === "composition") {
+    const stacked = round.stacked_titles ?? [];
+    const leftTitle = round.is_fallback
+      ? `Fallback single: ${stacked[0] ?? "?"}`
+      : `Stacked (${stacked.length} imps)`;
+    headline = (
+      <span>
+        Generation{" "}
+        {round.generation != null ? `#${round.generation}` : ""} —{" "}
+        {round.is_fallback ? "Fallback composition" : "Composition"}
+      </span>
+    );
+    subline = (
+      <>
+        <MatchupGrid
+          leftTitle={leftTitle}
+          leftId={round.candidate ?? "?"}
+          rightTitle="parent baseline"
+          rightId={runParent ?? "parent"}
+          scoreLeft={scoreCand}
+          scoreRight={scoreParent}
+          accentColor={accentColor}
+        />
+        {!round.is_fallback && stacked.length > 0 ? (
+          <ul
+            data-testid="composition-stack-list"
+            style={{
+              listStyle: "none",
+              padding: 0,
+              margin: "10px 0 0",
+              fontSize: "0.85em",
+              color: "#aaa",
+              textAlign: "center",
+            }}
+          >
+            {stacked.map((t, i) => (
+              <li key={`${i}-${t}`}>• {t}</li>
+            ))}
+          </ul>
+        ) : null}
+      </>
+    );
+    progressNode = (
+      <>
+        <div
+          style={{
+            marginTop: "10px",
+            fontSize: "0.9em",
+            color: "#aaa",
+            textAlign: "center",
+          }}
+        >
+          Game{" "}
+          <code data-testid="current-round-progress">
+            {played}/{total}
+          </code>
         </div>
-      </div>
+        <ProgressBar pct={pct} color={accentColor} />
+      </>
+    );
+  } else if (phase === "regression") {
+    headline = (
+      <span>
+        Generation{" "}
+        {round.generation != null ? `#${round.generation}` : ""} —
+        Regression check
+      </span>
+    );
+    subline = (
+      <MatchupGrid
+        leftTitle="new parent"
+        leftId={round.new_parent ?? "?"}
+        rightTitle="prior parent"
+        rightId={round.prior_parent ?? "?"}
+        scoreLeft={scoreCand}
+        scoreRight={scoreParent}
+        accentColor={accentColor}
+      />
     );
     progressNode = (
       <>
@@ -388,7 +561,6 @@ function CurrentPhaseCard({
       </>
     );
   } else {
-    // Unknown phase — render something safe.
     headline = <span>Running…</span>;
   }
 
@@ -459,15 +631,28 @@ function PoolView({ pool }: { pool: EvolvePoolItem[] }) {
             #{item.rank}
           </span>
           <span style={{ flex: 1 }}>{item.title}</span>
+          {item.fitness_score ? (
+            <span
+              style={{
+                fontSize: "0.8em",
+                color: "#aaa",
+                minWidth: "40px",
+                textAlign: "right",
+              }}
+            >
+              {item.fitness_score[0]}/{item.fitness_score[1]}
+            </span>
+          ) : null}
           <span
             style={{
-              fontSize: "0.8em",
-              color: "#888",
-              minWidth: "60px",
+              fontSize: "0.75em",
+              color: "#666",
+              minWidth: "30px",
               textAlign: "right",
             }}
+            title={`retries: ${item.retry_count}`}
           >
-            {item.type}
+            r{item.retry_count}
           </span>
           <PoolStatusBadge status={item.status} />
         </li>
@@ -479,50 +664,52 @@ function PoolView({ pool }: { pool: EvolvePoolItem[] }) {
 function RoundHistoryTable({ rounds }: { rounds: EvolveRoundResult[] }) {
   if (rounds.length === 0) {
     return (
-      <div style={{ color: "#888", fontSize: "0.85em" }}>No rounds yet</div>
+      <div style={{ color: "#888", fontSize: "0.85em" }}>No phases yet</div>
     );
   }
   return (
     <table style={{ width: "100%", fontSize: "0.85em" }}>
       <thead>
         <tr>
-          <th style={{ textAlign: "left" }}>#</th>
-          <th style={{ textAlign: "left" }}>Candidate A</th>
-          <th style={{ textAlign: "left" }}>Candidate B</th>
+          <th style={{ textAlign: "left" }}>Gen</th>
+          <th style={{ textAlign: "left" }}>Phase</th>
+          <th style={{ textAlign: "left" }}>Subject</th>
+          <th style={{ textAlign: "left" }}>Score</th>
           <th style={{ textAlign: "left" }}>Outcome</th>
-          <th style={{ textAlign: "left" }}>Winner</th>
           <th style={{ textAlign: "left" }}>Reason</th>
         </tr>
       </thead>
       <tbody>
         {rounds.map((r, i) => {
-          // A crashed round is recognisable by the explicit `error` field
-          // (written by scripts/evolve.py's exception handler). Fall back to
-          // the legacy ab_record-based classification for rounds that
-          // actually ran.
-          const outcome = r.error
-            ? "discarded-crash"
-            : r.promoted
-              ? "promoted"
-              : r.winner === null
-                ? "discarded-tie"
-                : "discarded-gate";
+          const isCrash = r.outcome === "crash";
+          let subject = "";
+          let scoreText = "";
+          if (r.phase === "fitness" && "imp" in r) {
+            subject = r.imp?.title ?? "?";
+            scoreText = `${r.wins_cand}-${r.wins_parent}`;
+          } else if (r.phase === "composition" && "stacked_titles" in r) {
+            subject = r.is_fallback
+              ? `fallback: ${r.stacked_titles[0] ?? "?"}`
+              : `stack (${r.stacked_titles.length})`;
+            scoreText = `${r.wins_cand}-${r.wins_parent}`;
+          } else if (r.phase === "regression" && "new_parent" in r) {
+            subject = `${r.new_parent} vs ${r.prior_parent}`;
+            scoreText = `${r.wins_new}-${r.wins_prior}`;
+          } else {
+            subject = "(phase data unavailable)";
+          }
           return (
             <tr
-              key={`${r.candidate_a}-${r.candidate_b}-${i}`}
-              data-testid={
-                outcome === "discarded-crash"
-                  ? "round-history-row-crash"
-                  : undefined
-              }
+              key={`${r.phase}-${r.generation}-${i}`}
+              data-testid={isCrash ? "round-history-row-crash" : undefined}
             >
-              <td>{i + 1}</td>
-              <td>{r.candidate_a}</td>
-              <td>{r.candidate_b}</td>
+              <td>{r.generation}</td>
+              <td>{r.phase}</td>
+              <td>{subject}</td>
+              <td>{scoreText}</td>
               <td>
-                <OutcomeBadge outcome={outcome} />
+                <OutcomeBadge outcome={r.outcome} />
               </td>
-              <td>{r.winner ?? "---"}</td>
               <td style={{ color: "#888" }}>
                 {r.reason}
                 {r.error ? (
@@ -556,9 +743,11 @@ export function EvolutionTab() {
     parent_current: null,
     started_at: null,
     wall_budget_hours: null,
-    rounds_completed: null,
-    rounds_promoted: null,
-    no_progress_streak: null,
+    generation_index: null,
+    generations_completed: null,
+    generations_promoted: null,
+    evictions: null,
+    resurrections_remaining: null,
     pool_remaining_count: null,
     last_result: null,
   };
@@ -579,7 +768,7 @@ export function EvolutionTab() {
     setStopOpen(false);
     await sendControl({ stop_run: true });
     showMessage(
-      "Stop requested \u2014 run will end at the next round boundary",
+      "Stop requested \u2014 run will end at the next generation boundary",
     );
   }, [sendControl, showMessage]);
 
@@ -588,8 +777,8 @@ export function EvolutionTab() {
       await sendControl({ pause_after_round: next });
       showMessage(
         next
-          ? "Will pause after the current round"
-          : "Pause-after-round cleared",
+          ? "Will pause after the current generation"
+          : "Pause-after-generation cleared",
       );
     },
     [sendControl, showMessage],
@@ -601,7 +790,6 @@ export function EvolutionTab() {
         <StaleDataBanner lastSuccess={state.lastSuccess} label="Evolve State" />
       ) : null}
 
-      {/* Header */}
       <div
         style={{
           display: "flex",
@@ -615,10 +803,10 @@ export function EvolutionTab() {
       </div>
 
       <p style={{ color: "#888", fontSize: "0.85em", margin: "0 0 16px" }}>
-        Monitor an active <code>/improve-bot-evolve</code> sibling-tournament
-        run. Pairs of Claude-proposed improvements play head-to-head; decisive
-        winners gate against the current parent and promote to the new
-        baseline.
+        Monitor an active <code>/improve-bot-evolve</code> run. Each generation
+        fitness-tests every pool imp vs the current parent, stacks the winners
+        for a composition promotion, and regression-checks against the prior
+        parent.
       </p>
 
       {run.status === "idle" ? (
@@ -637,7 +825,6 @@ export function EvolutionTab() {
         </div>
       ) : (
         <>
-          {/* Header line: parents */}
           <div
             style={{
               fontSize: "0.9em",
@@ -669,14 +856,12 @@ export function EvolutionTab() {
             </div>
           ) : null}
 
-          {/* Last-round card */}
           {run.last_result ? (
             <section style={{ marginTop: "16px" }}>
               <LastResultCard last={run.last_result} />
             </section>
           ) : null}
 
-          {/* Current phase (live; shows seeding, claude prompt, A/B, or gate) */}
           {currentRound.data?.active ? (
             <CurrentPhaseCard
               round={currentRound.data}
@@ -684,14 +869,11 @@ export function EvolutionTab() {
             />
           ) : null}
 
-          {/* Pool view */}
           <section style={{ marginBottom: "24px" }}>
             <h3>Pool</h3>
             <PoolView pool={pool.data?.pool ?? []} />
           </section>
 
-          {/* Cumulative stats — moved below Pool so they stay out of the way
-              while the live phase is the operator's main focus. */}
           <section style={{ marginBottom: "24px" }}>
             <h3>Run Stats</h3>
             <ul
@@ -708,18 +890,26 @@ export function EvolutionTab() {
               }}
             >
               <li>
-                <strong>Rounds Completed:</strong> {run.rounds_completed ?? 0}
+                <strong>Generation:</strong> {run.generation_index ?? 0}
               </li>
               <li>
-                <strong>Rounds Promoted:</strong> {run.rounds_promoted ?? 0}
+                <strong>Generations Completed:</strong>{" "}
+                {run.generations_completed ?? 0}
               </li>
               <li>
-                <strong>Pool Remaining:</strong>{" "}
+                <strong>Generations Promoted:</strong>{" "}
+                {run.generations_promoted ?? 0}
+              </li>
+              <li>
+                <strong>Pool Active:</strong>{" "}
                 {run.pool_remaining_count ?? 0}
               </li>
               <li>
-                <strong>No-Progress Streak:</strong>{" "}
-                {run.no_progress_streak ?? 0}
+                <strong>Evictions:</strong> {run.evictions ?? 0}
+              </li>
+              <li>
+                <strong>Resurrections Left:</strong>{" "}
+                {run.resurrections_remaining ?? 0}
               </li>
               <li>
                 <strong>Wall Budget:</strong>{" "}
@@ -730,13 +920,11 @@ export function EvolutionTab() {
             </ul>
           </section>
 
-          {/* Round history */}
           <section style={{ marginBottom: "24px" }}>
-            <h3>Round History</h3>
+            <h3>Phase History</h3>
             <RoundHistoryTable rounds={results.data?.rounds ?? []} />
           </section>
 
-          {/* Run actions */}
           <section className="control-panel" aria-labelledby="evolve-actions">
             <h3 id="evolve-actions">Run Actions</h3>
             <div
@@ -780,7 +968,7 @@ export function EvolutionTab() {
                   disabled={!isRunning}
                   onChange={(e) => void handleTogglePause(e.target.checked)}
                 />
-                Pause after current round
+                Pause after current generation
               </label>
             </div>
           </section>
@@ -788,7 +976,7 @@ export function EvolutionTab() {
           <ConfirmDialog
             open={stopOpen}
             title="Stop evolve run?"
-            message="The run will stop gracefully at the next round boundary. In-progress games will complete first."
+            message="The run will stop gracefully at the next generation boundary. In-progress games will complete first."
             confirmLabel="Stop"
             onConfirm={() => void handleStopConfirm()}
             onCancel={() => setStopOpen(false)}

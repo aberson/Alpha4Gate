@@ -481,16 +481,18 @@ class TestEvolveEndpoints:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "idle"
-        # Idle skeleton has the same top-level keys as a running state so
-        # the frontend can destructure without null-coalescing every field.
+        # Idle skeleton carries the new generation-phase keys so the
+        # frontend can destructure without null-coalescing every field.
         for key in (
             "parent_start",
             "parent_current",
             "started_at",
             "wall_budget_hours",
-            "rounds_completed",
-            "rounds_promoted",
-            "no_progress_streak",
+            "generation_index",
+            "generations_completed",
+            "generations_promoted",
+            "evictions",
+            "resurrections_remaining",
             "pool_remaining_count",
             "last_result",
         ):
@@ -503,12 +505,14 @@ class TestEvolveEndpoints:
         state = {
             "status": "running",
             "parent_start": "v0",
-            "parent_current": "v0",
+            "parent_current": "v1",
             "started_at": "2026-04-19T10:00:00+00:00",
             "wall_budget_hours": 4.0,
-            "rounds_completed": 3,
-            "rounds_promoted": 1,
-            "no_progress_streak": 0,
+            "generation_index": 3,
+            "generations_completed": 2,
+            "generations_promoted": 1,
+            "evictions": 4,
+            "resurrections_remaining": 3,
             "pool_remaining_count": 6,
             "last_result": None,
         }
@@ -520,7 +524,8 @@ class TestEvolveEndpoints:
         data = resp.json()
         assert data["status"] == "running"
         assert data["parent_start"] == "v0"
-        assert data["rounds_completed"] == 3
+        assert data["generations_completed"] == 2
+        assert data["generations_promoted"] == 1
 
     def test_get_state_returns_idle_on_corrupt_file(
         self, client: TestClient, tmp_path: Path
@@ -669,39 +674,46 @@ class TestEvolveEndpoints:
         # Full skeleton so the frontend can destructure without
         # null-coalescing every field.
         for key in (
-            "round_index",
-            "imp_a_title",
-            "imp_b_title",
+            "generation",
             "phase",
-            "cand_a",
-            "cand_b",
+            "imp_title",
+            "imp_rank",
+            "imp_index",
+            "candidate",
+            "new_parent",
+            "prior_parent",
             "games_played",
             "games_total",
-            "score_a",
-            "score_b",
-            "gate_candidate",
+            "score_cand",
+            "score_parent",
             "updated_at",
         ):
             assert key in data
             assert data[key] is None
+        # List / bool defaults for non-null fields.
+        assert data["stacked_titles"] == []
+        assert data["is_fallback"] is False
 
     def test_get_current_round_returns_file_content(
         self, client: TestClient, tmp_path: Path
     ) -> None:
         live = {
             "active": True,
-            "round_index": 2,
-            "imp_a_title": "Chrono Boost",
-            "imp_b_title": "Blink micro",
-            "phase": "ab",
-            "cand_a": "cand_abc_a",
-            "cand_b": "cand_abc_b",
+            "generation": 3,
+            "phase": "fitness",
+            "imp_title": "Chrono Boost",
+            "imp_rank": 1,
+            "imp_index": 0,
+            "candidate": "cand_abc",
+            "stacked_titles": [],
+            "is_fallback": False,
+            "new_parent": None,
+            "prior_parent": None,
             "games_played": 3,
-            "games_total": 10,
-            "score_a": 2,
-            "score_b": 1,
-            "gate_candidate": None,
-            "updated_at": "2026-04-20T19:15:00+00:00",
+            "games_total": 5,
+            "score_cand": 2,
+            "score_parent": 1,
+            "updated_at": "2026-04-21T19:15:00+00:00",
         }
         (tmp_path / "data" / "evolve_current_round.json").write_text(
             json.dumps(live)
@@ -710,26 +722,29 @@ class TestEvolveEndpoints:
         assert resp.status_code == 200
         data = resp.json()
         assert data["active"] is True
-        assert data["round_index"] == 2
-        assert data["phase"] == "ab"
-        assert data["score_a"] == 2
-        assert data["score_b"] == 1
+        assert data["generation"] == 3
+        assert data["phase"] == "fitness"
+        assert data["score_cand"] == 2
+        assert data["score_parent"] == 1
 
     def test_get_current_round_merges_partial_payload_with_skeleton(
         self, client: TestClient, tmp_path: Path
     ) -> None:
         """Older writers might omit fields added later — the endpoint backfills
         from the idle skeleton so the response shape is always stable."""
-        partial = {"active": True, "round_index": 7}
+        partial = {"active": True, "generation": 7, "phase": "fitness"}
         (tmp_path / "data" / "evolve_current_round.json").write_text(
             json.dumps(partial)
         )
         resp = client.get("/api/evolve/current-round")
         data = resp.json()
         assert data["active"] is True
-        assert data["round_index"] == 7
-        assert data["phase"] is None
+        assert data["generation"] == 7
+        assert data["phase"] == "fitness"
         assert data["games_played"] is None
+        # Skeleton backfill gives non-null defaults for list/bool fields.
+        assert data["stacked_titles"] == []
+        assert data["is_fallback"] is False
 
 
 class TestRewardRulesEndpoints:

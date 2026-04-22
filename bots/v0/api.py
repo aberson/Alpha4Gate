@@ -1173,17 +1173,20 @@ _EVOLVE_CURRENT_ROUND_FILE = "evolve_current_round.json"
 
 _EVOLVE_CURRENT_ROUND_IDLE: dict[str, Any] = {
     "active": False,
-    "round_index": None,
-    "imp_a_title": None,
-    "imp_b_title": None,
+    "generation": None,
     "phase": None,
-    "cand_a": None,
-    "cand_b": None,
+    "imp_title": None,
+    "imp_rank": None,
+    "imp_index": None,
+    "candidate": None,
+    "stacked_titles": [],
+    "is_fallback": False,
+    "new_parent": None,
+    "prior_parent": None,
     "games_played": None,
     "games_total": None,
-    "score_a": None,
-    "score_b": None,
-    "gate_candidate": None,
+    "score_cand": None,
+    "score_parent": None,
     "updated_at": None,
 }
 
@@ -1193,9 +1196,11 @@ _EVOLVE_IDLE_STATE: dict[str, Any] = {
     "parent_current": None,
     "started_at": None,
     "wall_budget_hours": None,
-    "rounds_completed": None,
-    "rounds_promoted": None,
-    "no_progress_streak": None,
+    "generation_index": None,
+    "generations_completed": None,
+    "generations_promoted": None,
+    "evictions": None,
+    "resurrections_remaining": None,
     "pool_remaining_count": None,
     "last_result": None,
 }
@@ -1286,12 +1291,11 @@ async def update_evolve_control(request: dict[str, Any]) -> dict[str, Any]:
 async def get_evolve_current_round() -> dict[str, Any]:
     """Read the live per-game progress file for the active round.
 
-    Written by ``scripts/evolve.py`` inside each round — updates every
-    ``on_round_event`` (ab_start, ab_game_end, gate_start, gate_game_end).
-    Returns the idle skeleton ``{"active": False, ...}`` when no round is
-    in progress / no file exists. The Evolution dashboard tab polls this
-    at ~2s cadence so operators see score changes between round-boundary
-    writes.
+    Written by ``scripts/evolve.py`` inside each phase — updates on every
+    fitness/composition/regression game-end event. Returns the idle
+    skeleton ``{"active": False, ...}`` when no phase is in progress / no
+    file exists. The Evolution dashboard tab polls this at ~2s cadence so
+    operators see score changes between phase-boundary writes.
     """
     data = _read_json_file(_evolve_dir / _EVOLVE_CURRENT_ROUND_FILE)
     if data is None:
@@ -1319,14 +1323,14 @@ async def get_evolve_pool() -> dict[str, Any]:
 
 @app.get("/api/evolve/results")
 async def get_evolve_results() -> dict[str, Any]:
-    """Read the last 50 rounds from ``evolve_results.jsonl``.
+    """Read the last 50 phase rows from ``evolve_results.jsonl``.
 
-    Each line of the JSONL file is one :class:`RoundResult` serialised
-    via ``dataclasses.asdict``. We truncate to the last 50 so the round
-    history table stays bounded even after a long overnight run. The
-    response shape is ``{"rounds": [RoundResult, ...]}``; malformed
-    lines are skipped silently so a half-written tail line doesn't
-    kill the whole endpoint.
+    Each line is one fitness/composition/regression/crash row. Truncated
+    to the last 50 to keep the Round History table bounded. The response
+    shape is ``{"rounds": [...]}`` (the key is kept as ``rounds`` for
+    frontend back-compat; entries are phase rows, not AB-round results).
+    Malformed lines are skipped silently so a half-written tail line
+    doesn't kill the whole endpoint.
     """
     path = _evolve_dir / _EVOLVE_RESULTS_FILE
     if not path.exists():

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -12,11 +11,15 @@ import pytest
 from orchestrator import evolve, registry, snapshot
 from orchestrator.contracts import Manifest, SelfPlayRecord, VersionFingerprint
 from orchestrator.evolve import (
+    CompositionResult,
+    FitnessResult,
     Improvement,
-    RoundResult,
+    RegressionResult,
     apply_improvement,
     generate_pool,
-    run_round,
+    run_composition_eval,
+    run_fitness_eval,
+    run_regression_eval,
 )
 
 # ---------------------------------------------------------------------------
@@ -372,17 +375,19 @@ class TestApplyImprovement:
         restored = Improvement.from_json(imp.to_json())
         assert restored == imp
 
-
 # ---------------------------------------------------------------------------
-# run_round
+# Phase primitives (fitness / composition / regression)
 # ---------------------------------------------------------------------------
 
 
 def _simple_training_imp(
-    key: str = "expansion_bonus", value: float = 2.0
+    key: str = "expansion_bonus",
+    value: float = 2.0,
+    *,
+    title: str | None = None,
 ) -> Improvement:
     return _make_imp(
-        title=f"bump {key}",
+        title=title or f"bump {key}",
         type_="training",
         concrete_change=_training_patch(
             "reward_rules.json", {key: value}
@@ -390,7 +395,19 @@ def _simple_training_imp(
     )
 
 
-class TestRunRound:
+def _single_namer(name: str) -> Any:
+    """Return a zero-arg callable that yields *name* — one-shot."""
+    calls = {"n": 0}
+
+    def namer() -> str:
+        calls["n"] += 1
+        return name
+
+    namer.calls = calls  # type: ignore[attr-defined]
+    return namer
+
+
+class TestRunFitnessEval:
     def test_parent_mismatch_raises(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -400,353 +417,101 @@ class TestRunRound:
 
         batch = _BatchRecorder([])  # should never be called
         with pytest.raises(ValueError, match="does not match current_version"):
-            run_round(
+            run_fitness_eval(
                 parent="v_wrong",
-                imp_a=_simple_training_imp("expansion_bonus", 2.0),
-                imp_b=_simple_training_imp("army_supply_bonus", 1.5),
+                imp=_simple_training_imp("expansion_bonus", 2.0),
+                games=5,
                 run_batch_fn=batch,
-                candidate_namer=lambda: ("cand_x_a", "cand_x_b"),
+                candidate_namer=_single_namer("cand_x"),
             )
         assert batch.call_count == 0
 
-    def test_promotes_when_candidate_beats_parent(
+    def test_pass_bucket_beats_parent(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _redirect_repo_root(tmp_path, monkeypatch)
         _seed_version(tmp_path, "v0")
         _seed_pointer(tmp_path, "v0")
 
-        # AB: A=7, B=3. Gate: winner=4, parent=1.
-        batch = _BatchRecorder([(7, 3, 0), (4, 1, 0)])
-        result = run_round(
+        # 3-2 candidate win → pass bucket.
+        batch = _BatchRecorder([(3, 2, 0)])
+        result = run_fitness_eval(
             parent="v0",
-            imp_a=_simple_training_imp("expansion_bonus", 2.0),
-            imp_b=_simple_training_imp("army_supply_bonus", 1.5),
-            ab_games=10,
-            gate_games=5,
+            imp=_simple_training_imp("expansion_bonus", 2.0),
+            games=5,
             run_batch_fn=batch,
-            candidate_namer=lambda: ("cand_promo_a", "cand_promo_b"),
+            candidate_namer=_single_namer("cand_pass"),
         )
 
-        assert isinstance(result, RoundResult)
-        assert result.promoted is True
-        # winner retains the A/B winner's cand name so imp identification
-        # in scripts/evolve.py still matches SelfPlayRecord.winner entries.
-        assert result.winner == "cand_promo_a"
-        # promoted_version is the permanent vN — snapshot_current picks
-        # v1 because the only existing numeric version is v0.
-        assert result.promoted_version == "v1"
-        assert result.gate_record is not None
-        assert len(result.gate_record) == 5
-        assert "promoted" in result.reason
-        assert "v1" in result.reason
-
-        # current.txt updated to the permanent vN, not the cand name.
-        pointer = tmp_path / "bots" / "current" / "current.txt"
-        assert pointer.read_text(encoding="utf-8") == "v1"
-
-        # Permanent vN dir exists; both scratch cand dirs are gone.
-        assert (tmp_path / "bots" / "v1").is_dir()
-        assert not (tmp_path / "bots" / "cand_promo_a").exists()
-        assert not (tmp_path / "bots" / "cand_promo_b").exists()
-
-        # v1 manifest lineage names the real parent (v0), not the
-        # scratch cand dir that snapshot_current happened to see.
-        manifest = json.loads(
-            (tmp_path / "bots" / "v1" / "manifest.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        assert manifest["parent"] == "v0"
-
-        # Confirm the promoted vN carries the applied training imp — the
-        # reward rule was patched in cand_promo_a before snapshot, so the
-        # copy at bots/v1/data/ must show the patched value.
-        post = json.loads(
-            (
-                tmp_path / "bots" / "v1" / "data" / "reward_rules.json"
-            ).read_text(encoding="utf-8")
-        )
-        assert post["expansion_bonus"] == 2.0
-
-    def test_a_beats_b_loses_to_parent_discards(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _redirect_repo_root(tmp_path, monkeypatch)
-        _seed_version(tmp_path, "v0")
-        _seed_pointer(tmp_path, "v0")
-
-        # AB: A=7, B=3. Gate: winner=1, parent=4.
-        batch = _BatchRecorder([(7, 3, 0), (1, 4, 0)])
-        result = run_round(
-            parent="v0",
-            imp_a=_simple_training_imp("expansion_bonus", 2.0),
-            imp_b=_simple_training_imp("army_supply_bonus", 1.5),
-            ab_games=10,
-            gate_games=5,
-            run_batch_fn=batch,
-            candidate_namer=lambda: ("cand_fail_a", "cand_fail_b"),
-        )
-
-        assert result.promoted is False
-        assert result.winner is None
-        assert result.gate_record is not None  # gate WAS run
-        assert len(result.gate_record) == 5
-        assert "lost to parent" in result.reason
-
-        pointer = tmp_path / "bots" / "current" / "current.txt"
-        assert pointer.read_text(encoding="utf-8") == "v0"
-        assert not (tmp_path / "bots" / "cand_fail_a").exists()
-        assert not (tmp_path / "bots" / "cand_fail_b").exists()
-
-    def test_ab_tie_discards_without_gate(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _redirect_repo_root(tmp_path, monkeypatch)
-        _seed_version(tmp_path, "v0")
-        _seed_pointer(tmp_path, "v0")
-
-        batch = _BatchRecorder([(5, 5, 0)])
-        result = run_round(
-            parent="v0",
-            imp_a=_simple_training_imp("expansion_bonus", 2.0),
-            imp_b=_simple_training_imp("army_supply_bonus", 1.5),
-            ab_games=10,
-            gate_games=5,
-            run_batch_fn=batch,
-            candidate_namer=lambda: ("cand_tie_a", "cand_tie_b"),
-        )
-
-        assert result.promoted is False
-        assert result.winner is None
-        assert result.gate_record is None
-        assert batch.call_count == 1  # gate NOT called
-        assert "tie" in result.reason
-        assert not (tmp_path / "bots" / "cand_tie_a").exists()
-        assert not (tmp_path / "bots" / "cand_tie_b").exists()
-
+        assert isinstance(result, FitnessResult)
+        assert result.bucket == "pass"
+        assert result.wins_candidate == 3
+        assert result.wins_parent == 2
+        assert result.candidate == "cand_pass"
+        assert "pass" in result.reason
+        # Scratch dir MUST be cleaned up even on pass.
+        assert not (tmp_path / "bots" / "cand_pass").exists()
+        # Pointer restored to parent.
         pointer = tmp_path / "bots" / "current" / "current.txt"
         assert pointer.read_text(encoding="utf-8") == "v0"
 
-    def test_ab_all_crashes_discards(
+    def test_close_bucket_one_win_short(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _redirect_repo_root(tmp_path, monkeypatch)
         _seed_version(tmp_path, "v0")
         _seed_pointer(tmp_path, "v0")
 
-        # All 10 AB games crashed (winner=None). Counts as 0-0 tie.
+        batch = _BatchRecorder([(2, 3, 0)])
+        result = run_fitness_eval(
+            parent="v0",
+            imp=_simple_training_imp("expansion_bonus", 2.0),
+            games=5,
+            run_batch_fn=batch,
+            candidate_namer=_single_namer("cand_close"),
+        )
+        assert result.bucket == "close"
+        assert result.wins_candidate == 2
+        assert not (tmp_path / "bots" / "cand_close").exists()
+
+    def test_fail_bucket_blowout(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _redirect_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_pointer(tmp_path, "v0")
+
+        # 1 win or less → fail.
+        batch = _BatchRecorder([(1, 4, 0)])
+        result = run_fitness_eval(
+            parent="v0",
+            imp=_simple_training_imp("expansion_bonus", 2.0),
+            games=5,
+            run_batch_fn=batch,
+            candidate_namer=_single_namer("cand_fail"),
+        )
+        assert result.bucket == "fail"
+        assert not (tmp_path / "bots" / "cand_fail").exists()
+
+    def test_fail_bucket_all_crashes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _redirect_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_pointer(tmp_path, "v0")
+
+        # 0-0 all-crashes → fail bucket.
         batch = _BatchRecorder([(0, 0, 0)])
-        result = run_round(
+        result = run_fitness_eval(
             parent="v0",
-            imp_a=_simple_training_imp("expansion_bonus", 2.0),
-            imp_b=_simple_training_imp("army_supply_bonus", 1.5),
-            ab_games=10,
-            gate_games=5,
+            imp=_simple_training_imp("expansion_bonus", 2.0),
+            games=5,
             run_batch_fn=batch,
-            candidate_namer=lambda: ("cand_crash_a", "cand_crash_b"),
+            candidate_namer=_single_namer("cand_crash"),
         )
+        assert result.bucket == "fail"
 
-        assert result.promoted is False
-        assert result.winner is None
-        assert result.gate_record is None
-        assert batch.call_count == 1
-        assert "crashed" in result.reason
-        assert not (tmp_path / "bots" / "cand_crash_a").exists()
-        assert not (tmp_path / "bots" / "cand_crash_b").exists()
-
-    def test_name_collision_retries_once(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _redirect_repo_root(tmp_path, monkeypatch)
-        _seed_version(tmp_path, "v0")
-        # Pre-seed a colliding version so the first naming attempt fails.
-        _seed_version(tmp_path, "cand_first_a")
-        _seed_pointer(tmp_path, "v0")
-
-        attempts: list[tuple[str, str]] = []
-
-        def namer() -> tuple[str, str]:
-            if not attempts:
-                pair = ("cand_first_a", "cand_first_b")
-            else:
-                pair = ("cand_second_a", "cand_second_b")
-            attempts.append(pair)
-            return pair
-
-        # AB: tie to short-circuit before gate for a fast test.
-        batch = _BatchRecorder([(3, 3, 0)])
-        result = run_round(
-            parent="v0",
-            imp_a=_simple_training_imp("expansion_bonus", 2.0),
-            imp_b=_simple_training_imp("army_supply_bonus", 1.5),
-            ab_games=6,
-            gate_games=5,
-            run_batch_fn=batch,
-            candidate_namer=namer,
-        )
-
-        assert len(attempts) == 2  # retried once
-        assert result.candidate_a == "cand_second_a"
-        assert result.candidate_b == "cand_second_b"
-
-    def test_persistent_collision_raises(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _redirect_repo_root(tmp_path, monkeypatch)
-        _seed_version(tmp_path, "v0")
-        _seed_version(tmp_path, "cand_stuck_a")  # always collides
-        _seed_pointer(tmp_path, "v0")
-
-        batch = _BatchRecorder([])  # must never be called
-
-        def namer() -> tuple[str, str]:
-            return ("cand_stuck_a", "cand_stuck_b")
-
-        with pytest.raises(RuntimeError, match="colliding names twice"):
-            run_round(
-                parent="v0",
-                imp_a=_simple_training_imp("expansion_bonus", 2.0),
-                imp_b=_simple_training_imp("army_supply_bonus", 1.5),
-                run_batch_fn=batch,
-                candidate_namer=namer,
-            )
-        assert batch.call_count == 0
-
-    def test_pointer_restored_between_snapshots(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """After each ``snapshot_current`` call the pointer MUST point at the
-        parent again so the second snapshot doesn't end up sourced from the
-        first candidate.
-        """
-        _redirect_repo_root(tmp_path, monkeypatch)
-        _seed_version(tmp_path, "v0")
-        _seed_pointer(tmp_path, "v0")
-
-        pointer_path = tmp_path / "bots" / "current" / "current.txt"
-        pointer_states: list[str] = []
-
-        real_snapshot_current = snapshot.snapshot_current
-
-        def spy_snapshot(name: str | None = None) -> Path:
-            result = real_snapshot_current(name)
-            # Capture the pointer value IMMEDIATELY after snapshot_current
-            # updates it. run_round must then restore it to "v0" before the
-            # NEXT snapshot fires — we verify that below by checking
-            # pointer_states[0] == candidate_a name, then the post-round
-            # run made a second candidate whose parent was still v0.
-            pointer_states.append(pointer_path.read_text(encoding="utf-8"))
-            return result
-
-        monkeypatch.setattr(snapshot, "snapshot_current", spy_snapshot)
-
-        batch = _BatchRecorder([(3, 3, 0)])  # tie -> short-circuit
-        run_round(
-            parent="v0",
-            imp_a=_simple_training_imp("expansion_bonus", 2.0),
-            imp_b=_simple_training_imp("army_supply_bonus", 1.5),
-            ab_games=6,
-            gate_games=5,
-            run_batch_fn=batch,
-            candidate_namer=lambda: ("cand_spy_a", "cand_spy_b"),
-        )
-
-        # snapshot_current ran twice: once for A, once for B.
-        assert pointer_states == ["cand_spy_a", "cand_spy_b"]
-        # Final pointer: v0 (tie -> discard restores to parent). If the
-        # pointer weren't restored between snapshot A and snapshot B, the
-        # pointer_states list would still have both candidate names (since
-        # snapshot_current overwrites unconditionally) but the manifests
-        # would record the wrong parent. See
-        # ``test_parent_snapshot_is_v0_for_cand_b`` for the manifest-level
-        # proof when the gate passes and the dirs survive inspection.
-        assert pointer_path.read_text(encoding="utf-8") == "v0"
-
-    def test_parent_snapshot_is_v0_for_cand_b(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Follow-on check: the promoted vN's manifest.parent is v0.
-
-        This proves both (a) the pointer restoration between the two
-        snapshots is taking effect and (b) ``_rewrite_manifest_parent``
-        fixed up the cand-intermediate name that ``snapshot_current``
-        would otherwise have recorded as the lineage parent.
-        """
-        _redirect_repo_root(tmp_path, monkeypatch)
-        _seed_version(tmp_path, "v0")
-        _seed_pointer(tmp_path, "v0")
-
-        # Gate passes so the promoted vN survives for inspection.
-        batch = _BatchRecorder([(6, 4, 0), (4, 1, 0)])
-        result = run_round(
-            parent="v0",
-            imp_a=_simple_training_imp("expansion_bonus", 2.0),
-            imp_b=_simple_training_imp("army_supply_bonus", 1.5),
-            ab_games=10,
-            gate_games=5,
-            run_batch_fn=batch,
-            candidate_namer=lambda: ("cand_parent_a", "cand_parent_b"),
-        )
-        assert result.promoted is True
-        assert result.promoted_version is not None  # narrow for type checker
-        # The permanent vN's manifest lists the real v parent.
-        winner_manifest = Manifest.from_json(
-            (tmp_path / "bots" / result.promoted_version / "manifest.json")
-            .read_text(encoding="utf-8")
-        )
-        assert winner_manifest.parent == "v0"
-
-    def test_cleanup_error_does_not_mask_result(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        _redirect_repo_root(tmp_path, monkeypatch)
-        _seed_version(tmp_path, "v0")
-        _seed_pointer(tmp_path, "v0")
-
-        # AB tie so both candidate dirs hit _safe_rmtree.
-        batch = _BatchRecorder([(3, 3, 0)])
-
-        import shutil as _shutil
-
-        original_rmtree = _shutil.rmtree
-        calls: list[Path] = []
-
-        def flaky_rmtree(path: Any, *args: Any, **kwargs: Any) -> None:
-            calls.append(Path(path))
-            # First rmtree call raises; second succeeds via real rmtree.
-            if len(calls) == 1:
-                raise OSError("simulated permission error")
-            original_rmtree(path, *args, **kwargs)
-
-        monkeypatch.setattr("orchestrator.evolve.shutil.rmtree", flaky_rmtree)
-
-        with caplog.at_level(logging.WARNING, logger=evolve.__name__):
-            result = run_round(
-                parent="v0",
-                imp_a=_simple_training_imp("expansion_bonus", 2.0),
-                imp_b=_simple_training_imp("army_supply_bonus", 1.5),
-                ab_games=6,
-                gate_games=5,
-                run_batch_fn=batch,
-                candidate_namer=lambda: ("cand_flaky_a", "cand_flaky_b"),
-            )
-
-        assert result.promoted is False
-        assert result.winner is None
-        assert result.gate_record is None
-        # Warning was logged for the rmtree failure.
-        assert any(
-            "failed to clean up" in r.message for r in caplog.records
-        )
-        # Pointer still safe at parent.
-        pointer = tmp_path / "bots" / "current" / "current.txt"
-        assert pointer.read_text(encoding="utf-8") == "v0"
-
-    def test_dev_imp_round_uses_injected_fn(
+    def test_dev_imp_uses_injected_fn(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _redirect_repo_root(tmp_path, monkeypatch)
@@ -756,76 +521,48 @@ class TestRunRound:
         seen: list[tuple[str, str]] = []
 
         def dev_apply(version_dir: Path, imp: Improvement) -> None:
-            # Use the dir NAME so we can assert on ordering cleanly.
             seen.append((version_dir.name, imp.title))
 
-        imp_a = _make_imp(
-            title="dev-a", type_="dev", concrete_change="refactor attack"
+        imp = _make_imp(
+            title="dev-alpha", type_="dev", concrete_change="refactor attack"
         )
-        imp_b = _make_imp(
-            title="dev-b", type_="dev", concrete_change="refactor defend"
-        )
-
-        batch = _BatchRecorder([(3, 3, 0)])  # tie -> fast
-        result = run_round(
+        batch = _BatchRecorder([(3, 2, 0)])
+        result = run_fitness_eval(
             parent="v0",
-            imp_a=imp_a,
-            imp_b=imp_b,
-            ab_games=6,
-            gate_games=5,
+            imp=imp,
+            games=5,
             run_batch_fn=batch,
             dev_apply_fn=dev_apply,
-            candidate_namer=lambda: ("cand_dev_a", "cand_dev_b"),
+            candidate_namer=_single_namer("cand_dev"),
         )
-        assert result.promoted is False
-        # dev_apply was called once per candidate, in order A then B.
-        assert seen == [
-            ("cand_dev_a", "dev-a"),
-            ("cand_dev_b", "dev-b"),
-        ]
+        assert result.bucket == "pass"
+        assert seen == [("cand_dev", "dev-alpha")]
 
-    def test_apply_error_cleans_candidates(
+    def test_apply_error_cleans_scratch(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """apply_improvement failure on imp_a must wipe cand_a_dir and leave
-        the pointer at parent. cand_b is never created.
-        """
         _redirect_repo_root(tmp_path, monkeypatch)
         _seed_version(tmp_path, "v0")
         _seed_pointer(tmp_path, "v0")
 
-        # Invalid JSON triggers ValueError inside apply_improvement for imp_a.
-        imp_a = _make_imp(type_="training", concrete_change="not-json")
-        imp_b = _simple_training_imp("army_supply_bonus", 1.5)
-
+        imp = _make_imp(type_="training", concrete_change="not-json")
         batch = _BatchRecorder([])  # must never be called
         with pytest.raises(ValueError, match="not valid JSON"):
-            run_round(
+            run_fitness_eval(
                 parent="v0",
-                imp_a=imp_a,
-                imp_b=imp_b,
-                ab_games=10,
-                gate_games=5,
+                imp=imp,
+                games=5,
                 run_batch_fn=batch,
-                candidate_namer=lambda: ("cand_err_a", "cand_err_b"),
+                candidate_namer=_single_namer("cand_err"),
             )
-
-        # Snapshot A was created but apply_improvement blew up; the finally
-        # must have removed it.
-        assert not (tmp_path / "bots" / "cand_err_a").exists()
-        # Snapshot B was never reached.
-        assert not (tmp_path / "bots" / "cand_err_b").exists()
-
+        assert not (tmp_path / "bots" / "cand_err").exists()
         pointer = tmp_path / "bots" / "current" / "current.txt"
         assert pointer.read_text(encoding="utf-8") == "v0"
         assert batch.call_count == 0
 
-    def test_run_batch_failure_cleans_candidates(
+    def test_run_batch_failure_cleans_scratch(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """If run_batch_fn raises on the AB batch, both candidate dirs
-        already exist; the finally must wipe them and restore the pointer.
-        """
         _redirect_repo_root(tmp_path, monkeypatch)
         _seed_version(tmp_path, "v0")
         _seed_pointer(tmp_path, "v0")
@@ -836,78 +573,26 @@ class TestRunRound:
             raise RuntimeError("selfplay blew up")
 
         with pytest.raises(RuntimeError, match="selfplay blew up"):
-            run_round(
+            run_fitness_eval(
                 parent="v0",
-                imp_a=_simple_training_imp("expansion_bonus", 2.0),
-                imp_b=_simple_training_imp("army_supply_bonus", 1.5),
-                ab_games=10,
-                gate_games=5,
+                imp=_simple_training_imp(),
+                games=5,
                 run_batch_fn=exploding_batch,
-                candidate_namer=lambda: ("cand_ab_err_a", "cand_ab_err_b"),
+                candidate_namer=_single_namer("cand_boom"),
             )
-
-        assert not (tmp_path / "bots" / "cand_ab_err_a").exists()
-        assert not (tmp_path / "bots" / "cand_ab_err_b").exists()
-
+        assert not (tmp_path / "bots" / "cand_boom").exists()
         pointer = tmp_path / "bots" / "current" / "current.txt"
         assert pointer.read_text(encoding="utf-8") == "v0"
 
-    def test_gate_batch_failure_cleans_candidates(
+    def test_on_event_fires_fitness_lifecycle(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """If run_batch_fn succeeds on AB (decisive winner) but raises on the
-        gate batch, both candidate dirs must still be wiped.
-        """
-        _redirect_repo_root(tmp_path, monkeypatch)
-        _seed_version(tmp_path, "v0")
-        _seed_pointer(tmp_path, "v0")
-
-        call_count = {"n": 0}
-
-        def partly_exploding_batch(
-            p1: str, p2: str, games: int, map_name: str, **kwargs: Any
-        ) -> list[SelfPlayRecord]:
-            call_count["n"] += 1
-            if call_count["n"] == 1:
-                # AB: decisive A win so the gate is triggered.
-                return _batch(p1, p2, games, p1_wins=7, p2_wins=3)
-            raise RuntimeError("gate batch blew up")
-
-        with pytest.raises(RuntimeError, match="gate batch blew up"):
-            run_round(
-                parent="v0",
-                imp_a=_simple_training_imp("expansion_bonus", 2.0),
-                imp_b=_simple_training_imp("army_supply_bonus", 1.5),
-                ab_games=10,
-                gate_games=5,
-                run_batch_fn=partly_exploding_batch,
-                candidate_namer=lambda: ("cand_gate_err_a", "cand_gate_err_b"),
-            )
-
-        assert not (tmp_path / "bots" / "cand_gate_err_a").exists()
-        assert not (tmp_path / "bots" / "cand_gate_err_b").exists()
-
-        pointer = tmp_path / "bots" / "current" / "current.txt"
-        assert pointer.read_text(encoding="utf-8") == "v0"
-        assert call_count["n"] == 2
-
-    def test_on_round_event_fires_ab_then_gate_phases(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """run_round emits ab_start/ab_game_end/gate_start/gate_game_end
-        events in order, with incrementing win counts, when a candidate
-        reaches the gate phase."""
         _redirect_repo_root(tmp_path, monkeypatch)
         _seed_version(tmp_path, "v0")
         _seed_pointer(tmp_path, "v0")
 
         events: list[dict[str, Any]] = []
 
-        def recording_callback(event: dict[str, Any]) -> None:
-            events.append(dict(event))
-
-        # Batch fn that invokes on_game_end for each record in order,
-        # matching the production run_batch behaviour.
         def fake_batch(
             p1: str,
             p2: str,
@@ -916,80 +601,229 @@ class TestRunRound:
             **kwargs: Any,
         ) -> list[SelfPlayRecord]:
             on_game_end = kwargs.get("on_game_end")
-            # AB: 3-1 A wins; Gate: 3-0 candidate wins (over 3 games).
-            if games == 4:
-                records = [
-                    _record(p1, p2, p1, "ab-0"),
-                    _record(p1, p2, p1, "ab-1"),
-                    _record(p1, p2, p2, "ab-2"),
-                    _record(p1, p2, p1, "ab-3"),
-                ]
-            else:
-                records = [_record(p1, p2, p1, f"gate-{i}") for i in range(games)]
+            # 3-1 cand wins over 4 games.
+            records = [
+                _record(p1, p2, p1, "g-0"),
+                _record(p1, p2, p1, "g-1"),
+                _record(p1, p2, p2, "g-2"),
+                _record(p1, p2, p1, "g-3"),
+            ]
             if on_game_end is not None:
                 for r in records:
                     on_game_end(r)
             return records
 
-        result = run_round(
+        result = run_fitness_eval(
             parent="v0",
-            imp_a=_simple_training_imp("expansion_bonus", 2.0),
-            imp_b=_simple_training_imp("army_supply_bonus", 1.5),
-            ab_games=4,
-            gate_games=3,
+            imp=_simple_training_imp(),
+            games=4,
             run_batch_fn=fake_batch,
-            candidate_namer=lambda: ("cand_evt_a", "cand_evt_b"),
-            on_round_event=recording_callback,
+            candidate_namer=_single_namer("cand_evt"),
+            on_event=lambda e: events.append(dict(e)),
         )
-
-        assert result.promoted is True
-
-        # Event sequence: ab_start, 4x ab_game_end, gate_start, 3x gate_game_end.
+        assert result.bucket == "pass"
         types = [e["type"] for e in events]
         assert types == [
-            "ab_start",
-            "ab_game_end",
-            "ab_game_end",
-            "ab_game_end",
-            "ab_game_end",
-            "gate_start",
-            "gate_game_end",
-            "gate_game_end",
-            "gate_game_end",
+            "fitness_start",
+            "fitness_game_end",
+            "fitness_game_end",
+            "fitness_game_end",
+            "fitness_game_end",
         ]
-
-        # ab_start payload
-        assert events[0]["cand_a"] == "cand_evt_a"
-        assert events[0]["cand_b"] == "cand_evt_b"
+        assert events[0]["candidate"] == "cand_evt"
         assert events[0]["total"] == 4
+        # Running score: (1,0) (2,0) (2,1) (3,1)
+        assert (events[1]["wins_cand"], events[1]["wins_parent"]) == (1, 0)
+        assert (events[2]["wins_cand"], events[2]["wins_parent"]) == (2, 0)
+        assert (events[3]["wins_cand"], events[3]["wins_parent"]) == (2, 1)
+        assert (events[4]["wins_cand"], events[4]["wins_parent"]) == (3, 1)
 
-        # Running score after each AB game: (1,0) (2,0) (2,1) (3,1)
-        assert (events[1]["wins_a"], events[1]["wins_b"]) == (1, 0)
-        assert (events[2]["wins_a"], events[2]["wins_b"]) == (2, 0)
-        assert (events[3]["wins_a"], events[3]["wins_b"]) == (2, 1)
-        assert (events[4]["wins_a"], events[4]["wins_b"]) == (3, 1)
-
-        # gate_start payload
-        assert events[5]["candidate"] == "cand_evt_a"
-        assert events[5]["parent"] == "v0"
-        assert events[5]["total"] == 3
-
-        # Running gate score: (1,0) (2,0) (3,0)
-        assert (events[6]["wins_cand"], events[6]["wins_parent"]) == (1, 0)
-        assert (events[7]["wins_cand"], events[7]["wins_parent"]) == (2, 0)
-        assert (events[8]["wins_cand"], events[8]["wins_parent"]) == (3, 0)
-
-    def test_on_round_event_callback_error_does_not_abort_round(
+    def test_on_event_callback_error_does_not_abort(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A raising on_round_event must be swallowed so cosmetic dashboard
-        writers never tank a round."""
         _redirect_repo_root(tmp_path, monkeypatch)
         _seed_version(tmp_path, "v0")
         _seed_pointer(tmp_path, "v0")
 
-        def exploding_callback(event: dict[str, Any]) -> None:
+        def exploding_cb(event: dict[str, Any]) -> None:
             raise RuntimeError(f"dashboard write failed on {event['type']}")
+
+        batch = _BatchRecorder([(3, 2, 0)])
+        result = run_fitness_eval(
+            parent="v0",
+            imp=_simple_training_imp(),
+            games=5,
+            run_batch_fn=batch,
+            candidate_namer=_single_namer("cand_cb"),
+            on_event=exploding_cb,
+        )
+        assert result.bucket == "pass"
+
+
+class TestRunCompositionEval:
+    def test_empty_imps_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _redirect_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_pointer(tmp_path, "v0")
+
+        batch = _BatchRecorder([])
+        with pytest.raises(ValueError, match="at least one improvement"):
+            run_composition_eval(
+                parent="v0",
+                imps=[],
+                games=5,
+                run_batch_fn=batch,
+                candidate_namer=_single_namer("cand_empty"),
+            )
+
+    def test_stack_promotes_on_majority(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _redirect_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_pointer(tmp_path, "v0")
+
+        # Stack beats parent 4-1.
+        batch = _BatchRecorder([(4, 1, 0)])
+        imps = [
+            _simple_training_imp("expansion_bonus", 2.0, title="bump exp"),
+            _simple_training_imp("army_supply_bonus", 1.5, title="bump army"),
+        ]
+        result = run_composition_eval(
+            parent="v0",
+            imps=imps,
+            games=5,
+            run_batch_fn=batch,
+            candidate_namer=_single_namer("cand_stack"),
+        )
+        assert isinstance(result, CompositionResult)
+        assert result.promoted is True
+        assert result.promoted_version == "v1"
+        assert result.stacked_imps == imps
+        # Pointer moved to the permanent vN (snapshot_current flips it).
+        pointer = tmp_path / "bots" / "current" / "current.txt"
+        assert pointer.read_text(encoding="utf-8") == "v1"
+        # Scratch cand dir is gone; permanent v1 dir exists.
+        assert (tmp_path / "bots" / "v1").is_dir()
+        assert not (tmp_path / "bots" / "cand_stack").exists()
+        # Manifest lineage names the real parent.
+        manifest_payload = json.loads(
+            (tmp_path / "bots" / "v1" / "manifest.json").read_text(encoding="utf-8")
+        )
+        assert manifest_payload["parent"] == "v0"
+        # Both patches landed in v1.
+        post = json.loads(
+            (tmp_path / "bots" / "v1" / "data" / "reward_rules.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert post["expansion_bonus"] == 2.0
+        assert post["army_supply_bonus"] == 1.5
+
+    def test_stack_fails_on_minority(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _redirect_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_pointer(tmp_path, "v0")
+
+        batch = _BatchRecorder([(2, 3, 0)])
+        imps = [_simple_training_imp("expansion_bonus", 2.0)]
+        result = run_composition_eval(
+            parent="v0",
+            imps=imps,
+            games=5,
+            run_batch_fn=batch,
+            candidate_namer=_single_namer("cand_nopromo"),
+        )
+        assert result.promoted is False
+        assert result.promoted_version is None
+        assert not (tmp_path / "bots" / "cand_nopromo").exists()
+        # No v1 created.
+        assert not (tmp_path / "bots" / "v1").exists()
+        pointer = tmp_path / "bots" / "current" / "current.txt"
+        assert pointer.read_text(encoding="utf-8") == "v0"
+
+    def test_single_imp_promotion_is_top1_fallback_shape(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Composition with a single-element list is the top-1 fallback path.
+
+        Same primitive, same pass threshold — only difference is the caller
+        intent. We verify the primitive does NOT special-case list length.
+        """
+        _redirect_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_pointer(tmp_path, "v0")
+
+        batch = _BatchRecorder([(3, 2, 0)])
+        imps = [_simple_training_imp("expansion_bonus", 2.0, title="solo")]
+        result = run_composition_eval(
+            parent="v0",
+            imps=imps,
+            games=5,
+            run_batch_fn=batch,
+            candidate_namer=_single_namer("cand_solo"),
+        )
+        assert result.promoted is True
+        assert result.promoted_version == "v1"
+        assert len(result.stacked_imps) == 1
+
+    def test_apply_error_cleans_scratch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _redirect_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_pointer(tmp_path, "v0")
+
+        good = _simple_training_imp("expansion_bonus", 2.0)
+        bad = _make_imp(type_="training", concrete_change="not-json")
+
+        batch = _BatchRecorder([])
+        with pytest.raises(ValueError, match="not valid JSON"):
+            run_composition_eval(
+                parent="v0",
+                imps=[good, bad],
+                games=5,
+                run_batch_fn=batch,
+                candidate_namer=_single_namer("cand_apply_err"),
+            )
+        assert not (tmp_path / "bots" / "cand_apply_err").exists()
+        pointer = tmp_path / "bots" / "current" / "current.txt"
+        assert pointer.read_text(encoding="utf-8") == "v0"
+
+    def test_run_batch_failure_cleans_scratch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _redirect_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_pointer(tmp_path, "v0")
+
+        def exploding_batch(
+            p1: str, p2: str, games: int, map_name: str, **kwargs: Any
+        ) -> list[SelfPlayRecord]:
+            raise RuntimeError("selfplay blew up")
+
+        with pytest.raises(RuntimeError, match="selfplay blew up"):
+            run_composition_eval(
+                parent="v0",
+                imps=[_simple_training_imp()],
+                games=5,
+                run_batch_fn=exploding_batch,
+                candidate_namer=_single_namer("cand_batch_err"),
+            )
+        assert not (tmp_path / "bots" / "cand_batch_err").exists()
+
+    def test_on_event_fires_composition_lifecycle(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _redirect_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_pointer(tmp_path, "v0")
+
+        events: list[dict[str, Any]] = []
 
         def fake_batch(
             p1: str,
@@ -999,28 +833,141 @@ class TestRunRound:
             **kwargs: Any,
         ) -> list[SelfPlayRecord]:
             on_game_end = kwargs.get("on_game_end")
-            # All crashes: ab wins 0-0 -> tie -> round short-circuits (no
-            # gate phase), which keeps the test focused on the AB callbacks.
-            records = [_record(p1, p2, None, f"crash-{i}") for i in range(games)]
+            records = [_record(p1, p2, p1, f"g-{i}") for i in range(games)]
             if on_game_end is not None:
                 for r in records:
                     on_game_end(r)
             return records
 
-        result = run_round(
+        imps = [
+            _simple_training_imp(title="imp-a"),
+            _simple_training_imp("army_supply_bonus", 1.5, title="imp-b"),
+        ]
+        result = run_composition_eval(
             parent="v0",
-            imp_a=_simple_training_imp("expansion_bonus", 2.0),
-            imp_b=_simple_training_imp("army_supply_bonus", 1.5),
-            ab_games=4,
-            gate_games=3,
+            imps=imps,
+            games=3,
             run_batch_fn=fake_batch,
-            candidate_namer=lambda: ("cand_boom_a", "cand_boom_b"),
-            on_round_event=exploding_callback,
+            candidate_namer=_single_namer("cand_ev"),
+            on_event=lambda e: events.append(dict(e)),
         )
-        assert result.promoted is False
-        assert result.winner is None
-        assert "discarded" in result.reason
+        assert result.promoted is True
+        types = [e["type"] for e in events]
+        assert types == [
+            "composition_start",
+            "composition_game_end",
+            "composition_game_end",
+            "composition_game_end",
+        ]
+        assert events[0]["candidate"] == "cand_ev"
+        assert events[0]["stacked_titles"] == ["imp-a", "imp-b"]
+        assert events[0]["total"] == 3
 
+
+class TestRunRegressionEval:
+    def test_pass_no_rollback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _redirect_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_version(tmp_path, "v1")
+        _seed_pointer(tmp_path, "v1")
+
+        batch = _BatchRecorder([(3, 2, 0)])
+        result = run_regression_eval(
+            new_parent="v1",
+            prior_parent="v0",
+            games=5,
+            run_batch_fn=batch,
+        )
+        assert isinstance(result, RegressionResult)
+        assert result.rolled_back is False
+        assert result.wins_new == 3
+        assert result.wins_prior == 2
+        # Pointer unchanged.
+        pointer = tmp_path / "bots" / "current" / "current.txt"
+        assert pointer.read_text(encoding="utf-8") == "v1"
+
+    def test_rollback_restores_pointer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _redirect_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_version(tmp_path, "v1")
+        _seed_pointer(tmp_path, "v1")
+
+        batch = _BatchRecorder([(1, 4, 0)])
+        result = run_regression_eval(
+            new_parent="v1",
+            prior_parent="v0",
+            games=5,
+            run_batch_fn=batch,
+        )
+        assert result.rolled_back is True
+        pointer = tmp_path / "bots" / "current" / "current.txt"
+        assert pointer.read_text(encoding="utf-8") == "v0"
+
+    def test_identical_parents_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _redirect_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_pointer(tmp_path, "v0")
+
+        batch = _BatchRecorder([])
+        with pytest.raises(ValueError, match="distinct new/prior parents"):
+            run_regression_eval(
+                new_parent="v0",
+                prior_parent="v0",
+                games=5,
+                run_batch_fn=batch,
+            )
+        assert batch.call_count == 0
+
+    def test_on_event_fires_regression_lifecycle(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _redirect_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_version(tmp_path, "v1")
+        _seed_pointer(tmp_path, "v1")
+
+        events: list[dict[str, Any]] = []
+
+        def fake_batch(
+            p1: str,
+            p2: str,
+            games: int,
+            map_name: str,
+            **kwargs: Any,
+        ) -> list[SelfPlayRecord]:
+            on_game_end = kwargs.get("on_game_end")
+            records = [_record(p1, p2, p1, f"g-{i}") for i in range(games)]
+            if on_game_end is not None:
+                for r in records:
+                    on_game_end(r)
+            return records
+
+        run_regression_eval(
+            new_parent="v1",
+            prior_parent="v0",
+            games=3,
+            run_batch_fn=fake_batch,
+            on_event=lambda e: events.append(dict(e)),
+        )
+        types = [e["type"] for e in events]
+        assert types == [
+            "regression_start",
+            "regression_game_end",
+            "regression_game_end",
+            "regression_game_end",
+        ]
+        assert events[0]["new_parent"] == "v1"
+        assert events[0]["prior_parent"] == "v0"
+        # Running count after each game: (1,0), (2,0), (3,0).
+        assert (events[1]["wins_new"], events[1]["wins_prior"]) == (1, 0)
+        assert (events[2]["wins_new"], events[2]["wins_prior"]) == (2, 0)
+        assert (events[3]["wins_new"], events[3]["wins_prior"]) == (3, 0)
 
 # ---------------------------------------------------------------------------
 # generate_pool
@@ -1033,13 +980,20 @@ def _well_formed_imp_dict(
     type_: Literal["training", "dev"] = "training",
     title: str | None = None,
 ) -> dict[str, Any]:
-    """Return a dict that passes generate_pool's schema validator."""
+    """Return a dict that passes generate_pool's schema validator.
+
+    Per-item ``concrete_change`` text names a rank-specific filename so the
+    regex-based orthogonality fallback doesn't fire between distinct items
+    — the default pool is orthogonal.
+    """
     if type_ == "training":
         concrete: Any = json.dumps(
             {"file": "reward_rules.json", "patch": {"expansion_bonus": 2.0}}
         )
     else:
-        concrete = "rewrite defend() in commands/tactics.py to attack-move"
+        concrete = (
+            f"rewrite bots/v0/commands/imp_{rank}.py to attack-move"
+        )
     return {
         "rank": rank,
         "title": title or f"imp-{rank}",
@@ -1651,11 +1605,13 @@ class TestGeneratePool:
         """
         self._setup(tmp_path, monkeypatch)
         items = _well_formed_pool(10)
-        items[3]["files_touched"] = ["bots/v0/bot.py"]  # 8th field
+        # files_touched is now an allowed optional field; use an actually
+        # unknown field name so the schema-strictness check still fires.
+        items[3]["notes"] = "some advisor preamble"
         claude = _ScriptedClaude([json.dumps(items)])
         batch = _BatchRecorder([(1, 1, 1)])
 
-        with pytest.raises(ValueError, match="files_touched") as exc:
+        with pytest.raises(ValueError, match="notes") as exc:
             generate_pool(
                 "v0",
                 mirror_games=3,
@@ -1763,6 +1719,143 @@ class TestGeneratePool:
         assert len(pool) == 10
         assert [imp.rank for imp in pool] == list(range(1, 11))
         # Only one Claude call (no retry needed since we got >= pool_size).
+        assert claude.call_count == 1
+
+    def test_files_touched_accepted_as_optional_field(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """files_touched is an optional schema field; present is OK."""
+        self._setup(tmp_path, monkeypatch)
+        items = _well_formed_pool(10)
+        for i, item in enumerate(items):
+            item["files_touched"] = [f"bots/v0/module_{i}.py"]
+        claude = _ScriptedClaude([json.dumps(items)])
+        batch = _BatchRecorder([(1, 1, 1)])
+
+        pool = generate_pool(
+            "v0",
+            mirror_games=3,
+            pool_size=10,
+            run_batch_fn=batch,
+            claude_fn=claude,
+        )
+        assert len(pool) == 10
+        assert pool[0].files_touched == ["bots/v0/module_0.py"]
+        # No retry — orthogonal files mean no conflict.
+        assert claude.call_count == 1
+
+    def test_orthogonality_conflict_triggers_retry(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two imps touching the same file triggers ONE retry with a
+        conflict list prefixed to the prompt.
+        """
+        self._setup(tmp_path, monkeypatch)
+        # First attempt: imps 0 and 1 both edit the same file.
+        conflicting = _well_formed_pool(10)
+        conflicting[0]["files_touched"] = ["bots/v0/bot.py"]
+        conflicting[1]["files_touched"] = ["bots/v0/bot.py"]
+        for i, item in enumerate(conflicting[2:], start=2):
+            item["files_touched"] = [f"bots/v0/module_{i}.py"]
+
+        # Retry: all orthogonal.
+        clean = _well_formed_pool(10)
+        for i, item in enumerate(clean):
+            item["files_touched"] = [f"bots/v0/clean_{i}.py"]
+
+        claude = _ScriptedClaude(
+            [json.dumps(conflicting), json.dumps(clean)]
+        )
+        batch = _BatchRecorder([(1, 1, 1)])
+
+        pool = generate_pool(
+            "v0",
+            mirror_games=3,
+            pool_size=10,
+            run_batch_fn=batch,
+            claude_fn=claude,
+        )
+        assert len(pool) == 10
+        assert claude.call_count == 2
+        # Retry prompt names the specific conflict file.
+        retry_prompt = claude.prompts[1]
+        assert "bots/v0/bot.py" in retry_prompt
+        assert "orthogonality" in retry_prompt.lower()
+
+    def test_orthogonality_conflict_accepted_after_second_round(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If the retry ALSO has conflicts, accept the pool anyway and log."""
+        self._setup(tmp_path, monkeypatch)
+        conflicting = _well_formed_pool(10)
+        conflicting[0]["files_touched"] = ["bots/v0/bot.py"]
+        conflicting[1]["files_touched"] = ["bots/v0/bot.py"]
+        still_conflicting = _well_formed_pool(10)
+        still_conflicting[2]["files_touched"] = ["bots/v0/shared.py"]
+        still_conflicting[3]["files_touched"] = ["bots/v0/shared.py"]
+
+        claude = _ScriptedClaude(
+            [json.dumps(conflicting), json.dumps(still_conflicting)]
+        )
+        batch = _BatchRecorder([(1, 1, 1)])
+
+        pool = generate_pool(
+            "v0",
+            mirror_games=3,
+            pool_size=10,
+            run_batch_fn=batch,
+            claude_fn=claude,
+        )
+        assert len(pool) == 10
+        assert claude.call_count == 2
+
+    def test_orthogonality_conflict_uses_concrete_change_fallback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When files_touched is omitted, regex-extracted filenames from
+        concrete_change still trigger the conflict check.
+        """
+        self._setup(tmp_path, monkeypatch)
+        conflicting = _well_formed_pool(10)
+        conflicting[0]["concrete_change"] = "edit bots/v0/shared.py to do X"
+        conflicting[1]["concrete_change"] = "tweak bots/v0/shared.py in method Y"
+
+        clean = _well_formed_pool(10)
+
+        claude = _ScriptedClaude(
+            [json.dumps(conflicting), json.dumps(clean)]
+        )
+        batch = _BatchRecorder([(1, 1, 1)])
+
+        pool = generate_pool(
+            "v0",
+            mirror_games=3,
+            pool_size=10,
+            run_batch_fn=batch,
+            claude_fn=claude,
+        )
+        assert len(pool) == 10
+        assert claude.call_count == 2
+        assert "bots/v0/shared.py" in claude.prompts[1]
+
+    def test_skip_mirror_skips_mirror_games(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """skip_mirror=True (pool refresh) omits the mirror-games phase."""
+        self._setup(tmp_path, monkeypatch)
+        claude = _ScriptedClaude([json.dumps(_well_formed_pool(5))])
+        batch = _BatchRecorder([])  # must never be called
+
+        pool = generate_pool(
+            "v0",
+            mirror_games=3,
+            pool_size=5,
+            run_batch_fn=batch,
+            claude_fn=claude,
+            skip_mirror=True,
+        )
+        assert len(pool) == 5
+        assert batch.call_count == 0
         assert claude.call_count == 1
 
 
