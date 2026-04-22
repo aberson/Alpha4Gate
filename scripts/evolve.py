@@ -431,10 +431,18 @@ PhaseOutcome = Literal[
     "fitness-fail",
     "composition-pass",
     "composition-fail",
+    "composition-crash-skipped",
     "regression-pass",
     "regression-rollback",
     "crash",
 ]
+
+
+def _composition_outcome(result: CompositionResult) -> PhaseOutcome:
+    """Map a :class:`CompositionResult` to its phase-outcome label."""
+    if result.crash_skipped:
+        return "composition-crash-skipped"
+    return "composition-pass" if result.promoted else "composition-fail"
 
 
 def _fitness_row(
@@ -483,9 +491,8 @@ def _composition_row(
         "games": result.games,
         "promoted": result.promoted,
         "promoted_version": result.promoted_version,
-        "outcome": (
-            "composition-pass" if result.promoted else "composition-fail"
-        ),
+        "crash_skipped": result.crash_skipped,
+        "outcome": _composition_outcome(result),
         "reason": result.reason,
     }
 
@@ -674,9 +681,7 @@ def _last_result_snapshot_composition(
         "stacked_titles": [imp.title for imp in result.stacked_imps],
         "is_fallback": is_fallback,
         "score": [result.wins_candidate, result.games],
-        "outcome": (
-            "composition-pass" if result.promoted else "composition-fail"
-        ),
+        "outcome": _composition_outcome(result),
         "reason": result.reason,
     }
 
@@ -1670,96 +1675,155 @@ def run_loop(
                                 generation_index,
                             )
                 else:
-                    # Fallback: try the single top-ranked imp.
-                    composition_outcome_label = "stack-fail"
-                    top_idx = winner_idxs[0]
-                    top_imp = pool[top_idx]
-                    gen_payload.is_fallback = True
-                    gen_payload.stacked_titles = [top_imp.title]
-                    gen_payload.reset_progress(args.games_per_eval)
-                    _current_round_writer(gen_payload)
-
-                    try:
-                        fallback_result = run_composition_fn(
-                            parent_current,
-                            [top_imp],
-                            games=args.games_per_eval,
-                            map_name=args.map,
-                            game_time_limit=args.game_time_limit,
-                            hard_timeout=args.hard_timeout,
-                            run_batch_fn=run_batch_fn,
-                            dev_apply_fn=dev_apply_fn,
-                            on_event=_on_composition_event,
-                        )
-                    except Exception as exc:
-                        tb = traceback.format_exc()
-                        _log.error(
-                            "evolve: fallback composition crash gen %d: %s",
-                            generation_index,
-                            exc,
-                            exc_info=True,
-                        )
-                        append_phase_result(
-                            args.results_path,
-                            _crash_row(
-                                generation_index,
-                                "composition",
-                                parent_current,
-                                top_imp,
-                                exc,
-                                tb,
-                            ),
-                        )
-                        append_crash_log(
-                            args.crash_log_path,
-                            generation=generation_index,
-                            phase="composition",
-                            parent=parent_current,
-                            imp=top_imp,
-                            exc=exc,
-                            traceback_str=tb,
-                        )
-                        last_result_snap = _last_result_snapshot_crash(
-                            generation_index, "composition", top_imp, exc
-                        )
-                        composition_outcome_label = "fallback-crash"
+                    # Fallback strategy:
+                    # - lost-by-games stack → try top-1 imp only (existing
+                    #   behavior; dropping to a lower-ranked imp is unlikely
+                    #   to beat a parent that just beat the full stack).
+                    # - crash-skipped stack → rotate through winners rank
+                    #   1 → N until one imports. First non-crash-skipped
+                    #   fallback is the fallback result — if it wins we
+                    #   promote, if it loses we stop. This catches the
+                    #   failure mode where one imp's edit poisons the
+                    #   stack at import time (run 20260422-0559: 5/5 SC2
+                    #   games crashed in <20s each).
+                    if composition_result.crash_skipped:
+                        composition_outcome_label = "stack-crash-skipped"
+                        fallback_rank_order = list(winner_idxs)
                     else:
+                        composition_outcome_label = "stack-fail"
+                        fallback_rank_order = winner_idxs[:1]
+
+                    fallback_result: CompositionResult | None = None
+                    fallback_idx: int | None = None
+                    for try_idx in fallback_rank_order:
+                        try_imp = pool[try_idx]
+                        gen_payload.is_fallback = True
+                        gen_payload.stacked_titles = [try_imp.title]
+                        gen_payload.reset_progress(args.games_per_eval)
+                        _current_round_writer(gen_payload)
+
+                        try:
+                            candidate_result = run_composition_fn(
+                                parent_current,
+                                [try_imp],
+                                games=args.games_per_eval,
+                                map_name=args.map,
+                                game_time_limit=args.game_time_limit,
+                                hard_timeout=args.hard_timeout,
+                                run_batch_fn=run_batch_fn,
+                                dev_apply_fn=dev_apply_fn,
+                                on_event=_on_composition_event,
+                            )
+                        except Exception as exc:
+                            tb = traceback.format_exc()
+                            _log.error(
+                                "evolve: fallback composition crash gen %d "
+                                "rank %d: %s",
+                                generation_index,
+                                try_imp.rank,
+                                exc,
+                                exc_info=True,
+                            )
+                            append_phase_result(
+                                args.results_path,
+                                _crash_row(
+                                    generation_index,
+                                    "composition",
+                                    parent_current,
+                                    try_imp,
+                                    exc,
+                                    tb,
+                                ),
+                            )
+                            append_crash_log(
+                                args.crash_log_path,
+                                generation=generation_index,
+                                phase="composition",
+                                parent=parent_current,
+                                imp=try_imp,
+                                exc=exc,
+                                traceback_str=tb,
+                            )
+                            last_result_snap = _last_result_snapshot_crash(
+                                generation_index, "composition", try_imp, exc
+                            )
+                            composition_outcome_label = "fallback-crash"
+                            break  # hard exception: abort rotation
+
                         append_phase_result(
                             args.results_path,
                             _composition_row(
                                 generation_index,
                                 parent_current,
-                                fallback_result,
+                                candidate_result,
                                 is_fallback=True,
                             ),
                         )
+
+                        if candidate_result.crash_skipped:
+                            _log.info(
+                                "evolve: gen %d fallback rank %d "
+                                "crash-skipped; trying next rank",
+                                generation_index,
+                                try_imp.rank,
+                            )
+                            last_result_snap = (
+                                _last_result_snapshot_composition(
+                                    generation_index,
+                                    candidate_result,
+                                    is_fallback=True,
+                                )
+                            )
+                            continue  # try next rank
+
+                        # Got a non-crash result — use it whether it won
+                        # or lost. Rotation stops here.
+                        fallback_result = candidate_result
+                        fallback_idx = try_idx
                         last_result_snap = _last_result_snapshot_composition(
                             generation_index,
-                            fallback_result,
+                            candidate_result,
                             is_fallback=True,
                         )
+                        break
+                    else:
+                        # Loop completed without break → every fallback
+                        # rank crash-skipped. No promote-eligible imp.
+                        composition_outcome_label = (
+                            "fallback-all-crash-skipped"
+                        )
+
+                    if (
+                        fallback_result is not None
+                        and fallback_idx is not None
+                    ):
                         if fallback_result.promoted:
                             composition_outcome_label = "single-pass"
-                            promoted_imp_idxs = [top_idx]
-                            per_item_state[top_idx].status = _PROMOTED_SINGLE
+                            promoted_imp_idxs = [fallback_idx]
+                            per_item_state[fallback_idx].status = (
+                                _PROMOTED_SINGLE
+                            )
                             parent_current = (
-                                fallback_result.promoted_version or parent_current
+                                fallback_result.promoted_version
+                                or parent_current
                             )
                             composition_result = fallback_result
-                            # Remaining winners stay benched as fitness-pass; the
-                            # pool-refresh step will flip them back to active.
-                            # Commit the single promotion.
+                            # Remaining winners stay benched as
+                            # fitness-pass; the pool-refresh step will
+                            # flip them back to active. Commit the
+                            # single promotion.
                             if not args.no_commit:
                                 commit_ok, sha = commit_fn(
                                     parent_current,
                                     generation_index,
-                                    [top_imp.title],
+                                    [pool[fallback_idx].title],
                                     is_fallback=True,
                                 )
                                 promote_sha = sha if commit_ok else None
                                 if not commit_ok:
                                     _log.warning(
-                                        "evolve: single-promote commit failed on gen %d",
+                                        "evolve: single-promote commit "
+                                        "failed on gen %d",
                                         generation_index,
                                     )
                         else:

@@ -145,7 +145,22 @@ def _composition(
     candidate: str = "cand_stack",
     parent: str = "v0",
     promoted_version: str | None = "v1",
+    crash_skipped: bool = False,
 ) -> CompositionResult:
+    if crash_skipped:
+        return CompositionResult(
+            parent=parent,
+            candidate=candidate,
+            stacked_imps=list(imps),
+            record=[],
+            wins_candidate=0,
+            wins_parent=0,
+            games=0,
+            promoted=False,
+            promoted_version=None,
+            reason=f"composition crash-skipped: {candidate} failed import check",
+            crash_skipped=True,
+        )
     record = [_rec(candidate, parent, candidate) for _ in range(wins)] + [
         _rec(candidate, parent, parent) for _ in range(games - wins)
     ]
@@ -254,10 +269,23 @@ class _ScriptedFitness:
 
 
 class _ScriptedComposition:
-    """Pops a (promoted, new_version) per call; reuses imps from caller."""
+    """Pops an outcome per call; reuses imps from caller.
 
-    def __init__(self, plan: list[tuple[bool, str | None]]) -> None:
-        self._plan = list(plan)
+    Plan entries may be ``(promoted, new_version)`` (back-compat shape)
+    or ``(promoted, new_version, crash_skipped)``. When
+    ``crash_skipped=True`` the returned result simulates the
+    pre-batch import-check failure path (games=0, no record).
+    """
+
+    def __init__(
+        self,
+        plan: list[
+            tuple[bool, str | None] | tuple[bool, str | None, bool]
+        ],
+    ) -> None:
+        self._plan: list[
+            tuple[bool, str | None] | tuple[bool, str | None, bool]
+        ] = list(plan)
         self.calls: list[dict[str, Any]] = []
 
     def __call__(
@@ -272,12 +300,16 @@ class _ScriptedComposition:
                 "ScriptedComposition: no more scripted outcomes; "
                 f"call #{len(self.calls)} has nothing to return"
             )
-        promoted, new_version = self._plan.pop(0)
+        entry = self._plan.pop(0)
+        promoted = entry[0]
+        new_version = entry[1]
+        crash_skipped = entry[2] if len(entry) > 2 else False
         return _composition(
             imps,
             promoted=promoted,
             parent=parent,
             promoted_version=new_version,
+            crash_skipped=crash_skipped,
         )
 
 
@@ -637,6 +669,155 @@ def test_stack_fail_fallback_single_promotes(
     pool_state = json.loads(args.pool_path.read_text(encoding="utf-8"))
     statuses = [item["status"] for item in pool_state["pool"]]
     assert statuses.count("promoted-single") == 1
+
+
+def test_stack_crash_skipped_rotates_through_ranks_until_pass(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stack crash-skipped must rotate fallback through winner ranks.
+
+    Addresses the run 20260422-0559 failure mode: the full stack fails
+    import check (crash_skipped=True), so the orchestrator should try
+    each fitness-pass imp individually in rank order until one either
+    imports AND wins (promote) or imports AND loses (stop). Without
+    this rotation, the legacy top-1 fallback is stuck with whichever
+    imp broke the stack.
+    """
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    args = _build_args(tmp_path, pool_size=3, no_commit=True)
+    pool = _make_pool(3)
+
+    fitness = _ScriptedFitness(["pass", "pass", "pass"])
+    # Stack crash-skipped, rank 1 alone crash-skipped, rank 2 alone passes.
+    composition = _ScriptedComposition(
+        [
+            (False, None, True),   # full stack — crash-skipped
+            (False, None, True),   # rank 1 alone — also crash-skipped
+            (True, "v1", False),   # rank 2 alone — passes
+        ]
+    )
+    regression = _ScriptedRegression([False])
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    parent_holder = {"current": "v0"}
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=fitness,
+        run_composition_fn=composition,
+        run_regression_fn=regression,
+        current_version_fn=lambda: parent_holder["current"],
+    )
+    assert rc == 0
+    # Three composition calls: stack (3 imps), rank 1, rank 2.
+    assert len(composition.calls) == 3
+    assert len(composition.calls[0]["imps"]) == 3
+    assert len(composition.calls[1]["imps"]) == 1
+    assert len(composition.calls[2]["imps"]) == 1
+    # Rank 1 imp tried first, rank 2 imp second.
+    assert composition.calls[1]["imps"][0].rank == 1
+    assert composition.calls[2]["imps"][0].rank == 2
+
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["generations_promoted"] == 1
+    assert state["parent_current"] == "v1"
+
+    pool_state = json.loads(args.pool_path.read_text(encoding="utf-8"))
+    # Only rank 2 got promoted-single. Ranks 1 and 3 remain as pass.
+    rank2_status = next(i for i in pool_state["pool"] if i["rank"] == 2)[
+        "status"
+    ]
+    assert rank2_status == "promoted-single"
+
+
+def test_stack_crash_skipped_all_ranks_crash_no_promotion(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every rank crash-skips → no promotion, parent unchanged."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    args = _build_args(tmp_path, pool_size=2, no_commit=True)
+    pool = _make_pool(2)
+
+    fitness = _ScriptedFitness(["pass", "pass"])
+    composition = _ScriptedComposition(
+        [
+            (False, None, True),  # stack crash-skipped
+            (False, None, True),  # rank 1 crash-skipped
+            (False, None, True),  # rank 2 crash-skipped
+        ]
+    )
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=fitness,
+        run_composition_fn=composition,
+        run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("no promotion, regression should not fire")
+        ),
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+    # Stack + rank 1 + rank 2 = 3 calls; none promoted.
+    assert len(composition.calls) == 3
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["generations_promoted"] == 0
+    assert state["parent_current"] == "v0"
+
+
+def test_stack_lost_by_games_does_not_rotate_beyond_top1(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Lost-by-games stack → top-1 only (no rank rotation).
+
+    Preserves the pre-existing fallback behavior: a stack that lost on
+    the board (not crash-skipped) only gets a single top-1 fallback
+    attempt. Rotating further down the ranks after a real loss is
+    statistically wasteful.
+    """
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    args = _build_args(tmp_path, pool_size=3, no_commit=True)
+    pool = _make_pool(3)
+
+    fitness = _ScriptedFitness(["pass", "pass", "pass"])
+    # Stack lost (not crash_skipped), rank 1 alone also lost.
+    composition = _ScriptedComposition(
+        [
+            (False, None, False),  # stack — lost by games
+            (False, None, False),  # rank 1 alone — also lost
+        ]
+    )
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=fitness,
+        run_composition_fn=composition,
+        run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("no promotion, regression should not fire")
+        ),
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+    # Exactly 2 calls: stack + rank-1 fallback. No rank-2 attempt.
+    assert len(composition.calls) == 2
+    assert len(composition.calls[0]["imps"]) == 3
+    assert len(composition.calls[1]["imps"]) == 1
+    assert composition.calls[1]["imps"][0].rank == 1
 
 
 def test_stack_fail_and_fallback_fail_no_promotion(

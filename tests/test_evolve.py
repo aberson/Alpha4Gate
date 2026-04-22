@@ -380,6 +380,20 @@ class TestApplyImprovement:
 # ---------------------------------------------------------------------------
 
 
+def _noop_import_check(
+    _cand_dir: Path, _cand_name: str
+) -> str | None:
+    """Test helper: skip the real subprocess import check.
+
+    The real check runs ``python -c "import bots.<cand>.bot"`` which
+    cannot succeed under ``_redirect_repo_root`` fixtures (tmp_path is
+    not on ``sys.path``). Tests that explicitly want the import-check
+    behavior inject their own checker; everything else threads this
+    no-op through.
+    """
+    return None
+
+
 def _simple_training_imp(
     key: str = "expansion_bonus",
     value: float = 2.0,
@@ -697,6 +711,7 @@ class TestRunCompositionEval:
             games=5,
             run_batch_fn=batch,
             candidate_namer=_single_namer("cand_stack"),
+            import_check_fn=_noop_import_check,
         )
         assert isinstance(result, CompositionResult)
         assert result.promoted is True
@@ -737,6 +752,7 @@ class TestRunCompositionEval:
             games=5,
             run_batch_fn=batch,
             candidate_namer=_single_namer("cand_nopromo"),
+            import_check_fn=_noop_import_check,
         )
         assert result.promoted is False
         assert result.promoted_version is None
@@ -766,6 +782,7 @@ class TestRunCompositionEval:
             games=5,
             run_batch_fn=batch,
             candidate_namer=_single_namer("cand_solo"),
+            import_check_fn=_noop_import_check,
         )
         assert result.promoted is True
         assert result.promoted_version == "v1"
@@ -813,6 +830,7 @@ class TestRunCompositionEval:
                 games=5,
                 run_batch_fn=exploding_batch,
                 candidate_namer=_single_namer("cand_batch_err"),
+                import_check_fn=_noop_import_check,
             )
         assert not (tmp_path / "bots" / "cand_batch_err").exists()
 
@@ -850,6 +868,7 @@ class TestRunCompositionEval:
             run_batch_fn=fake_batch,
             candidate_namer=_single_namer("cand_ev"),
             on_event=lambda e: events.append(dict(e)),
+            import_check_fn=_noop_import_check,
         )
         assert result.promoted is True
         types = [e["type"] for e in events]
@@ -862,6 +881,59 @@ class TestRunCompositionEval:
         assert events[0]["candidate"] == "cand_ev"
         assert events[0]["stacked_titles"] == ["imp-a", "imp-b"]
         assert events[0]["total"] == 3
+
+    def test_import_check_failure_short_circuits_batch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Pre-batch import failure must skip SC2 games and mark crash_skipped.
+
+        Reproduces the run 20260422-0559 failure mode: two imps that
+        each passed fitness crash all 5 composition games under 20s when
+        stacked. With the gate, the import error short-circuits before
+        any SC2 process spawns.
+        """
+        _redirect_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_pointer(tmp_path, "v0")
+
+        def exploding_batch(
+            p1: str, p2: str, games: int, map_name: str, **kwargs: Any
+        ) -> list[SelfPlayRecord]:
+            raise AssertionError(
+                "run_batch_fn must NOT be called when import check fails"
+            )
+
+        events: list[dict[str, Any]] = []
+        imps = [
+            _simple_training_imp(title="a"),
+            _simple_training_imp("army_supply_bonus", 1.5, title="b"),
+        ]
+        result = run_composition_eval(
+            parent="v0",
+            imps=imps,
+            games=5,
+            run_batch_fn=exploding_batch,
+            candidate_namer=_single_namer("cand_crash"),
+            import_check_fn=lambda _d, _n: "ImportError: bogus",
+            on_event=lambda e: events.append(dict(e)),
+        )
+        assert result.crash_skipped is True
+        assert result.promoted is False
+        assert result.games == 0
+        assert result.wins_candidate == 0
+        assert result.wins_parent == 0
+        assert result.record == []
+        assert "ImportError: bogus" in result.reason
+        # Scratch cand dir cleaned, pointer restored to parent.
+        assert not (tmp_path / "bots" / "cand_crash").exists()
+        pointer = tmp_path / "bots" / "current" / "current.txt"
+        assert pointer.read_text(encoding="utf-8") == "v0"
+        # Event emitted.
+        types = [e["type"] for e in events]
+        assert types == ["composition_crash_skipped"]
+        assert events[0]["candidate"] == "cand_crash"
+        assert events[0]["stacked_titles"] == ["a", "b"]
+        assert events[0]["error"] == "ImportError: bogus"
 
 
 class TestRunRegressionEval:

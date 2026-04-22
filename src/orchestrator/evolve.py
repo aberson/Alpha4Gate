@@ -51,6 +51,8 @@ import logging
 import os
 import re
 import shutil
+import subprocess
+import sys
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -173,6 +175,15 @@ class CompositionResult:
 
     On ``promoted=False`` the scratch dir is rmtree'd and the pointer is
     restored to ``parent``.
+
+    ``crash_skipped=True`` means the stacked candidate failed the
+    pre-batch import check — SC2 games were NOT run, so ``games`` /
+    ``record`` / ``wins_*`` are all zero/empty. The caller should rotate
+    to a rank-1-smaller fallback stack rather than treat this as a
+    lost-by-games result. This catches the silent-crash failure mode
+    observed on run 20260422-0559 where two clean-on-fitness imps
+    stacked together crashed all 5 SC2 games in <20s without a single
+    usable log line.
     """
 
     parent: str
@@ -185,6 +196,7 @@ class CompositionResult:
     promoted: bool
     promoted_version: str | None
     reason: str
+    crash_skipped: bool = False
 
 
 @dataclass(frozen=True)
@@ -580,6 +592,48 @@ def run_fitness_eval(
 # ---------------------------------------------------------------------------
 
 
+def _default_import_check(
+    cand_dir: Path,
+    cand_name: str,
+    *,
+    timeout: float = 30.0,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> str | None:
+    """Verify ``bots.<cand_name>.bot`` imports cleanly.
+
+    Returns ``None`` on success. On failure returns an error message
+    (last ~500 chars of stderr) so the caller can surface it in the
+    composition result's ``reason``.
+
+    This gate catches the silent-crash failure mode where a sub-agent's
+    edit passes ruff + mypy but produces a module that fails to import
+    at runtime — e.g. a ``bots.v0.X``-style absolute import referring to
+    a file that only exists in the candidate snapshot, or a combination
+    of two per-imp edits that each type-check but together produce an
+    import-time ``NameError``. Without this gate the failure only
+    surfaces as 5 back-to-back SC2 games crashing in <20s each.
+    """
+    argv = [sys.executable, "-c", f"import bots.{cand_name}.bot"]
+    try:
+        result = run(
+            argv,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+            cwd=str(_repo_root()),
+        )
+    except subprocess.TimeoutExpired:
+        return f"import-check timed out after {timeout}s"
+    if result.returncode == 0:
+        return None
+    stderr = (result.stderr or "").strip()
+    if not stderr:
+        stderr = (result.stdout or "").strip()
+    tail = stderr[-500:] if len(stderr) > 500 else stderr
+    return tail or f"import-check exited rc={result.returncode} (no stderr)"
+
+
 def run_composition_eval(
     parent: str,
     imps: list[Improvement],
@@ -592,6 +646,7 @@ def run_composition_eval(
     dev_apply_fn: Callable[[Path, Improvement], None] | None = None,
     candidate_namer: Callable[[], str] | None = None,
     on_event: Callable[[dict[str, Any]], None] | None = None,
+    import_check_fn: Callable[[Path, str], str | None] | None = None,
 ) -> CompositionResult:
     """Stack *imps* onto one scratch snapshot and test vs parent.
 
@@ -625,6 +680,9 @@ def run_composition_eval(
     if candidate_namer is None:
         candidate_namer = _default_candidate_namer
 
+    if import_check_fn is None:
+        import_check_fn = _default_import_check
+
     live_parent = current_version()
     if live_parent != parent:
         raise ValueError(
@@ -645,6 +703,44 @@ def run_composition_eval(
             apply_improvement(cand_dir, imp, dev_apply_fn=dev_apply_fn)
 
         stacked_titles = [imp.title for imp in imps]
+
+        # Pre-batch import check: bail out cheaply if the stacked
+        # candidate can't even `import bots.<cand>.bot`. Without this the
+        # failure only surfaces as 5 SC2 games each crashing in <20s.
+        import_error = import_check_fn(cand_dir, cand_name)
+        if import_error is not None:
+            _safe_rmtree(cand_dir)
+            _restore_pointer(parent)
+            reason = (
+                f"composition crash-skipped: stacked_parent ({cand_name}; "
+                f"{len(imps)} imps) failed import check; stderr tail: "
+                f"{import_error}"
+            )
+            _log.warning("composition outcome: %s", reason)
+            if on_event is not None:
+                _safe_emit(
+                    on_event,
+                    {
+                        "type": "composition_crash_skipped",
+                        "candidate": cand_name,
+                        "stacked_titles": stacked_titles,
+                        "parent": parent,
+                        "error": import_error,
+                    },
+                )
+            return CompositionResult(
+                parent=parent,
+                candidate=cand_name,
+                stacked_imps=list(imps),
+                record=[],
+                wins_candidate=0,
+                wins_parent=0,
+                games=0,
+                promoted=False,
+                promoted_version=None,
+                reason=reason,
+                crash_skipped=True,
+            )
         _log.info(
             "composition: %s (%d stacked imps: %s) vs parent %s (%d games)",
             cand_name,
