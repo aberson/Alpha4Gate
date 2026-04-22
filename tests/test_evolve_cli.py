@@ -820,6 +820,69 @@ def test_stack_lost_by_games_does_not_rotate_beyond_top1(
     assert composition.calls[1]["imps"][0].rank == 1
 
 
+def test_stack_fail_fallback_picks_highest_fitness_not_lowest_rank(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Lost-by-games fallback picks the imp with the highest fitness
+    wins, not the imp with the lowest rank.
+
+    Addresses run 20260422-0824 gen 2: the 8-1 fitness-pass imp at
+    rank 3 was skipped in favor of a rank-1 6-3 imp, and the fallback
+    lost 3-6. Empirical fitness is a measurement; rank is Claude's
+    a-priori guess. Ties preserve rank order via stable sort.
+    """
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    args = _build_args(tmp_path, pool_size=3, no_commit=True)
+    pool = _make_pool(3)
+
+    calls: list[int] = []
+
+    def fitness_fn(parent: str, imp: Improvement, **_: Any) -> FitnessResult:
+        calls.append(imp.rank)
+        if len(calls) > 3:
+            raise AssertionError(
+                f"fitness should only run once per imp in gen 1; got {calls}"
+            )
+        wins_by_rank = {1: 3, 2: 5, 3: 1}
+        wins = wins_by_rank[imp.rank]
+        return _fitness(
+            imp,
+            bucket="pass" if wins >= 3 else "fail",
+            wins=wins,
+            parent=parent,
+            candidate=f"cand_rank{imp.rank}",
+        )
+
+    composition = _ScriptedComposition(
+        [
+            (False, None, False),  # stack — lost by games
+            (False, None, False),  # fallback — also lost (outcome not asserted)
+        ]
+    )
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=fitness_fn,
+        run_composition_fn=composition,
+        run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("no promotion, regression should not fire")
+        ),
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+    assert len(composition.calls) == 2
+    assert len(composition.calls[0]["imps"]) == 2  # 2 fitness-pass imps stacked
+    assert len(composition.calls[1]["imps"]) == 1
+    # Rank 2 had 5/5 wins; rank 1 had 3/5. Fallback must pick rank 2.
+    assert composition.calls[1]["imps"][0].rank == 2
+
+
 def test_stack_fail_and_fallback_fail_no_promotion(
     cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

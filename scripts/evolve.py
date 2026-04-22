@@ -1679,6 +1679,10 @@ def run_loop(
                     # - lost-by-games stack → try top-1 imp only (existing
                     #   behavior; dropping to a lower-ranked imp is unlikely
                     #   to beat a parent that just beat the full stack).
+                    #   Pick that top-1 by empirical fitness wins, not by
+                    #   Claude's a-priori rank — rank is a guess, fitness
+                    #   is a measurement (run 20260422-0824 gen 2:
+                    #   8-1 winner skipped for rank-1 6-3 winner).
                     # - crash-skipped stack → rotate through winners rank
                     #   1 → N until one imports. First non-crash-skipped
                     #   fallback is the fallback result — if it wins we
@@ -1691,7 +1695,10 @@ def run_loop(
                         fallback_rank_order = list(winner_idxs)
                     else:
                         composition_outcome_label = "stack-fail"
-                        fallback_rank_order = winner_idxs[:1]
+                        fallback_rank_order = sorted(
+                            winner_idxs,
+                            key=lambda i: -fitness_results[i].wins_candidate,
+                        )[:1]
 
                     fallback_result: CompositionResult | None = None
                     fallback_idx: int | None = None
