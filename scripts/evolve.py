@@ -329,14 +329,29 @@ def _now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
+_ATOMIC_REPLACE_RETRY_DELAYS = (0.05, 0.1, 0.2, 0.4, 0.8)
+
+
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    """Write *payload* as pretty-printed, sorted JSON, atomically."""
+    """Write *payload* as pretty-printed, sorted JSON, atomically.
+
+    On Windows, ``os.replace`` fails with ``PermissionError`` if any process
+    holds an open handle on the target — which happens whenever the backend
+    ``--serve`` is polling these state files. Retry a few times with backoff
+    before giving up; the races are short-lived.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    for delay in _ATOMIC_REPLACE_RETRY_DELAYS:
+        try:
+            tmp.replace(path)
+            return
+        except PermissionError:
+            time.sleep(delay)
     tmp.replace(path)
 
 

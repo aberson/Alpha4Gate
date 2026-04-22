@@ -314,6 +314,63 @@ class _ScriptedRegression:
 
 
 # ---------------------------------------------------------------------------
+# 0. _atomic_write_json retry behavior (Windows file-lock race)
+# ---------------------------------------------------------------------------
+
+
+def test_atomic_write_json_retries_on_permission_error(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Transient PermissionError on ``tmp.replace`` is retried with backoff.
+
+    The Alpha4Gate backend polls evolve state files while the run is in
+    flight. On Windows, its short-lived read handles can cause
+    ``os.replace`` to fail with WinError 5. Two failures followed by a
+    success must still land the file.
+    """
+    target = tmp_path / "state.json"
+
+    original_replace = Path.replace
+    call_count = {"n": 0}
+
+    def flaky_replace(self: Path, new: Path | str) -> Path:
+        call_count["n"] += 1
+        if call_count["n"] <= 2:
+            raise PermissionError("simulated WinError 5")
+        return original_replace(self, new)
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(Path, "replace", flaky_replace)
+    monkeypatch.setattr(cli.time, "sleep", sleeps.append)
+
+    cli._atomic_write_json(target, {"k": "v"})
+
+    assert call_count["n"] == 3
+    assert sleeps == [0.05, 0.1]  # two backoffs before the third attempt succeeded
+    assert json.loads(target.read_text()) == {"k": "v"}
+
+
+def test_atomic_write_json_final_attempt_raises(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If every retry fails, the original PermissionError propagates."""
+    target = tmp_path / "state.json"
+
+    def always_fail(self: Path, new: Path | str) -> Path:
+        raise PermissionError("simulated WinError 5")
+
+    monkeypatch.setattr(Path, "replace", always_fail)
+    monkeypatch.setattr(cli.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(PermissionError):
+        cli._atomic_write_json(target, {"k": "v"})
+
+
+# ---------------------------------------------------------------------------
 # 1. argparse smoke
 # ---------------------------------------------------------------------------
 
