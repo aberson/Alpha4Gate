@@ -353,11 +353,14 @@ The bot follows a build order during the opening, then transitions to dynamic de
 
 ---
 
-## Acknowledgments
+<details>
+<summary><b>Acknowledgments</b></summary>
 
 Special thanks to my friends for their support:
 
 - Drew Goya
 - William Gathright
 - Willie Williams
+
+</details>
 
