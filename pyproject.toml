@@ -2,7 +2,22 @@
 name = "alpha4gate"
 version = "0.1.0"
 description = "StarCraft II Protoss bot with rule-based decisions and Claude strategic advisor"
+readme = "README.md"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Abraham Robison" }]
+keywords = ["starcraft2", "sc2", "bot", "reinforcement-learning", "ppo", "claude", "self-improvement"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Games/Entertainment :: Real Time Strategy",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "burnysc2",
     "fastapi",
@@ -32,6 +47,11 @@ viewer = [
     "pywin32>=306",
     "psutil>=5.9",
 ]
+
+[project.urls]
+Homepage = "https://github.com/aberson/Alpha4Gate"
+Repository = "https://github.com/aberson/Alpha4Gate"
+Issues = "https://github.com/aberson/Alpha4Gate/issues"
 
 [build-system]
 requires = ["hatchling"]

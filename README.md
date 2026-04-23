@@ -186,7 +186,7 @@ bash scripts/start-dev.sh
 
 # Or in two terminals:
 # Terminal 1: backend
-uv run python -m alpha4gate.runner --serve
+uv run python -m bots.v0.runner --serve
 
 # Terminal 2: frontend dev server
 cd frontend && npm run dev
@@ -222,7 +222,7 @@ In-app `AlertToast` lives at the App root and shows new alerts as they fire, reg
 
 ```bash
 # Single game vs Easy AI
-uv run python -m alpha4gate.runner --map Simple64
+uv run python -m bots.v0.runner --map Simple64
 
 # Options
 --difficulty 3       # AI difficulty 1-10 (default: Easy)
@@ -241,7 +241,7 @@ What still works without Claude:
 
 | Feature | Notes |
 |---|---|
-| Rule-based play vs SC2 AI | `uv run python -m alpha4gate.runner --no-claude --difficulty 3` |
+| Rule-based play vs SC2 AI | `uv run python -m bots.v0.runner --no-claude --difficulty 3` |
 | Batch runs + stats aggregation | `--batch 10 --no-claude` |
 | Neural (PPO) play and training | Rule-based or hybrid decision mode; training loop is Claude-free |
 | Dashboard — Live, Stats, Decisions, Training, Loop, Improvements, Processes, Alerts | All tabs render and update as normal |
@@ -260,7 +260,7 @@ Quick start without Claude:
 ```bash
 uv sync
 cd frontend && npm install && cd ..
-uv run python -m alpha4gate.runner --map Simple64 --difficulty 3 --no-claude --realtime
+uv run python -m bots.v0.runner --map Simple64 --difficulty 3 --no-claude --realtime
 # In another terminal, watch the dashboard:
 bash scripts/start-dev.sh
 ```
