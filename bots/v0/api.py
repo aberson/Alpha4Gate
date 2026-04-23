@@ -1180,7 +1180,6 @@ _EVOLVE_CURRENT_ROUND_IDLE: dict[str, Any] = {
     "imp_index": None,
     "candidate": None,
     "stacked_titles": [],
-    "is_fallback": False,
     "new_parent": None,
     "prior_parent": None,
     "games_played": None,

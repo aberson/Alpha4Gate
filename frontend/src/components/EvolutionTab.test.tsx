@@ -56,7 +56,6 @@ function mockFetch(
     imp_index: null,
     candidate: null,
     stacked_titles: [],
-    is_fallback: false,
     new_parent: null,
     prior_parent: null,
     games_played: null,
@@ -126,13 +125,13 @@ const runningState = {
   pool_remaining_count: 6,
   last_result: {
     generation_index: 2,
-    phase: "composition",
+    phase: "stack_apply",
     imp_title: null,
     stacked_titles: ["Chrono boost", "Forward pylon"],
-    is_fallback: false,
-    score: [3, 5],
-    outcome: "composition-pass",
-    reason: "composition pass: stacked_parent (v1, 2 imps) beat v0 3-2",
+    new_version: "v1",
+    score: [0, 0],
+    outcome: "stack-apply-pass",
+    reason: "stack-apply pass: promoted v1 (2 imps) from parent v0",
   },
 };
 
@@ -311,21 +310,7 @@ describe("EvolutionTab", () => {
           principle_ids: [],
           expected_impact: "",
           concrete_change: "",
-          status: "promoted-stack",
-          fitness_score: [3, 5],
-          retry_count: 1,
-          first_evaluated_against: "v0",
-          last_evaluated_against: "v0",
-        },
-        {
-          rank: 6,
-          title: "Promoted single",
-          type: "dev",
-          description: "",
-          principle_ids: [],
-          expected_impact: "",
-          concrete_change: "",
-          status: "promoted-single",
+          status: "promoted",
           fitness_score: [3, 5],
           retry_count: 1,
           first_evaluated_against: "v0",
@@ -360,10 +345,7 @@ describe("EvolutionTab", () => {
     ).toBe(1);
     expect(screen.getAllByTestId("pool-status-evicted").length).toBe(1);
     expect(
-      screen.getAllByTestId("pool-status-promoted-stack").length,
-    ).toBe(1);
-    expect(
-      screen.getAllByTestId("pool-status-promoted-single").length,
+      screen.getAllByTestId("pool-status-promoted").length,
     ).toBe(1);
     expect(
       screen.getAllByTestId("pool-status-regression-rollback").length,
@@ -384,7 +366,6 @@ describe("EvolutionTab", () => {
         imp_index: null,
         candidate: null,
         stacked_titles: [],
-        is_fallback: false,
         new_parent: null,
         prior_parent: null,
         games_played: null,
@@ -413,7 +394,6 @@ describe("EvolutionTab", () => {
         imp_index: 0,
         candidate: "cand_abc",
         stacked_titles: [],
-        is_fallback: false,
         new_parent: null,
         prior_parent: null,
         games_played: 2,
@@ -437,33 +417,32 @@ describe("EvolutionTab", () => {
     expect(matchup.textContent).toContain("parent baseline");
   });
 
-  it("shows the composition phase with a stacked-imps list", async () => {
+  it("shows the stack_apply phase with a stacked-imps list", async () => {
     installFetch({
       state: runningState,
       currentRound: {
         active: true,
         generation: 3,
-        phase: "composition",
+        phase: "stack_apply",
         imp_title: null,
         imp_rank: null,
         imp_index: null,
-        candidate: "cand_stk",
+        candidate: null,
         stacked_titles: ["Chrono", "Forward pylon", "Archon morph"],
-        is_fallback: false,
         new_parent: null,
         prior_parent: null,
-        games_played: 3,
-        games_total: 5,
-        score_cand: 2,
-        score_parent: 1,
+        games_played: 0,
+        games_total: 0,
+        score_cand: 0,
+        score_parent: 0,
         updated_at: "2026-04-21T19:20:00+00:00",
       },
     });
     render(<EvolutionTab />);
     await waitFor(() => {
-      expect(screen.getByTestId("round-phase-composition")).toBeTruthy();
+      expect(screen.getByTestId("round-phase-stack_apply")).toBeTruthy();
     });
-    const stackList = screen.getByTestId("composition-stack-list");
+    const stackList = screen.getByTestId("stack-apply-list");
     expect(stackList.textContent).toContain("Chrono");
     expect(stackList.textContent).toContain("Forward pylon");
     expect(stackList.textContent).toContain("Archon morph");
@@ -481,7 +460,6 @@ describe("EvolutionTab", () => {
         imp_index: null,
         candidate: null,
         stacked_titles: [],
-        is_fallback: false,
         new_parent: "v1",
         prior_parent: "v0",
         games_played: 4,
@@ -514,7 +492,6 @@ describe("EvolutionTab", () => {
         imp_index: null,
         candidate: "v0",
         stacked_titles: [],
-        is_fallback: false,
         new_parent: null,
         prior_parent: null,
         games_played: 2,
@@ -545,7 +522,6 @@ describe("EvolutionTab", () => {
         imp_index: null,
         candidate: null,
         stacked_titles: [],
-        is_fallback: false,
         new_parent: null,
         prior_parent: null,
         games_played: 0,

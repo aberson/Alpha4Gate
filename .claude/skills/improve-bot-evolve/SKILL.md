@@ -1,6 +1,6 @@
 ---
 name: improve-bot-evolve
-description: Autonomous generation-phase improvement loop. Generates a pool of Claude-proposed improvements, fitness-tests each vs the current parent, stacks the winners for a full-stack composition promotion, and regression-checks against the prior parent — repeating for hours until the pool or wall-clock budget is exhausted. Designed for overnight unattended runs.
+description: Autonomous generation-phase improvement loop. Generates a pool of Claude-proposed improvements, fitness-tests each vs the current parent, stacks the winners onto a new snapshot (with an import-check gate), and regression-checks against the prior parent — repeating for hours until the pool or wall-clock budget is exhausted. Designed for overnight unattended runs.
 user-invocable: true
 argument: Optional flags only — no free-text suggestion needed. Flags: `--pool-size N` (default 10), `--games-per-eval N` (default 5), `--hours N` (default 4), `--map NAME` (default Simple64), `--no-commit` (dev/test only), `--results-path PATH`, `--pool-path PATH`, `--state-path PATH`, `--run-log PATH`, `--resume`, `--post-training-cycles N`.
 required-env: SC2 installed at `C:/Program Files (x86)/StarCraft II/`, `claude` CLI on PATH and authenticated (OAuth subscription token OR `ANTHROPIC_API_KEY` — whichever the CLI is set up with).
@@ -11,9 +11,11 @@ required-env: SC2 installed at `C:/Program Files (x86)/StarCraft II/`, `claude` 
 Autonomous generation-phase improvement loop. Every generation:
 
 1. **Fitness** — each active pool imp is individually snapshotted, applied, and plays the current parent for `--games-per-eval` games. Strict-majority wins (≥3/5) become fitness-pass; one-short (2/5) become fitness-close (resurrection-eligible, retry cap 2); anything lower evicts immediately.
-2. **Composition** — all fitness-pass imps are stacked onto one snapshot and tested vs parent. Pass → the whole stack promotes as one `[evo-auto]` commit. Fail → a top-1 fallback composition runs on just the highest-ranked pass imp.
+2. **Stack-apply + promote** — if ≥1 fitness-pass imp exists, snapshot the parent into a fresh `vN+1` directory, apply every fitness-pass imp in rank order, run `python -c "import bots.vN+1.bot"` as a pre-regression gate, and commit the promotion as one `[evo-auto]` commit. Import-check failures roll back the new directory and skip regression for the generation.
 3. **Regression** — if anything was promoted, new parent plays prior parent for `--games-per-eval` games. On rollback, `git revert` the promote commit (also under `EVO_AUTO=1`) and restore the pointer.
 4. **Pool refresh** — close-loss and benched-pass imps go back to active (retry cap enforced; cap=3 total evals before eviction). Claude tops up the active pool back to `--pool-size` with fresh orthogonal imps targeting the new parent.
+
+**Gate-reduction note (2026-04-23):** The legacy third gate — a 5-game composition batch testing the stacked candidate against the parent before promotion — was removed per [evolve-gate-reduction-plan.md](../../documentation/plans/evolve-gate-reduction-plan.md). Regression already catches bad-interaction stacks as "new parent loses to prior parent", and the extra Bernoulli filter dominated promotion rate without adding unique detection capability. The import-check gate that used to live inside composition migrated into the stack-apply step.
 
 **Design goal:** `/improve-bot-evolve` in a fresh context window with no additional input should produce a measurably stronger parent version after a few hours, with every promotion recorded as an `[evo-auto]` commit and every regression recorded as an `[evo-auto]` revert.
 
@@ -21,7 +23,7 @@ Autonomous generation-phase improvement loop. Every generation:
 
 **Relationship to `/improve-bot-advised`:** These two skills are siblings with different inner mechanics:
 - `/improve-bot-advised` picks one improvement, applies it, validates win-rate, commits — linear.
-- `/improve-bot-evolve` generates a pool of 10, fitness-tests each vs parent, stacks winners for a composition promotion — parallel with a regression safety net.
+- `/improve-bot-evolve` generates a pool of 10, fitness-tests each vs parent, stacks winners onto a new snapshot with an import-check gate — parallel with a regression safety net.
 
 The outer phase shape (pre-flight → seed → loop → decision → report) is identical. The two skills must NEVER run concurrently (they both mutate `bots/current/current.txt`). The pre-flight explicitly refuses to start if an advised run is in progress.
 
@@ -32,7 +34,7 @@ The outer phase shape (pre-flight → seed → loop → decision → report) is 
 | Flag | Type | Default | Purpose |
 |------|------|---------|---------|
 | `--pool-size` | int | `10` | Number of improvements Claude generates (and tops up to between generations) |
-| `--games-per-eval` | int | `5` | Games in each phase evaluation (fitness / composition / regression). Pass threshold = strict majority of this count. |
+| `--games-per-eval` | int | `5` | Games in each phase evaluation (fitness / regression). Pass threshold = strict majority of this count. |
 | `--hours` | float | `4.0` | Wall-clock budget. `0` disables the check (test-only). |
 | `--map` | str | `Simple64` | SC2 map name |
 | `--game-time-limit` | int | `1800` | SC2 in-game time limit per game, in seconds |
@@ -47,7 +49,7 @@ The outer phase shape (pre-flight → seed → loop → decision → report) is 
 | `--resume` | flag | off | Reload pool + per-item statuses from `--pool-path` instead of generating fresh. |
 | `--post-training-cycles` | int | `0` | On promoted runs, start the training daemon for exactly N cycles after the loop exits. |
 
-Budget math: pool=10, games-per-eval=5 → ~60 games per generation (50 fitness + 5 composition + 5 regression); with 4-hour budget and ~3-min games, roughly 1 generation per hour.
+Budget math: pool=10, games-per-eval=5 → ~55 games per generation (50 fitness + 5 regression; stack-apply runs no SC2 games); with 4-hour budget and ~3-min games, roughly 1 generation per hour — ~15 min faster than the pre-2026-04-23 3-gate pipeline.
 
 ---
 
@@ -63,7 +65,7 @@ Print this banner at the start of every run (before any other output):
   I cannot edit: src/orchestrator/, pyproject.toml, tests/, frontend/, scripts/
   Commit marker: [evo-auto] on its own line in the commit message body
   Env: EVO_AUTO=1 must be set in the commit subprocess env (scripts/evolve.py handles this)
-  SC2 required for mirror seed, fitness batches, composition test, regression gate
+  SC2 required for mirror seed, fitness batches, regression gate
 ```
 
 The banner differs from the advised banner in three ways:
@@ -180,7 +182,7 @@ This tag is the restore point for a full revert of the run. `scripts/evolve.py` 
 
 ### 1.1 Invoke the evolve runner
 
-The entire generation loop (pool gen + fitness + composition + regression + refresh) is owned by `scripts/evolve.py`. The skill's job is to invoke with the right flags, monitor state files, and handle exit.
+The entire generation loop (pool gen + fitness + stack-apply + regression + refresh) is owned by `scripts/evolve.py`. The skill's job is to invoke with the right flags, monitor state files, and handle exit.
 
 ```bash
 uv run python scripts/evolve.py \
@@ -194,7 +196,7 @@ uv run python scripts/evolve.py \
 Internally:
 1. Runs 3 parent-vs-parent mirror games via `orchestrator.selfplay.run_batch`.
 2. Calls `orchestrator.evolve.generate_pool(parent, pool_size=10, ...)` which prompts Claude (Opus by default) with the mirror summary, source tree, and guiding principles. Claude returns 10 orthogonal dev `Improvement` records.
-3. If the initial response has file overlaps (two imps touching the same file), re-prompts once with a conflict list. A second-round overlap is accepted — the composition phase surfaces merge failures empirically.
+3. If the initial response has file overlaps (two imps touching the same file), re-prompts once with a conflict list. A second-round overlap is accepted — the stack-apply step surfaces merge failures empirically at the import-check gate.
 4. Writes `data/evolve_pool.json` with all 10 items marked `status: "active"`.
 
 If pool generation fails (malformed JSON, rate limit, missing API key), the script writes `status: "failed"` to `data/evolve_run_state.json` and exits 1. See **Troubleshooting**.
@@ -231,11 +233,10 @@ Per-item `status` vocabulary (managed by `scripts/evolve.py`):
 | Status | Meaning |
 |---|---|
 | `active` | awaiting fitness eval this generation |
-| `fitness-pass` | beat parent ≥ majority this gen; included in composition stack |
+| `fitness-pass` | beat parent ≥ majority this gen; included in the stack-apply set |
 | `fitness-close` | one win short of majority; resurrection-eligible (cap=3 total evals) |
 | `evicted` | permanent. Either 0/1 wins on fitness, hit the retry cap, or crashed during a phase. |
-| `promoted-stack` | part of a stack that passed composition AND regression |
-| `promoted-single` | promoted alone as top-1 fallback after stack failed |
+| `promoted` | part of the winning set that passed stack-apply AND regression |
 | `regression-rollback` | promoted but regression check reverted the commit |
 
 Transitions outside `active` are visible in the dashboard Pool view. At the end of each generation, `fitness-pass` and `fitness-close` imps whose `retry_count` is below the cap flip back to `active` for the next generation.
@@ -257,21 +258,21 @@ For every imp with `status == "active"`:
 5. `rmtree` scratch dir. Pointer restored to parent.
 6. Append a `phase: "fitness"` row to `evolve_results.jsonl`. Update pool state.
 
-### 2b. Composition phase
+### 2b. Stack-apply + promote
 
 If ≥1 fitness-pass imp exists:
 
-1. `snapshot_current()` → new scratch `cand_*` dir.
-2. Apply ALL fitness-pass imps to the single scratch dir, in rank order.
-3. `run_batch(cand, parent, games_per_eval, map)` — stacked-vs-parent.
-4. If majority win: `snapshot_current()` promotes the scratch to `vN+1`; rewrite `manifest.parent`; commit `[evo-auto]` with stacked titles.
-5. If lose: `rmtree` scratch, pointer restored to parent. **Fallback** — run composition again with just the top-ranked imp.
-6. Fallback pass: promote top-1 as `vN+1`, commit with `is_fallback=True`.
-7. Fallback fail: no promotion this generation. All winners go to `fitness-close` for next gen.
+1. `snapshot_current()` → fresh `vN+1` directory (auto-incremented from the highest existing `vN`). `snapshot_current` also flips `bots/current/current.txt` to the new version as a side effect.
+2. Apply ALL fitness-pass imps to `bots/vN+1/`, in rank order.
+3. **Import-check gate:** `python -c "import bots.vN+1.bot"` under a 30-second timeout. On failure: rmtree `bots/vN+1/`, restore the pointer to the parent, and skip regression for the generation — all winners stay `fitness-close` for next generation.
+4. On pass: rewrite `manifest.parent` to the real parent, then commit `[evo-auto]` with the stacked titles.
+5. `promote_sha` is captured for the regression rollback's `git revert` call.
+
+**Option B rationale (2026-04-23 gate reduction):** every fitness-pass imp is stacked unconditionally — there is no empirical pre-regression composition filter. Bad-interaction stacks are caught by regression as "new parent loses to prior parent". The import-check gate only catches the cheap failure mode where two imps' edits, each passing ruff + mypy individually, produce a module that fails to import when combined.
 
 ### 2c. Regression phase
 
-If composition promoted anything:
+If stack-apply promoted anything:
 
 1. `run_batch(new_parent, prior_parent, games_per_eval, map)` — no snapshots.
 2. Majority new-parent win: accept the promotion, log `regression-pass`.
@@ -292,15 +293,6 @@ evolve: generation 3 promoted stack (3 imps)
 - Chrono boost auto-cast
 - Forward pylon warp-in
 - Archon morph on 4 HTs
-
-[evo-auto]
-```
-
-Single-imp fallback promotion:
-```
-evolve: generation 3 promoted single imp (top-1 fallback)
-
-- Chrono boost auto-cast
 
 [evo-auto]
 ```
@@ -349,12 +341,12 @@ Write the final report to `$LOGFILE` and print to stdout.
 
 ## Generations
 
-| gen | fitness pass/close/fail | composition | regression | outcome |
+| gen | fitness pass/close/fail | stack-apply | regression | outcome |
 |---|---|---|---|---|
-| 1 | 3/2/5 | stack-pass | pass | promoted v5 → v6 |
-| 2 | 1/3/6 | single-pass (fallback) | rollback | ROLLBACK |
-| 3 | 2/2/5 (+1 crash) | stack-fail | — | no promote |
-| 4 | 4/1/5 | stack-pass | pass | promoted v6 → v7 |
+| 1 | 3/2/5 | stack-apply-pass | pass | promoted v5 → v6 |
+| 2 | 1/3/6 | stack-apply-pass | rollback | ROLLBACK |
+| 3 | 2/2/5 (+1 crash) | stack-apply-import-fail | — | no promote |
+| 4 | 4/1/5 | stack-apply-pass | pass | promoted v6 → v7 |
 ```
 
 Final tag + GitHub issue + cleanup as before.
@@ -395,12 +387,12 @@ Do NOT kill `SC2_x64.exe`.
   "pool_remaining_count": 6,
   "last_result": {
     "generation_index": 3,
-    "phase": "composition",
+    "phase": "stack_apply",
     "imp_title": null,
     "stacked_titles": ["Chrono boost", "Forward pylon"],
-    "is_fallback": false,
-    "score": [3, 5],
-    "outcome": "composition-pass",
+    "new_version": "v7",
+    "score": [0, 0],
+    "outcome": "stack-apply-pass",
     "reason": "..."
   }
 }
@@ -417,7 +409,7 @@ See §1.2.
 
 ### Results file: `data/evolve_results.jsonl`
 
-One line per phase outcome. Each row's `phase` field is one of `fitness`, `composition`, `regression`, or the crash equivalents. Full schema in `frontend/src/hooks/useEvolveRun.ts`.
+One line per phase outcome. Each row's `phase` field is one of `fitness`, `stack_apply`, `regression`, or the crash equivalents. Full schema in `frontend/src/hooks/useEvolveRun.ts`.
 
 ### Control file: `data/evolve_run_control.json`
 
@@ -463,9 +455,9 @@ Check `$LOGFILE` for the Python exception. Common causes:
 - **Port collision.** `Get-NetTCPConnection -LocalPort 8765`, then cleanup block from Phase 4.
 - **Stale `bots/<candidate>/`.** `snapshot_current()` picks fresh UUID names; collisions are almost always permission / disk-space issues.
 
-### Composition always fails (`composition-fail` on every stack)
+### Stack-apply import check fails on every generation
 
-Claude's proposals are probably not orthogonal even after the retry. Check `files_touched` in the most recent pool. If two fitness-pass imps edit the same function, the second imp's apply silently overwrites the first's changes, and the composition candidate ends up running just one of them. Manually prune the conflicting imp from the pool and `--resume`.
+Claude's proposals are probably not orthogonal even after the retry. Check `files_touched` in the most recent pool. If two fitness-pass imps edit overlapping regions of the same file, their combined edits may fail to import at `bots.vN+1.bot` import time — the pre-regression import gate catches this and rolls the snapshot back. Manually prune the conflicting imp from the pool and `--resume`.
 
 ### Regression rollback on every generation
 
@@ -485,7 +477,7 @@ Both `ADVISED_AUTO` and `EVO_AUTO` are set. Close the shell, open a fresh one, r
 
 ### No promotions after N generations
 
-Expected when the pool is low-quality or the parent is already strong. Check the `composition_outcome` column in the run log. If mostly `single-fail`, the fitness-pass threshold may be too loose for this parent — re-run with `--games-per-eval 7`.
+Expected when the pool is low-quality or the parent is already strong. Check the `stack-apply` column in the run log. If mostly `stack-apply-import-fail`, Claude's proposals are not orthogonal and their combined edits break at import — reseed the pool. If mostly `rollback` in the `regression` column, the fitness-pass threshold may be too loose for this parent — re-run with `--games-per-eval 7`.
 
 ### Stale `data/evolve_run_state.json` blocks a fresh run
 
@@ -541,7 +533,7 @@ git push origin master --force-with-lease
 - **One evolve run at a time.** Pre-flight refuses on fresh `running` state (<12h).
 - **No concurrent advised runs.** Pre-flight refuses on running advised.
 - **Atomic state writes.** All JSON writes use `tmp.replace(path)`.
-- **Fitness + composition + regression are non-negotiable.** Never bypass any phase gate; the whole point is that LLM proposals are untrusted and must earn their promotion empirically.
+- **Fitness + stack-apply import gate + regression are non-negotiable.** Never bypass any phase gate; the whole point is that LLM proposals are untrusted and must earn their promotion empirically.
 - **EVO_AUTO scope is `bots/**`.** Broader than advised's `bots/current/**` because evolve creates new version dirs.
 - **Never kill SC2_x64.exe.**
 - **Wall-clock discipline.** Check elapsed at every phase boundary.
@@ -555,10 +547,10 @@ git push origin master --force-with-lease
   ├── Phase 0: Bootstrap (sandbox, pre-flight, baseline tag, start backend)
   ├── Phase 1: Seed + Pool (mirror games, generate_pool via Claude)
   ├── Phase 2: Generation loop
-  │     ├── 2a Fitness      (run_fitness_eval per active imp)
-  │     ├── 2b Composition  (run_composition_eval on stack → fallback)
-  │     ├── 2c Regression   (run_regression_eval vs prior parent)
-  │     └── 2d Pool refresh (retry bookkeeping + generate_pool delta)
+  │     ├── 2a Fitness       (run_fitness_eval per active imp)
+  │     ├── 2b Stack-apply   (_stack_apply_and_promote → vN+1 + import check)
+  │     ├── 2c Regression    (run_regression_eval vs prior parent)
+  │     └── 2d Pool refresh  (retry bookkeeping + generate_pool delta)
   ├── Phase 3: Loop decision (wall-clock / pool-exhausted / dashboard-stop)
   └── Phase 4: Morning Report (final tag, GitHub issue, generation table)
 ```

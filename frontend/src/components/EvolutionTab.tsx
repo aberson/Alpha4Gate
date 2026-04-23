@@ -45,8 +45,7 @@ function PoolStatusBadge({ status }: { status: EvolvePoolStatus | string }) {
     "fitness-pass": { bg: "rgba(52, 152, 219, 0.2)", fg: "#3498db" },
     "fitness-close": { bg: "rgba(241, 196, 15, 0.2)", fg: "#f1c40f" },
     evicted: { bg: "rgba(127, 140, 141, 0.2)", fg: "#95a5a6" },
-    "promoted-stack": { bg: "rgba(46, 204, 113, 0.3)", fg: "#27ae60" },
-    "promoted-single": { bg: "rgba(26, 188, 156, 0.25)", fg: "#16a085" },
+    promoted: { bg: "rgba(46, 204, 113, 0.3)", fg: "#27ae60" },
     "regression-rollback": { bg: "rgba(231, 76, 60, 0.2)", fg: "#e74c3c" },
   };
   const tone = palette[status] ?? { bg: "rgba(136,136,136,0.2)", fg: "#888" };
@@ -75,8 +74,15 @@ function OutcomeBadge({ outcome }: { outcome: string }) {
     "fitness-pass": { bg: "rgba(52, 152, 219, 0.2)", fg: "#3498db" },
     "fitness-close": { bg: "rgba(241, 196, 15, 0.2)", fg: "#f1c40f" },
     "fitness-fail": { bg: "rgba(127, 140, 141, 0.2)", fg: "#95a5a6" },
-    "composition-pass": { bg: "rgba(46, 204, 113, 0.3)", fg: "#27ae60" },
-    "composition-fail": { bg: "rgba(230, 126, 34, 0.25)", fg: "#e67e22" },
+    "stack-apply-pass": { bg: "rgba(46, 204, 113, 0.3)", fg: "#27ae60" },
+    "stack-apply-import-fail": {
+      bg: "rgba(230, 126, 34, 0.25)",
+      fg: "#e67e22",
+    },
+    "stack-apply-commit-fail": {
+      bg: "rgba(230, 126, 34, 0.25)",
+      fg: "#e67e22",
+    },
     "regression-pass": { bg: "rgba(26, 188, 156, 0.25)", fg: "#16a085" },
     "regression-rollback": { bg: "rgba(231, 76, 60, 0.2)", fg: "#e74c3c" },
     crash: { bg: "rgba(155, 89, 182, 0.2)", fg: "#9b59b6" },
@@ -105,19 +111,13 @@ function LastResultCard({ last }: { last: EvolveLastResult }) {
     ? last.stacked_titles
     : [];
   const titleNode =
-    last.phase === "composition" && stackedTitles.length > 0
+    last.phase === "stack_apply" && stackedTitles.length > 0
       ? (
           <>
-            <strong>
-              {last.is_fallback
-                ? `Fallback single: ${stackedTitles[0] ?? "?"}`
-                : `Stack of ${stackedTitles.length}`}
-            </strong>
-            {!last.is_fallback ? (
-              <span style={{ color: "#aaa", fontSize: "0.9em" }}>
-                {" "}— {stackedTitles.join(", ")}
-              </span>
-            ) : null}
+            <strong>Stack of {stackedTitles.length}</strong>
+            <span style={{ color: "#aaa", fontSize: "0.9em" }}>
+              {" "}— {stackedTitles.join(", ")}
+            </span>
           </>
         )
       : last.phase === "regression"
@@ -185,10 +185,10 @@ function PhaseBadge({ phase }: { phase: string | null }) {
       fg: "#3498db",
       display: "FITNESS",
     },
-    composition: {
+    stack_apply: {
       bg: "rgba(26, 188, 156, 0.25)",
       fg: "#16a085",
-      display: "COMPOSITION",
+      display: "STACK APPLY",
     },
     regression: {
       bg: "rgba(230, 126, 34, 0.25)",
@@ -360,7 +360,7 @@ function CurrentPhaseCard({
     mirror_games: "#9b59b6",
     claude_prompt: "#2ecc71",
     fitness: "#3498db",
-    composition: "#16a085",
+    stack_apply: "#16a085",
     regression: "#e67e22",
     pool_refresh: "#8e44ad",
   };
@@ -463,32 +463,32 @@ function CurrentPhaseCard({
         <ProgressBar pct={pct} color={accentColor} />
       </>
     );
-  } else if (phase === "composition") {
+  } else if (phase === "stack_apply") {
     const stacked = round.stacked_titles ?? [];
-    const leftTitle = round.is_fallback
-      ? `Fallback single: ${stacked[0] ?? "?"}`
-      : `Stacked (${stacked.length} imps)`;
     headline = (
       <span>
         Generation{" "}
-        {round.generation != null ? `#${round.generation}` : ""} —{" "}
-        {round.is_fallback ? "Fallback composition" : "Composition"}
+        {round.generation != null ? `#${round.generation}` : ""} — Stack
+        apply + import check
       </span>
     );
     subline = (
       <>
-        <MatchupGrid
-          leftTitle={leftTitle}
-          leftId={round.candidate ?? "?"}
-          rightTitle="parent baseline"
-          rightId={runParent ?? "parent"}
-          scoreLeft={scoreCand}
-          scoreRight={scoreParent}
-          accentColor={accentColor}
-        />
-        {!round.is_fallback && stacked.length > 0 ? (
+        <div
+          style={{
+            marginTop: "8px",
+            fontSize: "0.95em",
+            textAlign: "center",
+          }}
+        >
+          Applying <strong>{stacked.length} imps</strong> to a fresh
+          snapshot of{" "}
+          <code>{runParent ?? "parent"}</code>, then running{" "}
+          <code>python -c "import bots.&lt;new&gt;.bot"</code>.
+        </div>
+        {stacked.length > 0 ? (
           <ul
-            data-testid="composition-stack-list"
+            data-testid="stack-apply-list"
             style={{
               listStyle: "none",
               padding: 0,
@@ -505,24 +505,8 @@ function CurrentPhaseCard({
         ) : null}
       </>
     );
-    progressNode = (
-      <>
-        <div
-          style={{
-            marginTop: "10px",
-            fontSize: "0.9em",
-            color: "#aaa",
-            textAlign: "center",
-          }}
-        >
-          Game{" "}
-          <code data-testid="current-round-progress">
-            {played}/{total}
-          </code>
-        </div>
-        <ProgressBar pct={pct} color={accentColor} />
-      </>
-    );
+    // Stack-apply doesn't play games — use an indefinite bar.
+    progressNode = <IndefiniteBar color={accentColor} />;
   } else if (phase === "regression") {
     headline = (
       <span>
@@ -686,12 +670,12 @@ function RoundHistoryTable({ rounds }: { rounds: EvolveRoundResult[] }) {
           let scoreText = "";
           if (r.phase === "fitness" && "imp" in r) {
             subject = r.imp?.title ?? "?";
-            scoreText = `${r.wins_cand}-${r.wins_parent}`;
-          } else if (r.phase === "composition" && "stacked_titles" in r) {
-            subject = r.is_fallback
-              ? `fallback: ${r.stacked_titles[0] ?? "?"}`
-              : `stack (${r.stacked_titles.length})`;
-            scoreText = `${r.wins_cand}-${r.wins_parent}`;
+            if ("wins_cand" in r) {
+              scoreText = `${r.wins_cand}-${r.wins_parent}`;
+            }
+          } else if (r.phase === "stack_apply" && "stacked_titles" in r) {
+            subject = `stack (${r.stacked_titles.length}) → ${r.new_version || "?"}`;
+            scoreText = "";
           } else if (r.phase === "regression" && "new_parent" in r) {
             subject = `${r.new_parent} vs ${r.prior_parent}`;
             scoreText = `${r.wins_new}-${r.wins_prior}`;
@@ -805,8 +789,8 @@ export function EvolutionTab() {
       <p style={{ color: "#888", fontSize: "0.85em", margin: "0 0 16px" }}>
         Monitor an active <code>/improve-bot-evolve</code> run. Each generation
         fitness-tests every pool imp vs the current parent, stacks the winners
-        for a composition promotion, and regression-checks against the prior
-        parent.
+        into a new snapshot with an import-check gate, and regression-checks
+        the promotion against the prior parent.
       </p>
 
       {run.status === "idle" ? (

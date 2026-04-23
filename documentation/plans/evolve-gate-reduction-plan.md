@@ -129,6 +129,7 @@ The user explicitly scoped it as a prerequisite. `/build-phase` executes `/build
 - **Depends on:** none (prerequisite git revert must be done first by operator, but that's outside the build-phase scope).
 
 ### Step 2: Remove composition phase — 3 gates → 2 gates
+- **Status:** DONE (2026-04-23)
 - **Problem:** Remove the composition phase from the evolve pipeline. Delete `run_composition_eval` + `CompositionResult` + `_composition_outcome` + composition-specific pool-status values (`promoted-stack`, `promoted-single`, `is_fallback`) + `_ScriptedComposition` test fixture. Replace the composition phase in `run_loop` with a direct `_stack_apply_and_promote` helper that applies all fitness-pass imps to a fresh snapshot, runs the import-check that used to live at the composition-eval entry, and promotes on success. Regression phase is unchanged. Update `frontend/src/hooks/useEvolveRun.ts` to match the simplified schema (drop `composition*` union members, drop `is_fallback`, collapse `promoted-stack`/`promoted-single` to `promoted`) and bump its `cacheKey`. Update [.claude/skills/improve-bot-evolve/SKILL.md](.claude/skills/improve-bot-evolve/SKILL.md) sections describing Phase 2.
 - **Issue:** (leave blank)
 - **Flags:** `--reviewers code --isolation worktree`

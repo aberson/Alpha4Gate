@@ -692,7 +692,6 @@ class TestEvolveEndpoints:
             assert data[key] is None
         # List / bool defaults for non-null fields.
         assert data["stacked_titles"] == []
-        assert data["is_fallback"] is False
 
     def test_get_current_round_returns_file_content(
         self, client: TestClient, tmp_path: Path
@@ -706,7 +705,6 @@ class TestEvolveEndpoints:
             "imp_index": 0,
             "candidate": "cand_abc",
             "stacked_titles": [],
-            "is_fallback": False,
             "new_parent": None,
             "prior_parent": None,
             "games_played": 3,
@@ -742,9 +740,8 @@ class TestEvolveEndpoints:
         assert data["generation"] == 7
         assert data["phase"] == "fitness"
         assert data["games_played"] is None
-        # Skeleton backfill gives non-null defaults for list/bool fields.
+        # Skeleton backfill gives non-null defaults for list fields.
         assert data["stacked_titles"] == []
-        assert data["is_fallback"] is False
 
 
 class TestRewardRulesEndpoints:

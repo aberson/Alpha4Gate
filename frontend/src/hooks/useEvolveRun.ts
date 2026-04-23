@@ -4,15 +4,16 @@ import type { UseApiResult } from "./useApi";
 
 // --- Pool item (from data/evolve_pool.json) ---
 
-// Seven-status vocabulary for the new (generation-phase) evolve algorithm.
-// See documentation/investigations/evolve-algorithm-redesign-investigation.md.
+// Six-status vocabulary for the gate-reduced (2-gate) evolve algorithm.
+// See documentation/plans/evolve-gate-reduction-plan.md (2026-04-23);
+// the two legacy promotion statuses collapsed into a single `promoted`
+// status when the composition phase was removed.
 export type EvolvePoolStatus =
   | "active"
   | "fitness-pass"
   | "fitness-close"
   | "evicted"
-  | "promoted-stack"
-  | "promoted-single"
+  | "promoted"
   | "regression-rollback";
 
 export interface EvolvePoolItem {
@@ -44,8 +45,9 @@ export type EvolveOutcome =
   | "fitness-pass"
   | "fitness-close"
   | "fitness-fail"
-  | "composition-pass"
-  | "composition-fail"
+  | "stack-apply-pass"
+  | "stack-apply-import-fail"
+  | "stack-apply-commit-fail"
   | "regression-pass"
   | "regression-rollback"
   | "crash";
@@ -55,7 +57,7 @@ export type EvolvePhase =
   | "mirror_games"
   | "claude_prompt"
   | "fitness"
-  | "composition"
+  | "stack_apply"
   | "regression"
   | "pool_refresh";
 
@@ -64,7 +66,7 @@ export interface EvolveLastResult {
   phase: EvolvePhase | string;
   imp_title: string | null;
   stacked_titles: string[] | null;
-  is_fallback?: boolean;
+  new_version?: string | null;
   score: [number, number];
   outcome: EvolveOutcome | string;
   reason: string;
@@ -94,9 +96,9 @@ export interface EvolveRunState {
 
 // --- Round-history row (one phase row per line of evolve_results.jsonl) ---
 //
-// Discriminated by `phase`. Fitness rows carry one imp; composition rows
-// carry a stack; regression rows carry two parents; crash rows carry an
-// error field.
+// Discriminated by `phase`. Fitness rows carry one imp; stack-apply rows
+// carry the full winning-imp stack + the new version; regression rows
+// carry two parents; crash rows carry an error field.
 
 export interface EvolveRoundImprovement {
   rank: number;
@@ -136,19 +138,12 @@ export interface EvolveFitnessRow extends EvolveRowBase {
   games: number;
 }
 
-export interface EvolveCompositionRow extends EvolveRowBase {
-  phase: "composition";
+export interface EvolveStackApplyRow extends EvolveRowBase {
+  phase: "stack_apply";
   parent: string;
-  candidate: string;
+  new_version: string;
   stacked_imps: EvolveRoundImprovement[];
   stacked_titles: string[];
-  is_fallback: boolean;
-  record: EvolveSelfPlayRecord[];
-  wins_cand: number;
-  wins_parent: number;
-  games: number;
-  promoted: boolean;
-  promoted_version: string | null;
 }
 
 export interface EvolveRegressionRow extends EvolveRowBase {
@@ -163,7 +158,7 @@ export interface EvolveRegressionRow extends EvolveRowBase {
 }
 
 export interface EvolveCrashRow extends EvolveRowBase {
-  phase: string; // "fitness" | "composition" | "regression"
+  phase: string; // "fitness" | "stack_apply" | "regression"
   parent?: string;
   imp?: EvolveRoundImprovement | null;
   outcome: "crash";
@@ -172,7 +167,7 @@ export interface EvolveCrashRow extends EvolveRowBase {
 // Union type for RoundHistoryTable rendering.
 export type EvolveRoundResult =
   | EvolveFitnessRow
-  | EvolveCompositionRow
+  | EvolveStackApplyRow
   | EvolveRegressionRow
   | EvolveCrashRow;
 
@@ -198,9 +193,8 @@ export interface EvolveCurrentRound {
   imp_rank: number | null;
   imp_index: number | null;
   candidate: string | null;
-  // Composition-phase payload:
+  // Stack-apply-phase payload:
   stacked_titles: string[];
-  is_fallback: boolean;
   // Regression-phase payload:
   new_parent: string | null;
   prior_parent: string | null;
@@ -223,15 +217,17 @@ export interface UseEvolveRunResult {
   sendControl: (patch: Partial<EvolveRunControl>) => Promise<void>;
 }
 
-// Cache-key suffix bumped to v2 because the schema for every endpoint
-// changed (new status vocabulary, new field names, new phase rows).
-// Without bumping the cache key, browsers with cached v1 responses would
-// feed stale shapes into the new component renderers and crash.
-const CACHE_KEY_SUFFIX = "evolve-v2";
+// Cache-key suffix bumped to v3 because the 2-gate schema removes the
+// pre-regression stacked-games phase and the fallback-variant fields.
+// See documentation/plans/evolve-gate-reduction-plan.md and
+// feedback_useapi_cache_schema_break.md — without bumping the cache
+// key, browsers with cached v2 responses would feed stale shapes into
+// the new component renderers and crash.
+const CACHE_KEY_SUFFIX = "evolve-v4";
 
 /**
  * Hook for monitoring and controlling an improve-bot-evolve run
- * (generation-phase algorithm).
+ * (generation-phase algorithm, 2-gate pipeline).
  */
 export function useEvolveRun(): UseEvolveRunResult {
   const state = useApi<EvolveRunState>("/api/evolve/state", {

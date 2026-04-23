@@ -800,6 +800,33 @@ of leaving is one extra deny-list code path to maintain). Dashboard tab
 disable: remove the `EvolutionTab.tsx` route registration. `bots/vN/`
 directories accumulated during runs are safe to `rm -rf`.
 
+### Post-Step-10 enhancement — gate reduction (2026-04-23)
+
+Build plan:
+[documentation/plans/evolve-gate-reduction-plan.md](evolve-gate-reduction-plan.md).
+
+Collapses the evolve pipeline from **3 gates** (fitness + composition +
+regression) to **2 gates** (fitness + regression), with the
+composition-phase import check migrated into a new `_stack_apply_and_promote`
+helper that runs BEFORE regression. Motivation: run 20260422-0824 (10.3h,
+4 generations, 0 net promotions) surfaced that three compound Bernoulli
+filters at p=0.60 drive expected promotion rate to ~0.39 per generation
+without the composition gate adding unique detection capability —
+regression already catches bad-interaction stacks as "new parent loses to
+prior parent". Removing composition raises expected per-generation
+promotion rate to ~0.53 and saves ~18 games (~50 min) per generation.
+
+Includes a companion rollback-order fix (Step 1, shipped 2026-04-23):
+`scripts/evolve.py` now calls `git revert` BEFORE resetting the pointer,
+so the regression-rollback path operates on a clean working tree and
+`git revert --no-commit` no longer bails with exit 128. Also adds a
+phantom-promote pre-flight guard that refuses to start a new run if
+`bots/current/current.txt` on disk diverges from `git HEAD`.
+
+Schema change: frontend `useEvolveRun.ts` `cacheKey` bumped to
+`evolve-v3`; `promoted-stack` + `promoted-single` collapsed to
+`promoted`; `is_fallback` and `composition-*` phase names removed.
+
 ---
 
 ## Phase F — Entity transformer encoder

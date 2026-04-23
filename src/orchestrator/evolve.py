@@ -1,30 +1,32 @@
-"""Individual-vs-parent fitness + full-stack composition + regression primitives.
+"""Individual-vs-parent fitness + regression primitives.
 
 Replaces the older (1+λ)-ES sibling-tournament round. Design rationale is
-captured in ``documentation/investigations/evolve-algorithm-redesign-investigation.md``;
-the short version:
+captured in ``documentation/investigations/evolve-algorithm-redesign-investigation.md``
+and the 2026-04-23 gate-reduction plan
+(``documentation/plans/evolve-gate-reduction-plan.md``); the short version:
 
 - One imp at a time vs the parent (fitness phase, default 5 games).
 - ``>=3/5`` → winner candidate; ``2/5`` → close-loss (resurrection-eligible,
   ``retry_count`` capped at 2); ``0-1/5`` → evicted.
-- All winner candidates are stacked onto one snapshot and tested vs parent
-  for 5 games (composition phase). Pass → promote the whole stack as one
-  ``[evo-auto]`` commit. Fail → fall back to top-1 imp re-composition.
+- The caller (``scripts/evolve.py``) stacks all fitness-pass imps onto a
+  fresh snapshot, runs an import-check, promotes to ``vN+1``, and then
+  regression-checks vs the prior parent. The composition-phase gate was
+  removed 2026-04-23 — regression already catches bad-interaction stacks,
+  and the extra Bernoulli filter dominated promotion rate without adding
+  unique detection capability.
 - New parent plays prior parent for 5 games (regression phase). Rollback
-  on regression.
+  on regression via ``git revert`` of the promote commit.
 
 Public surface:
 
 - :class:`Improvement` — frozen dataclass describing a proposed change
   (now carries optional ``files_touched`` for orthogonality checks).
-- :class:`FitnessResult`, :class:`CompositionResult`, :class:`RegressionResult`
-  — phase-specific result types replacing the old ``RoundResult``.
+- :class:`FitnessResult`, :class:`RegressionResult` — phase-specific
+  result types.
 - :func:`apply_improvement` — apply one :class:`Improvement` to a version dir.
 - :func:`generate_pool` — run mirror games, prompt Claude for ``pool_size``
   orthogonal improvements (re-prompts once on conflict).
 - :func:`run_fitness_eval` — one-imp-vs-parent evaluation primitive.
-- :func:`run_composition_eval` — full-stack promotion primitive (also used
-  for the top-1 fallback path with a single-element list).
 - :func:`run_regression_eval` — new-parent vs prior-parent regression gate.
 
 Design notes
@@ -33,9 +35,9 @@ Design notes
 * ``snapshot_current`` updates ``bots/current/current.txt`` as a side
   effect. Each primitive restores the pointer on every outcome path so the
   caller never sees a dangling scratch pointer.
-* Scratch ``cand_*`` directories are discarded on every outcome EXCEPT a
-  composition-pass, which promotes the scratch into a permanent ``vN`` via
-  a second ``snapshot_current`` and then deletes the scratch.
+* Scratch ``cand_*`` directories from :func:`run_fitness_eval` are always
+  discarded — the caller re-snapshots from parent when assembling the
+  promotion candidate.
 * ``dev``-type improvements are dispatched to a caller-supplied
   ``dev_apply_fn``. Without one, ``dev`` imps raise
   :class:`NotImplementedError`.
@@ -51,8 +53,6 @@ import logging
 import os
 import re
 import shutil
-import subprocess
-import sys
 import time
 import uuid
 from collections.abc import Callable
@@ -70,13 +70,11 @@ from orchestrator.registry import (
 _log = logging.getLogger(__name__)
 
 __all__ = [
-    "CompositionResult",
     "FitnessResult",
     "Improvement",
     "RegressionResult",
     "apply_improvement",
     "generate_pool",
-    "run_composition_eval",
     "run_fitness_eval",
     "run_regression_eval",
 ]
@@ -110,9 +108,10 @@ class Improvement:
     files_touched:
         Optional list of repo-relative file paths the imp will modify.
         Used by :func:`_orthogonality_conflicts` to detect proposals that
-        would step on each other during the composition phase. Advisory
-        only — missing values fall back to regex extraction from
-        ``concrete_change``. Defaults to an empty list.
+        would step on each other when the caller stacks multiple imps
+        onto a single promotion candidate. Advisory only — missing
+        values fall back to regex extraction from ``concrete_change``.
+        Defaults to an empty list.
     """
 
     rank: int
@@ -160,44 +159,6 @@ class FitnessResult:
     games: int
     bucket: FitnessBucket
     reason: str
-
-
-@dataclass(frozen=True)
-class CompositionResult:
-    """Outcome of :func:`run_composition_eval` — stacked imps vs parent.
-
-    ``stacked_imps`` is the ordered list of imps that were applied to the
-    single scratch candidate. A one-element list is the top-1 fallback
-    after a full-stack composition fail.
-
-    On ``promoted=True`` the scratch dir has been snapshotted into
-    ``promoted_version`` (``vN``) and the scratch is rmtree'd. The pointer
-    at ``bots/current/current.txt`` has been updated to ``vN``.
-
-    On ``promoted=False`` the scratch dir is rmtree'd and the pointer is
-    restored to ``parent``.
-
-    ``crash_skipped=True`` means the stacked candidate failed the
-    pre-batch import check — SC2 games were NOT run, so ``games`` /
-    ``record`` / ``wins_*`` are all zero/empty. The caller should rotate
-    to a rank-1-smaller fallback stack rather than treat this as a
-    lost-by-games result. This catches the silent-crash failure mode
-    observed on run 20260422-0559 where two clean-on-fitness imps
-    stacked together crashed all 5 SC2 games in <20s without a single
-    usable log line.
-    """
-
-    parent: str
-    candidate: str
-    stacked_imps: list[Improvement]
-    record: list[SelfPlayRecord]
-    wins_candidate: int
-    wins_parent: int
-    games: int
-    promoted: bool
-    promoted_version: str | None
-    reason: str
-    crash_skipped: bool = False
 
 
 @dataclass(frozen=True)
@@ -500,8 +461,8 @@ def run_fitness_eval(
     2. Apply *imp* to the scratch dir.
     3. Play ``games`` candidate-vs-parent games.
     4. Classify the win count into pass / close / fail.
-    5. Rmtree the scratch dir (always — the composition phase re-snapshots
-       from parent so nothing downstream needs this candidate on disk).
+    5. Rmtree the scratch dir (always — the caller re-snapshots from
+       parent when assembling the promotion candidate).
     6. Restore ``bots/current/current.txt`` to *parent*.
 
     Progress events emitted on *on_event* (if provided):
@@ -606,267 +567,6 @@ def run_fitness_eval(
         if cand_dir is not None and cand_dir.exists():
             _safe_rmtree(cand_dir)
         _restore_pointer(parent)
-
-
-# ---------------------------------------------------------------------------
-# run_composition_eval
-# ---------------------------------------------------------------------------
-
-
-def _default_import_check(
-    cand_dir: Path,
-    cand_name: str,
-    *,
-    timeout: float = 30.0,
-    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
-) -> str | None:
-    """Verify ``bots.<cand_name>.bot`` imports cleanly.
-
-    Returns ``None`` on success. On failure returns an error message
-    (last ~500 chars of stderr) so the caller can surface it in the
-    composition result's ``reason``.
-
-    This gate catches the silent-crash failure mode where a sub-agent's
-    edit passes ruff + mypy but produces a module that fails to import
-    at runtime — e.g. a ``bots.v0.X``-style absolute import referring to
-    a file that only exists in the candidate snapshot, or a combination
-    of two per-imp edits that each type-check but together produce an
-    import-time ``NameError``. Without this gate the failure only
-    surfaces as 5 back-to-back SC2 games crashing in <20s each.
-    """
-    argv = [sys.executable, "-c", f"import bots.{cand_name}.bot"]
-    try:
-        result = run(
-            argv,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=timeout,
-            cwd=str(_repo_root()),
-        )
-    except subprocess.TimeoutExpired:
-        return f"import-check timed out after {timeout}s"
-    if result.returncode == 0:
-        return None
-    stderr = (result.stderr or "").strip()
-    if not stderr:
-        stderr = (result.stdout or "").strip()
-    tail = stderr[-500:] if len(stderr) > 500 else stderr
-    return tail or f"import-check exited rc={result.returncode} (no stderr)"
-
-
-def run_composition_eval(
-    parent: str,
-    imps: list[Improvement],
-    *,
-    games: int = 5,
-    map_name: str = "Simple64",
-    game_time_limit: int = 1800,
-    hard_timeout: float = 2700.0,
-    run_batch_fn: Callable[..., list[SelfPlayRecord]] | None = None,
-    dev_apply_fn: Callable[[Path, Improvement], None] | None = None,
-    candidate_namer: Callable[[], str] | None = None,
-    on_event: Callable[[dict[str, Any]], None] | None = None,
-    import_check_fn: Callable[[Path, str], str | None] | None = None,
-) -> CompositionResult:
-    """Stack *imps* onto one scratch snapshot and test vs parent.
-
-    Used for both the full-stack phase (all fitness-pass imps) AND the
-    top-1 fallback (single-element list) after a full-stack composition
-    fails. Pass threshold is strict-majority of *games*.
-
-    On pass:
-        - Pointer is flipped to the scratch candidate.
-        - ``snapshot_current()`` creates a permanent ``vN+1``.
-        - Manifest's parent field is rewritten to *parent* (not the scratch).
-        - Scratch dir is rmtree'd.
-        - Pointer now points at the new ``vN+1``.
-
-    On fail:
-        - Scratch dir is rmtree'd.
-        - Pointer is restored to *parent*.
-
-    Progress events:
-      - ``{"type": "composition_start", "candidate", "stacked_titles", "total"}``
-      - ``{"type": "composition_game_end", "wins_cand", "wins_parent", "games_played"}``
-    """
-    if not imps:
-        raise ValueError("run_composition_eval requires at least one improvement")
-
-    if run_batch_fn is None:
-        from orchestrator import selfplay
-
-        run_batch_fn = selfplay.run_batch
-
-    if candidate_namer is None:
-        candidate_namer = _default_candidate_namer
-
-    if import_check_fn is None:
-        import_check_fn = _default_import_check
-
-    live_parent = current_version()
-    if live_parent != parent:
-        raise ValueError(
-            f"parent={parent!r} does not match current_version()={live_parent!r}; "
-            "refusing to snapshot from a pointer that drifted since the caller "
-            "decided."
-        )
-
-    cand_name = _resolve_candidate_name(candidate_namer)
-
-    from orchestrator import snapshot as _snapshot_mod
-
-    cand_dir: Path | None = None
-    try:
-        cand_dir = _snapshot_mod.snapshot_current(cand_name)
-        _restore_pointer(parent)
-        for imp in imps:
-            apply_improvement(cand_dir, imp, dev_apply_fn=dev_apply_fn)
-
-        stacked_titles = [imp.title for imp in imps]
-
-        # Pre-batch import check: bail out cheaply if the stacked
-        # candidate can't even `import bots.<cand>.bot`. Without this the
-        # failure only surfaces as 5 SC2 games each crashing in <20s.
-        import_error = import_check_fn(cand_dir, cand_name)
-        if import_error is not None:
-            _safe_rmtree(cand_dir)
-            _restore_pointer(parent)
-            reason = (
-                f"composition crash-skipped: stacked_parent ({cand_name}; "
-                f"{len(imps)} imps) failed import check; stderr tail: "
-                f"{import_error}"
-            )
-            _log.warning("composition outcome: %s", reason)
-            if on_event is not None:
-                _safe_emit(
-                    on_event,
-                    {
-                        "type": "composition_crash_skipped",
-                        "candidate": cand_name,
-                        "stacked_titles": stacked_titles,
-                        "parent": parent,
-                        "error": import_error,
-                    },
-                )
-            return CompositionResult(
-                parent=parent,
-                candidate=cand_name,
-                stacked_imps=list(imps),
-                record=[],
-                wins_candidate=0,
-                wins_parent=0,
-                games=0,
-                promoted=False,
-                promoted_version=None,
-                reason=reason,
-                crash_skipped=True,
-            )
-        _log.info(
-            "composition: %s (%d stacked imps: %s) vs parent %s (%d games)",
-            cand_name,
-            len(imps),
-            stacked_titles,
-            parent,
-            games,
-        )
-        if on_event is not None:
-            _safe_emit(
-                on_event,
-                {
-                    "type": "composition_start",
-                    "candidate": cand_name,
-                    "stacked_titles": stacked_titles,
-                    "parent": parent,
-                    "total": games,
-                },
-            )
-
-        batch_kwargs: dict[str, Any] = {
-            "game_time_limit": game_time_limit,
-            "hard_timeout": hard_timeout,
-        }
-        if on_event is not None:
-            live = [0, 0]  # [wins_cand, wins_parent]
-
-            def _on_game_end(record: SelfPlayRecord) -> None:
-                if record.winner == cand_name:
-                    live[0] += 1
-                elif record.winner == parent:
-                    live[1] += 1
-                _safe_emit(
-                    on_event,
-                    {
-                        "type": "composition_game_end",
-                        "wins_cand": live[0],
-                        "wins_parent": live[1],
-                    },
-                )
-
-            batch_kwargs["on_game_end"] = _on_game_end
-
-        record = run_batch_fn(
-            cand_name,
-            parent,
-            games,
-            map_name,
-            **batch_kwargs,
-        )
-        wins_cand, wins_parent = _count_wins(record, cand_name, parent)
-        needed = games // 2 + 1
-
-        if wins_cand >= needed:
-            # Promote: flip pointer to scratch, snapshot to vN+1, rewrite
-            # manifest.parent, rmtree scratch.
-            _restore_pointer(cand_name)
-            new_version_dir = _snapshot_mod.snapshot_current()
-            new_version = new_version_dir.name
-            _rewrite_manifest_parent(new_version_dir, parent)
-            _safe_rmtree(cand_dir)
-            reason = (
-                f"composition pass: stacked_parent ({new_version}, was "
-                f"{cand_name}; {len(imps)} imps) beat parent {parent} "
-                f"{wins_cand}-{wins_parent}"
-            )
-            _log.info("composition outcome: %s", reason)
-            return CompositionResult(
-                parent=parent,
-                candidate=cand_name,
-                stacked_imps=list(imps),
-                record=record,
-                wins_candidate=wins_cand,
-                wins_parent=wins_parent,
-                games=games,
-                promoted=True,
-                promoted_version=new_version,
-                reason=reason,
-            )
-
-        _safe_rmtree(cand_dir)
-        _restore_pointer(parent)
-        reason = (
-            f"composition fail: stacked_parent ({cand_name}; {len(imps)} "
-            f"imps) lost to parent {parent} {wins_cand}-{wins_parent}"
-        )
-        _log.info("composition outcome: %s", reason)
-        return CompositionResult(
-            parent=parent,
-            candidate=cand_name,
-            stacked_imps=list(imps),
-            record=record,
-            wins_candidate=wins_cand,
-            wins_parent=wins_parent,
-            games=games,
-            promoted=False,
-            promoted_version=None,
-            reason=reason,
-        )
-    except BaseException:
-        # Defensive cleanup on apply / run_batch / snapshot failures.
-        if cand_dir is not None and cand_dir.exists():
-            _safe_rmtree(cand_dir)
-        _restore_pointer(parent)
-        raise
 
 
 # ---------------------------------------------------------------------------
@@ -1241,7 +941,8 @@ def _format_conflict_retry_prefix(
     lines = [
         "The previous response violated the orthogonality rule. The following",
         "files are touched by MORE THAN ONE improvement, which would cause",
-        "merge conflicts in the composition phase:",
+        "merge conflicts when the caller stacks them onto a single",
+        "promotion candidate:",
         "",
     ]
     for fpath, idxs in sorted(conflicts.items()):
@@ -1342,7 +1043,8 @@ def _summarize_records(
 _PROMPT_HEADER = """You are the improvement advisor for Alpha4Gate, a Protoss \
 StarCraft II bot. Your job: propose a pool of {pool_size} candidate \
 improvements that the evolve loop will fitness-test individually and then \
-STACK TOGETHER on top of the parent for a single composition test.
+STACK TOGETHER onto a single promotion candidate for a regression test \
+against the prior parent.
 
 Parent version: {parent}
 Map: {map_name}
@@ -1389,12 +1091,12 @@ to detect overlap between sibling improvements.
 
 ## Orthogonality constraint (hard requirement)
 
-The {pool_size} improvements will be STACKED together on one snapshot for a \
-composition test. They MUST be orthogonal: **no two items may list the same \
-file in `files_touched`**. If two ideas naturally target the same file, \
-pick the stronger one and propose a different area for the other slot. \
-Include `files_touched` on every item so the caller can mechanically verify \
-orthogonality before running games.
+The fitness-pass subset of these improvements will be STACKED together on \
+one snapshot for the promotion candidate. They MUST be orthogonal: **no two \
+items may list the same file in `files_touched`**. If two ideas naturally \
+target the same file, pick the stronger one and propose a different area \
+for the other slot. Include `files_touched` on every item so the caller can \
+mechanically verify orthogonality before running games.
 
 ## Constraints
 
@@ -1670,8 +1372,8 @@ def generate_pool(
             if remaining:
                 _log.warning(
                     "generate_pool: %d file conflict(s) STILL present after "
-                    "retry; accepting pool anyway — composition phase will "
-                    "surface the merge failure empirically",
+                    "retry; accepting pool anyway — the stack-apply step "
+                    "will surface the merge failure empirically",
                     len(remaining),
                 )
 

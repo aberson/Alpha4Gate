@@ -6,10 +6,11 @@ Per generation the script:
    and plays the parent for ``--games-per-eval`` games. Buckets:
    ``>= games//2 + 1`` wins → ``fitness-pass``; one win short of majority
    → ``fitness-close`` (resurrection-eligible); anything lower → ``evicted``.
-2. **Composition phase** — all fitness-pass imps from this generation are
-   stacked onto one snapshot and tested vs parent. Pass → promote as one
-   ``[evo-auto]`` commit. Fail → fall back to a single-imp composition on
-   the top-ranked fitness-pass imp.
+2. **Stack-apply + promote** — if ≥1 fitness-pass imp, snapshot the parent
+   into a fresh ``vN+1`` directory, apply every fitness-pass imp in rank
+   order, run a ``python -c "import bots.vN+1.bot"`` gate, and (on pass)
+   commit the promotion as one ``[evo-auto]`` commit. Import-check failures
+   roll back the snapshot and skip regression.
 3. **Regression phase** — if anything was promoted, play the new parent
    vs the prior parent. On rollback, ``git revert`` the promote commit
    (also under ``EVO_AUTO=1``) and restore the pointer.
@@ -17,6 +18,12 @@ Per generation the script:
    benched-pass imps get ``retry_count += 1``; any at ``retry_count >= 3``
    evict, the rest flip back to ``active``. Claude is asked for enough
    new imps to top the active pool up to ``--pool-size``.
+
+The composition phase (a third Bernoulli filter that tested the stacked
+candidate against the parent before promotion) was removed 2026-04-23;
+see ``documentation/plans/evolve-gate-reduction-plan.md``. Regression
+already catches bad-interaction stacks, so the composition gate added
+cost without adding unique detection capability.
 
 Usage::
 
@@ -47,7 +54,6 @@ from typing import TYPE_CHECKING, Any, Literal
 if TYPE_CHECKING:
     from orchestrator.contracts import SelfPlayRecord
     from orchestrator.evolve import (
-        CompositionResult,
         FitnessResult,
         Improvement,
         RegressionResult,
@@ -69,14 +75,16 @@ _log = logging.getLogger("evolve")
 
 
 # Per-imp status vocabulary (also used by the dashboard). See
-# documentation/investigations/evolve-algorithm-redesign-investigation.md.
+# documentation/investigations/evolve-algorithm-redesign-investigation.md
+# and documentation/plans/evolve-gate-reduction-plan.md for the post-
+# gate-reduction vocabulary — the two legacy promotion statuses were
+# collapsed into a single ``promoted`` status.
 PoolItemStatus = str
 _ACTIVE: PoolItemStatus = "active"
 _FITNESS_PASS: PoolItemStatus = "fitness-pass"
 _FITNESS_CLOSE: PoolItemStatus = "fitness-close"
 _EVICTED: PoolItemStatus = "evicted"
-_PROMOTED_STACK: PoolItemStatus = "promoted-stack"
-_PROMOTED_SINGLE: PoolItemStatus = "promoted-single"
+_PROMOTED: PoolItemStatus = "promoted"
 _REGRESSION_ROLLBACK: PoolItemStatus = "regression-rollback"
 
 # Upper bound on total fitness evaluations per imp (original + 2 retries).
@@ -109,8 +117,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=5,
         help=(
-            "Games in each phase evaluation (fitness / composition / "
-            "regression). Default: 5. Threshold for pass = strict majority "
+            "Games in each phase evaluation (fitness / regression). "
+            "Default: 5. Threshold for pass = strict majority "
             "(>= games//2 + 1); close-loss = one win short of majority; "
             "anything else = fail."
         ),
@@ -503,20 +511,13 @@ PhaseOutcome = Literal[
     "fitness-pass",
     "fitness-close",
     "fitness-fail",
-    "composition-pass",
-    "composition-fail",
-    "composition-crash-skipped",
+    "stack-apply-pass",
+    "stack-apply-import-fail",
+    "stack-apply-commit-fail",
     "regression-pass",
     "regression-rollback",
     "crash",
 ]
-
-
-def _composition_outcome(result: CompositionResult) -> PhaseOutcome:
-    """Map a :class:`CompositionResult` to its phase-outcome label."""
-    if result.crash_skipped:
-        return "composition-crash-skipped"
-    return "composition-pass" if result.promoted else "composition-fail"
 
 
 def _fitness_row(
@@ -544,30 +545,33 @@ def _fitness_row(
     }
 
 
-def _composition_row(
+def _stack_apply_row(
     generation: int,
     parent: str,
-    result: CompositionResult,
+    new_version: str,
+    stacked_imps: list[Improvement],
     *,
-    is_fallback: bool,
+    outcome: PhaseOutcome,
+    reason: str,
 ) -> dict[str, Any]:
+    """Build a results-row for the stack-apply step.
+
+    ``outcome`` is ``stack-apply-pass`` when the import check succeeded,
+    the snapshot was promoted to *new_version*, and the promote commit
+    landed (if ``--no-commit`` was not set); ``stack-apply-import-fail``
+    when the import check failed and the snapshot was rolled back; or
+    ``stack-apply-commit-fail`` when import passed but the git commit
+    step failed and the snapshot was rolled back.
+    """
     return {
-        "phase": "composition",
+        "phase": "stack_apply",
         "generation": generation,
         "parent": parent,
-        "candidate": result.candidate,
-        "stacked_imps": [_imp_asdict(imp) for imp in result.stacked_imps],
-        "stacked_titles": [imp.title for imp in result.stacked_imps],
-        "is_fallback": is_fallback,
-        "record": [_record_asdict(r) for r in result.record],
-        "wins_cand": result.wins_candidate,
-        "wins_parent": result.wins_parent,
-        "games": result.games,
-        "promoted": result.promoted,
-        "promoted_version": result.promoted_version,
-        "crash_skipped": result.crash_skipped,
-        "outcome": _composition_outcome(result),
-        "reason": result.reason,
+        "new_version": new_version,
+        "stacked_imps": [_imp_asdict(imp) for imp in stacked_imps],
+        "stacked_titles": [imp.title for imp in stacked_imps],
+        "outcome": outcome,
+        "reason": reason,
     }
 
 
@@ -664,14 +668,13 @@ class CurrentRoundPayload:
 
     generation: int = 0
     # Phases: starting / mirror_games / claude_prompt / fitness /
-    # composition / regression / pool_refresh.
+    # stack_apply / regression / pool_refresh.
     phase: str = "starting"
     imp_title: str | None = None
     imp_rank: int | None = None
     imp_index: int | None = None
     candidate: str | None = None
     stacked_titles: list[str] = field(default_factory=list)
-    is_fallback: bool = False
     new_parent: str | None = None
     prior_parent: str | None = None
     games_played: int = 0
@@ -695,7 +698,6 @@ class CurrentRoundPayload:
             "imp_index": self.imp_index,
             "candidate": self.candidate,
             "stacked_titles": list(self.stacked_titles),
-            "is_fallback": self.is_fallback,
             "new_parent": self.new_parent,
             "prior_parent": self.prior_parent,
             "games_played": self.games_played,
@@ -742,21 +744,23 @@ def _last_result_snapshot_fitness(
     }
 
 
-def _last_result_snapshot_composition(
+def _last_result_snapshot_stack_apply(
     generation: int,
-    result: CompositionResult,
+    new_version: str,
+    stacked_imps: list[Improvement],
     *,
-    is_fallback: bool,
+    outcome: PhaseOutcome,
+    reason: str,
 ) -> dict[str, Any]:
     return {
         "generation_index": generation,
-        "phase": "composition",
+        "phase": "stack_apply",
         "imp_title": None,
-        "stacked_titles": [imp.title for imp in result.stacked_imps],
-        "is_fallback": is_fallback,
-        "score": [result.wins_candidate, result.games],
-        "outcome": _composition_outcome(result),
-        "reason": result.reason,
+        "stacked_titles": [imp.title for imp in stacked_imps],
+        "new_version": new_version,
+        "score": [0, 0],
+        "outcome": outcome,
+        "reason": reason,
     }
 
 
@@ -863,14 +867,14 @@ def write_run_log(
         lines.append("(no generations completed)")
     else:
         lines.append(
-            "| gen | fitness pass/close/fail | composition | regression | outcome |"
+            "| gen | fitness pass/close/fail | stack-apply | regression | outcome |"
         )
         lines.append("|---|---|---|---|---|")
         for entry in generation_entries:
             lines.append(
                 f"| {entry['generation']} "
                 f"| {entry['fitness_counts']} "
-                f"| {entry.get('composition_outcome', '—')} "
+                f"| {entry.get('stack_outcome', '—')} "
                 f"| {entry.get('regression_outcome', '—')} "
                 f"| {entry.get('summary', '—')} |"
             )
@@ -894,7 +898,6 @@ def git_commit_evo_auto(
     generation: int,
     stacked_titles: list[str],
     *,
-    is_fallback: bool = False,
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> tuple[bool, str | None]:
     """Stage ``bots/<new_version>/`` + ``current.txt`` and commit.
@@ -906,9 +909,8 @@ def git_commit_evo_auto(
     env = _git_env_evo_auto()
 
     header = (
-        f"evolve: generation {generation} promoted single imp (top-1 fallback)"
-        if is_fallback
-        else f"evolve: generation {generation} promoted stack ({len(stacked_titles)} imps)"
+        f"evolve: generation {generation} promoted "
+        f"stack ({len(stacked_titles)} imps)"
     )
     body_lines = [header, ""]
     for title in stacked_titles:
@@ -1255,6 +1257,254 @@ def _apply_fitness_outcome(
 
 
 # ---------------------------------------------------------------------------
+# Stack-apply + promote (gate-reduction refactor, 2026-04-23)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class StackApplyOutcome:
+    """Outcome of :func:`_stack_apply_and_promote`.
+
+    ``promoted=True`` means a new ``vN+1`` dir now exists, the pointer
+    has been flipped to it, the commit (if ``--no-commit`` was not set)
+    landed as ``promote_sha``, and the caller should proceed to
+    regression. ``promoted=False`` means one of:
+
+    * the pre-promote import check failed, OR
+    * the post-promote git commit step failed, OR
+    * the apply step raised.
+
+    In every ``promoted=False`` case the candidate directory has been
+    removed and the pointer is back at *parent*.
+
+    ``stacked_imps`` is always populated (input echo). ``new_version``
+    and ``promote_sha`` are only meaningful when ``promoted=True``.
+    """
+
+    parent: str
+    stacked_imps: list[Improvement]
+    new_version: str | None
+    promote_sha: str | None
+    promoted: bool
+    outcome: PhaseOutcome
+    reason: str
+
+
+def _default_import_check(
+    new_version: str,
+    *,
+    timeout: float = 30.0,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> str | None:
+    """Run ``python -c "import bots.<new_version>.bot"`` under *timeout* seconds.
+
+    Returns ``None`` on success. On failure returns a trimmed error
+    string (last ~500 chars of stderr/stdout) suitable for surfacing in
+    the results row's ``reason`` field.
+
+    Migrated from the deleted ``orchestrator.evolve._default_import_check``
+    when the composition phase was removed 2026-04-23; see
+    ``documentation/plans/evolve-gate-reduction-plan.md``. The gate now
+    runs AFTER the snapshot + apply + promote-to-``vN+1`` step, so a
+    failure here rolls back the snapshot and skips regression.
+    """
+    argv = [sys.executable, "-c", f"import bots.{new_version}.bot"]
+    try:
+        result = run(
+            argv,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+            cwd=str(_REPO_ROOT),
+        )
+    except subprocess.TimeoutExpired:
+        return f"import-check timed out after {timeout}s"
+    if result.returncode == 0:
+        return None
+    stderr = (result.stderr or "").strip()
+    if not stderr:
+        stderr = (result.stdout or "").strip()
+    tail = stderr[-500:] if len(stderr) > 500 else stderr
+    return tail or f"import-check exited rc={result.returncode} (no stderr)"
+
+
+def _stack_apply_and_promote(
+    parent: str,
+    winning_imps: list[Improvement],
+    *,
+    dev_apply_fn: Any,
+    snapshot_fn: Callable[[], str] | None = None,
+    import_check_fn: Callable[[str], str | None] | None = None,
+    apply_fn: Callable[..., None] | None = None,
+    commit_fn: Callable[..., tuple[bool, str | None]] | None = None,
+    generation: int = 0,
+) -> StackApplyOutcome:
+    """Snapshot *parent* → apply each winning imp → import-check → commit.
+
+    Steps, in order:
+
+    1. Compute the next ``vN+1`` name and pre-assign ``new_version_dir``
+       BEFORE calling ``snapshot_fn`` — this guarantees any partial-copy
+       leak (e.g. manifest write raises mid-snapshot) is cleanable.
+       Then call ``snapshot_fn(new_version)`` (default:
+       ``orchestrator.snapshot.snapshot_current`` with that name) to
+       produce a fresh ``bots/<new_version>/`` directory. ``snapshot_current``
+       also flips the pointer to the new version as a side effect.
+    2. Apply each winning imp to the snapshot in the order given (the
+       caller sorts by rank before calling). ``dev``-type imps are
+       dispatched to *dev_apply_fn*; ``training`` imps are patched
+       directly.
+    3. Run ``python -c "import bots.<new_version>.bot"`` under a 30s
+       timeout. On failure: rmtree the new version directory, restore
+       the pointer to *parent*, and return ``promoted=False`` with
+       ``outcome="stack-apply-import-fail"``.
+    4. Rewrite the manifest's parent field to *parent*
+       (``snapshot_current`` writes the last-pointer value there, which
+       may drift).
+    5. If ``commit_fn`` is provided (caller suppresses with ``--no-commit``),
+       invoke it to create the ``[evolve-promote]`` commit. On commit
+       failure: rmtree the new version dir, restore the pointer to
+       *parent*, and return ``promoted=False`` with
+       ``outcome="stack-apply-commit-fail"``. This keeps in-process
+       state (pointer / parent_current / imp statuses) aligned with
+       what's actually tracked in git: if there's no commit, there's
+       no promotion.
+    6. On success: return ``promoted=True`` with
+       ``outcome="stack-apply-pass"``. The caller proceeds to regression.
+
+    On any apply failure (e.g. malformed training patch, dev sub-agent
+    raised), the snapshot is rolled back and the exception is re-raised
+    to the caller, which wraps it as a crash row. Rollback uses a
+    nested try/except around ``_primitive_restore_pointer`` so a
+    restore-pointer error (e.g. Windows PermissionError after retries)
+    does NOT mask the original apply/snapshot exception — the pointer
+    inconsistency is surfaced on the next run by the phantom-promote
+    guard.
+    """
+    from orchestrator import snapshot as _snapshot_mod
+    from orchestrator.evolve import (
+        _rewrite_manifest_parent,
+        _safe_rmtree,
+        apply_improvement,
+    )
+
+    if import_check_fn is None:
+        import_check_fn = _default_import_check
+    if apply_fn is None:
+        apply_fn = apply_improvement
+
+    # H1 fix: compute target name FIRST so the candidate dir path is
+    # known even if snapshot_fn raises partway through shutil.copytree
+    # or during the manifest/pointer writes that follow the copy.
+    new_version = _snapshot_mod._next_version_name()
+    new_version_dir = _REPO_ROOT / "bots" / new_version
+
+    def _cleanup_on_error() -> None:
+        """Rmtree candidate dir + restore pointer; swallow restore errors.
+
+        Called from every rollback branch. The pointer-restore failure
+        mode is Windows-specific (PermissionError after retries); we
+        log it and let the original exception propagate or the
+        helper's intended return value land — the phantom-promote
+        guard on the next run will catch any lingering inconsistency.
+        """
+        if new_version_dir.exists():
+            _safe_rmtree(new_version_dir)
+        try:
+            _primitive_restore_pointer(parent)
+        except Exception as restore_exc:  # noqa: BLE001
+            _log.error(
+                "failed to restore pointer during cleanup: %s",
+                restore_exc,
+            )
+
+    try:
+        if snapshot_fn is not None:
+            snapshot_fn()
+        else:
+            _snapshot_mod.snapshot_current(new_version)
+        for imp in winning_imps:
+            apply_fn(new_version_dir, imp, dev_apply_fn=dev_apply_fn)
+    except Exception:
+        # H2 fix: wrap pointer-restore in its own try/except (inside
+        # _cleanup_on_error) so a restore failure does not mask the
+        # original apply/snapshot exception reported to the caller.
+        _cleanup_on_error()
+        raise
+
+    # Import gate: the snapshot exists on disk, the pointer is already
+    # flipped to it, apply succeeded — now verify the module imports.
+    import_error = import_check_fn(new_version)
+    if import_error is not None:
+        _cleanup_on_error()
+        reason = (
+            f"stack-apply import-fail: {new_version} ({len(winning_imps)} "
+            f"imps) failed import check; stderr tail: {import_error}"
+        )
+        _log.warning("stack-apply outcome: %s", reason)
+        return StackApplyOutcome(
+            parent=parent,
+            stacked_imps=list(winning_imps),
+            new_version=None,
+            promote_sha=None,
+            promoted=False,
+            outcome="stack-apply-import-fail",
+            reason=reason,
+        )
+
+    # Rewrite manifest parent to the real parent (snapshot_current
+    # records the then-current pointer, which in our case IS the parent,
+    # so this is a no-op most of the time but keeps lineage honest).
+    _rewrite_manifest_parent(new_version_dir, parent)
+
+    # H3 fix: commit BEFORE claiming promotion. If the commit fails,
+    # rollback the snapshot and report stack-apply-commit-fail so
+    # parent_current / per_item_state never advance into a state that
+    # disagrees with git HEAD.
+    promote_sha: str | None = None
+    if commit_fn is not None:
+        commit_ok, sha = commit_fn(
+            new_version,
+            generation,
+            [imp.title for imp in winning_imps],
+        )
+        if not commit_ok:
+            _cleanup_on_error()
+            reason = (
+                f"stack-apply commit-fail: {new_version} "
+                f"({len(winning_imps)} imps) imported cleanly but git "
+                f"commit failed; rolled back to {parent}"
+            )
+            _log.warning("stack-apply outcome: %s", reason)
+            return StackApplyOutcome(
+                parent=parent,
+                stacked_imps=list(winning_imps),
+                new_version=None,
+                promote_sha=None,
+                promoted=False,
+                outcome="stack-apply-commit-fail",
+                reason=reason,
+            )
+        promote_sha = sha
+
+    reason = (
+        f"stack-apply pass: promoted {new_version} "
+        f"({len(winning_imps)} imps) from parent {parent}"
+    )
+    _log.info("stack-apply outcome: %s", reason)
+    return StackApplyOutcome(
+        parent=parent,
+        stacked_imps=list(winning_imps),
+        new_version=new_version,
+        promote_sha=promote_sha,
+        promoted=True,
+        outcome="stack-apply-pass",
+        reason=reason,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Orchestration loop
 # ---------------------------------------------------------------------------
 
@@ -1264,7 +1514,7 @@ def run_loop(
     *,
     generate_pool_fn: Callable[..., list[Improvement]] | None = None,
     run_fitness_fn: Callable[..., FitnessResult] | None = None,
-    run_composition_fn: Callable[..., CompositionResult] | None = None,
+    stack_apply_fn: Callable[..., StackApplyOutcome] | None = None,
     run_regression_fn: Callable[..., RegressionResult] | None = None,
     claude_fn: Callable[[str], str] | None = None,
     commit_fn: Callable[..., tuple[bool, str | None]] | None = None,
@@ -1289,10 +1539,8 @@ def run_loop(
         from orchestrator.evolve import run_fitness_eval
 
         run_fitness_fn = run_fitness_eval
-    if run_composition_fn is None:
-        from orchestrator.evolve import run_composition_eval
-
-        run_composition_fn = run_composition_eval
+    if stack_apply_fn is None:
+        stack_apply_fn = _stack_apply_and_promote
     if run_regression_fn is None:
         from orchestrator.evolve import run_regression_eval
 
@@ -1580,7 +1828,6 @@ def run_loop(
             gen_payload.imp_index = idx
             gen_payload.candidate = None
             gen_payload.stacked_titles = []
-            gen_payload.is_fallback = False
             gen_payload.new_parent = None
             gen_payload.prior_parent = None
             gen_payload.reset_progress(args.games_per_eval)
@@ -1680,67 +1927,55 @@ def run_loop(
             key=lambda i: pool[i].rank,
         )
 
-        # ---------- COMPOSITION PHASE ----------
+        # ---------- STACK-APPLY + PROMOTE PHASE ----------
+        # All fitness-pass imps are applied in rank order to a fresh
+        # snapshot of the parent. An import-check gate runs AFTER apply
+        # but BEFORE regression; import failure rolls back the snapshot
+        # and skips regression. Pre-2026-04-23 this was a full
+        # composition phase with its own 5-game Bernoulli gate — removed
+        # per documentation/plans/evolve-gate-reduction-plan.md.
         prior_parent = parent_current
-        composition_outcome_label: str = "none"
+        stack_outcome_label: str = "none"
         promote_sha: str | None = None
         promoted_imp_idxs: list[int] = []
-        composition_result: CompositionResult | None = None
 
         if not winner_idxs:
             _log.info(
                 "evolve: generation %d — no fitness passes; skipping "
-                "composition phase",
+                "stack-apply",
                 generation_index,
             )
-            composition_outcome_label = "no winners"
+            stack_outcome_label = "no winners"
         else:
             winning_imps = [pool[i] for i in winner_idxs]
-            gen_payload.phase = "composition"
+            gen_payload.phase = "stack_apply"
             gen_payload.imp_title = None
             gen_payload.imp_rank = None
             gen_payload.imp_index = None
             gen_payload.candidate = None
             gen_payload.stacked_titles = [imp.title for imp in winning_imps]
-            gen_payload.is_fallback = False
             gen_payload.new_parent = None
             gen_payload.prior_parent = None
-            gen_payload.reset_progress(args.games_per_eval)
+            gen_payload.reset_progress(0)
             _current_round_writer(gen_payload)
 
-            def _on_composition_event(
-                event: dict[str, Any],
-                _p: CurrentRoundPayload = gen_payload,
-            ) -> None:
-                etype = event.get("type")
-                if etype == "composition_start":
-                    _p.candidate = event.get("candidate")
-                    _p.games_total = event.get("total", _p.games_total)
-                    _p.games_played = 0
-                    _p.score_cand = 0
-                    _p.score_parent = 0
-                elif etype == "composition_game_end":
-                    _p.games_played += 1
-                    _p.score_cand = event.get("wins_cand", _p.score_cand)
-                    _p.score_parent = event.get("wins_parent", _p.score_parent)
-                _current_round_writer(_p)
-
             try:
-                composition_result = run_composition_fn(
+                # H3 fix: commit is now part of the helper's contract.
+                # If --no-commit is set, pass commit_fn=None so the
+                # helper skips the commit step entirely (tests + CI
+                # dry-runs rely on this). Otherwise the helper's own
+                # rollback handles commit-failure cleanup.
+                stack_result = stack_apply_fn(
                     parent_current,
                     winning_imps,
-                    games=args.games_per_eval,
-                    map_name=args.map,
-                    game_time_limit=args.game_time_limit,
-                    hard_timeout=args.hard_timeout,
-                    run_batch_fn=run_batch_fn,
                     dev_apply_fn=dev_apply_fn,
-                    on_event=_on_composition_event,
+                    commit_fn=None if args.no_commit else commit_fn,
+                    generation=generation_index,
                 )
             except Exception as exc:
                 tb = traceback.format_exc()
                 _log.error(
-                    "evolve: composition crash on generation %d: %s",
+                    "evolve: stack-apply crash on generation %d: %s",
                     generation_index,
                     exc,
                     exc_info=True,
@@ -1749,7 +1984,7 @@ def run_loop(
                     args.results_path,
                     _crash_row(
                         generation_index,
-                        "composition",
+                        "stack_apply",
                         parent_current,
                         None,
                         exc,
@@ -1759,212 +1994,55 @@ def run_loop(
                 append_crash_log(
                     args.crash_log_path,
                     generation=generation_index,
-                    phase="composition",
+                    phase="stack_apply",
                     parent=parent_current,
                     imp=None,
                     exc=exc,
                     traceback_str=tb,
                 )
                 last_result_snap = _last_result_snapshot_crash(
-                    generation_index, "composition", None, exc
+                    generation_index, "stack_apply", None, exc
                 )
-                composition_outcome_label = "crash"
-                composition_result = None
+                stack_outcome_label = "crash"
             else:
                 append_phase_result(
                     args.results_path,
-                    _composition_row(
+                    _stack_apply_row(
                         generation_index,
                         parent_current,
-                        composition_result,
-                        is_fallback=False,
+                        stack_result.new_version or "",
+                        list(stack_result.stacked_imps),
+                        outcome=stack_result.outcome,
+                        reason=stack_result.reason,
                     ),
                 )
-                last_result_snap = _last_result_snapshot_composition(
-                    generation_index, composition_result, is_fallback=False
+                last_result_snap = _last_result_snapshot_stack_apply(
+                    generation_index,
+                    stack_result.new_version or "",
+                    list(stack_result.stacked_imps),
+                    outcome=stack_result.outcome,
+                    reason=stack_result.reason,
                 )
 
-                if composition_result.promoted:
-                    composition_outcome_label = "stack-pass"
+                if stack_result.promoted and stack_result.new_version:
+                    # Helper already did the commit (or skipped it when
+                    # --no-commit was honored). State mutations ONLY
+                    # happen on the success branch — a commit failure
+                    # returns promoted=False with the rollback already
+                    # done inside the helper, so parent_current stays
+                    # put and the phantom-promote guard never fires.
+                    stack_outcome_label = "stack-apply-pass"
                     promoted_imp_idxs = list(winner_idxs)
-                    parent_current = composition_result.promoted_version or parent_current
+                    parent_current = stack_result.new_version
+                    promote_sha = stack_result.promote_sha
                     for idx in promoted_imp_idxs:
-                        per_item_state[idx].status = _PROMOTED_STACK
-                    # Commit the stack promotion.
-                    if not args.no_commit:
-                        commit_ok, sha = commit_fn(
-                            parent_current,
-                            generation_index,
-                            [pool[i].title for i in promoted_imp_idxs],
-                            is_fallback=False,
-                        )
-                        promote_sha = sha if commit_ok else None
-                        if not commit_ok:
-                            _log.warning(
-                                "evolve: stack-promote commit failed on gen %d",
-                                generation_index,
-                            )
+                        per_item_state[idx].status = _PROMOTED
                 else:
-                    # Fallback strategy:
-                    # - lost-by-games stack → try top-1 imp only (existing
-                    #   behavior; dropping to a lower-ranked imp is unlikely
-                    #   to beat a parent that just beat the full stack).
-                    #   Pick that top-1 by empirical fitness wins, not by
-                    #   Claude's a-priori rank — rank is a guess, fitness
-                    #   is a measurement (run 20260422-0824 gen 2:
-                    #   8-1 winner skipped for rank-1 6-3 winner).
-                    # - crash-skipped stack → rotate through winners rank
-                    #   1 → N until one imports. First non-crash-skipped
-                    #   fallback is the fallback result — if it wins we
-                    #   promote, if it loses we stop. This catches the
-                    #   failure mode where one imp's edit poisons the
-                    #   stack at import time (run 20260422-0559: 5/5 SC2
-                    #   games crashed in <20s each).
-                    if composition_result.crash_skipped:
-                        composition_outcome_label = "stack-crash-skipped"
-                        fallback_rank_order = list(winner_idxs)
-                    else:
-                        composition_outcome_label = "stack-fail"
-                        fallback_rank_order = sorted(
-                            winner_idxs,
-                            key=lambda i: -fitness_results[i].wins_candidate,
-                        )[:1]
-
-                    fallback_result: CompositionResult | None = None
-                    fallback_idx: int | None = None
-                    for try_idx in fallback_rank_order:
-                        try_imp = pool[try_idx]
-                        gen_payload.is_fallback = True
-                        gen_payload.stacked_titles = [try_imp.title]
-                        gen_payload.reset_progress(args.games_per_eval)
-                        _current_round_writer(gen_payload)
-
-                        try:
-                            candidate_result = run_composition_fn(
-                                parent_current,
-                                [try_imp],
-                                games=args.games_per_eval,
-                                map_name=args.map,
-                                game_time_limit=args.game_time_limit,
-                                hard_timeout=args.hard_timeout,
-                                run_batch_fn=run_batch_fn,
-                                dev_apply_fn=dev_apply_fn,
-                                on_event=_on_composition_event,
-                            )
-                        except Exception as exc:
-                            tb = traceback.format_exc()
-                            _log.error(
-                                "evolve: fallback composition crash gen %d "
-                                "rank %d: %s",
-                                generation_index,
-                                try_imp.rank,
-                                exc,
-                                exc_info=True,
-                            )
-                            append_phase_result(
-                                args.results_path,
-                                _crash_row(
-                                    generation_index,
-                                    "composition",
-                                    parent_current,
-                                    try_imp,
-                                    exc,
-                                    tb,
-                                ),
-                            )
-                            append_crash_log(
-                                args.crash_log_path,
-                                generation=generation_index,
-                                phase="composition",
-                                parent=parent_current,
-                                imp=try_imp,
-                                exc=exc,
-                                traceback_str=tb,
-                            )
-                            last_result_snap = _last_result_snapshot_crash(
-                                generation_index, "composition", try_imp, exc
-                            )
-                            composition_outcome_label = "fallback-crash"
-                            break  # hard exception: abort rotation
-
-                        append_phase_result(
-                            args.results_path,
-                            _composition_row(
-                                generation_index,
-                                parent_current,
-                                candidate_result,
-                                is_fallback=True,
-                            ),
-                        )
-
-                        if candidate_result.crash_skipped:
-                            _log.info(
-                                "evolve: gen %d fallback rank %d "
-                                "crash-skipped; trying next rank",
-                                generation_index,
-                                try_imp.rank,
-                            )
-                            last_result_snap = (
-                                _last_result_snapshot_composition(
-                                    generation_index,
-                                    candidate_result,
-                                    is_fallback=True,
-                                )
-                            )
-                            continue  # try next rank
-
-                        # Got a non-crash result — use it whether it won
-                        # or lost. Rotation stops here.
-                        fallback_result = candidate_result
-                        fallback_idx = try_idx
-                        last_result_snap = _last_result_snapshot_composition(
-                            generation_index,
-                            candidate_result,
-                            is_fallback=True,
-                        )
-                        break
-                    else:
-                        # Loop completed without break → every fallback
-                        # rank crash-skipped. No promote-eligible imp.
-                        composition_outcome_label = (
-                            "fallback-all-crash-skipped"
-                        )
-
-                    if (
-                        fallback_result is not None
-                        and fallback_idx is not None
-                    ):
-                        if fallback_result.promoted:
-                            composition_outcome_label = "single-pass"
-                            promoted_imp_idxs = [fallback_idx]
-                            per_item_state[fallback_idx].status = (
-                                _PROMOTED_SINGLE
-                            )
-                            parent_current = (
-                                fallback_result.promoted_version
-                                or parent_current
-                            )
-                            composition_result = fallback_result
-                            # Remaining winners stay benched as
-                            # fitness-pass; the pool-refresh step will
-                            # flip them back to active. Commit the
-                            # single promotion.
-                            if not args.no_commit:
-                                commit_ok, sha = commit_fn(
-                                    parent_current,
-                                    generation_index,
-                                    [pool[fallback_idx].title],
-                                    is_fallback=True,
-                                )
-                                promote_sha = sha if commit_ok else None
-                                if not commit_ok:
-                                    _log.warning(
-                                        "evolve: single-promote commit "
-                                        "failed on gen %d",
-                                        generation_index,
-                                    )
-                        else:
-                            composition_outcome_label = "single-fail"
+                    # Import-check or commit failed; snapshot rolled
+                    # back inside the helper. No promotion this
+                    # generation. The outcome label carries the
+                    # specific failure flavor for the run state.
+                    stack_outcome_label = stack_result.outcome
 
             write_pool_state(
                 args.pool_path,
@@ -1993,7 +2071,6 @@ def run_loop(
             gen_payload.imp_index = None
             gen_payload.candidate = None
             gen_payload.stacked_titles = []
-            gen_payload.is_fallback = False
             gen_payload.new_parent = parent_current
             gen_payload.prior_parent = prior_parent
             gen_payload.reset_progress(args.games_per_eval)
@@ -2125,7 +2202,6 @@ def run_loop(
             gen_payload.imp_index = None
             gen_payload.candidate = None
             gen_payload.stacked_titles = []
-            gen_payload.is_fallback = False
             gen_payload.new_parent = None
             gen_payload.prior_parent = None
             gen_payload.reset_progress(delta)
@@ -2173,7 +2249,7 @@ def run_loop(
 
         # Summarise the generation for the run-log markdown.
         stack_summary = (
-            f"{composition_outcome_label}"
+            f"{stack_outcome_label}"
             + (
                 f" → promoted {parent_current}"
                 if promoted_imp_idxs and regression_outcome_label != "rollback"
@@ -2193,7 +2269,7 @@ def run_loop(
                         else ""
                     )
                 ),
-                "composition_outcome": composition_outcome_label,
+                "stack_outcome": stack_outcome_label,
                 "regression_outcome": regression_outcome_label,
                 "summary": stack_summary,
             }

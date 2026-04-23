@@ -1,11 +1,11 @@
 """CLI-level tests for ``scripts/evolve.py`` (generation-phase algorithm).
 
 Exercises the orchestration loop's control flow — pool generation, fitness
-phase, composition (stack + top-1 fallback), regression + rollback, pool
-refresh, commit / revert helpers, and state-file writes. Every heavy
-boundary (``run_fitness_eval``, ``run_composition_eval``,
-``run_regression_eval``, ``generate_pool``, ``git_commit_evo_auto``,
-``git_revert_evo_auto``) is replaced with a scripted fake.
+phase, stack-apply + import check, regression + rollback, pool refresh,
+commit / revert helpers, and state-file writes. Every heavy boundary
+(``run_fitness_eval``, ``_stack_apply_and_promote``, ``run_regression_eval``,
+``generate_pool``, ``git_commit_evo_auto``, ``git_revert_evo_auto``) is
+replaced with a scripted fake.
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ import pytest
 
 from orchestrator.contracts import SelfPlayRecord
 from orchestrator.evolve import (
-    CompositionResult,
     FitnessResult,
     Improvement,
     RegressionResult,
@@ -136,51 +135,6 @@ def _fitness(
     )
 
 
-def _composition(
-    imps: list[Improvement],
-    *,
-    promoted: bool,
-    wins: int = 3,
-    games: int = 5,
-    candidate: str = "cand_stack",
-    parent: str = "v0",
-    promoted_version: str | None = "v1",
-    crash_skipped: bool = False,
-) -> CompositionResult:
-    if crash_skipped:
-        return CompositionResult(
-            parent=parent,
-            candidate=candidate,
-            stacked_imps=list(imps),
-            record=[],
-            wins_candidate=0,
-            wins_parent=0,
-            games=0,
-            promoted=False,
-            promoted_version=None,
-            reason=f"composition crash-skipped: {candidate} failed import check",
-            crash_skipped=True,
-        )
-    record = [_rec(candidate, parent, candidate) for _ in range(wins)] + [
-        _rec(candidate, parent, parent) for _ in range(games - wins)
-    ]
-    return CompositionResult(
-        parent=parent,
-        candidate=candidate,
-        stacked_imps=list(imps),
-        record=record,
-        wins_candidate=wins,
-        wins_parent=games - wins,
-        games=games,
-        promoted=promoted,
-        promoted_version=promoted_version if promoted else None,
-        reason=(
-            f"composition {'pass' if promoted else 'fail'}: "
-            f"{candidate} {wins}-{games - wins}"
-        ),
-    )
-
-
 def _regression(
     *,
     new_parent: str,
@@ -268,48 +222,101 @@ class _ScriptedFitness:
         )
 
 
-class _ScriptedComposition:
-    """Pops an outcome per call; reuses imps from caller.
+class _ScriptedStackApply:
+    """Pops a stack-apply outcome per call; echoes imps back from the caller.
 
-    Plan entries may be ``(promoted, new_version)`` (back-compat shape)
-    or ``(promoted, new_version, crash_skipped)``. When
-    ``crash_skipped=True`` the returned result simulates the
-    pre-batch import-check failure path (games=0, no record).
+    Plan entries are ``(promoted, new_version)``. ``promoted=True``
+    means the import check passed and the snapshot was promoted to
+    ``new_version``; ``promoted=False`` means the import check failed
+    and the snapshot was rolled back (``new_version`` should be
+    ``None``).
+
+    Post-H3-refactor: the helper's contract includes invoking the
+    caller-supplied ``commit_fn``. When ``promoted=True`` and the
+    caller passed ``commit_fn`` via kwargs, this scripted stand-in
+    calls it so tests asserting commit observation still work. If
+    ``commit_fn`` returns ``(False, None)``, the scripted outcome is
+    flipped to ``stack-apply-commit-fail`` with ``promoted=False``
+    — matching what the real helper does on commit failure.
+
+    Imports ``StackApplyOutcome`` from the module under test lazily so
+    the fixture works with the dynamic module-loading dance in
+    :func:`_load_cli_module`.
     """
 
-    def __init__(
-        self,
-        plan: list[
-            tuple[bool, str | None] | tuple[bool, str | None, bool]
-        ],
-    ) -> None:
-        self._plan: list[
-            tuple[bool, str | None] | tuple[bool, str | None, bool]
-        ] = list(plan)
+    def __init__(self, plan: list[tuple[bool, str | None]]) -> None:
+        self._plan: list[tuple[bool, str | None]] = list(plan)
         self.calls: list[dict[str, Any]] = []
 
     def __call__(
         self,
         parent: str,
-        imps: list[Improvement],
+        winning_imps: list[Improvement],
         **kwargs: Any,
-    ) -> CompositionResult:
-        self.calls.append({"parent": parent, "imps": list(imps), "kwargs": kwargs})
+    ) -> Any:
+        self.calls.append(
+            {
+                "parent": parent,
+                "winning_imps": list(winning_imps),
+                "kwargs": kwargs,
+            }
+        )
         if not self._plan:
             raise AssertionError(
-                "ScriptedComposition: no more scripted outcomes; "
+                "ScriptedStackApply: no more scripted outcomes; "
                 f"call #{len(self.calls)} has nothing to return"
             )
-        entry = self._plan.pop(0)
-        promoted = entry[0]
-        new_version = entry[1]
-        crash_skipped = entry[2] if len(entry) > 2 else False
-        return _composition(
-            imps,
-            promoted=promoted,
+        promoted, new_version = self._plan.pop(0)
+        cli = _load_cli_module()
+        outcome: str
+        reason: str
+        promote_sha: str | None = None
+        if promoted:
+            # Simulate the helper's commit step: if the caller passed
+            # commit_fn, invoke it and honor the (ok, sha) return.
+            commit_fn = kwargs.get("commit_fn")
+            generation = kwargs.get("generation", 0)
+            if commit_fn is not None:
+                commit_ok, sha = commit_fn(
+                    new_version,
+                    generation,
+                    [imp.title for imp in winning_imps],
+                )
+                if not commit_ok:
+                    outcome = "stack-apply-commit-fail"
+                    reason = (
+                        f"stack-apply commit-fail: {new_version} "
+                        f"({len(winning_imps)} imps) rolled back"
+                    )
+                    return cli.StackApplyOutcome(
+                        parent=parent,
+                        stacked_imps=list(winning_imps),
+                        new_version=None,
+                        promote_sha=None,
+                        promoted=False,
+                        outcome=outcome,
+                        reason=reason,
+                    )
+                promote_sha = sha
+            outcome = "stack-apply-pass"
+            reason = (
+                f"stack-apply pass: promoted {new_version} "
+                f"({len(winning_imps)} imps) from parent {parent}"
+            )
+        else:
+            outcome = "stack-apply-import-fail"
+            reason = (
+                f"stack-apply import-fail: scratch ({len(winning_imps)} "
+                f"imps) failed import check"
+            )
+        return cli.StackApplyOutcome(
             parent=parent,
-            promoted_version=new_version,
-            crash_skipped=crash_skipped,
+            stacked_imps=list(winning_imps),
+            new_version=new_version if promoted else None,
+            promote_sha=promote_sha,
+            promoted=promoted,
+            outcome=outcome,
+            reason=reason,
         )
 
 
@@ -455,7 +462,7 @@ def test_sc2_not_installed_returns_1(
             AssertionError("should not reach pool gen")
         ),
         run_fitness_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
-        run_composition_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
         run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
         current_version_fn=lambda: "v0",
     )
@@ -476,7 +483,7 @@ def test_pool_generation_failure_returns_1(
         args,
         generate_pool_fn=boom,
         run_fitness_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
-        run_composition_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
         run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
         current_version_fn=lambda: "v0",
     )
@@ -512,8 +519,8 @@ def test_pool_exhaustion_stops_loop(
         args,
         generate_pool_fn=refresh_empty,
         run_fitness_fn=scripted_fitness,
-        run_composition_fn=lambda *a, **k: (_ for _ in ()).throw(
-            AssertionError("no winners, composition should not fire")
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("no winners, stack-apply should not fire")
         ),
         run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
             AssertionError("no promotion, regression should not fire")
@@ -556,7 +563,7 @@ def test_wall_clock_stops_before_second_generation(
         args,
         generate_pool_fn=refresh_same,
         run_fitness_fn=scripted_fitness,
-        run_composition_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
         run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
         current_version_fn=lambda: "v0",
         time_fn=fake_time,
@@ -568,7 +575,7 @@ def test_wall_clock_stops_before_second_generation(
 
 
 # ---------------------------------------------------------------------------
-# 4. Happy-path single generation (stack promote + regression pass)
+# 4. Happy-path single generation (stack-apply promote + regression pass)
 # ---------------------------------------------------------------------------
 
 
@@ -581,7 +588,7 @@ def test_happy_path_stack_promote_then_regression_pass(
 
     # 2 pass, 1 fail.
     fitness = _ScriptedFitness(["pass", "pass", "fail"])
-    composition = _ScriptedComposition([(True, "v1")])
+    stack_apply = _ScriptedStackApply([(True, "v1")])
     regression = _ScriptedRegression([False])  # regression pass → keep new
 
     parent_holder = {"current": "v0"}
@@ -598,16 +605,16 @@ def test_happy_path_stack_promote_then_regression_pass(
         args,
         generate_pool_fn=refresh,
         run_fitness_fn=fitness,
-        run_composition_fn=composition,
+        stack_apply_fn=stack_apply,
         run_regression_fn=regression,
         current_version_fn=current_version_fn,
     )
     assert rc == 0
     # Fitness ran once per pool item (3 calls).
     assert len(fitness.calls) == 3
-    # Composition ran once, against 2 winners.
-    assert len(composition.calls) == 1
-    assert len(composition.calls[0]["imps"]) == 2
+    # Stack-apply ran once, against 2 winners.
+    assert len(stack_apply.calls) == 1
+    assert len(stack_apply.calls[0]["winning_imps"]) == 2
     # Regression ran once, v1 vs v0.
     assert len(regression.calls) == 1
     assert regression.calls[0]["new_parent"] == "v1"
@@ -618,303 +625,156 @@ def test_happy_path_stack_promote_then_regression_pass(
     assert state["generations_promoted"] == 1
     assert state["parent_current"] == "v1"
 
-    # Pool file shows two promoted-stack, one evicted.
+    # Pool file shows two promoted, one evicted.
     pool_state = json.loads(args.pool_path.read_text(encoding="utf-8"))
     statuses = [item["status"] for item in pool_state["pool"]]
-    assert statuses.count("promoted-stack") == 2
+    assert statuses.count("promoted") == 2
     assert statuses.count("evicted") == 1
 
 
-# ---------------------------------------------------------------------------
-# 5. Composition fail → top-1 fallback promote
-# ---------------------------------------------------------------------------
-
-
-def test_stack_fail_fallback_single_promotes(
+def test_all_fitness_pass_imps_stacked_into_new_version(
     cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
-    args = _build_args(tmp_path, pool_size=3, no_commit=True)
-    pool = _make_pool(3)
+    """Option B (gate-reduction plan): every fitness-pass imp is stacked.
 
-    fitness = _ScriptedFitness(["pass", "pass", "fail"])
-    # First composition (stack) fails; second (single) passes.
-    composition = _ScriptedComposition([(False, None), (True, "v1")])
+    Pre-2026-04-23 the composition phase decided empirically which subset
+    stacked cleanly. Post-removal, the caller trusts regression to catch
+    bad interactions and stacks ALL fitness-pass imps unconditionally.
+    """
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    args = _build_args(tmp_path, pool_size=4, no_commit=True)
+    pool = _make_pool(4)
+
+    # 3 pass, 1 fail — all three winners should stack.
+    fitness = _ScriptedFitness(["pass", "pass", "pass", "fail"])
+    stack_apply = _ScriptedStackApply([(True, "v1")])
     regression = _ScriptedRegression([False])
 
     def refresh(*a: Any, **k: Any) -> list[Improvement]:
-        if k.get("skip_mirror"):
-            return []
-        return pool
+        return [] if k.get("skip_mirror") else pool
 
-    parent_holder = {"current": "v0"}
     rc = cli.run_loop(
         args,
         generate_pool_fn=refresh,
         run_fitness_fn=fitness,
-        run_composition_fn=composition,
+        stack_apply_fn=stack_apply,
         run_regression_fn=regression,
-        current_version_fn=lambda: parent_holder["current"],
+        current_version_fn=lambda: "v0",
     )
     assert rc == 0
-    assert len(composition.calls) == 2
-    # First composition was the full stack (2 imps), second was top-1.
-    assert len(composition.calls[0]["imps"]) == 2
-    assert len(composition.calls[1]["imps"]) == 1
-
-    state = json.loads(args.state_path.read_text(encoding="utf-8"))
-    assert state["generations_promoted"] == 1
-    assert state["parent_current"] == "v1"
+    assert len(stack_apply.calls) == 1
+    # All three fitness-pass imps were passed in, sorted by rank.
+    winning = stack_apply.calls[0]["winning_imps"]
+    assert [imp.rank for imp in winning] == [1, 2, 3]
 
     pool_state = json.loads(args.pool_path.read_text(encoding="utf-8"))
     statuses = [item["status"] for item in pool_state["pool"]]
-    assert statuses.count("promoted-single") == 1
+    assert statuses.count("promoted") == 3
+    assert statuses.count("evicted") == 1
 
 
-def test_stack_crash_skipped_rotates_through_ranks_until_pass(
+def test_import_fail_outcome_skips_regression_and_commit(
     cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Stack crash-skipped must rotate fallback through winner ranks.
+    """Import-fail outcome must skip regression and leave parent unchanged.
 
-    Addresses the run 20260422-0559 failure mode: the full stack fails
-    import check (crash_skipped=True), so the orchestrator should try
-    each fitness-pass imp individually in rank order until one either
-    imports AND wins (promote) or imports AND loses (stop). Without
-    this rotation, the legacy top-1 fallback is stuck with whichever
-    imp broke the stack.
+    CLI-level test with the helper fully mocked — asserts the
+    control-flow contract only (no filesystem rollback verification).
+    The real rollback primitive is exercised by the primitive tests in
+    ``tests/test_evolve.py::TestStackApplyAndPromote``.
     """
-    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
-    args = _build_args(tmp_path, pool_size=3, no_commit=True)
-    pool = _make_pool(3)
-
-    fitness = _ScriptedFitness(["pass", "pass", "pass"])
-    # Stack crash-skipped, rank 1 alone crash-skipped, rank 2 alone passes.
-    composition = _ScriptedComposition(
-        [
-            (False, None, True),   # full stack — crash-skipped
-            (False, None, True),   # rank 1 alone — also crash-skipped
-            (True, "v1", False),   # rank 2 alone — passes
-        ]
-    )
-    regression = _ScriptedRegression([False])
-
-    def refresh(*a: Any, **k: Any) -> list[Improvement]:
-        if k.get("skip_mirror"):
-            return []
-        return pool
-
-    parent_holder = {"current": "v0"}
-    rc = cli.run_loop(
-        args,
-        generate_pool_fn=refresh,
-        run_fitness_fn=fitness,
-        run_composition_fn=composition,
-        run_regression_fn=regression,
-        current_version_fn=lambda: parent_holder["current"],
-    )
-    assert rc == 0
-    # Three composition calls: stack (3 imps), rank 1, rank 2.
-    assert len(composition.calls) == 3
-    assert len(composition.calls[0]["imps"]) == 3
-    assert len(composition.calls[1]["imps"]) == 1
-    assert len(composition.calls[2]["imps"]) == 1
-    # Rank 1 imp tried first, rank 2 imp second.
-    assert composition.calls[1]["imps"][0].rank == 1
-    assert composition.calls[2]["imps"][0].rank == 2
-
-    state = json.loads(args.state_path.read_text(encoding="utf-8"))
-    assert state["generations_promoted"] == 1
-    assert state["parent_current"] == "v1"
-
-    pool_state = json.loads(args.pool_path.read_text(encoding="utf-8"))
-    # Only rank 2 got promoted-single. Ranks 1 and 3 remain as pass.
-    rank2_status = next(i for i in pool_state["pool"] if i["rank"] == 2)[
-        "status"
-    ]
-    assert rank2_status == "promoted-single"
-
-
-def test_stack_crash_skipped_all_ranks_crash_no_promotion(
-    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Every rank crash-skips → no promotion, parent unchanged."""
-    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
-    args = _build_args(tmp_path, pool_size=2, no_commit=True)
-    pool = _make_pool(2)
-
-    fitness = _ScriptedFitness(["pass", "pass"])
-    composition = _ScriptedComposition(
-        [
-            (False, None, True),  # stack crash-skipped
-            (False, None, True),  # rank 1 crash-skipped
-            (False, None, True),  # rank 2 crash-skipped
-        ]
-    )
-
-    def refresh(*a: Any, **k: Any) -> list[Improvement]:
-        if k.get("skip_mirror"):
-            return []
-        return pool
-
-    rc = cli.run_loop(
-        args,
-        generate_pool_fn=refresh,
-        run_fitness_fn=fitness,
-        run_composition_fn=composition,
-        run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
-            AssertionError("no promotion, regression should not fire")
-        ),
-        current_version_fn=lambda: "v0",
-    )
-    assert rc == 0
-    # Stack + rank 1 + rank 2 = 3 calls; none promoted.
-    assert len(composition.calls) == 3
-    state = json.loads(args.state_path.read_text(encoding="utf-8"))
-    assert state["generations_promoted"] == 0
-    assert state["parent_current"] == "v0"
-
-
-def test_stack_lost_by_games_does_not_rotate_beyond_top1(
-    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Lost-by-games stack → top-1 only (no rank rotation).
-
-    Preserves the pre-existing fallback behavior: a stack that lost on
-    the board (not crash-skipped) only gets a single top-1 fallback
-    attempt. Rotating further down the ranks after a real loss is
-    statistically wasteful.
-    """
-    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
-    args = _build_args(tmp_path, pool_size=3, no_commit=True)
-    pool = _make_pool(3)
-
-    fitness = _ScriptedFitness(["pass", "pass", "pass"])
-    # Stack lost (not crash_skipped), rank 1 alone also lost.
-    composition = _ScriptedComposition(
-        [
-            (False, None, False),  # stack — lost by games
-            (False, None, False),  # rank 1 alone — also lost
-        ]
-    )
-
-    def refresh(*a: Any, **k: Any) -> list[Improvement]:
-        if k.get("skip_mirror"):
-            return []
-        return pool
-
-    rc = cli.run_loop(
-        args,
-        generate_pool_fn=refresh,
-        run_fitness_fn=fitness,
-        run_composition_fn=composition,
-        run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
-            AssertionError("no promotion, regression should not fire")
-        ),
-        current_version_fn=lambda: "v0",
-    )
-    assert rc == 0
-    # Exactly 2 calls: stack + rank-1 fallback. No rank-2 attempt.
-    assert len(composition.calls) == 2
-    assert len(composition.calls[0]["imps"]) == 3
-    assert len(composition.calls[1]["imps"]) == 1
-    assert composition.calls[1]["imps"][0].rank == 1
-
-
-def test_stack_fail_fallback_picks_highest_fitness_not_lowest_rank(
-    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Lost-by-games fallback picks the imp with the highest fitness
-    wins, not the imp with the lowest rank.
-
-    Addresses run 20260422-0824 gen 2: the 8-1 fitness-pass imp at
-    rank 3 was skipped in favor of a rank-1 6-3 imp, and the fallback
-    lost 3-6. Empirical fitness is a measurement; rank is Claude's
-    a-priori guess. Ties preserve rank order via stable sort.
-    """
-    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
-    args = _build_args(tmp_path, pool_size=3, no_commit=True)
-    pool = _make_pool(3)
-
-    calls: list[int] = []
-
-    def fitness_fn(parent: str, imp: Improvement, **_: Any) -> FitnessResult:
-        calls.append(imp.rank)
-        if len(calls) > 3:
-            raise AssertionError(
-                f"fitness should only run once per imp in gen 1; got {calls}"
-            )
-        wins_by_rank = {1: 3, 2: 5, 3: 1}
-        wins = wins_by_rank[imp.rank]
-        return _fitness(
-            imp,
-            bucket="pass" if wins >= 3 else "fail",
-            wins=wins,
-            parent=parent,
-            candidate=f"cand_rank{imp.rank}",
-        )
-
-    composition = _ScriptedComposition(
-        [
-            (False, None, False),  # stack — lost by games
-            (False, None, False),  # fallback — also lost (outcome not asserted)
-        ]
-    )
-
-    def refresh(*a: Any, **k: Any) -> list[Improvement]:
-        if k.get("skip_mirror"):
-            return []
-        return pool
-
-    rc = cli.run_loop(
-        args,
-        generate_pool_fn=refresh,
-        run_fitness_fn=fitness_fn,
-        run_composition_fn=composition,
-        run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
-            AssertionError("no promotion, regression should not fire")
-        ),
-        current_version_fn=lambda: "v0",
-    )
-    assert rc == 0
-    assert len(composition.calls) == 2
-    assert len(composition.calls[0]["imps"]) == 2  # 2 fitness-pass imps stacked
-    assert len(composition.calls[1]["imps"]) == 1
-    # Rank 2 had 5/5 wins; rank 1 had 3/5. Fallback must pick rank 2.
-    assert composition.calls[1]["imps"][0].rank == 2
-
-
-def test_stack_fail_and_fallback_fail_no_promotion(
-    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
     monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
     args = _build_args(tmp_path, pool_size=3, no_commit=True)
     pool = _make_pool(3)
 
     fitness = _ScriptedFitness(["pass", "pass", "fail"])
-    composition = _ScriptedComposition([(False, None), (False, None)])
+    stack_apply = _ScriptedStackApply([(False, None)])
 
     def refresh(*a: Any, **k: Any) -> list[Improvement]:
-        if k.get("skip_mirror"):
-            # Evict the passed imps via retry cap over many generations. For a
-            # single gen, pool refresh tops up the delta (0 here since the
-            # close-flip hasn't happened yet). Return empty.
-            return []
-        return pool
+        return [] if k.get("skip_mirror") else pool
 
     rc = cli.run_loop(
         args,
         generate_pool_fn=refresh,
         run_fitness_fn=fitness,
-        run_composition_fn=composition,
+        stack_apply_fn=stack_apply,
         run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
-            AssertionError("no promotion, regression should not fire")
+            AssertionError("regression must not run when import check fails")
         ),
         current_version_fn=lambda: "v0",
     )
     assert rc == 0
+    assert len(stack_apply.calls) == 1
+
     state = json.loads(args.state_path.read_text(encoding="utf-8"))
     assert state["generations_promoted"] == 0
     assert state["parent_current"] == "v0"
+
+    # Results jsonl has exactly one stack_apply row with the
+    # import-fail outcome.
+    results_lines = [
+        line
+        for line in args.results_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    stack_rows = [
+        json.loads(line)
+        for line in results_lines
+        if json.loads(line).get("phase") == "stack_apply"
+    ]
+    assert len(stack_rows) == 1
+    assert stack_rows[0]["outcome"] == "stack-apply-import-fail"
+
+
+# ---------------------------------------------------------------------------
+# 5. Fitness-all-fail skips stack-apply and regression entirely
+# ---------------------------------------------------------------------------
+
+
+def test_fitness_all_fail_no_promotion_no_regression(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No fitness passes → neither stack-apply nor regression fires.
+
+    Post-2026-04-23 gate-reduction: when every imp fails fitness there
+    is no winning_imps list to stack-apply, so both stack_apply_fn
+    and run_regression_fn must NOT be called. Asserts promoted count
+    is 0 and those injected fns never fire.
+    """
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    args = _build_args(tmp_path, pool_size=3, no_commit=True)
+    pool = _make_pool(3)
+
+    fitness = _ScriptedFitness(["fail", "fail", "fail"])
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        return [] if k.get("skip_mirror") else pool
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=fitness,
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("stack-apply must not run when 0 fitness passes")
+        ),
+        run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("regression must not run when nothing promoted")
+        ),
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["generations_promoted"] == 0
+    assert state["parent_current"] == "v0"
+    # Every fitness row landed; no stack_apply or regression row.
+    results_lines = [
+        line
+        for line in args.results_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    phases = {json.loads(line).get("phase") for line in results_lines}
+    assert phases == {"fitness"}
 
 
 # ---------------------------------------------------------------------------
@@ -930,7 +790,7 @@ def test_regression_rollback_triggers_revert_and_reverts_parent(
     pool = _make_pool(2)
 
     fitness = _ScriptedFitness(["pass", "pass"])
-    composition = _ScriptedComposition([(True, "v1")])
+    stack_apply = _ScriptedStackApply([(True, "v1")])
     regression = _ScriptedRegression([True])  # rollback
 
     commit_calls: list[dict[str, Any]] = []
@@ -939,8 +799,6 @@ def test_regression_rollback_triggers_revert_and_reverts_parent(
         new_version: str,
         generation: int,
         stacked_titles: list[str],
-        *,
-        is_fallback: bool = False,
         **kwargs: Any,
     ) -> tuple[bool, str | None]:
         commit_calls.append(
@@ -948,7 +806,6 @@ def test_regression_rollback_triggers_revert_and_reverts_parent(
                 "new_version": new_version,
                 "generation": generation,
                 "stacked_titles": list(stacked_titles),
-                "is_fallback": is_fallback,
             }
         )
         return True, f"sha-{generation}"
@@ -979,7 +836,7 @@ def test_regression_rollback_triggers_revert_and_reverts_parent(
         args,
         generate_pool_fn=refresh,
         run_fitness_fn=fitness,
-        run_composition_fn=composition,
+        stack_apply_fn=stack_apply,
         run_regression_fn=regression,
         commit_fn=fake_commit,
         revert_fn=fake_revert,
@@ -1021,7 +878,7 @@ def test_fitness_crash_evicts_imp_and_continues(
             raise RuntimeError("selfplay OOM")
         return _fitness(imp, bucket="pass", candidate=f"cand_{imp.title}", parent=parent)
 
-    composition = _ScriptedComposition([(True, "v1")])
+    stack_apply = _ScriptedStackApply([(True, "v1")])
     regression = _ScriptedRegression([False])
 
     def refresh(*a: Any, **k: Any) -> list[Improvement]:
@@ -1033,13 +890,13 @@ def test_fitness_crash_evicts_imp_and_continues(
         args,
         generate_pool_fn=refresh,
         run_fitness_fn=fitness,
-        run_composition_fn=composition,
+        stack_apply_fn=stack_apply,
         run_regression_fn=regression,
         current_version_fn=lambda: "v0",
     )
     assert rc == 0
-    # Only 2 pass imps reached composition (crashed one was evicted).
-    assert len(composition.calls[0]["imps"]) == 2
+    # Only 2 pass imps reached stack-apply (crashed one was evicted).
+    assert len(stack_apply.calls[0]["winning_imps"]) == 2
 
     # Crash log has an entry for the crashed imp.
     crash_lines = [
@@ -1053,17 +910,19 @@ def test_fitness_crash_evicts_imp_and_continues(
     assert crash["imp_title"] == "imp-1"
 
 
-def test_composition_crash_ends_generation_without_promoting(
+def test_stack_apply_crash_ends_generation_without_promoting(
     cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """An exception inside stack_apply_fn is logged as a crash and the
+    generation ends without promoting. Regression must NOT fire."""
     monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
     args = _build_args(tmp_path, pool_size=2, no_commit=True)
     pool = _make_pool(2)
 
     fitness = _ScriptedFitness(["pass", "pass"])
 
-    def composition(*a: Any, **kwargs: Any) -> CompositionResult:
-        raise RuntimeError("composition OOM")
+    def exploding_stack_apply(*a: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("stack-apply OOM")
 
     def refresh(*a: Any, **k: Any) -> list[Improvement]:
         if k.get("skip_mirror"):
@@ -1074,7 +933,7 @@ def test_composition_crash_ends_generation_without_promoting(
         args,
         generate_pool_fn=refresh,
         run_fitness_fn=fitness,
-        run_composition_fn=composition,
+        stack_apply_fn=exploding_stack_apply,
         run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
             AssertionError("no promotion, regression should not fire")
         ),
@@ -1088,7 +947,9 @@ def test_composition_crash_ends_generation_without_promoting(
         for line in args.crash_log_path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-    assert any(json.loads(line)["phase"] == "composition" for line in crash_lines)
+    assert any(
+        json.loads(line)["phase"] == "stack_apply" for line in crash_lines
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1117,8 +978,8 @@ def test_retry_cap_evicts_chronic_close_loss(
         args,
         generate_pool_fn=refresh,
         run_fitness_fn=fitness,
-        run_composition_fn=lambda *a, **k: (_ for _ in ()).throw(
-            AssertionError("no winners, composition should not fire")
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("no winners, stack-apply should not fire")
         ),
         run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
         current_version_fn=lambda: "v0",
@@ -1153,7 +1014,7 @@ def test_pool_refresh_tops_up_to_pool_size(
 
     # Gen 1: pass/fail/fail. Stack promote. Gen 2: both refresh imps fail.
     fitness = _ScriptedFitness(["pass", "fail", "fail", "fail", "fail"])
-    composition = _ScriptedComposition([(True, "v1")])
+    stack_apply = _ScriptedStackApply([(True, "v1")])
     regression = _ScriptedRegression([False])
 
     refresh_calls = {"n": 0}
@@ -1170,7 +1031,7 @@ def test_pool_refresh_tops_up_to_pool_size(
         args,
         generate_pool_fn=generate,
         run_fitness_fn=fitness,
-        run_composition_fn=composition,
+        stack_apply_fn=stack_apply,
         run_regression_fn=regression,
         current_version_fn=lambda: "v0",
     )
@@ -1205,7 +1066,6 @@ def test_git_commit_evo_auto_builds_stack_body(
         "v1",
         3,
         ["imp-a", "imp-b", "imp-c"],
-        is_fallback=False,
         run=fake_run,
     )
     assert ok is True
@@ -1219,34 +1079,6 @@ def test_git_commit_evo_auto_builds_stack_body(
     # EVO_AUTO=1 must be set in the commit env; ADVISED_AUTO must be absent.
     assert captured["env"]["EVO_AUTO"] == "1"
     assert "ADVISED_AUTO" not in captured["env"]
-
-
-def test_git_commit_evo_auto_builds_fallback_body(
-    cli: ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Fallback-promote commit body uses the top-1 header."""
-    captured: dict[str, Any] = {}
-
-    def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        if argv[:2] == ["git", "commit"]:
-            captured["msg"] = argv[argv.index("-m") + 1]
-        if argv[:2] == ["git", "rev-parse"]:
-            return subprocess.CompletedProcess(argv, 0, stdout="def456\n", stderr="")
-        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
-
-    ok, sha = cli.git_commit_evo_auto(
-        "v1",
-        4,
-        ["top-imp"],
-        is_fallback=True,
-        run=fake_run,
-    )
-    assert ok is True
-    assert sha == "def456"
-    msg = captured["msg"]
-    assert "generation 4 promoted single imp (top-1 fallback)" in msg
-    assert "- top-imp" in msg
-    assert "[evo-auto]" in msg
 
 
 def test_git_revert_evo_auto_uses_two_stage_revert(
@@ -1343,7 +1175,7 @@ def test_post_training_fires_on_promotion_when_flag_set(
     pool = _make_pool(2)
 
     fitness = _ScriptedFitness(["pass", "pass"])
-    composition = _ScriptedComposition([(True, "v1")])
+    stack_apply = _ScriptedStackApply([(True, "v1")])
     regression = _ScriptedRegression([False])
 
     calls: list[dict[str, Any]] = []
@@ -1361,7 +1193,7 @@ def test_post_training_fires_on_promotion_when_flag_set(
         args,
         generate_pool_fn=refresh,
         run_fitness_fn=fitness,
-        run_composition_fn=composition,
+        stack_apply_fn=stack_apply,
         run_regression_fn=regression,
         current_version_fn=lambda: "v0",
         post_training_fn=fake_post_training,
@@ -1396,7 +1228,7 @@ def test_post_training_does_not_fire_without_promotion(
         args,
         generate_pool_fn=refresh,
         run_fitness_fn=fitness,
-        run_composition_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
         run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
         current_version_fn=lambda: "v0",
         post_training_fn=fake_post_training,
@@ -1453,7 +1285,7 @@ def test_resume_loads_existing_pool_and_skips_generation(
         args,
         generate_pool_fn=tracked_generate,
         run_fitness_fn=fitness,
-        run_composition_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
         run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
         current_version_fn=lambda: "v0",
     )
@@ -1485,7 +1317,7 @@ def test_resume_parent_mismatch_returns_1(
         args,
         generate_pool_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
         run_fitness_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
-        run_composition_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
         run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
         current_version_fn=lambda: "v0",
     )
@@ -1530,7 +1362,7 @@ def test_fresh_run_clears_stale_state(
         args,
         generate_pool_fn=refresh,
         run_fitness_fn=fitness,
-        run_composition_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
         run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
         current_version_fn=lambda: "v0",
     )
@@ -1562,7 +1394,7 @@ def test_run_log_markdown_has_generation_table(
     pool = _make_pool(2)
 
     fitness = _ScriptedFitness(["pass", "fail"])
-    composition = _ScriptedComposition([(True, "v1")])
+    stack_apply = _ScriptedStackApply([(True, "v1")])
     regression = _ScriptedRegression([False])
 
     def refresh(*a: Any, **k: Any) -> list[Improvement]:
@@ -1574,7 +1406,7 @@ def test_run_log_markdown_has_generation_table(
         args,
         generate_pool_fn=refresh,
         run_fitness_fn=fitness,
-        run_composition_fn=composition,
+        stack_apply_fn=stack_apply,
         run_regression_fn=regression,
         current_version_fn=lambda: "v0",
     )
@@ -1586,7 +1418,7 @@ def test_run_log_markdown_has_generation_table(
     assert "## Generations" in md
     # Table header contains the new column names.
     assert "fitness pass/close/fail" in md
-    assert "composition" in md
+    assert "stack-apply" in md
     assert "regression" in md
 
 
@@ -1634,7 +1466,7 @@ def test_regression_rollback_reverts_cleanly_on_dirty_pointer(
 
     (tmp_path / "bots" / "current").mkdir(parents=True)
     pointer = tmp_path / "bots" / "current" / "current.txt"
-    # Starts at v1 — the state after the composition phase promoted
+    # Starts at v1 — the state after the stack-apply step promoted
     # the new parent. In production this is what git HEAD also holds
     # at this moment.
     pointer.write_text("v1", encoding="utf-8")
@@ -1695,8 +1527,6 @@ def test_regression_rollback_reverts_cleanly_on_dirty_pointer(
         new_version: str,
         generation: int,
         stacked_titles: list[str],
-        *,
-        is_fallback: bool = False,
         **kwargs: Any,
     ) -> tuple[bool, str | None]:
         return True, f"sha-{generation}"
@@ -1704,7 +1534,7 @@ def test_regression_rollback_reverts_cleanly_on_dirty_pointer(
     args = _build_args(tmp_path, pool_size=2, no_commit=False)
     pool = _make_pool(2)
     fitness = _ScriptedFitness(["pass", "pass"])
-    composition = _ScriptedComposition([(True, "v1")])
+    stack_apply = _ScriptedStackApply([(True, "v1")])
 
     def refresh(*a: Any, **k: Any) -> list[Improvement]:
         return [] if k.get("skip_mirror") else pool
@@ -1713,7 +1543,7 @@ def test_regression_rollback_reverts_cleanly_on_dirty_pointer(
         args,
         generate_pool_fn=refresh,
         run_fitness_fn=fitness,
-        run_composition_fn=composition,
+        stack_apply_fn=stack_apply,
         run_regression_fn=real_run_regression,
         commit_fn=fake_commit,
         revert_fn=fake_revert,
@@ -1804,7 +1634,7 @@ def test_run_loop_aborts_if_master_has_phantom_promote_at_startup(
             AssertionError("pre-flight should abort before pool gen")
         ),
         run_fitness_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
-        run_composition_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
         run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
         current_version_fn=lambda: "v0",
     )

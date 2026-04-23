@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import sys
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Literal, cast
 
 import pytest
@@ -11,13 +14,11 @@ import pytest
 from orchestrator import evolve, registry, snapshot
 from orchestrator.contracts import Manifest, SelfPlayRecord, VersionFingerprint
 from orchestrator.evolve import (
-    CompositionResult,
     FitnessResult,
     Improvement,
     RegressionResult,
     apply_improvement,
     generate_pool,
-    run_composition_eval,
     run_fitness_eval,
     run_regression_eval,
 )
@@ -376,22 +377,8 @@ class TestApplyImprovement:
         assert restored == imp
 
 # ---------------------------------------------------------------------------
-# Phase primitives (fitness / composition / regression)
+# Phase primitives (fitness / regression)
 # ---------------------------------------------------------------------------
-
-
-def _noop_import_check(
-    _cand_dir: Path, _cand_name: str
-) -> str | None:
-    """Test helper: skip the real subprocess import check.
-
-    The real check runs ``python -c "import bots.<cand>.bot"`` which
-    cannot succeed under ``_redirect_repo_root`` fixtures (tmp_path is
-    not on ``sys.path``). Tests that explicitly want the import-check
-    behavior inject their own checker; everything else threads this
-    no-op through.
-    """
-    return None
 
 
 def _simple_training_imp(
@@ -673,267 +660,6 @@ class TestRunFitnessEval:
         )
         assert result.bucket == "pass"
 
-
-class TestRunCompositionEval:
-    def test_empty_imps_raises(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _redirect_repo_root(tmp_path, monkeypatch)
-        _seed_version(tmp_path, "v0")
-        _seed_pointer(tmp_path, "v0")
-
-        batch = _BatchRecorder([])
-        with pytest.raises(ValueError, match="at least one improvement"):
-            run_composition_eval(
-                parent="v0",
-                imps=[],
-                games=5,
-                run_batch_fn=batch,
-                candidate_namer=_single_namer("cand_empty"),
-            )
-
-    def test_stack_promotes_on_majority(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _redirect_repo_root(tmp_path, monkeypatch)
-        _seed_version(tmp_path, "v0")
-        _seed_pointer(tmp_path, "v0")
-
-        # Stack beats parent 4-1.
-        batch = _BatchRecorder([(4, 1, 0)])
-        imps = [
-            _simple_training_imp("expansion_bonus", 2.0, title="bump exp"),
-            _simple_training_imp("army_supply_bonus", 1.5, title="bump army"),
-        ]
-        result = run_composition_eval(
-            parent="v0",
-            imps=imps,
-            games=5,
-            run_batch_fn=batch,
-            candidate_namer=_single_namer("cand_stack"),
-            import_check_fn=_noop_import_check,
-        )
-        assert isinstance(result, CompositionResult)
-        assert result.promoted is True
-        assert result.promoted_version == "v1"
-        assert result.stacked_imps == imps
-        # Pointer moved to the permanent vN (snapshot_current flips it).
-        pointer = tmp_path / "bots" / "current" / "current.txt"
-        assert pointer.read_text(encoding="utf-8") == "v1"
-        # Scratch cand dir is gone; permanent v1 dir exists.
-        assert (tmp_path / "bots" / "v1").is_dir()
-        assert not (tmp_path / "bots" / "cand_stack").exists()
-        # Manifest lineage names the real parent.
-        manifest_payload = json.loads(
-            (tmp_path / "bots" / "v1" / "manifest.json").read_text(encoding="utf-8")
-        )
-        assert manifest_payload["parent"] == "v0"
-        # Both patches landed in v1.
-        post = json.loads(
-            (tmp_path / "bots" / "v1" / "data" / "reward_rules.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        assert post["expansion_bonus"] == 2.0
-        assert post["army_supply_bonus"] == 1.5
-
-    def test_stack_fails_on_minority(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _redirect_repo_root(tmp_path, monkeypatch)
-        _seed_version(tmp_path, "v0")
-        _seed_pointer(tmp_path, "v0")
-
-        batch = _BatchRecorder([(2, 3, 0)])
-        imps = [_simple_training_imp("expansion_bonus", 2.0)]
-        result = run_composition_eval(
-            parent="v0",
-            imps=imps,
-            games=5,
-            run_batch_fn=batch,
-            candidate_namer=_single_namer("cand_nopromo"),
-            import_check_fn=_noop_import_check,
-        )
-        assert result.promoted is False
-        assert result.promoted_version is None
-        assert not (tmp_path / "bots" / "cand_nopromo").exists()
-        # No v1 created.
-        assert not (tmp_path / "bots" / "v1").exists()
-        pointer = tmp_path / "bots" / "current" / "current.txt"
-        assert pointer.read_text(encoding="utf-8") == "v0"
-
-    def test_single_imp_promotion_is_top1_fallback_shape(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Composition with a single-element list is the top-1 fallback path.
-
-        Same primitive, same pass threshold — only difference is the caller
-        intent. We verify the primitive does NOT special-case list length.
-        """
-        _redirect_repo_root(tmp_path, monkeypatch)
-        _seed_version(tmp_path, "v0")
-        _seed_pointer(tmp_path, "v0")
-
-        batch = _BatchRecorder([(3, 2, 0)])
-        imps = [_simple_training_imp("expansion_bonus", 2.0, title="solo")]
-        result = run_composition_eval(
-            parent="v0",
-            imps=imps,
-            games=5,
-            run_batch_fn=batch,
-            candidate_namer=_single_namer("cand_solo"),
-            import_check_fn=_noop_import_check,
-        )
-        assert result.promoted is True
-        assert result.promoted_version == "v1"
-        assert len(result.stacked_imps) == 1
-
-    def test_apply_error_cleans_scratch(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _redirect_repo_root(tmp_path, monkeypatch)
-        _seed_version(tmp_path, "v0")
-        _seed_pointer(tmp_path, "v0")
-
-        good = _simple_training_imp("expansion_bonus", 2.0)
-        bad = _make_imp(type_="training", concrete_change="not-json")
-
-        batch = _BatchRecorder([])
-        with pytest.raises(ValueError, match="not valid JSON"):
-            run_composition_eval(
-                parent="v0",
-                imps=[good, bad],
-                games=5,
-                run_batch_fn=batch,
-                candidate_namer=_single_namer("cand_apply_err"),
-            )
-        assert not (tmp_path / "bots" / "cand_apply_err").exists()
-        pointer = tmp_path / "bots" / "current" / "current.txt"
-        assert pointer.read_text(encoding="utf-8") == "v0"
-
-    def test_run_batch_failure_cleans_scratch(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _redirect_repo_root(tmp_path, monkeypatch)
-        _seed_version(tmp_path, "v0")
-        _seed_pointer(tmp_path, "v0")
-
-        def exploding_batch(
-            p1: str, p2: str, games: int, map_name: str, **kwargs: Any
-        ) -> list[SelfPlayRecord]:
-            raise RuntimeError("selfplay blew up")
-
-        with pytest.raises(RuntimeError, match="selfplay blew up"):
-            run_composition_eval(
-                parent="v0",
-                imps=[_simple_training_imp()],
-                games=5,
-                run_batch_fn=exploding_batch,
-                candidate_namer=_single_namer("cand_batch_err"),
-                import_check_fn=_noop_import_check,
-            )
-        assert not (tmp_path / "bots" / "cand_batch_err").exists()
-
-    def test_on_event_fires_composition_lifecycle(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _redirect_repo_root(tmp_path, monkeypatch)
-        _seed_version(tmp_path, "v0")
-        _seed_pointer(tmp_path, "v0")
-
-        events: list[dict[str, Any]] = []
-
-        def fake_batch(
-            p1: str,
-            p2: str,
-            games: int,
-            map_name: str,
-            **kwargs: Any,
-        ) -> list[SelfPlayRecord]:
-            on_game_end = kwargs.get("on_game_end")
-            records = [_record(p1, p2, p1, f"g-{i}") for i in range(games)]
-            if on_game_end is not None:
-                for r in records:
-                    on_game_end(r)
-            return records
-
-        imps = [
-            _simple_training_imp(title="imp-a"),
-            _simple_training_imp("army_supply_bonus", 1.5, title="imp-b"),
-        ]
-        result = run_composition_eval(
-            parent="v0",
-            imps=imps,
-            games=3,
-            run_batch_fn=fake_batch,
-            candidate_namer=_single_namer("cand_ev"),
-            on_event=lambda e: events.append(dict(e)),
-            import_check_fn=_noop_import_check,
-        )
-        assert result.promoted is True
-        types = [e["type"] for e in events]
-        assert types == [
-            "composition_start",
-            "composition_game_end",
-            "composition_game_end",
-            "composition_game_end",
-        ]
-        assert events[0]["candidate"] == "cand_ev"
-        assert events[0]["stacked_titles"] == ["imp-a", "imp-b"]
-        assert events[0]["total"] == 3
-
-    def test_import_check_failure_short_circuits_batch(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Pre-batch import failure must skip SC2 games and mark crash_skipped.
-
-        Reproduces the run 20260422-0559 failure mode: two imps that
-        each passed fitness crash all 5 composition games under 20s when
-        stacked. With the gate, the import error short-circuits before
-        any SC2 process spawns.
-        """
-        _redirect_repo_root(tmp_path, monkeypatch)
-        _seed_version(tmp_path, "v0")
-        _seed_pointer(tmp_path, "v0")
-
-        def exploding_batch(
-            p1: str, p2: str, games: int, map_name: str, **kwargs: Any
-        ) -> list[SelfPlayRecord]:
-            raise AssertionError(
-                "run_batch_fn must NOT be called when import check fails"
-            )
-
-        events: list[dict[str, Any]] = []
-        imps = [
-            _simple_training_imp(title="a"),
-            _simple_training_imp("army_supply_bonus", 1.5, title="b"),
-        ]
-        result = run_composition_eval(
-            parent="v0",
-            imps=imps,
-            games=5,
-            run_batch_fn=exploding_batch,
-            candidate_namer=_single_namer("cand_crash"),
-            import_check_fn=lambda _d, _n: "ImportError: bogus",
-            on_event=lambda e: events.append(dict(e)),
-        )
-        assert result.crash_skipped is True
-        assert result.promoted is False
-        assert result.games == 0
-        assert result.wins_candidate == 0
-        assert result.wins_parent == 0
-        assert result.record == []
-        assert "ImportError: bogus" in result.reason
-        # Scratch cand dir cleaned, pointer restored to parent.
-        assert not (tmp_path / "bots" / "cand_crash").exists()
-        pointer = tmp_path / "bots" / "current" / "current.txt"
-        assert pointer.read_text(encoding="utf-8") == "v0"
-        # Event emitted.
-        types = [e["type"] for e in events]
-        assert types == ["composition_crash_skipped"]
-        assert events[0]["candidate"] == "cand_crash"
-        assert events[0]["stacked_titles"] == ["a", "b"]
-        assert events[0]["error"] == "ImportError: bogus"
 
 
 class TestRunRegressionEval:
@@ -1985,3 +1711,277 @@ class TestDefaultClaudeFn:
             )
         # And it MUST be piped via stdin.
         assert captured["input"] == long_prompt
+
+
+# ---------------------------------------------------------------------------
+# Primitive tests for scripts/evolve._stack_apply_and_promote
+# ---------------------------------------------------------------------------
+#
+# These exercise the REAL helper against a tmp-path-redirected filesystem,
+# using the real snapshot_current, real apply_improvement, real pointer
+# flips, and real manifest rewrites. The CLI tests in tests/test_evolve_cli.py
+# mock the helper wholesale; the tests below cover what mocks can't — that
+# the rollback branches actually clean up disk state, and that the happy
+# path produces a committable bots/<new>/ tree with the correct manifest
+# lineage and patched reward_rules.
+
+
+_SCRIPTS_EVOLVE_PATH = (
+    Path(__file__).resolve().parent.parent / "scripts" / "evolve.py"
+)
+
+
+def _load_evolve_cli_module() -> ModuleType:
+    """Import ``scripts/evolve.py`` as module ``evolve_cli``.
+
+    Mirrors the loader in ``tests/test_evolve_cli.py``: registers in
+    sys.modules BEFORE exec so Python 3.14 ``@dataclass`` can resolve
+    ``cls.__module__`` during KW_ONLY detection.
+    """
+    if "evolve_cli" in sys.modules:
+        return sys.modules["evolve_cli"]
+    spec = importlib.util.spec_from_file_location(
+        "evolve_cli", str(_SCRIPTS_EVOLVE_PATH)
+    )
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["evolve_cli"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _redirect_stack_apply_repo_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> ModuleType:
+    """Redirect every ``_repo_root`` site used by the stack-apply helper.
+
+    The helper calls into ``orchestrator.snapshot`` (snapshot_current),
+    ``orchestrator.evolve`` (_rewrite_manifest_parent, _safe_rmtree,
+    apply_improvement, _restore_pointer), and reads its own
+    ``evolve_cli._REPO_ROOT`` module constant. All four need to point
+    at *tmp_path* for the test to exercise real filesystem effects
+    in isolation.
+    """
+    _redirect_repo_root(tmp_path, monkeypatch)
+    cli = _load_evolve_cli_module()
+    monkeypatch.setattr(cli, "_REPO_ROOT", tmp_path)
+    return cli
+
+
+class TestStackApplyAndPromote:
+    """Primitive tests for the real :func:`_stack_apply_and_promote`."""
+
+    def test_stack_apply_promotes_all_fitness_pass_imps_into_new_version(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Happy path: 2 training imps apply + import-check passes + promote.
+
+        Uses the REAL helper with tmp-path-redirected filesystem. Verifies:
+        * ``bots/<new>/`` exists on disk after the call,
+        * manifest parent is ``v0`` (not the pre-existing snapshot default),
+        * all imp patches landed in reward_rules.json,
+        * pointer points at the new version.
+        """
+        cli = _redirect_stack_apply_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_pointer(tmp_path, "v0")
+
+        imp_a = _make_imp(
+            rank=1,
+            title="imp-a",
+            type_="training",
+            concrete_change=_training_patch(
+                "reward_rules.json", {"expansion_bonus": 2.5}
+            ),
+        )
+        imp_b = _make_imp(
+            rank=2,
+            title="imp-b",
+            type_="training",
+            concrete_change=_training_patch(
+                "reward_rules.json", {"army_supply_bonus": 1.75}
+            ),
+        )
+
+        # import_check_fn returns None on success; real subprocess import
+        # cannot run under tmp_path so inject the pass signal directly.
+        result = cli._stack_apply_and_promote(
+            "v0",
+            [imp_a, imp_b],
+            dev_apply_fn=None,
+            import_check_fn=lambda _new_version: None,
+        )
+
+        assert result.promoted is True
+        assert result.outcome == "stack-apply-pass"
+        new_version = result.new_version
+        assert new_version is not None
+        assert new_version != "v0"
+
+        new_dir = tmp_path / "bots" / new_version
+        assert new_dir.is_dir(), f"expected snapshot dir at {new_dir}"
+
+        # Manifest parent must be v0 (helper rewrites it post-snapshot).
+        manifest = json.loads(
+            (new_dir / "manifest.json").read_text(encoding="utf-8")
+        )
+        assert manifest["parent"] == "v0"
+        assert manifest["version"] == new_version
+
+        # Both patches landed.
+        rewards = json.loads(
+            (new_dir / "data" / "reward_rules.json").read_text(encoding="utf-8")
+        )
+        assert rewards["expansion_bonus"] == 2.5
+        assert rewards["army_supply_bonus"] == 1.75
+
+        # Pointer flipped to new version (snapshot_current's side effect).
+        pointer = tmp_path / "bots" / "current" / "current.txt"
+        assert pointer.read_text(encoding="utf-8") == new_version
+
+    def test_stack_apply_import_check_failure_rolls_back_snapshot_and_pointer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Import-check failure → snapshot dir removed + pointer restored.
+
+        Passes a failing ``import_check_fn`` and verifies the real helper
+        rmtree's the candidate directory and writes the parent back to
+        ``bots/current/current.txt``.
+        """
+        cli = _redirect_stack_apply_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_pointer(tmp_path, "v0")
+
+        imp = _make_imp(
+            rank=1,
+            title="imp-fails-import",
+            type_="training",
+            concrete_change=_training_patch(
+                "reward_rules.json", {"expansion_bonus": 99.0}
+            ),
+        )
+
+        # Predict the new version name the helper will pick.
+        # snapshot._next_version_name scans the registry; under this
+        # tmp_path only ``v0`` exists, so the next name is ``v1``.
+        result = cli._stack_apply_and_promote(
+            "v0",
+            [imp],
+            dev_apply_fn=None,
+            import_check_fn=lambda _new_version: (
+                "ModuleNotFoundError: simulated failure"
+            ),
+        )
+
+        assert result.promoted is False
+        assert result.outcome == "stack-apply-import-fail"
+        assert result.new_version is None
+        assert "simulated failure" in result.reason
+
+        # Snapshot dir must be gone.
+        new_dir = tmp_path / "bots" / "v1"
+        assert not new_dir.exists(), (
+            f"expected {new_dir} to be cleaned up after import-check fail; "
+            "it still exists"
+        )
+
+        # Pointer must be back at v0.
+        pointer = tmp_path / "bots" / "current" / "current.txt"
+        assert pointer.read_text(encoding="utf-8") == "v0"
+
+    def test_stack_apply_error_during_apply_improvement_cleans_up(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """apply_improvement raising mid-stack triggers rollback + re-raise.
+
+        Injects an imp whose concrete_change is invalid JSON; real
+        ``apply_improvement`` raises ``ValueError``. The helper must
+        rmtree the candidate dir and restore the pointer before the
+        exception propagates, so the caller's crash-row log reflects the
+        ORIGINAL ``ValueError`` and the disk is clean for the next run.
+        """
+        cli = _redirect_stack_apply_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_pointer(tmp_path, "v0")
+
+        bad_imp = _make_imp(
+            rank=1,
+            title="imp-bad-json",
+            type_="training",
+            concrete_change="{not-valid-json",
+        )
+
+        with pytest.raises(ValueError):
+            cli._stack_apply_and_promote(
+                "v0",
+                [bad_imp],
+                dev_apply_fn=None,
+                import_check_fn=lambda _: None,
+            )
+
+        # Predicted new version dir must be removed.
+        new_dir = tmp_path / "bots" / "v1"
+        assert not new_dir.exists(), (
+            f"expected {new_dir} to be cleaned up after apply-improvement "
+            "crash; it still exists"
+        )
+
+        # Pointer must be back at v0.
+        pointer = tmp_path / "bots" / "current" / "current.txt"
+        assert pointer.read_text(encoding="utf-8") == "v0"
+
+    def test_stack_apply_commit_failure_rolls_back_and_returns_commit_fail(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """commit_fn returning (False, None) triggers rollback + commit-fail.
+
+        The H3 fix makes the helper responsible for the commit step. A
+        commit failure after a successful import-check must remove the
+        candidate dir, restore the pointer to parent, and return
+        ``promoted=False`` with outcome ``stack-apply-commit-fail``.
+        This prevents the in-process state from diverging from git.
+        """
+        cli = _redirect_stack_apply_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_pointer(tmp_path, "v0")
+
+        imp = _make_imp(
+            rank=1,
+            title="imp-commit-fails",
+            type_="training",
+            concrete_change=_training_patch(
+                "reward_rules.json", {"expansion_bonus": 4.0}
+            ),
+        )
+
+        def failing_commit(
+            new_version: str,
+            generation: int,
+            stacked_titles: list[str],
+        ) -> tuple[bool, str | None]:
+            return False, None
+
+        result = cli._stack_apply_and_promote(
+            "v0",
+            [imp],
+            dev_apply_fn=None,
+            import_check_fn=lambda _: None,
+            commit_fn=failing_commit,
+            generation=1,
+        )
+
+        assert result.promoted is False
+        assert result.outcome == "stack-apply-commit-fail"
+        assert result.new_version is None
+        assert result.promote_sha is None
+
+        # Snapshot dir must be gone.
+        new_dir = tmp_path / "bots" / "v1"
+        assert not new_dir.exists(), (
+            "commit-fail rollback failed to rmtree the snapshot dir; "
+            "in-process state would diverge from git HEAD"
+        )
+
+        # Pointer restored to v0.
+        pointer = tmp_path / "bots" / "current" / "current.txt"
+        assert pointer.read_text(encoding="utf-8") == "v0"
