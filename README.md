@@ -350,3 +350,14 @@ The bot follows a build order during the opening, then transitions to dynamic de
 
 **Wiki:** [documentation/wiki/index.md](documentation/wiki/index.md) — system diagram + page map
 **Active plan:** [documentation/plans/alpha4gate-master-plan.md](documentation/plans/alpha4gate-master-plan.md)
+
+---
+
+## Acknowledgments
+
+Special thanks to my friends for their support:
+
+- Drew Goya
+- William Gathright
+- Willie Williams
+
