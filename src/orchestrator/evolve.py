@@ -53,6 +53,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -351,10 +352,30 @@ def _resolve_candidate_name(
     )
 
 
+_ATOMIC_REPLACE_RETRY_DELAYS = (0.05, 0.1, 0.2, 0.4, 0.8)
+
+
 def _restore_pointer(parent_name: str) -> None:
-    """Write ``bots/current/current.txt`` back to *parent_name*."""
+    """Write ``bots/current/current.txt`` back to *parent_name*, atomically.
+
+    On Windows ``os.replace`` fails with ``PermissionError`` when the
+    target has an open handle — the backend ``--serve`` polls this
+    pointer file, so a direct ``write_text`` can race. Write to a
+    ``.tmp`` sibling and ``os.replace`` with bounded retries; on final
+    failure fall back to ``os.replace`` so the ``PermissionError``
+    surfaces to the caller.
+    """
     pointer = _repo_root() / "bots" / "current" / "current.txt"
-    pointer.write_text(parent_name, encoding="utf-8")
+    pointer.parent.mkdir(parents=True, exist_ok=True)
+    tmp = pointer.with_suffix(pointer.suffix + ".tmp")
+    tmp.write_text(parent_name, encoding="utf-8")
+    for delay in _ATOMIC_REPLACE_RETRY_DELAYS:
+        try:
+            os.replace(tmp, pointer)
+            return
+        except PermissionError:
+            time.sleep(delay)
+    os.replace(tmp, pointer)
 
 
 def _rewrite_manifest_parent(version_dir: Path, parent_name: str) -> None:
@@ -867,9 +888,15 @@ def run_regression_eval(
     """Play *new_parent* vs *prior_parent* for *games* games.
 
     No snapshots — both versions are already on disk. On regression (new
-    parent fails the strict-majority gate), the pointer is restored to
-    *prior_parent* and ``rolled_back=True`` is returned; the caller is
-    responsible for the git revert of the promote commit.
+    parent fails the strict-majority gate), ``rolled_back=True`` is
+    returned; the caller is responsible for BOTH the git revert of the
+    promote commit AND restoring ``bots/current/current.txt`` to
+    *prior_parent*. This primitive deliberately does NOT touch the
+    pointer so the caller can order operations such that ``git revert``
+    runs against a clean working tree (the revert commit's reverse diff
+    restores the pointer as a side effect). If the caller bypasses the
+    revert (``--no-commit`` dev runs, or a revert-failure fallback) it
+    must call ``_restore_pointer(prior_parent)`` explicitly.
 
     Progress events:
       - ``{"type": "regression_start", "new_parent", "prior_parent", "total"}``
@@ -938,10 +965,13 @@ def run_regression_eval(
     rolled_back = wins_new < needed
 
     if rolled_back:
-        _restore_pointer(prior_parent)
+        # NOTE: deliberately NOT calling _restore_pointer here. The caller
+        # (scripts/evolve.py) must run ``git revert`` against a clean
+        # working tree; the revert commit restores current.txt via its
+        # reverse diff. See the docstring for the full contract.
         reason = (
             f"regression rollback: new {new_parent} {wins_new}-{wins_prior} "
-            f"prior {prior_parent} (needed {needed}); pointer reset"
+            f"prior {prior_parent} (needed {needed}); caller must revert"
         )
     else:
         reason = (

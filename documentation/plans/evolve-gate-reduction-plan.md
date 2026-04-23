@@ -113,6 +113,7 @@ The user explicitly scoped it as a prerequisite. `/build-phase` executes `/build
 ## 7. Build Steps
 
 ### Step 1: Fix rollback-order bug in scripts/evolve.py
+- **Status:** DONE (2026-04-23)
 - **Problem:** In [scripts/evolve.py:1937-1950](scripts/evolve.py#L1937-L1950), the regression-rollback branch writes `bots/current/current.txt` to the prior parent (via `parent_current = prior_parent` and its side-effect on `snapshot_current`) before calling `revert_fn(promote_sha, ...)`. `git revert --no-commit` refuses to operate on a dirty working tree and exits 128. Swap the order: call `revert_fn` first (the revert commit itself writes `current.txt` back via its reverse diff), then update in-memory `parent_current`. Also add a pre-flight assertion: master is at the expected commit and `bots/current/current.txt` is `v0` before the run starts (new check in `run_loop` startup).
 - **Issue:** (leave blank — created later by /repo-sync)
 - **Flags:** `--reviewers code`

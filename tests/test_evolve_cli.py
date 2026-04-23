@@ -1281,6 +1281,54 @@ def test_git_revert_evo_auto_uses_two_stage_revert(
         assert "ADVISED_AUTO" not in env
 
 
+def test_git_revert_evo_auto_resets_index_when_commit_fails(
+    cli: ModuleType,
+) -> None:
+    """If ``git commit`` fails after ``git revert --no-commit`` staged the
+    reverse diff, the revert primitive must drop the staged changes itself.
+
+    Without this cleanup the staged reverse diff leaks into the NEXT
+    generation's commit (``git_commit_evo_auto`` does a plain
+    ``git commit -m msg`` with no pathspec and no ``-a``, which commits
+    everything currently staged). The revert function owns the mess it
+    created, so it owns cleaning it up on the failure path.
+    """
+    commands: list[list[str]] = []
+
+    def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(list(argv))
+        # revert succeeds (stages the reverse diff), commit fails, reset
+        # must then happen to drop the staged diff.
+        if argv[:2] == ["git", "revert"]:
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+        if argv[:2] == ["git", "commit"]:
+            return subprocess.CompletedProcess(
+                argv, 1, stdout="", stderr="hook blocked commit"
+            )
+        if argv[:2] == ["git", "reset"]:
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+        raise AssertionError(f"unexpected argv: {argv!r}")
+
+    ok = cli.git_revert_evo_auto(
+        "abc123",
+        7,
+        "regression rollback: new v5 1-4 prior v4",
+        run=fake_run,
+    )
+    assert ok is False
+    # Verify the sequence: revert, commit (fails), reset HEAD -- .
+    assert [c[:2] for c in commands] == [
+        ["git", "revert"],
+        ["git", "commit"],
+        ["git", "reset"],
+    ]
+    # The reset must target HEAD and the whole tree (``.``) — scoped to
+    # index so the working tree is unchanged, so subsequent pointer
+    # fallbacks still see their own writes.
+    reset_cmd = commands[2]
+    assert reset_cmd == ["git", "reset", "HEAD", "--", "."]
+
+
 # ---------------------------------------------------------------------------
 # 11. Post-training hook
 # ---------------------------------------------------------------------------
@@ -1540,3 +1588,231 @@ def test_run_log_markdown_has_generation_table(
     assert "fitness pass/close/fail" in md
     assert "composition" in md
     assert "regression" in md
+
+
+# ---------------------------------------------------------------------------
+# 15. Rollback-order bug fix (run 20260422-0824)
+# ---------------------------------------------------------------------------
+
+
+def test_regression_rollback_reverts_cleanly_on_dirty_pointer(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rollback must call revert_fn against a CLEAN tree, not a dirty one.
+
+    Regression: run 20260422-0824 gens 1 and 3 promoted and then
+    rolled back, but the primitive (``run_regression_eval``) was
+    rewriting ``bots/current/current.txt`` to ``prior_parent`` on its
+    own — dirtying the working tree. By the time
+    ``scripts/evolve.py`` called ``git revert --no-commit``, git
+    refused with exit 128 ("local changes would be overwritten by
+    merge"). The promote commit stayed on master unreverted.
+
+    This test pins the fix by running the REAL ``run_regression_eval``
+    primitive (with a scripted ``run_batch_fn``) against a real
+    ``bots/current/current.txt`` in ``tmp_path``, and snapshotting the
+    pointer's on-disk contents at the exact moment ``revert_fn`` is
+    invoked. On the pre-fix primitive the snapshot would read ``v0``
+    (dirty tree → production ``git revert`` bails with exit 128). On
+    the fixed primitive the snapshot must read ``v1`` (clean tree →
+    ``git revert`` succeeds and its reverse diff restores the pointer).
+    """
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+
+    # Import the real primitive + its collaborators and redirect them
+    # all at tmp_path so `_restore_pointer`, `current_version`, etc.
+    # use the seeded fake repo layout.
+    from orchestrator import evolve as primitive_mod
+    from orchestrator import registry as registry_mod
+    from orchestrator import snapshot as snapshot_mod
+    from orchestrator.contracts import SelfPlayRecord as _Rec
+    from orchestrator.evolve import run_regression_eval
+
+    monkeypatch.setattr(registry_mod, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(primitive_mod, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(snapshot_mod, "_repo_root", lambda: tmp_path)
+
+    (tmp_path / "bots" / "current").mkdir(parents=True)
+    pointer = tmp_path / "bots" / "current" / "current.txt"
+    # Starts at v1 — the state after the composition phase promoted
+    # the new parent. In production this is what git HEAD also holds
+    # at this moment.
+    pointer.write_text("v1", encoding="utf-8")
+
+    pointer_snapshots: dict[str, str] = {}
+
+    # Scripted run_batch returns a regression outcome where v1 loses
+    # 1-4 to v0, triggering rollback.
+    def scripted_run_batch(
+        p1: str, p2: str, games: int, map_name: str, **kwargs: Any
+    ) -> list[_Rec]:
+        return [
+            _Rec(
+                match_id=f"m{i}",
+                p1_version=p1,
+                p2_version=p2,
+                winner=p2 if i < 4 else p1,  # 4 wins for prior, 1 for new
+                map_name=map_name,
+                duration_s=10.0,
+                seat_swap=False,
+                timestamp="2026-04-23T00:00:00+00:00",
+                error=None,
+            )
+            for i in range(games)
+        ]
+
+    def real_run_regression(
+        new_parent: str, prior_parent: str, **kwargs: Any
+    ) -> RegressionResult:
+        pointer_snapshots["pre_regression"] = pointer.read_text(
+            encoding="utf-8"
+        )
+        # Force the real primitive to use our scripted batch runner.
+        # scripts/evolve.py passes run_batch_fn=None through from run_loop;
+        # override here regardless of the incoming value.
+        kwargs["run_batch_fn"] = scripted_run_batch
+        result = run_regression_eval(new_parent, prior_parent, **kwargs)
+        pointer_snapshots["post_regression"] = pointer.read_text(
+            encoding="utf-8"
+        )
+        return result
+
+    def fake_revert(
+        promote_sha: str,
+        generation: int,
+        reason: str,
+        **kwargs: Any,
+    ) -> bool:
+        # Load-bearing snapshot: on the pre-fix primitive, the pointer
+        # has already been rewritten to v0 here, which is exactly the
+        # dirty-tree state where production ``git revert`` bails.
+        pointer_snapshots["pre_revert"] = pointer.read_text(
+            encoding="utf-8"
+        )
+        return True
+
+    def fake_commit(
+        new_version: str,
+        generation: int,
+        stacked_titles: list[str],
+        *,
+        is_fallback: bool = False,
+        **kwargs: Any,
+    ) -> tuple[bool, str | None]:
+        return True, f"sha-{generation}"
+
+    args = _build_args(tmp_path, pool_size=2, no_commit=False)
+    pool = _make_pool(2)
+    fitness = _ScriptedFitness(["pass", "pass"])
+    composition = _ScriptedComposition([(True, "v1")])
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        return [] if k.get("skip_mirror") else pool
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=fitness,
+        run_composition_fn=composition,
+        run_regression_fn=real_run_regression,
+        commit_fn=fake_commit,
+        revert_fn=fake_revert,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+
+    # These are the load-bearing invariants:
+    # 1. The primitive ran against the promoted pointer (v1).
+    assert pointer_snapshots["pre_regression"] == "v1"
+    # 2. The primitive did NOT rewrite the pointer on rollback —
+    #    this was the bug. On the pre-fix primitive this value is v0.
+    assert pointer_snapshots["post_regression"] == "v1", (
+        "primitive must leave bots/current/current.txt untouched on "
+        f"rollback; got {pointer_snapshots['post_regression']!r}. "
+        "Dirty tree would cause production ``git revert`` to bail "
+        "with exit 128 (run 20260422-0824 symptom)."
+    )
+    # 3. revert_fn observed a clean tree (pointer == HEAD == v1).
+    #    This is the invariant that guarantees production ``git revert``
+    #    actually runs successfully.
+    assert pointer_snapshots["pre_revert"] == "v1", (
+        "git revert must be invoked on a clean working tree; got "
+        f"pointer={pointer_snapshots['pre_revert']!r}. "
+        "This is the run 20260422-0824 rollback-order bug."
+    )
+
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["parent_current"] == "v0"
+    assert state["generations_promoted"] == 0
+
+
+def test_run_loop_aborts_if_master_has_phantom_promote_at_startup(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Pre-flight aborts with rc=1 and an error message naming both values.
+
+    Prevents a rerun from starting against a promote commit that was
+    rolled back on disk but never reverted in git — the exact state
+    that run 20260422-0824 left master in before manual cleanup.
+
+    Exercises the helper itself (not just its mocked return) by seeding
+    a fake repo layout under ``tmp_path`` and injecting a ``run`` that
+    simulates ``git show HEAD:bots/current/current.txt`` returning ``v1``
+    while the disk pointer holds ``v0``.
+    """
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+
+    # --- Verify the helper directly (end-to-end on a fake repo) ---
+    monkeypatch.setattr(cli, "_REPO_ROOT", tmp_path)
+    (tmp_path / "bots" / "current").mkdir(parents=True)
+    (tmp_path / "bots" / "current" / "current.txt").write_text(
+        "v0", encoding="utf-8"
+    )
+
+    def fake_git_show(
+        argv: list[str], **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        assert argv[:3] == ["git", "show", "HEAD:bots/current/current.txt"]
+        return subprocess.CompletedProcess(
+            argv, returncode=0, stdout="v1\n", stderr=""
+        )
+
+    ok, head_v, disk_v = cli.check_no_phantom_promote(run=fake_git_show)
+    assert ok is False
+    assert head_v == "v1"
+    assert disk_v == "v0"
+
+    # --- Verify run_loop aborts when the helper reports a phantom state ---
+    # Monkeypatch the helper directly — defaulting kwargs like ``run`` are
+    # bound at module-load time, so patching subprocess.run doesn't reach
+    # the helper's default, but patching the helper itself does.
+    monkeypatch.setattr(
+        cli,
+        "check_no_phantom_promote",
+        lambda **_: (False, "v1", "v0"),
+    )
+
+    args = _build_args(tmp_path, pool_size=2, no_commit=True)
+
+    rc = cli.run_loop(
+        args,
+        # These must never be called; pre-flight aborts first.
+        generate_pool_fn=lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("pre-flight should abort before pool gen")
+        ),
+        run_fitness_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        run_composition_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 1
+
+    # Error message names both values and suggests a recovery path.
+    err = capsys.readouterr().err
+    assert "phantom-promote" in err
+    assert "'v0'" in err  # disk value
+    assert "'v1'" in err  # HEAD value
+    assert "git checkout bots/current/current.txt" in err

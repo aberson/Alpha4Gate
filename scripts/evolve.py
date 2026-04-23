@@ -54,11 +54,16 @@ if TYPE_CHECKING:
     )
 
 # Ensure repo root is on sys.path so ``orchestrator`` is importable when the
-# script is invoked directly (``python scripts/evolve.py``).
+# script is invoked directly (``python scripts/evolve.py``). The
+# ``orchestrator.evolve`` import below is deferred past this ``sys.path``
+# setup (hence the E402 waivers).
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT / "src"))
 
+from orchestrator.evolve import (  # noqa: E402
+    _restore_pointer as _primitive_restore_pointer,
+)
 
 _log = logging.getLogger("evolve")
 
@@ -278,6 +283,75 @@ def check_sc2_installed() -> bool:
         sc2_path,
     )
     return False
+
+
+def _restore_current_pointer(parent_name: str) -> None:
+    """Write ``bots/current/current.txt`` to *parent_name*.
+
+    Thin script-side wrapper around ``orchestrator.evolve._restore_pointer``
+    so the atomic-replace retry loop lives in exactly one place. Used by
+    the regression-rollback path when ``git revert`` is skipped or fails —
+    in those cases the primitive deliberately leaves the pointer untouched
+    so this caller can order operations correctly.
+    """
+    _primitive_restore_pointer(parent_name)
+
+
+def check_no_phantom_promote(
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> tuple[bool, str | None, str | None]:
+    """Return ``(ok, head_version, disk_version)``.
+
+    A "phantom promote" state is one where ``bots/current/current.txt``
+    on disk differs from ``git show HEAD:bots/current/current.txt``. This
+    happens when a prior run rolled back a promote on disk but failed to
+    revert the promote commit in git — the scenario from run
+    20260422-0824 that motivated the rollback-order fix. Starting a new
+    evolve run from such a state is unsafe: the primitives trust the
+    filesystem pointer but the working tree is dirty relative to HEAD.
+
+    ``ok=True`` means both values match (or the pointer file is missing,
+    which is handled by other pre-flight checks). ``ok=False`` means the
+    caller must bail with a recovery message naming both values.
+    """
+    pointer = _REPO_ROOT / "bots" / "current" / "current.txt"
+    if not pointer.is_file():
+        # No pointer file on disk; other pre-flight steps will surface this.
+        return True, None, None
+
+    disk_version = pointer.read_text(encoding="utf-8").strip()
+
+    try:
+        result = run(
+            ["git", "show", "HEAD:bots/current/current.txt"],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=str(_REPO_ROOT),
+            encoding="utf-8",
+        )
+    except (FileNotFoundError, OSError) as exc:
+        _log.warning(
+            "git show HEAD:bots/current/current.txt failed (%s); "
+            "skipping phantom-promote check",
+            exc,
+        )
+        return True, None, disk_version
+
+    if result.returncode != 0:
+        _log.warning(
+            "git show HEAD:bots/current/current.txt returned %d: %s; "
+            "skipping phantom-promote check",
+            result.returncode,
+            (result.stderr or "").strip(),
+        )
+        return True, None, disk_version
+
+    head_version = result.stdout.strip()
+    if head_version != disk_version:
+        return False, head_version, disk_version
+    return True, head_version, disk_version
 
 
 # ---------------------------------------------------------------------------
@@ -909,6 +983,36 @@ def git_commit_evo_auto(
     return True, sha
 
 
+def _reset_staged_revert(
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> None:
+    """Clear any staged changes left behind by a failed revert commit.
+
+    ``git revert --no-commit`` stages the reverse diff in the index; if
+    the follow-up ``git commit`` then fails, the staged diff lingers and
+    will leak into the NEXT generation's commit (``git_commit_evo_auto``
+    does a plain ``git commit -m`` with no pathspec and no ``-a``, which
+    commits everything currently staged). Run ``git reset HEAD -- .`` so
+    the revert primitive cleans up its own mess on the failure path.
+    Never raises — this is best-effort.
+    """
+    try:
+        run(
+            ["git", "reset", "HEAD", "--", "."],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=str(_REPO_ROOT),
+        )
+    except (FileNotFoundError, OSError) as exc:
+        _log.warning(
+            "git reset (post-failed-revert cleanup) failed: %s; "
+            "index may still carry staged revert diff",
+            exc,
+        )
+
+
 def git_revert_evo_auto(
     promote_sha: str,
     generation: int,
@@ -920,7 +1024,10 @@ def git_revert_evo_auto(
 
     Uses ``git revert --no-commit`` so we can provide our own commit
     message containing the ``[evo-auto]`` marker. Returns True on success;
-    a failure logs WARNING and returns False (operator reconciles).
+    a failure logs WARNING and returns False (operator reconciles). On
+    any failure path after ``git revert --no-commit`` has staged its
+    reverse diff, ``_reset_staged_revert`` is called to drop the staged
+    changes so they do not leak into the next generation's commit.
     """
     env = _git_env_evo_auto()
 
@@ -963,6 +1070,7 @@ def git_revert_evo_auto(
         )
     except (FileNotFoundError, OSError) as exc:
         _log.warning("git commit (revert) failed for %s: %s", promote_sha, exc)
+        _reset_staged_revert(run=run)
         return False
     if commit_result.returncode != 0:
         _log.warning(
@@ -971,6 +1079,7 @@ def git_revert_evo_auto(
             generation,
             commit_result.stderr,
         )
+        _reset_staged_revert(run=run)
         return False
     _log.info(
         "evolve: reverted promotion %s (generation %d regression rollback)",
@@ -1208,6 +1317,27 @@ def run_loop(
             "evolve: SC2 not installed; aborting pre-flight.",
             file=sys.stderr,
         )
+        return 1
+
+    # Phantom-promote guard: catch the failure mode from run 20260422-0824
+    # where a prior rollback dirtied ``bots/current/current.txt`` but
+    # ``git revert`` failed on the dirty tree, leaving HEAD still carrying
+    # the promote commit. Starting a new run from that state is unsafe.
+    phantom_ok, head_version, disk_version = check_no_phantom_promote()
+    if not phantom_ok:
+        msg = (
+            "evolve: phantom-promote state detected — "
+            f"bots/current/current.txt on disk is {disk_version!r} but "
+            f"git HEAD has {head_version!r}. A prior rollback left the "
+            "pointer inconsistent with git. Recover with:\n"
+            "  git checkout bots/current/current.txt   "
+            "# accept HEAD's version\n"
+            "or\n"
+            "  git revert <promote-sha>                "
+            "# revert the phantom promote commit"
+        )
+        _log.error(msg)
+        print(msg, file=sys.stderr)
         return 1
 
     parent_start = current_version_fn()
@@ -1941,7 +2071,16 @@ def run_loop(
                     # Flip promoted imps to regression-rollback.
                     for idx in promoted_imp_idxs:
                         per_item_state[idx].status = _REGRESSION_ROLLBACK
-                    # Revert the promote commit (if we have a sha to revert).
+                    # Rollback order is load-bearing: run ``git revert`` on
+                    # a CLEAN working tree first — the revert commit's
+                    # reverse diff restores bots/current/current.txt to
+                    # prior_parent as a side effect. The primitive
+                    # deliberately leaves the pointer alone so this works;
+                    # see run_regression_eval's docstring. If the revert is
+                    # skipped (--no-commit) or fails, we fall back to
+                    # writing the pointer explicitly so the in-process
+                    # state and on-disk state still agree.
+                    revert_ok = False
                     if promote_sha and not args.no_commit:
                         revert_ok = revert_fn(
                             promote_sha,
@@ -1954,6 +2093,12 @@ def run_loop(
                                 "operator must reconcile manually",
                                 generation_index,
                             )
+                    if not revert_ok:
+                        # No revert commit landed (either --no-commit dev
+                        # run, missing sha, or the revert failed). Restore
+                        # the pointer explicitly so subsequent generations
+                        # see prior_parent as the live parent.
+                        _restore_current_pointer(prior_parent)
                     parent_current = prior_parent
                 else:
                     regression_outcome_label = "pass"

@@ -960,9 +960,17 @@ class TestRunRegressionEval:
         pointer = tmp_path / "bots" / "current" / "current.txt"
         assert pointer.read_text(encoding="utf-8") == "v1"
 
-    def test_rollback_restores_pointer(
+    def test_rollback_leaves_pointer_untouched(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """Primitive must NOT rewrite the pointer on rollback.
+
+        The caller (``scripts/evolve.py``) runs ``git revert`` first and
+        relies on the revert commit to restore the pointer via its
+        reverse diff; the primitive dirtying the working tree in advance
+        caused the rollback-order bug observed in run 20260422-0824.
+        See the docstring on ``run_regression_eval`` for the contract.
+        """
         _redirect_repo_root(tmp_path, monkeypatch)
         _seed_version(tmp_path, "v0")
         _seed_version(tmp_path, "v1")
@@ -977,7 +985,8 @@ class TestRunRegressionEval:
         )
         assert result.rolled_back is True
         pointer = tmp_path / "bots" / "current" / "current.txt"
-        assert pointer.read_text(encoding="utf-8") == "v0"
+        # Pointer stays at v1 (the caller's responsibility to flip).
+        assert pointer.read_text(encoding="utf-8") == "v1"
 
     def test_identical_parents_raises(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
