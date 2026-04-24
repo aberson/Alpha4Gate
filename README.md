@@ -70,27 +70,28 @@ The loop runs unattended for hours. Each cycle: play N games, Claude reads the r
 ## The self-play arena
 
 ```
-                    ┌──────────────────────────────────────────────────────┐
-                    │          /improve-bot-evolve                         │
-                    │       generational self-play arena (4-6 hours)       │
-                    │                                                      │
-  ┌─────────┐       │   ┌─────────┐    ┌─────────┐    ┌─────────┐          │
-  │         │       │   │         │    │         │    │         │          │
-  │   THE   │◄─────────►│  POOL   │───►│ FITNESS │───►│  STACK  │          │
-  │   TASK  │       │   │         │    │         │    │         │          │
-  │         │       │   └─────────┘    └─────────┘    └────┬────┘          │
-  │ (SC2)   │◄──┐   │                                      │               │
-  │         │   │   │   ┌─────────┐    ┌─────────┐    ┌────▼────┐          │
-  │         │   └──────►│ REFRESH │◄───│ PROMOTE │◄───│ REGRESS │          │
-  │         │       │   │         │    │         │    │         │          │
-  └─────────┘       │   └─────────┘    └─────────┘    └─────────┘          │
-                    │         │                                            │
-                    │         └──────── loop back to POOL ──────────────►  │
-                    │                   (or stop if time's up / empty)     │
-                    └──────────────────────────────────────────────────────┘
+  The bot grows by ancestor chain — each step requires two head-to-head wins:
+
+         v0  →  v1  →  v2  →  v3  →  …
+
+  Each generation plays out as a tournament in the SC2 sandbox:
+
+         Fitness round                     Regression round
+         ─────────────                     ────────────────
+     imp_a ⚔ parent (9g)
+     imp_b ⚔ parent (9g)   winners
+     imp_c ⚔ parent (9g)   stacked  ────►  vN+1 ⚔ vN (9g)
+     imp_d ⚔ parent (9g)   into vN+1             │
+                                                 ▼
+                                          majority wins?
+                                          ┌──────┴──────┐
+                                         yes           no
+                                      commit vN+1   git revert
+                                      (lineage      (lineage
+                                       grows)       unchanged)
 ```
 
-A different kind of loop. The advised loop picks one improvement at a time and validates it; the arena generates a pool of orthogonal improvements per generation and lets them compete. Each generation: Claude proposes N candidates, each plays the current parent for a fitness batch, winners stack into a fresh snapshot with an import-check gate, the new version plays the prior parent (regression), and either auto-commits as `vN+1` or rolls back via `git revert`. Close-losers retry against the next parent; evicted imps get replaced. Parent lineage walks v0 → v1 → v2 → … on master, every step real.
+A different kind of loop from the advised one — instead of validating one improvement at a time, the arena generates a pool of orthogonal candidates per generation and lets them compete. Claude proposes the pool; fitness winners get stacked into a new snapshot (with an import-check gate catching bad combinations); regression gates the promotion. Close-losers retry against the next parent; evicted imps get replaced. Every arrow in the lineage is a real auto-commit on master.
 
 **Read the mechanism:** [improve-bot-evolve SKILL.md](.claude/skills/improve-bot-evolve/SKILL.md) · [gate-reduction plan](documentation/plans/evolve-gate-reduction-plan.md)
 
