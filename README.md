@@ -2,13 +2,17 @@
 
 ![Python](https://img.shields.io/badge/python-3.12-blue) ![pytest](https://img.shields.io/badge/pytest-1313%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-143%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
 
-An AI agent that teaches itself to get better at a task with <i><b>- zero human input</b></i>.
+An AI agent that teaches itself to get better at a task with — zero human input.
 
-It plays, watches itself fail, figures out why, writes a fix, proves the fix works, and repeats. The task happens to be StarCraft II, but the loops are general.  A live React dashboard streams every phase — every proposed fix, every rejection, every win-rate swing — while the agent runs unattended for hours.  (Techincally an iterative LLM-guided reinforcement learning model with a learned advisor)
+It plays, diagnoses what went wrong, produces code-level proposals, and only keeps the ones that prove themselves in games. The task happens to be StarCraft II, but the loops are general. A live React dashboard streams every phase — every proposed fix, every rejection, every win-rate swing — while the agent runs unattended for hours. (Technically an iterative LLM-guided reinforcement learning model with a learned advisor.)
 
-Two source signals: 
-* <b>Advised loop:</b> signal comes from playing an external static opponent (Blizzard's stock SC2 AI). Claude reads the bot-vs-stock games and proposes fixes. Improvement is measured against a fixed bar that never moves.
-* <b>Evolve loop:</b> signal comes from self-play between our own bot versions. No external opponent. Improvement is measured against the bot's own ancestors — a moving target that gets stronger each generation.
+**Two complementary learning loops:**
+
+- **Advised loop:** signal comes from playing an external static opponent (Blizzard's stock SC2 AI). Claude reads the bot-vs-stock games and proposes fixes. Improvement is measured against a fixed bar that never moves.
+- **Evolve loop:** signal comes from self-play between our own bot versions. No external opponent. Improvement is measured against the bot's own ancestors — a moving target that gets stronger each generation.
+
+Advised drives progress against a known benchmark; evolve keeps the bot improving past it. They catch each other's blind spots.
+
 
 <table>
 <tr>
