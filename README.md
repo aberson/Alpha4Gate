@@ -115,11 +115,10 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 - **The breakthrough -** Self-improvement took win rate from 0% to 75% at difficulty 3.
 - **Reality check -** Harder opponents exposed that training scores lie — need honest exams.
 - **The big merge -** Three plans became one: every future bot is a snapshot that must beat its ancestors.
-- **Phase A -** Added memory (LSTM) and a gentler training recipe — 19/20 wins at difficulty 3.
+- **Memory matters -** Added memory (LSTM) and a gentler training recipe — 19/20 wins at difficulty 3.
 - **The arena works -** Two bot versions fighting each other in separate sandboxes, validated.
 - **The arena -** Bot versions fight each other in sandboxed self-play. Elo ladder + promotion gate decides who ships.
-- **First overnight run, zero promotions -** 10 hours, 4 generations, every stack rolled back — three compound 60% filters made the math impossible.
-- **Cutting the middle gate -** Dropped the redundant composition check and patched a rollback-order bug hiding phantom commits.
+- **Overnight run, zero promotions -** Three compound 60% filters made the math impossible, dropped the redundant composition check.
 - **The arena produces winners -** 7 hours, v0 → v1 → v2 — the self-play loop ships its first two auto-promotions.
 - **Now -** Self-play evolution is producing auto-promotions unattended. Claude proposes orthogonal improvements, the arena filters, master advances. The platform from the earlier phases now has a working growth engine on top of it.
 - **Next -** Multi-race support: Zerg first, then Terran. Each race gets its own bot lineage competing on the Elo ladder.
@@ -364,6 +363,8 @@ Special thanks to my friends for their support:
 - Drew Goya
 - William Gathright
 - Willie Williams
+
+Also thanks to all the creators and companies who makde the mountain of tools this is built on (and anyone else I forgot).
 
 </details>
 
