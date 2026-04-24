@@ -168,6 +168,7 @@ The user explicitly scoped it as a prerequisite. `/build-phase` executes `/build
 - **Depends on:** Step 2.
 
 ### Step 4: Validation soak — 5-6h evolve run
+- **Status:** DONE (2026-04-24) — 2 net promotions in 7h 15m (v0 → v1 → v2). See [documentation/soak-test-runs/evolve-20260423-2052.md](../soak-test-runs/evolve-20260423-2052.md). Primary success criterion met.
 - **Problem:** Run a production-shaped evolve soak on the 2-gate pipeline to measure real-world promotion rate. Launch `/improve-bot-evolve --hours 6 --games-per-eval 9 --pool-size 4 --post-training-cycles 0 --game-time-limit 1800 --hard-timeout 2100` (matching the 20260422-0824 baseline except `--hours` halved and `--post-training-cycles 0` to avoid confounding the comparison). Monitor via scheduled wake-ups. At run end, write a morning report to `documentation/soak-test-runs/evolve-<RUN_TS>.md` comparing outcomes to the 20260422-0824 baseline (0 net promotions in 10h).
 - **Type:** wait
 - **Issue:** (leave blank)
