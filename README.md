@@ -4,7 +4,11 @@
 
 An AI agent that teaches itself to get better at a task with <i><b>- zero human input</b></i>.
 
-It plays, watches itself fail, figures out why, writes a fix, proves the fix works, and repeats. The task happens to be StarCraft II, but the loop is general. A live React dashboard streams every phase — every proposed fix, every rejection, every win-rate swing — while the agent runs unattended for hours.  (Techincally an iterative LLM-guided reinforcement learning model with a learned advisor)
+It plays, watches itself fail, figures out why, writes a fix, proves the fix works, and repeats. The task happens to be StarCraft II, but the loops are general.  A live React dashboard streams every phase — every proposed fix, every rejection, every win-rate swing — while the agent runs unattended for hours.  (Techincally an iterative LLM-guided reinforcement learning model with a learned advisor)
+
+Two source signals: 
+* <b>Advised loop:</b> signal comes from playing an external static opponent (Blizzard's stock SC2 AI). Claude reads the bot-vs-stock games and proposes fixes. Improvement is measured against a fixed bar that never moves.
+* <b>Evolve loop:</b> signal comes from self-play between our own bot versions. No external opponent. Improvement is measured against the bot's own ancestors — a moving target that gets stronger each generation.
 
 <table>
 <tr>
