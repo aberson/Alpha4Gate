@@ -1,6 +1,6 @@
 # Alpha4Gate
 
-![Python](https://img.shields.io/badge/python-3.12-blue) ![pytest](https://img.shields.io/badge/pytest-1020%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-129%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
+![Python](https://img.shields.io/badge/python-3.12-blue) ![pytest](https://img.shields.io/badge/pytest-1313%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-143%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
 
 An AI agent that teaches itself to get better at a task with <i><b>- zero human input</b></i>.
 
@@ -139,8 +139,8 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 | Deep learning | PyTorch + Stable Baselines 3 | PPO policy network for strategic decisions |
 | Training data | SQLite | Structured (s,a,r,s') transition storage |
 | Charts | Recharts 3.8 | Per-rule reward trend visualization |
-| Testing (Python) | pytest | 1020 unit tests, SC2 integration markers |
-| Testing (Frontend) | vitest + jsdom + @testing-library/react | 129 component / hook / lib tests |
+| Testing (Python) | pytest | 1313 unit tests, SC2 integration markers |
+| Testing (Frontend) | vitest + jsdom + @testing-library/react | 143 component / hook / lib tests |
 | Linting | ruff + mypy | Strict type checking, consistent style |
 
 </details>
@@ -273,7 +273,7 @@ bash scripts/start-dev.sh
 ### Testing
 
 ```bash
-uv run pytest              # 1020 unit tests (no SC2 needed)
+uv run pytest              # 1313 unit tests (no SC2 needed)
 uv run pytest -m sc2       # SC2 integration tests (SC2 must be running)
 uv run ruff check .        # Lint
 uv run mypy src bots --strict  # Type check
@@ -296,7 +296,7 @@ Alpha4Gate/
 │   └── ...                  # scouting, config, macro, micro, etc.
 ├── bots/current/            # Thin pointer package (MetaPathFinder → v0)
 ├── src/orchestrator/        # Version registry, snapshots, self-play, Elo ladder
-├── tests/                   # 1020 unit tests (+ SC2 integration markers)
+├── tests/                   # 1313 unit tests (+ SC2 integration markers)
 ├── frontend/                # React + TypeScript dashboard (Vite, 10 tabs)
 ├── scripts/                 # Live test, training analysis, sandbox hook
 ├── documentation/wiki/      # Project wiki (start with index.md)

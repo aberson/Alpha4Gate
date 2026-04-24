@@ -703,7 +703,7 @@ No data migrations.
 
 ## Phase 9 — improve-bot-evolve (sibling-tournament evolutionary loop)
 
-**Status: IN PROGRESS** — Steps 1-7 shipped 2026-04-20 (`51a2201..03a4b38`, 1257 pytest + 135 vitest). Step 8 (overnight soak, #161) operator-pending.
+**Status: OPERATIONAL** — Steps 1-9 shipped. Post-Step-10 gate reduction (see below) landed 2026-04-24 and validated by soak `20260423-2052`: 2 net promotions in 7h 15m (v0 → v1 → v2), 0 rollbacks, 0 crashes. Baseline 20260422-0824 (3-gate pipeline) produced 0 promotions in 10.33h. 1313 pytest + 143 vitest.
 
 **Track:** Operational. **Prerequisites:** Phase 5 (sandbox + skill
 integration). Independent of B/D/E/6/7 — ships standalone.
@@ -826,6 +826,19 @@ phantom-promote pre-flight guard that refuses to start a new run if
 Schema change: frontend `useEvolveRun.ts` `cacheKey` bumped to
 `evolve-v3`; `promoted-stack` + `promoted-single` collapsed to
 `promoted`; `is_fallback` and `composition-*` phase names removed.
+
+**Validation (2026-04-24):** Soak run `20260423-2052` (7h 15m, `--hours 6
+--games-per-eval 9 --pool-size 4`) produced **2 net promotions** (v0 → v1
+→ v2), 0 rollbacks, 0 crashes — a clean empirical win vs the baseline's
+0 promotions in 10.33h. Both promoted imps survived regression:
+gen 1's "OPENING state timeout escape hatch" (9-0 fitness), and
+gen 2's "Reduce re-scout interval + Observers" (resurrected from gen-1
+fitness-close; 5-3 fitness, 5-4 regression — the resurrection mechanic
+earned its keep). See
+[documentation/soak-test-runs/evolve-20260423-2052.md](../soak-test-runs/evolve-20260423-2052.md)
+for the full report. Next follow-up: PFSP-lineage regression gate
+(regression currently tests only the immediate prior parent; PFSP would
+sample a distribution of ancestors weighted by strength).
 
 ---
 
