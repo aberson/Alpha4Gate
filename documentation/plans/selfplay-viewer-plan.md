@@ -1,658 +1,609 @@
-# Self-play viewer — windowed container
+# Self-play viewer — observer-based single-window
 
 ## 1. What This Feature Does
 
-Embed the two SC2 windows spawned during a self-play match into a single
-themed container window so the user can watch round-robin self-play
-without juggling scattered top-level windows on the desktop. The
-container is built with **pygame**, uses Win32 `SetParent` to reparent
-the two `SC2_x64.exe` windows as child windows of the pygame surface,
-paints a themed background (SF2-inspired fight-select art) around them,
-and overlays live match stats (version labels, game N-of-M, running
-score).
+Refactor the existing Alpha4Gate self-play viewer
+(`src/selfplay_viewer/`, shipped 2026-04-18) from a **two-pane
+reparenting** design to a **single-pane observer** design. Spawn a third
+SC2 client as a `sc2.player.Observer` with full-map vision (no fog),
+reparent **only that one window** into the themed pygame container, and
+let the two bot clients continue running in the background
+minimized/offscreen where they're not watched.
 
-**Why now.** Phase 3 shipped subprocess self-play (`src/orchestrator/selfplay.py`
-`run_batch`) which already spawns two real SC2 processes per game. The
-project trajectory is to outgrow fixed-difficulty SC2-AI ladders and rely
-on round-robin self-play between `bots/vN/` versions as the primary
-improvement signal (Phase 6). SC2 on Windows cannot run truly headless —
-windows pop up regardless — so making those windows into a single themed
-pair strictly dominates the default experience. Getting the viewer in
-before Phase 6 ramps means the first long self-play soaks are already
-watchable.
+**Why now.** The two-pane viewer works, but each pane shows one bot's
+fog-of-war-limited camera; the two cropped perspectives don't combine into
+a useful strategic view, and 2×1024×768 of SC2 crammed side-by-side is
+awkward on a single monitor. An observer client gives a neutral
+omniscient camera on the full map — exactly the watching experience the
+viewer was built for. The cost is one extra SC2 process (~2 GB RAM) and a
+small burnysc2 patch; the payoff is a strictly better single-screen
+experience and a viewer that's safe to run during rated training soaks
+(the observer sees everything but the bots still play with fog, so
+decisions are unaffected).
 
-**Not scope.** Dashboard integration, automatic launch from the Phase 6
-daemon, multi-pane global window management across multiple concurrent
-`run_batch` calls, Linux/macOS support, or any SC2-process lifecycle
-changes.
+**Not scope.** Elo / rating overlay, advisor commentary overlay, dashboard
+integration, auto-launch from the Phase 6 daemon, multi-batch window
+management, Linux/macOS support, SC2 lifecycle changes, replay-viewing mode.
 
 ## 2. Existing Context
 
-**Project.** Alpha4Gate — StarCraft II Protoss bot with rule-based
-strategy + PPO neural policy + Claude advisor. Python 3.12, uv,
-burnysc2 v7.1.3, FastAPI + React dashboard. Production bot lives in
-`bots/v0/`; versioning infrastructure (Phases 1–5) is complete.
+**Investigation.** Full feasibility writeup at
+[`documentation/investigations/observer-player-viewer-investigation.md`](../investigations/observer-player-viewer-investigation.md)
+(2026-04-24). Confirmed: `sc2.player.Observer` is a first-class player
+type at the proto and Python class level
+([`.venv/Lib/site-packages/sc2/player.py:89-94`](../../.venv/Lib/site-packages/sc2/player.py#L89-L94));
+`sc2.client.Client.join_game` supports observers via `observed_player_id`
+([`client.py:89-95`](../../.venv/Lib/site-packages/sc2/client.py#L89-L95));
+`Controller.create_game` accepts Observer slots at the proto level
+([`controller.py:34-40`](../../.venv/Lib/site-packages/sc2/controller.py#L34-L40)).
+**But** `sc2.main._play_game` does not wire Observer through — it reads
+`player.race` and `player.ai` unconditionally
+([`main.py:217-225`](../../.venv/Lib/site-packages/sc2/main.py#L217-L225)),
+both missing on `Observer()`. A surgical monkey-patch dispatches Observer
+instances to our own coroutine; same pattern as the port-collision patch
+at [`selfplay.py:76-118`](../../src/orchestrator/selfplay.py#L76-L118).
 
-**How self-play works today.**
+**What already exists (DONE, to be partially reused).**
 
-- `src/orchestrator/selfplay.py` — `run_batch(p1, p2, games, map_name, ...)`
-  is the entry point. It installs a port-collision monkey-patch for
-  burnysc2 7.1.3, validates versions against the registry, and runs
-  games serially inside an `asyncio` event loop.
-- Each game calls `_run_single_game`, which builds a `GameMatch` with
-  two `BotProcess` instances (one per version) and awaits
-  `sc2.main.a_run_multiple_games`. Under the hood, burnysc2 spawns
-  two `SC2_x64.exe` processes via `SC2Process`; each gets its own
-  top-level Windows window with `fullscreen=False`.
-- Per-game results append to `data/selfplay_results.jsonl`.
-- `scripts/selfplay.py` is the CLI front-end: `--p1 v3 --p2 v5 --games 20
-  --map Simple64 [--sample pfsp --pool v0,v1,v2,v3]`.
-
-**Assets already in place.** [`src/selfplay_viewer/assets/`](../../src/selfplay_viewer/assets/)
-contains four SF2-themed WebPs (`brazil.webp`, `china.webp`, `japan.webp`,
-`spain.webp`) — originally dropped as 2624×1632 PNGs under `img_backgrounds/`
-at the repo root; relocated + re-encoded to WebP 1920×1194 q85 on
-2026-04-19 (commit `70d2ced`, 33MB → 1.7MB).
-
-**Windows platform constraints.**
-
-- SC2 is DirectX, windowed when `fullscreen=False`. The process creates
-  its own top-level `HWND`; we find it by enumerating top-level windows
-  and matching `GetWindowThreadProcessId` against the `SC2Process.pid`.
-  The window does not appear instantly — it takes 3–10s after spawn.
-- `SetParent(hwnd, container_hwnd)` reparents; `SetWindowLong(GWL_STYLE,
-  WS_CHILD | WS_VISIBLE)` converts it to a child window first.
-- pywin32 provides `win32gui`, `win32con`, `win32process`.
-- pygame gets its native window HWND via `pygame.display.get_wm_info()['window']`.
+- `src/selfplay_viewer/container.py` — pygame window + layout engine.
+  **Refactor:** replace 2-pane layout table with single-pane dimensions;
+  drop `--bar {top,side}` since there's no side real-estate to trade.
+- `src/selfplay_viewer/reparent.py` — Win32 `SetParent` / `MoveWindow`
+  primitives. **Reuse as-is.** Generic enough that single-pane is a
+  trivial caller.
+- `src/selfplay_viewer/backgrounds.py` — SF2-themed asset loader. **Reuse.**
+- `src/selfplay_viewer/overlay.py` — version labels + W-L overlay.
+  **Refactor:** refit layout to the new container dimensions; `--bar`
+  branching removed.
+- `src/orchestrator/selfplay.py` — `run_batch` + `_run_single_game`.
+  **Extend:** add observer coroutine, add `_play_game` dispatch patch,
+  change `GameMatch` players list from 2→3, extend PID discovery and
+  callback signature to pass the observer PID.
+- `scripts/selfplay.py` — CLI entry. **Extend:** add `--observer` /
+  `--no-observer` (default on), drop `--bar`. Keep `--no-viewer`,
+  `--background`, `--size`.
 
 **Relevant memory.**
 
-- [feedback_sc2_process_management.md](../../.claude/projects/alpha4gate-project/memory/feedback_sc2_process_management.md)
-  — never kill `SC2_x64.exe`. Closing the container must detach the
-  reparenting (`SetParent(hwnd, NULL)`), **never** terminate the
-  process.
-- [feedback_user_powershell.md](../../.claude/projects/alpha4gate-project/memory/feedback_user_powershell.md)
-  — operator steps use PowerShell commands.
-- [feedback_worktree_venv_incomplete.md](../../.claude/projects/alpha4gate-project/memory/feedback_worktree_venv_incomplete.md)
-  — worktree-isolated build steps must `uv sync` **and** `uv pip install
-  -e .[dev]` to get pytest/mypy/ruff available.
+- `feedback_sc2_process_management.md` — never kill `SC2_x64.exe`. Applies
+  to all three processes now, including the observer.
+- `project_selfplay_viewer_code_complete.md` — Step 9 soak ran 2026-04-18;
+  two-pane viewer is shipped and working. This plan supersedes that
+  design.
+- `feedback_user_powershell.md` — operator commands in PowerShell.
+- `feedback_worktree_venv_incomplete.md` — `uv sync` + `uv pip install -e
+  .[dev]` in worktrees.
+- `feedback_py312_venv_recipe_for_soaks.md` — main `.venv` is Py3.14 and
+  has no pygame wheels; use the side `.venv-py312` for viewer work.
+
+**Not-yet-addressed open questions from the investigation (§6)** — answered
+for this plan:
+
+1. *Neutral omniscient camera vs fog-disabled bot camera?* **Neutral
+   omniscient** (third-process observer).
+2. *Dev-only or safe during training?* **Safe during training** — the
+   observer is a non-playing spectator, so bots continue with their normal
+   fog-of-war decisions.
+3. *Keep themed backgrounds + overlays?* **Yes**, refitted to single-pane
+   dimensions.
 
 ## 3. Scope
 
 **In scope**
 
-- pygame container window with themed PNG background
-- Win32 reparenting of two SC2 windows into the container
-- Hooks into `run_batch` / `run_single_game` to learn PIDs as games start
-  and to detect game completion / SC2 crash
-- Stats overlay (top-bar default, side-bar alternative): p1 vs p2 labels,
-  game N of M, running W-L
-- Random background default with `--background <key>` override
-- Runtime hotkey toggles: `s` large/small size, `b` top/side bar
-- Placeholder paint when an SC2 window disappears mid-match, with a
-  small pool of flavor lines
-- `--no-viewer` escape hatch on `scripts/selfplay.py`
-- Soak observation (Step 9) — 10-game real self-play batch watched
-  end-to-end on Windows to verify no orphan processes, no HWND leaks,
-  crash placeholder works
+- Observer coroutine (`_play_observer`) that drives an observer client:
+  join, observation+step loop, clean leave on `_game_result`.
+- `sc2.main._play_game` monkey-patch: when the player is an `Observer`,
+  route to `_play_observer` instead of the default AI/human path.
+- `GameMatch` construction updated to include `Observer()` as a third
+  player in `_build_match` (conditional on the `--observer` flag).
+- `run_batch` PID discovery widened from 2→3 PIDs; the observer PID
+  routed through the `on_game_start` callback signature.
+- Observer camera init — `RequestDebug` to center camera on map
+  midpoint immediately after join.
+- `selfplay_viewer` layout refactor to single-pane, keeping SF2
+  background and overlay.
+- Soak gate: 10-game real self-play batch, watched end-to-end, verify
+  observer renders full map, no orphan SC2 processes, no HWND leaks, RAM
+  stays under 8 GB.
 
 **Explicitly out of scope**
 
-- Dashboard integration (no React component, no API endpoint)
-- Auto-launch from the Phase 6 daemon, the training loop, or
-  `/improve-bot-advised`. CLI-invoked `scripts/selfplay.py` only.
-- Multiple concurrent `run_batch` calls sharing one container. Each
-  batch gets its own viewer window.
-- Linux / macOS support. Viewer is Windows-only; `--no-viewer` is
-  forced on other platforms with a log line.
-- Advisor commentary overlay (deferred to a v2 pass once the basic
-  container is stable)
-- Elo / rating deltas on the overlay
-- Killing, restarting, or otherwise managing SC2 processes from the
-  viewer
+- Fog-disabled-bot-camera (`disable_fog=True`) variant. The investigation
+  noted this as cheaper but unsafe during training; we're committing to
+  the observer path instead. `disable_fog` is not added as a flag here.
+- Dashboard integration, Phase 6 daemon auto-launch, concurrent-batch
+  multi-viewer — same exclusions as the prior plan.
+- Upstreaming the `_play_game` patch to BurnySc2 — nice-to-have, not
+  blocking.
+- Letting the user swap which client they're watching at runtime
+  (observer vs P1-camera vs P2-camera). With a dedicated observer we
+  already see everything; swapping framing has no value.
+- Minimizing the 2 bot SC2 windows programmatically — we let Windows
+  handle stacking; if they cover the pygame container the user moves
+  them manually. (If this turns out to be annoying in practice, a
+  follow-up issue can add `ShowWindow(SW_MINIMIZE)` on the 2 bot HWNDs.)
 
 ## 4. Impact Analysis
 
 | File / module | Change type | Nature |
 |---|---|---|
-| `src/orchestrator/selfplay.py` | **Extend** | Add optional `on_game_start(game_index, p1_pid, p2_pid)` and `on_game_end(result)` callbacks to `run_batch` and thread them into `_run_single_game`. Callbacks are no-ops when `None` (preserves existing callers). |
-| `scripts/selfplay.py` | **Extend** | Construct a `SelfPlayViewer` unless `--no-viewer`; wire the viewer's callbacks into `run_batch`. Add flags: `--no-viewer`, `--background {brazil,china,random,...}`, `--bar {top,side}`, `--size {large,small}`. On non-Windows, force `--no-viewer` with an info log. |
-| `src/selfplay_viewer/__init__.py` | **NEW** | Package init, re-exports public API (`SelfPlayViewer`, `run_with_viewer`). |
-| `src/selfplay_viewer/container.py` | **NEW** | pygame window, layout engine, background loader, overlay renderer, event loop, hotkey handling. |
-| `src/selfplay_viewer/reparent.py` | **NEW** | Win32 primitive: `attach_window(pid, container_hwnd, rect, timeout_s) -> hwnd`; `detach_window(hwnd)`; `move_window(hwnd, rect)`. Isolated so it can be unit-tested against `notepad.exe`. |
-| `src/selfplay_viewer/backgrounds.py` | **NEW** | Enumerate `src/selfplay_viewer/assets/*.{webp,png}`, derive key from filename (strip `protoss_themed_sf2_` / `_background` boilerplate, else use stem), pick random or by key. |
-| `src/selfplay_viewer/overlay.py` | **NEW** | Stats bar renderer (top-bar + side-bar layouts), placeholder-paint renderer with message pool, font loading. |
-| `src/selfplay_viewer/demo.py` | **NEW** | `python -m selfplay_viewer.demo` — opens the container with placeholders, no SC2, for visual smoke-testing during development. |
-| `tests/test_reparent.py` | **NEW** | pytest marker `win32` — spawn `notepad.exe`, attach/detach/move, verify HWND belongs to that PID, verify `WS_CHILD` style flag set, cleanup on test teardown. |
-| `tests/test_backgrounds.py` | **NEW** | Filename-to-key extraction, random selection stability under seed, unknown-key error path. |
-| `tests/test_overlay.py` | **NEW** | Layout math — `large + top-bar`, `small + top-bar`, `large + side-bar`, `small + side-bar` produce expected container size and pane rects. Renders against an off-screen pygame surface, inspects pixels only for presence (not exact text). |
-| `tests/test_selfplay_callbacks.py` | **NEW** | `run_batch` fires `on_game_start(idx, p1_pid, p2_pid)` and `on_game_end(result)` in order; both `None` is accepted (back-compat); exceptions in callbacks don't abort the batch. |
-| `pyproject.toml` | **Extend** | Add `[project.optional-dependencies] viewer = ["pygame>=2.5", "pywin32>=306"]`. Keep base deps Linux-safe. `pytest` marker `win32` added to `[tool.pytest.ini_options]`. |
-| `src/selfplay_viewer/assets/` | **Read-only** | No schema changes; directory contents are asset-only. |
+| `src/orchestrator/selfplay.py` | **Extend** | Add `_play_observer` coroutine. Add `_install_observer_dispatch_patch()` (monkey-patch `sc2.main._play_game` to branch on `isinstance(player, Observer)`). Extend `_build_match` to optionally append `Observer()` to the players list, gated on an `enable_observer` kwarg threaded from `run_batch`. Widen the PID snapshot-diff logic in `_run_single_game` from "expect 2 new PIDs" to "expect 3 new PIDs"; pass the observer PID into `on_game_start`. |
+| `src/orchestrator/selfplay.py` (type alias) | **Change** | `OnGameStart` signature gains `observer_pid: int` after `p2_pid`: `Callable[[int, int, int, int, int, str, str], None]`. All existing callers updated; `-1` sentinel if observer is disabled or discovery timed out. |
+| `scripts/selfplay.py` | **Extend** | Add `--observer / --no-observer` (default `--observer`). Drop `--bar` (no longer meaningful). Thread `enable_observer` through to `run_batch`. |
+| `src/selfplay_viewer/container.py` | **Refactor** | Remove two-pane layout table + `bar` state. Add single-pane layout (see D1). `attach_pane(slot, pid, label)` becomes `attach_observer(pid, label)`; `attach_pane(slot=...)` deleted. Hotkeys: `s` (size toggle) kept; `b` (bar toggle) removed; `Esc` / close unchanged. |
+| `src/selfplay_viewer/overlay.py` | **Refactor** | Drop side-bar variant. Single top-bar overlay only; refitted to new container width. |
+| `src/selfplay_viewer/demo.py` | **Extend** | `--attach-notepad-pids A` (single PID) rather than `A,B` for the dev-only smoke test. |
+| `tests/test_observer_coroutine.py` | **NEW** | Unit test `_play_observer` against a mocked `Client`: verifies it calls `join_game(race=None, observed_player_id=...)`, loops `observation` + `step` at the expected cadence, exits on `_game_result`, calls `leave()` once. |
+| `tests/test_selfplay_callbacks.py` | **Extend** | Callback signature change — `observer_pid` added. Existing callback-ordering and exception-swallowing tests extended. |
+| `tests/test_overlay.py` | **Refactor** | Drop 4-variant layout matrix (two bar × two size); keep 2 variants (large / small). |
+| `tests/test_container_integration.py` | **Refactor** | Single notepad attach / move / detach; drop two-notepad path. |
+| `tests/test_selfplay.py`, `tests/test_pfsp_sampling.py`, `tests/test_selfplay_transition_hand_off.py` | **Read-only (regression)** | Must stay green after the dispatch patch lands. The patch is idempotent and only activates when an `Observer` is in the player list; pure-2-bot paths must behave identically. |
+| `pyproject.toml` | **Unchanged** | `[viewer]` extra already has pygame + pywin32 + psutil. No new deps. |
 
-No changes to `bots/v0/`, the Phase 3 port-collision patch, the dashboard,
-`data/selfplay_results.jsonl`, the registry, or the Elo ladder.
+No changes to `bots/v0/`, the Phase 3 port-collision patch, the
+dashboard, `data/selfplay_results.jsonl`, the registry, or the Elo
+ladder.
 
 ## 5. New Components
 
-### `src/selfplay_viewer/container.py` — `SelfPlayViewer`
-
-Main class. Constructed with `(bar="top", size="large", background="random")`.
-Owns the pygame window, layout state, callback queue, and event loop.
-
-Public API:
+### `src/orchestrator/selfplay.py` — `_play_observer` coroutine
 
 ```python
-class SelfPlayViewer:
-    def __init__(self, bar: str = "top", size: str = "large",
-                 background: str = "random") -> None: ...
+async def _play_observer(
+    client: Client,
+    observed_player_id: int,
+    portconfig: Portconfig,
+    realtime: bool,
+    game_step: int = 8,
+) -> Result | None:
+    """Drive an observer client: join, loop, leave.
 
-    # Callbacks to pass into run_batch. Thread-safe — internally push
-    # events onto a queue drained on the pygame thread.
-    def on_game_start(self, game_index: int, total: int,
-                      p1_pid: int, p2_pid: int,
-                      p1_label: str, p2_label: str) -> None: ...
-    def on_game_end(self, result: SelfPlayRecord) -> None: ...
+    - join_game(race=None, observed_player_id=observed_player_id)
+    - frame loop: await client.observation(); if client._game_result,
+      return that result. Otherwise await client.step(game_step).
+    - on clean exit: await client.leave() with ConnectionAlreadyClosedError
+      suppressed (bots may have torn down first).
 
-    # Main thread entry. Blocks until the batch completes OR the user
-    # closes the window. Runs run_batch on a background thread.
-    def run_with_batch(self, batch_fn: Callable[[], Coroutine]) -> Any: ...
+    Never raises — returns None on unexpected disconnect so run_match's
+    gather() doesn't flag this coroutine as a game-aborting failure.
+    """
 ```
 
-Layout state machine handles the four combinations:
+Notes:
 
-| bar × size | container W | container H | p1 rect | p2 rect | overlay rect |
-|---|---|---|---|---|---|
-| top + large | 2188 | 948 | (40, 140, 1024, 768) | (1124, 140, 1024, 768) | (0, 0, 2188, 100) |
-| top + small | 2060 | 900 | (40, 140, 960, 720) | (1060, 140, 960, 720) | (0, 0, 2060, 100) |
-| side + large | 2468 | 848 | (40, 40, 1024, 768) | (1124, 40, 1024, 768) | (2188, 0, 280, 848) |
-| side + small | 2340 | 800 | (40, 40, 960, 720) | (1060, 40, 960, 720) | (2060, 0, 280, 800) |
+- `observed_player_id=1` by default (watch P1). The specific ID is
+  cosmetic — fog is *server*-side controlled by the bots' own client
+  options; a neutral observer sees everything regardless of which player
+  it nominally "observes."
+- `game_step` matches the bots' default step so the observer doesn't
+  block the server on quorum. Bots run at `game_step=8` (22.4 game-loops
+  per real-second / 8 = 2.8 steps per sec) per current
+  `bots/v0/bot_ai.py` config.
 
-Hotkeys:
-
-- `s` — toggle large/small. Resizes the container window, recomputes
-  rects, calls `MoveWindow` on both attached SC2 HWNDs.
-- `b` — toggle top/side bar. Same recompute path.
-- `Esc` or window-close — detach SC2 HWNDs via `SetParent(hwnd, NULL)`
-  then quit pygame. Does NOT terminate SC2. The background `run_batch`
-  thread continues (user can Ctrl-C the script).
-
-### `src/selfplay_viewer/reparent.py`
+### `src/orchestrator/selfplay.py` — `_install_observer_dispatch_patch()`
 
 ```python
-def find_hwnd_for_pid(pid: int, timeout_s: float = 15.0) -> int | None:
-    """Poll EnumWindows filtered by GetWindowThreadProcessId == pid.
-    Returns None on timeout. 100ms tick. Skips invisible / tool windows."""
+def _install_observer_dispatch_patch() -> None:
+    """Idempotent monkey-patch of sc2.main._play_game to recognise Observer.
 
-def attach_window(hwnd: int, container_hwnd: int,
-                  rect: tuple[int, int, int, int]) -> None:
-    """Set WS_CHILD style, SetParent, MoveWindow. Idempotent."""
+    Installed exactly once per process (idempotent flag), alongside the
+    port-collision patch.
+    """
+    global _OBS_PATCH_INSTALLED
+    if _OBS_PATCH_INSTALLED: return
 
-def move_window(hwnd: int, rect: tuple[int, int, int, int]) -> None:
-    """Reposition an already-attached window."""
+    import sc2.main as _sc2_main
+    from sc2.player import Observer
 
-def detach_window(hwnd: int) -> None:
-    """SetParent(hwnd, 0), restore top-level style. Never terminates the process."""
+    orig_play = _sc2_main._play_game
+
+    async def _dispatch(player, client, realtime, portconfig, **kwargs):
+        if isinstance(player, Observer):
+            return await _play_observer(
+                client, observed_player_id=1,
+                portconfig=portconfig, realtime=realtime
+            )
+        return await orig_play(player, client, realtime, portconfig, **kwargs)
+
+    _sc2_main._play_game = _dispatch
+    _OBS_PATCH_INSTALLED = True
 ```
 
-All functions marshal onto the caller thread; caller is responsible for
-invoking them from the pygame main thread (enforced by assertion).
+Installed from `_install_port_collision_patch` sibling call site at
+module init of `run_batch`.
 
-### `src/selfplay_viewer/backgrounds.py`
+### `src/orchestrator/selfplay.py` — `_build_match` extension
 
 ```python
-BACKGROUND_DIR = Path(__file__).parent / "assets"
-
-def list_backgrounds() -> dict[str, Path]:
-    """Enumerate *.webp and *.png; derive key via:
-       stem = path.stem
-       if stem starts with 'protoss_themed_sf2_' and ends with '_background':
-           key = stem[len('protoss_themed_sf2_'):-len('_background')]
-       else:
-           key = stem
-       Return {key: path}."""
-
-def pick_background(key: str, rng: random.Random | None = None) -> Path:
-    """'random' -> random.choice; else lookup. Raises KeyError on unknown."""
+# Before:
+players=[p1_bot, p2_bot]
+# After:
+players = [p1_bot, p2_bot]
+if enable_observer:
+    from sc2.player import Observer
+    players.append(Observer())
+match = _GameMatch(map_sc2=maps.get(map_name), players=players, ...)
 ```
 
-### `src/selfplay_viewer/overlay.py`
+### `src/selfplay_viewer/container.py` — single-pane layout
 
-Top-bar: centered `{p1_label}  VS  {p2_label}` in large font (48pt),
-sub-row `Game {n} / {total}   •   W-L: {p1_wins} - {p2_wins}` (24pt).
+Replace the 2-pane layout table with:
 
-Side-bar: stacked version labels, vertical score, optional extension
-hooks (advisor feed) laid out so v2 can add rows without a layout
-rewrite.
+| size | container W | container H | observer rect | overlay rect |
+|---|---|---|---|---|
+| large | 2080 | 1250 | (80, 140, 1920, 1080) | (0, 0, 2080, 100) |
+| small | 1780 | 1070 | (80, 140, 1620, 910) | (0, 0, 1780, 100) |
 
-Placeholder pane: full-pane semi-transparent dark overlay, centered
-message from the pool:
+- Large preset targets 1920×1080 SC2 inside a 2080×1250 container — fits
+  a 2560×1600 monitor with room for the Windows taskbar + title bar.
+- Small preset targets 1620×910 — for 1920×1200 or 2560×1440 without
+  spilling.
+- 80 px side margin each side, 140 px top offset (40 px above the 100 px
+  bar), 30 px below bar before the SC2 window starts.
+- These numbers go into module constants so tuning is one-line.
 
-```python
-PLACEHOLDER_MESSAGES = [
-    "{label} has rage-quit",
-    "{label} is refusing to come out of the base",
-    "{label} crashed into the void",
-    "{label} forgot how to SC2",
-    "{label} took a coffee break",
-    "{label} surrendered to Brood War",
-]
-```
+Hotkeys after refactor:
+
+- `s` — toggle large/small. `set_mode` + `MoveWindow` on the one
+  attached SC2 HWND.
+- `Esc` / window-close — `SetParent(hwnd, NULL)` on the observer HWND;
+  pygame quit. Does NOT terminate any SC2 process (same rule as before,
+  now applies to all 3).
+
+### `src/selfplay_viewer/container.py` — observer-camera init hook
+
+After `attach_observer(pid, label)` succeeds, send a one-shot
+`RequestDebug` with `debug_game_state.action_raw.debug_camera_move` (or
+whichever field name is current in `s2clientprotocol`) aimed at the map
+midpoint. This is sent via a thin helper in the observer coroutine since
+only it has the `Client` handle — the pygame side just triggers the
+request via a shared asyncio-safe queue.
+
+Actually simpler: run camera-centering inside `_play_observer` on the
+first `observation()` response (we have `map_size` at that point — center
+is `map_size / 2`). No pygame→asyncio bridge needed.
 
 ## 6. Design Decisions
 
-### D1. Container framework — pygame
+### D1. Layout — single pane, drop `--bar`
 
-Considered: pygame, tkinter, PyQt/PySide, raw Win32 + GDI. pygame wins
-because (a) themed PNG backgrounds and overlay text render cleanly with
-`blit` and `Font.render`, (b) runtime resize / layout-swap is one `set_mode`
-call, (c) the hotkey event model is trivial, (d) no native widget theming
-fights. Cost: one extra dep, gated behind the `[viewer]` optional
-dependency so Linux CI doesn't install Windows-only wheels. tkinter is
-dep-free but its Canvas renders the themed background amateurishly. Qt
-is overkill for a three-image window. Raw Win32 means writing GDI text
-layout by hand.
+With one window there's no bar-side real-estate trade-off. Overlay lives
+above (top-bar only). `--bar` removed from CLI; existing users get a
+deprecation warning for one release, then the flag is deleted. Less
+surface, fewer test matrices, same look.
 
-### D2. Reparenting mechanism — Win32 `SetParent` with `WS_CHILD` style conversion
+### D2. Monkey-patch `_play_game` vs fork `run_match`
 
-Only reliable cross-process window embedding path on Windows. The
-alternative (DirectX swap-chain capture) would stream frames into the
-pygame surface without reparenting but adds a full capture pipeline,
-latency, and GPU load for zero gain — we don't need pixel-level access,
-we just need layout. `SetParent` keeps SC2 rendering natively.
+Monkey-patch is surgical (~15 LOC) and idempotent. Forking `run_match`
+means maintaining ~100 LOC of burnysc2-internal setup code that drifts on
+library upgrades. We already monkey-patch `Portconfig.contiguous_ports`
+and `portpicker.pick_unused_port` in the same file, so the pattern is
+established. If burnysc2 ships observer support upstream later, this
+patch goes to zero LOC without touching anything else.
 
-### D3. Threading — pygame on main thread, `run_batch` on background thread
+### D3. Observer sees all — no `observed_player_id` experimentation
 
-Both pygame and Win32 want the main thread. `run_batch` is async and
-runs happily inside `asyncio.run()` on a spawned `threading.Thread`.
-Callbacks from the batch thread push `(event, payload)` tuples onto a
-`queue.Queue`; the pygame loop drains the queue each frame and performs
-all `SetParent` / `MoveWindow` calls itself. This sidesteps the
-pygame-event-loop-from-bg-thread crash class and the pywin32-STA-apartment
-class simultaneously.
+Per `client.py:89-92`, an observer with `race=None` is required to pass
+`observed_player_id`. Protocol-wise this is the "this observer is
+following player N" hint; the actual visibility is full-map regardless.
+We hardcode `observed_player_id=1`. If we later want a "follow P1
+camera" hotkey, we'd change that param per-join but that's a v2 feature.
 
-### D4. Layout — top-bar default, 1024×768 panes, 40/60/40 margins, 100px stats bar
+### D4. Third SC2 process is **always on** when `--no-viewer` is not set
 
-Top-bar chosen as default because it matches the SF2 "VS" screen
-aesthetic (banner on top). Side-bar available via flag or hotkey. 1024×768
-per pane is the only hard constraint from the user (SC2 readable at that
-size). 40px outer margin + 60px inter-pane gutter is the tightest
-spacing that still visually frames the panes as "two fighters." 100px
-top bar leaves room for a large version label plus a sub-row, without
-dominating the window. All numbers exposed as module constants so tuning
-is a one-line edit.
+`--observer` default on. Running `scripts/selfplay.py ...` without flags
+gets the viewer + observer. `--no-viewer` turns off BOTH the pygame
+container and the 3rd SC2 process (there's no reason to pay 2 GB for a
+non-rendered observer). `--observer --no-viewer` explicitly spawns the
+observer with no container (useful for recording replays or debugging
+the observer coroutine in isolation).
 
-### D5. Overlay v1 — minimal
+### D5. Hard commit to observer; no `disable_fog` fallback
 
-Version labels, game N/M, running W-L score. Deferred to v2: advisor
-commentary feed, per-game duration, map name, Elo deltas, spoken
-commentary. Shipping minimal overlay first keeps the layout math clean;
-v2 additions plug into the side-bar layout slot without rearranging.
+Even though `GameMatch(disable_fog=True)` is a cheaper path (per the
+investigation), it changes `self.enemy_units` and the like for the two
+playing bots, which poisons training. We accept the ~2 GB RAM cost of a
+third process in exchange for training-safety and a neutral camera. If
+the observer path turns out to be unworkable after the spike (Step 1),
+we revisit.
 
-### D6. Crash placeholder — SC2 disappears → paint placeholder, keep container alive
+### D6. Camera init inside the observer coroutine, not inside pygame
 
-If a SC2 window vanishes (PID dead or HWND invalid on `IsWindow`) the
-container paints the pane with a semi-transparent overlay + a random
-flavor line. Pane rect stays reserved so the next game's SC2 window
-slots into the same space. Alternative (close container on crash) was
-rejected because the user wants to see the rest of the batch finish,
-and the Phase 3 cleanup path already handles the orphan SC2 case at the
-process level.
+First `observation()` response carries `game_info.start_locations` and
+map dimensions. The coroutine already has the `Client`; sending a
+`RequestDebug` is 3 lines. No need to pipe a request from pygame into
+asyncio.
 
-### D7. Close behavior — detach, never terminate
+### D7. PID discovery — widen existing diff-based snapshot
 
-`Esc` or window-close triggers `SetParent(hwnd, NULL)` on both attached
-SC2 windows, restoring them as top-level desktop windows. The `run_batch`
-thread keeps running; user Ctrl-Cs the script to abort the batch. This
-respects [feedback_sc2_process_management.md](../../.claude/projects/alpha4gate-project/memory/feedback_sc2_process_management.md)
-and means closing the viewer is always safe.
+Current code at `_sc2_pid_snapshot` + the delta logic in `_run_single_game`
+waits until `len(new_pids - baseline) >= 2`. Change to `>= 3`. We cannot
+distinguish which of the new PIDs is the observer from PID alone — all
+three are `SC2_x64.exe`. The ORDER they come up is not deterministic
+either. See R1 below for the reconciliation approach.
 
-### D8. Platform guard — Windows-only, `--no-viewer` forced elsewhere
+### D8. Hotkey simplification
 
-`sys.platform != "win32"` → `scripts/selfplay.py` logs an info line and
-runs as if `--no-viewer` were passed. No import of pywin32 on non-Windows.
-The `[viewer]` optional dependency keeps Linux CI clean.
+Keep `s` (size), `Esc` (close). Drop `b` (bar). Reason: bar variant was
+only useful to reclaim horizontal space for a 2nd pane; with 1 pane the
+wide layout is always right.
 
-### D9. One viewer per `run_batch` call
+### D9. Overlay stays minimal (unchanged from v1 intent)
 
-Matches user's intent (each fighter pair gets its own window) and keeps
-the design scope-bounded. A future multi-batch orchestrator can spawn N
-viewers, each owning its own pair. No global window manager in v1.
-
-### D10. Background image size — 2560×1600 native, composition guidance
-
-User generates backgrounds at 2560×1600 (matches monitor native; pygame
-downscales cleanly for smaller layouts). **Composition rule of thumb:**
-the two SC2 panes occupy roughly `x ∈ [40, 2188]`, `y ∈ [140, 908]` in
-top-bar large. Interesting art belongs in the outer ~200px frame and the
-top 100px banner zone; the center will be mostly hidden. Think SF2 VS
-screen — fighter portraits and stage details wrap around where the SC2
-windows sit.
-
-### D11. Background discovery — filename-to-key, random default
-
-Enumerate `src/selfplay_viewer/assets/*.{webp,png}`. Key extraction: strip
-`protoss_themed_sf2_` prefix and `_background` suffix if both present;
-else use stem. Accepts future drops like `japan.webp`, `tokyo.webp`
-without code changes. `--background random` picks uniformly from the
-discovered pool; `--background <key>` selects by derived key; unknown
-key raises a clear `KeyError` listing the available options.
+Version labels + `Game N/M` + running W-L. No advisor feed, no Elo, no
+map name. These are Appendix items for v2 just as in the prior plan.
 
 ## 7. Build Steps
 
-### Step 1: Scaffold pygame container + background loader
-- **Status:** DONE (2026-04-18)
-- **Problem:** Build the `selfplay_viewer` package skeleton: pygame
-  window with configurable bar (top/side) and size (large/small),
-  background loading from `src/selfplay_viewer/assets/`, and a `demo.py` entry
-  point that opens the window with placeholder grey rects where the SC2
-  panes will go. No SC2, no reparenting. The layout math in D4 is
-  authoritative. Add `pygame` and `pywin32` under a `[viewer]` optional
-  dependency in `pyproject.toml` so Linux CI doesn't try to install
-  them; add a `win32` pytest marker. Include `tests/test_backgrounds.py`
-  (filename-to-key extraction, random selection, unknown key) and
-  `tests/test_overlay.py` (layout math for all four bar × size
-  combinations).
-- **Issue:** #139
-- **Flags:** --reviewers code --isolation worktree
-- **Produces:** `src/selfplay_viewer/{__init__,container,backgrounds,overlay,demo}.py`,
-  `tests/test_backgrounds.py`, `tests/test_overlay.py`, updated
-  `pyproject.toml`.
-- **Done when:** `python -m selfplay_viewer.demo` opens a 2188×948
-  themed window on Windows with two grey placeholder rects at the
-  correct positions and a visible stats bar stub. `uv run pytest
-  tests/test_backgrounds.py tests/test_overlay.py` passes. `uv run ruff
-  check src/selfplay_viewer tests/test_backgrounds.py
-  tests/test_overlay.py` and `uv run mypy src/selfplay_viewer --strict`
-  clean.
+### Step 1: Observer-support spike — standalone script, blocking gate
+
+- **Problem:** Verify the full observer flow end-to-end before committing
+  to the refactor. Write `scripts/spike_observer.py` that spawns a
+  3-player `GameMatch` with `[Bot(P1), Bot(P2), Observer()]` via a local
+  copy of `_install_observer_dispatch_patch` + a minimal
+  `_play_observer`. Run one 1v1 game on `Simple64` with AI-Easy bots (no
+  bots/v0/ required — this is proving burnysc2 plumbing). Confirm: (a)
+  three `SC2_x64.exe` processes spawn, (b) the observer's SC2 window
+  visibly renders the full map with no fog (manual check, no
+  screenshot infra yet), (c) the game completes normally with no
+  hang/timeout, (d) `client._game_result` is populated on the observer
+  at game end, (e) RAM peak recorded (expect ~6 GB total for 3 SC2
+  clients). Write the observations to
+  `documentation/soak-2026-04-XX-observer-spike.md`.
+- **Type:** operator
+- **Issue:** #195
+- **Flags:** none — user writes the spike script by hand, runs it, reports
+  a green/red signal to build-phase which resumes (or halts) at Step 2.
+- **Produces:** `scripts/spike_observer.py`,
+  `documentation/soak-<date>-observer-spike.md`.
+- **Done when:** The spike script runs a full AI-Easy vs AI-Easy 1v1 game
+  with an observer, the observer window renders the full map, no SC2
+  process is orphaned after the script exits, and the soak doc records
+  pass/fail per checkpoint (a-e). On failure: triage the specific
+  breakage (likely candidates: join_game asserts, game_loop desync,
+  `_play_game` dispatch edge case) and fix inside the spike before
+  committing to the refactor.
 - **Depends on:** none
 
-### Step 2: Win32 reparenting primitive (TDD)
-- **Status:** DONE (2026-04-18)
-- **Problem:** Implement `src/selfplay_viewer/reparent.py` with
-  `find_hwnd_for_pid`, `attach_window`, `move_window`, `detach_window`.
-  Use TDD: tests spawn `notepad.exe` via `subprocess.Popen`, wait for
-  its window, attach it into a hidden test-owned parent HWND, verify
-  the `WS_CHILD` style flag and correct parent, move it, detach, and
-  verify it's restored to top-level. Tests are marked `@pytest.mark.win32`
-  and skipped on non-Windows CI. Handle the 3–10s window-ready delay
-  with a polling loop and a clear timeout error.
-- **Issue:** #140
-- **Flags:** --reviewers code --isolation worktree
-- **Produces:** `src/selfplay_viewer/reparent.py`, `tests/test_reparent.py`.
-- **Done when:** TDD cycle completes with all tests green on Windows.
-  Notepad is spawned, attached to a test parent, moved, detached,
-  verified restored, and cleaned up. Process never terminated by the
-  reparent code. `uv run pytest tests/test_reparent.py -m win32` passes
-  on a Windows dev box. `uv run ruff check src/selfplay_viewer/reparent.py
-  tests/test_reparent.py` and `uv run mypy src/selfplay_viewer
-  --strict` clean.
-- **Depends on:** Step 1
+### Step 2: Promote the spike — observer coroutine + dispatch patch in selfplay.py
 
-### Step 3: Wire reparent primitive into the container
-- **Status:** DONE (2026-04-18)
-- **Problem:** `SelfPlayViewer` gains `attach_pane(slot, pid, label)`
-  and `detach_pane(slot)` methods that look up the container's own
-  HWND via `pygame.display.get_wm_info()['window']`, call
-  `find_hwnd_for_pid` → `attach_window` with the correct pane rect
-  from the layout table, store the HWND + label in viewer state, and
-  repaint. The `s` and `b` hotkeys must call `move_window` on both
-  attached HWNDs when the layout recomputes. Test manually by spawning
-  two `notepad.exe` processes and attaching them via a dev-only
-  `--attach-notepad-pids A,B` demo flag. No SC2 yet.
-- **Issue:** #141
-- **Flags:** --reviewers code --isolation worktree
-- **Produces:** Updates to `src/selfplay_viewer/container.py`; possibly
-  a small `tests/test_container_integration.py` with a notepad-based
-  integration test (marked `win32`).
-- **Done when:** `python -m selfplay_viewer.demo --attach-notepad-pids
-  <A>,<B>` shows two notepad windows slotted into the container. `s`
-  toggles large/small and both notepads resize with the container. `b`
-  toggles top/side bar and both notepads reposition. Closing the
-  container returns both notepads to desktop as top-level windows.
+- **Problem:** Move the working `_play_observer` and
+  `_install_observer_dispatch_patch` from `spike_observer.py` into
+  `src/orchestrator/selfplay.py`. Call
+  `_install_observer_dispatch_patch` from the same site as
+  `_install_port_collision_patch`. Add
+  `tests/test_observer_coroutine.py` with unit tests against a mocked
+  `Client`: (a) `join_game` called with `race=None, observed_player_id=1`,
+  (b) loop exits on `_game_result` populated, (c) `leave()` called
+  exactly once, (d) `step(game_step=8)` called each iteration, (e)
+  `ConnectionAlreadyClosedError` from `leave()` is swallowed.
+- **Type:** code
+- **Issue:** #196
+- **Flags:** `--reviewers code --isolation worktree`
+- **Produces:** Updates to `src/orchestrator/selfplay.py`,
+  `tests/test_observer_coroutine.py`.
+- **Done when:** Unit tests pass. `uv run pytest tests/test_selfplay.py
+  tests/test_pfsp_sampling.py tests/test_selfplay_transition_hand_off.py
+  tests/test_observer_coroutine.py` all green (patch must be transparent
+  to existing 2-bot paths). `uv run ruff check src/orchestrator/selfplay.py`
+  and `uv run mypy src/orchestrator --strict` clean.
+- **Depends on:** Step 1 (greenlit)
+
+### Step 3: Wire observer into `_build_match` + PID callback
+
+- **Problem:** Add `enable_observer: bool = True` kwarg to `run_batch`
+  and thread it through `_build_match` and `_run_single_game`. When
+  enabled, `_build_match` appends `Observer()` to the players list.
+  `_run_single_game`'s PID snapshot-diff widens to expect 3 new PIDs.
+  The observer PID is identified heuristically — the **last** of the
+  three to appear, or (more robustly) diff vs the baseline and pick the
+  single PID not associated with a `BotProcess`'s stdout log file (the
+  bot PIDs can be recovered from `proc.pid` on the proxy subprocesses;
+  the remaining PID is the observer). Change `OnGameStart` signature to
+  `Callable[[int, int, int, int, int, str, str], None]` adding
+  `observer_pid` after `p2_pid`. Update all call sites; `-1` sentinel
+  when `enable_observer=False`. Extend `tests/test_selfplay_callbacks.py`
+  with the new signature.
+- **Type:** code
+- **Issue:** #197
+- **Flags:** `--reviewers code --isolation worktree`
+- **Produces:** Updates to `src/orchestrator/selfplay.py`,
+  `tests/test_selfplay_callbacks.py`.
+- **Done when:** `uv run pytest tests/test_selfplay_callbacks.py` passes.
+  Real SC2 1-game integration check (manual, not in pytest):
+  `python scripts/selfplay.py --p1 v0 --p2 v0 --games 1 --map Simple64
+  --no-viewer` completes, three `SC2_x64.exe` processes were observed in
+  Task Manager during the run, none remain after exit, `data/selfplay_results.jsonl`
+  has one new record. `uv run ruff check` + `uv run mypy --strict` clean.
 - **Depends on:** Step 2
 
-### Step 4: Integrate with `run_batch` + `scripts/selfplay.py`
-- **Status:** DONE (2026-04-18)
-- **Problem:** Add optional `on_game_start(game_index, total, p1_pid,
-  p2_pid, p1_label, p2_label)` and `on_game_end(result)` callbacks to
-  `run_batch` in `src/orchestrator/selfplay.py`, threading through
-  `_run_single_game`. Callbacks are no-ops when `None` (back-compat for
-  existing callers). In `_run_single_game`, after the `BotProcess`
-  objects are constructed and SC2 is spawned, extract each side's PID
-  and fire `on_game_start`. On game exit, fire `on_game_end` with the
-  `SelfPlayRecord`. Update `scripts/selfplay.py` to construct a
-  `SelfPlayViewer` unless `--no-viewer`, and to pass its callbacks into
-  `run_batch`. Add `--no-viewer` / `--background KEY` / `--bar
-  {top,side}` / `--size {large,small}` flags. On non-Windows, force
-  `--no-viewer` with an info log. Add `tests/test_selfplay_callbacks.py`
-  verifying callbacks fire in order, `None` is accepted, and exceptions
-  inside callbacks don't abort the batch. Verify end-to-end with a real
-  SC2 1-game batch on Windows.
-- **Issue:** #142
-- **Flags:** --reviewers code --isolation worktree
-- **Produces:** Updated `src/orchestrator/selfplay.py`, updated
-  `scripts/selfplay.py`, `tests/test_selfplay_callbacks.py`.
-- **Done when:** `python scripts/selfplay.py --p1 v0 --p2 v0 --games 1
-  --map Simple64` launches the container with two real SC2 windows
-  slotted inside; when the game ends the container stays up for a
-  post-game beat then closes cleanly; `data/selfplay_results.jsonl`
-  has one new record. `--no-viewer` path works identically to
-  pre-plan behavior (no viewer, just SC2). `uv run pytest
-  tests/test_selfplay_callbacks.py` passes. Existing Phase 3 tests
-  (`tests/test_selfplay.py`, `tests/test_pfsp_sampling.py`,
-  `tests/test_selfplay_transition_hand_off.py`) still pass.
+### Step 4: Container refactor — single-pane layout
+
+- **Problem:** In `src/selfplay_viewer/container.py`, replace the 2-pane
+  layout table with the single-pane table in D1. Delete the `bar` state
+  machine and the `b` hotkey. Rename `attach_pane(slot, pid, label)` to
+  `attach_observer(pid, label)` and make it a single-HWND reparent.
+  `detach_pane(slot)` becomes `detach_observer()`. Update `demo.py` to
+  take `--attach-notepad-pids <PID>` (single value). Refit
+  `overlay.py` to the new container width; drop side-bar overlay.
+  Update `tests/test_overlay.py` (4-variant → 2-variant).
+- **Type:** code
+- **Issue:** #198
+- **Flags:** `--reviewers code --isolation worktree`
+- **Produces:** Updates to `src/selfplay_viewer/{container,overlay,demo}.py`,
+  `tests/test_overlay.py`, `tests/test_container_integration.py`.
+- **Done when:** `python -m selfplay_viewer.demo` opens a themed 2080×1250
+  window with one grey placeholder rect at the correct position and an
+  overlay stub. `python -m selfplay_viewer.demo --attach-notepad-pids <PID>`
+  slots one notepad into the container; `s` toggles large/small and
+  notepad resizes with it. `Esc` returns notepad to desktop as
+  top-level. `uv run pytest tests/test_overlay.py
+  tests/test_container_integration.py -m win32` passes on Windows.
 - **Depends on:** Step 3
 
-### Step 5: Overlay — version labels, game N/M, running W-L score
-- **Status:** DONE (2026-04-18)
-- **Problem:** Implement the overlay content renderer in
-  `src/selfplay_viewer/overlay.py`. Top-bar variant: centered
-  `{p1_label}  VS  {p2_label}` at 48pt in the top 60px of the bar;
-  sub-row `Game {n} / {total}   •   W-L: {p1_wins} - {p2_wins}` at 24pt
-  below. Side-bar variant: stacked version labels at top, vertical
-  score below, leave a designated empty region for the v2 advisor
-  feed. Use a bundled font (freesans or similar — ships with pygame,
-  no new asset). Update `SelfPlayViewer` to repaint the overlay
-  whenever `on_game_start` or `on_game_end` fires. Extend
-  `tests/test_overlay.py` with a "rendered surface has non-background
-  pixels in the overlay rect" assertion for each of the four layouts.
-- **Issue:** #143
-- **Flags:** --reviewers code --isolation worktree
-- **Produces:** Updates to `src/selfplay_viewer/overlay.py`,
-  `src/selfplay_viewer/container.py`, `tests/test_overlay.py`.
-- **Done when:** `python -m selfplay_viewer.demo` shows the overlay
-  populated with mock values. A real 2-game SC2 run (`python
-  scripts/selfplay.py --p1 v0 --p2 v0 --games 2`) shows the W-L score
-  update after game 1. `s` and `b` hotkeys repaint the overlay in the
-  new layout with no missing text. `uv run pytest tests/test_overlay.py`
-  passes.
+### Step 5: End-to-end viewer wiring — observer PID → pygame reparent
+
+- **Problem:** In `scripts/selfplay.py`, when `--observer` (default on)
+  and `--no-viewer` is NOT set, wire `SelfPlayViewer.attach_observer(observer_pid, label)`
+  into the `on_game_start` callback. Label is `"{p1_label} vs {p2_label}"`.
+  Add `--no-observer` flag for the no-viewer-no-observer mode. On
+  non-Windows, force `--no-viewer` AND `--no-observer` with an info log
+  (the observer doesn't gain us anything without a viewer). Verify
+  end-to-end: real SC2 1-game run with viewer shows the observer window
+  slotted inside the themed container with full-map vision.
+- **Type:** code
+- **Issue:** #199
+- **Flags:** `--reviewers code --isolation worktree`
+- **Produces:** Updates to `scripts/selfplay.py`.
+- **Done when:** `python scripts/selfplay.py --p1 v0 --p2 v0 --games 1
+  --map Simple64` launches the container with ONE SC2 window (the
+  observer) slotted inside, showing full-map neutral vision. The two
+  bot SC2 windows exist but are not embedded — visible on the desktop
+  behind / alongside the container. Overlay shows `v0 VS v0 • Game 1/1
+  • W-L: 0-0`; after the game ends, W-L increments and the container
+  stays up for the post-game beat, then closes cleanly.
+  `data/selfplay_results.jsonl` has one new record.
 - **Depends on:** Step 4
 
-### Step 6: `--background` flag + random default
-- **Status:** DONE (2026-04-18)
-- **Problem:** Wire `--background {brazil,china,random,...}` in
-  `scripts/selfplay.py` into `SelfPlayViewer(background=...)`. Default
-  is `random`. Unknown key prints the list of available keys (derived
-  from `src/selfplay_viewer/assets/`) and exits with code 2. `backgrounds.py`
-  was already implemented in Step 1 — this step is wiring + CLI
-  error-message quality + a couple of CLI-parsing tests.
-- **Issue:** #144
-- **Flags:** --reviewers code --isolation worktree
-- **Produces:** Updates to `scripts/selfplay.py`, possibly
-  `tests/test_selfplay_cli.py` for the argparse paths.
-- **Done when:** `python scripts/selfplay.py --background brazil ...`
-  uses the Brazil background every game. `--background random` picks
-  a different one per run (deterministic under a `--seed` for testing).
-  `--background nonsense` exits with code 2 and lists valid keys.
-- **Depends on:** Step 1 (for the loader); Step 4 (for the CLI wiring)
+### Step 6: Camera centering + small polish
 
-### Step 7: Crash placeholder with flavor-message pool
-- **Status:** DONE (2026-04-18)
-- **Problem:** In `SelfPlayViewer`, poll each attached HWND each frame
-  via `IsWindow(hwnd)` (or check `PROCESS_QUERY_LIMITED_INFORMATION` on
-  the PID). When a pane's HWND becomes invalid, transition the pane to
-  "placeholder" state: paint a semi-transparent dark overlay + a random
-  message from `PLACEHOLDER_MESSAGES` (format with the slot's label).
-  Placeholder holds until the next `on_game_start` fires, at which
-  point the new SC2 HWND is attached and normal rendering resumes.
-  Add `tests/test_placeholder.py` with a headless pygame surface: stub
-  an "invalid HWND" state, render, assert dark overlay pixels + message
-  text rendered.
-- **Issue:** #145
-- **Flags:** --reviewers code --isolation worktree
-- **Produces:** Updates to `src/selfplay_viewer/overlay.py` and
-  `container.py`, `tests/test_placeholder.py`.
-- **Done when:** `uv run pytest tests/test_placeholder.py` passes
-  (headless pygame surface renders the placeholder pixels + message
-  text when the pane state is stubbed to "invalid HWND"). Code review
-  confirms the HWND-validity polling runs in the pygame main loop on a
-  ~500ms tick, placeholder state transitions on first detected invalid
-  HWND, and new `attach_pane` calls correctly replace the placeholder
-  with the live window. Runtime validation of the kill-mid-game flow
-  is deferred to Step 9 checkpoint (e).
+- **Problem:** Inside `_play_observer`, after the first `observation()`
+  response, read map dimensions from `game_info.start_locations` / map
+  size and send a one-shot `RequestDebug` camera-move to the map
+  midpoint. Without this the observer spawns with camera at (0,0). Also
+  ensure the observer's `game_step` matches the bots' (default 8);
+  mismatch would stall the quorum. Add a unit test that
+  `_play_observer` issues exactly one camera-center request on the
+  first frame and none after.
+- **Type:** code
+- **Issue:** #200
+- **Flags:** `--reviewers code --isolation worktree`
+- **Produces:** Updates to `src/orchestrator/selfplay.py`, extension to
+  `tests/test_observer_coroutine.py`.
+- **Done when:** Real SC2 1-game run: observer camera is centered on the
+  map at game start (not at origin). No game-loop stalls (bot step
+  timing vs wall clock matches pre-observer behavior within 5%). Unit
+  test green.
 - **Depends on:** Step 5
 
-### Step 8: Runtime resize / bar-toggle polish
-- **Status:** DONE (2026-04-18)
-- **Problem:** `s` and `b` hotkeys already work from Step 3. This step
-  is the polish pass: (a) ensure pygame `set_mode` + `MoveWindow` are
-  sequenced correctly so the container and both SC2 panes stay
-  coherent during the resize (no one-frame tearing of HWND positions),
-  (b) add a brief (~200ms) on-screen toast like "Large layout" /
-  "Side bar" so the user knows the hotkey fired, (c) preserve
-  placeholder state across resize (a placeholder'd pane stays
-  placeholder'd post-resize).
-- **Issue:** #146
-- **Flags:** --reviewers code --isolation worktree
-- **Produces:** Updates to `src/selfplay_viewer/container.py`.
-- **Done when:** Code review confirms: (a) `set_mode` and `MoveWindow`
-  are sequenced inside a single pygame frame so HWND positions never
-  tear, (b) a toast overlay with a 200ms fade is implemented in the
-  overlay renderer and covered by a unit test that asserts toast
-  pixels render in the expected rect, (c) the placeholder state
-  dictionary survives the layout recompute path (unit-tested with a
-  stubbed placeholder state + forced resize). Runtime validation of
-  mid-game resize is deferred to Step 9 checkpoint (f).
-- **Depends on:** Step 7
+### Step 7: Soak observation — 10-game real self-play, watched end-to-end
 
-### Step 9: Soak observation — 10-game real self-play, watched end-to-end
 - **Problem:** Windows-only OS-integration smoke gate. Run `python
   scripts/selfplay.py --p1 v0 --p2 v0 --games 10 --map Simple64` with
-  the viewer on and **watch it end to end**. Check for: (a) both SC2
-  windows correctly slotted in each of the 10 games, (b) overlay W-L
-  score updates correctly after each game, (c) no orphan `SC2_x64.exe`
-  processes in Task Manager after the batch completes, (d) no
-  accumulating HWND leaks over 10 reparent cycles (Task Manager →
-  Details → User Objects column on the python.exe process stays flat,
-  within +/- 20 from start), (e) deliberately kill one SC2 process
-  mid-game via Task Manager during game 5 — verify placeholder
-  triggers, game 5 result is logged cleanly, game 6 spawns fresh
-  windows and reparents them into the same panes, (f) hit `s` and `b`
-  twice each during a game — no crashes or layout corruption, (g)
-  close the container during game 8 via `Esc` — both SC2 windows
-  should return to top-level, `run_batch` thread should continue and
-  finish games 8-10 with no viewer, `data/selfplay_results.jsonl`
-  should have 10 records at the end. Record observations in a
-  `documentation/soak-2026-04-XX-selfplay-viewer.md` file.
-- **Issue:** #147
-- **Type:** operator
-- **Flags:** (none — manual observation step)
-- **Produces:** `documentation/soak-<date>-selfplay-viewer.md` with
-  pass/fail for each checkpoint plus any surprises.
-- **Done when:** All 7 checkpoints (a–g) pass in a single run OR a
-  triage doc lists each failure with a follow-up issue number.
-- **Depends on:** Step 8
+  viewer + observer on and **watch it end to end**. Checkpoints: (a)
+  observer window correctly slotted in each of the 10 games, (b) full
+  map rendered with no fog, camera centered at start, (c) overlay W-L
+  score updates correctly after each game, (d) no orphan
+  `SC2_x64.exe` processes after batch completes (three must spawn per
+  game, three must exit per game), (e) no accumulating HWND leaks over
+  10 reparent cycles (User Objects stays within +/- 20 of start), (f)
+  RAM peak stays under 8 GB (3× 2 GB SC2 + Python ~500 MB + OS + Chrome
+  ≤ 1 GB headroom on a 16 GB box), (g) deliberately kill the observer
+  SC2 process mid-game during game 5 — placeholder triggers, the bots'
+  game continues and completes with a correct record in
+  `selfplay_results.jsonl`, game 6 spawns fresh with a new observer
+  reparented into the container, (h) deliberately kill one BOT process
+  mid-game during game 7 — that game records a crash result, game 8
+  spawns fresh. (i) hit `s` twice during game 9 — no layout
+  corruption, observer window resizes with container. (j) close the
+  container via `Esc` during game 10 — observer HWND returns to
+  top-level, batch continues and finishes with 10 records in the
+  jsonl. Record observations in
+  `documentation/soak-2026-04-XX-observer-viewer.md`.
+- **Type:** wait
+- **Issue:** #201
+- **Flags:** none (halt-and-hand-off step; build-phase stops here and
+  the user runs the soak manually, then resumes in a fresh session to
+  mark Step 7 done)
+- **Produces:** `documentation/soak-<date>-observer-viewer.md` with
+  pass/fail per checkpoint.
+- **Done when:** All 10 checkpoints (a–j) pass in a single run OR a
+  triage doc lists each failure with a follow-up issue number. After
+  soak completes, manually update this step to `Status: DONE
+  (YYYY-MM-DD)` in the plan — build-phase does not auto-mark `wait`
+  steps.
+- **Depends on:** Step 6
 
 ## 8. Risks and Open Questions
 
 | Item | Risk | Mitigation |
 |---|---|---|
-| SC2 window ready-delay | The 3–10s gap between `SC2Process` spawn and window appearance could race callbacks | `find_hwnd_for_pid` polls with 15s timeout; on timeout, pane shows placeholder instead of crashing |
-| DirectX surface inside child window | Reparenting a DirectX window via `SetParent` has known quirks on some GPU drivers | Soak step 9 checks all 10 games; if rendering glitches appear, fall back to window-capture + texture streaming (larger design change, defer to v2) |
-| HWND leak from repeated attach/detach | 10+ reparent cycles over a long batch could leak GDI/User handles | Step 9 explicitly checks User Objects in Task Manager over 10 cycles |
-| `pygame.display.get_wm_info()` surface recreation on `set_mode` | pygame may replace the container HWND on `s`/`b` resize, invalidating attached SC2 parent pointers | Step 8 validates this sequence; if pygame recreates the HWND, resize path must re-parent both panes into the new HWND |
-| Multi-monitor DPI scaling | Per-monitor DPI on Windows can make pixel-coordinate math wrong | User runs 2560×1600; if scaling issues arise, call `SetProcessDpiAwarenessContext` at startup |
-| Background image aspect mismatch | Future drops at non-2560×1600 could look stretched | `backgrounds.py` respects source aspect ratio; layout engine letterboxes rather than stretches. Document this in the loader docstring |
-| Phase 3 callback integration touches frozen contracts | `_run_single_game` signature change ripples to other callers | Callbacks are `Optional[Callable] = None`; existing callers unchanged. Step 4 explicitly reruns the Phase 3 test suite |
-| Linux/macOS CI imports | `pywin32` wheels don't exist for non-Windows | `[viewer]` optional dep + `sys.platform` guard in `scripts/selfplay.py` + `@pytest.mark.win32` for all viewer tests |
+| Observer PID identification | The 3 new SC2 PIDs are indistinguishable by name alone; wrong pick → the pygame container embeds a bot's fog-limited window instead of the observer | D7: cross-reference the bot PIDs via the `BotProcess` proxy subprocesses (their PIDs are knowable) and pick the one remaining. If that fails, Step 7 (a) fails loudly — not a silent wrong-window bug |
+| Port pressure with 3 clients | The burnysc2 7.1.3 port-collision bug gets worse with a 3rd client competing for LAN ports | Existing blocklist patch at [`selfplay.py:76-118`](../../src/orchestrator/selfplay.py#L76-L118) should handle this; Step 1 spike is the proving ground. If contention shows up, widen `attempts=40` to higher |
+| Game-loop quorum stall | Observer not calling `step()` at the right cadence stalls both bots waiting on 3-way quorum | D3/Step 6: `_play_observer` calls `step(game_step=8)` every iteration, matching bot cadence. Unit test in Step 2 verifies `step` is called per-iter. Integration signal in Step 6 wall-clock check |
+| ~2 GB extra RAM on 16 GB dev boxes | 3 SC2 clients + Chrome + dashboard could push the box into swap | Step 7 (f) explicitly measures RAM peak. If we go over 8 GB, `--no-observer` is the fallback and the plan adjusts to "observer is a workstation-class feature only" |
+| Dispatch patch breaks 2-bot paths | The `_play_game` monkey-patch could subtly regress the pure-2-bot flow | Step 2 explicitly re-runs the existing 3-file Phase 3 test suite; patch is idempotent + type-guarded; delegation to original function when not an Observer |
+| burnysc2 version drift | If burnysc2 upgrades and `_play_game` signature changes, the patch silently breaks | Patch installs are logged; add a `try/except AttributeError` around the patch install and surface a loud error if the target function moved |
+| Observer camera snap-to-origin | Without camera-centering, observer spawns at (0,0) which is map-edge | Step 6 sends a one-shot `RequestDebug` camera move on first frame |
+| DirectX reparent for the observer window | Same quirk class as the old 2-pane plan; single-pane doesn't eliminate it | Step 7 checkpoints (a), (i) cover it |
 
 **Open questions (answerable during the build, not blocking):**
 
-- Does SC2's DirectX swap-chain cope with arbitrary parent HWND sizes
-  below 1024×768? Step 8 will tell us whether small-mode SC2 panes at
-  960×720 actually render or go black. If they fail, the small preset
-  becomes 1024×768 in a tighter container layout.
-- Should the placeholder include a snapshot of the last rendered frame
-  of the dead SC2 window? Nice-to-have, requires GDI bit-blit of the
-  last HWND state before it dies. Defer to v2 unless cheap.
-- Do we want a hotkey to take a screenshot of the full container?
-  Handy for sharing but trivial to add post-v1 (`F12` → `pygame.image.save`).
+- Does the observer coroutine need to handle mid-game `_game_result`
+  arriving before the bots have finished their final `step()`? Probably
+  yes; Step 6 integration run will expose any stall.
+- Should we silently minimize the 2 bot SC2 windows via `ShowWindow(SW_MINIMIZE)`
+  after the observer is attached? Slight quality-of-life improvement, but
+  adds UI surface. Defer; revisit after Step 7 if desktop clutter is
+  annoying in practice.
+- Does the camera-move `RequestDebug` persist after the user interacts
+  with the observer window (clicks to drag the camera)? If yes, we do it
+  once at start and trust the user. If no (SC2 snaps back), we send it
+  every N frames. Empirical during Step 6.
 
 ## 9. Testing Strategy
 
-**Unit tests (Linux-CI-safe, no pywin32 import):**
+**Unit tests (Linux-CI-safe, no pywin32):**
 
-- `tests/test_backgrounds.py` — filename-to-key extraction, random
-  selection under a seed, unknown key raises with available-keys
-  listed.
-- `tests/test_overlay.py` — layout math for all four `bar × size`
-  combinations produces expected container size and pane rects;
-  overlay surface rendering produces non-background pixels in the
+- `tests/test_observer_coroutine.py` — mocked `Client` verifies join
+  semantics, step cadence, leave once, camera-center-on-first-frame.
+- `tests/test_selfplay_callbacks.py` (extended) — new `observer_pid`
+  signature; existing callback-ordering and exception-swallowing tests
+  pass.
+- `tests/test_overlay.py` (refactored) — 2-variant layout matrix
+  (large / small), single-pane dimensions, overlay pixel presence in
   overlay rect.
-- `tests/test_placeholder.py` — headless pygame surface, stub
-  "invalid HWND" state, render assert dark overlay + message.
-- `tests/test_selfplay_callbacks.py` — `run_batch` fires callbacks in
-  order with correct args, `None` callbacks are accepted, callback
-  exceptions don't abort the batch.
-- `tests/test_selfplay_cli.py` — argparse accepts / rejects flag
-  combinations; unknown background key exits 2 with a useful message.
 
-**Windows-only integration tests (`@pytest.mark.win32`):**
+**Windows-only integration (`@pytest.mark.win32`):**
 
-- `tests/test_reparent.py` — notepad spawn / attach / move / detach
-  cycle; `WS_CHILD` flag set; process never terminated.
-- `tests/test_container_integration.py` (optional) — two notepads
-  attached via `--attach-notepad-pids` demo path; `s` / `b` hotkeys
-  resize both.
+- `tests/test_reparent.py` — unchanged, single-child reparent was
+  already the primitive.
+- `tests/test_container_integration.py` — one-notepad version of the
+  existing two-notepad test.
 
-**Manual observation (Step 9):**
+**Manual observation (Step 1 + Step 7):**
 
-- 10-game real self-play batch watched end-to-end on the user's
-  Windows machine. Seven-checkpoint script (a–g in Step 9). Failures
-  logged in `documentation/soak-<date>-selfplay-viewer.md`.
+- Step 1 spike: 1 game, 3 processes, observer renders full map, writeup.
+- Step 7 soak: 10 games, 10-point checkpoint list, writeup.
 
-**Regression safety for Phase 3:**
+**Regression safety:**
 
-- Step 4 must re-run `tests/test_selfplay.py`,
-  `tests/test_pfsp_sampling.py`, and
-  `tests/test_selfplay_transition_hand_off.py` to confirm the callback
-  wiring didn't break the existing batch runner. These tests exist
-  today and must stay green.
+- Step 2 re-runs `tests/test_selfplay.py`,
+  `tests/test_pfsp_sampling.py`,
+  `tests/test_selfplay_transition_hand_off.py`. Dispatch patch must be
+  transparent to 2-bot-only flows.
 
 **CI strategy:**
 
-- Linux CI runs the full unit suite with `viewer` deps **not**
-  installed. Viewer modules must `import pygame` / `import win32gui`
-  lazily (inside functions or guarded by `sys.platform == "win32"`)
-  so the package imports cleanly on Linux.
-- Windows dev-box runs the `win32`-marked tests manually before the
-  Step 9 soak.
+- Linux CI runs the full unit suite with `viewer` extra not installed;
+  `selfplay_viewer` modules keep their lazy `import pygame` /
+  `import win32gui` guards.
+- Windows dev-box runs `win32`-marked tests manually before Step 7
+  soak.
 
 ## Appendix — Post-v1 extensions (reference, not scope)
 
-1. **Advisor commentary overlay.** Subscribe to `/ws/commands` or the
-   advisor bridge, render the last N advisor messages as a scrolling
-   side-bar feed.
-2. **Phase 6 auto-launch.** When the cross-version self-play daemon
-   runs, optionally spawn a viewer so the user can attach and watch at
-   any time without interrupting the loop.
-3. **Elo / rating deltas on overlay.** Read `data/bot_ladder.json` at
-   game start and show the current Elo for each side + projected delta.
-4. **Match replay mode.** Given a `.SC2Replay` path + result record,
-   play back the game inside the container using SC2's built-in
-   replay. Same reparent primitive, different spawn path.
-5. **Screenshot hotkey (`F12`).** `pygame.image.save(full_surface,
-   "selfplay_<timestamp>.png")`.
-6. **Per-match background selection.** Random per game instead of per
-   batch; opt-in flag.
+1. **Advisor commentary overlay** — same idea as v1 deferral.
+2. **Phase 6 auto-launch** — when the cross-version self-play daemon
+   runs, optionally spawn the viewer.
+3. **Elo / rating deltas on overlay** — read `data/bot_ladder.json`.
+4. **Follow-P1-camera / follow-P2-camera hotkey** — reconfigure observer
+   mid-match by swapping `observed_player_id`; neat but not essential.
+5. **Minimize-bot-windows-on-attach** — `ShowWindow(SW_MINIMIZE)` on the
+   two bot HWNDs once the observer is attached.
+6. **Upstream the `_play_game` dispatch patch to burnysc2** — submit a
+   PR so the monkey-patch can eventually go to zero LOC.
+7. **Replay-viewer reuse** — feed a `.SC2Replay` into the same pygame
+   container via `ObserverAI` + `run_replay` (burnysc2 already
+   supports this — wiring only).

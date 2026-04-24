@@ -1037,20 +1037,52 @@ steps) are closed as subsumed by full-stack versioning; see this plan's
 Features outside the versioning spine. Each has its own plan doc; they
 can be built in any order and don't block numbered phases.
 
-### Self-play viewer — windowed container
+### Self-play viewer — observer-based single-window
 
-Embed the two SC2 windows spawned during self-play into a single themed
-container window (side-by-side, 1024×768 each, 200px buffer). Uses Win32
-`SetParent` reparenting after `a_run_multiple_games` spawns the
-processes. Background image from `src/selfplay_viewer/assets/`. Local developer
-experience only (no dashboard integration). Plan:
-`documentation/plans/selfplay-viewer-plan.md`.
+Spawn a third SC2 client as a `sc2.player.Observer` with full-map vision
+(no fog) alongside the two bot clients, and reparent **only the observer
+window** into the themed pygame container. Requires a small monkey-patch
+to `sc2.main._play_game` (Observer players aren't dispatched through the
+default AI/human flow in burnysc2 7.1.3) and one extra SC2 process per
+match (~2 GB RAM). Refactors the previously-shipped two-pane viewer
+(`src/selfplay_viewer/`, 2026-04-18) to single-pane; keeps the SF2-themed
+backgrounds, overlay, and `s` size hotkey. Safe to run during rated
+training soaks because bots still play with fog — only the observer sees
+everything. Local developer experience only (no dashboard integration).
+Plan: [`documentation/plans/selfplay-viewer-plan.md`](./selfplay-viewer-plan.md).
+Investigation that motivated the refactor:
+[`documentation/investigations/observer-player-viewer-investigation.md`](../investigations/observer-player-viewer-investigation.md).
+Superseded prior plan archived at
+[`documentation/archived/selfplay-viewer-2-screen-plan.md`](../archived/selfplay-viewer-2-screen-plan.md).
 
 ---
 
 ## Plan history
 
 Append-only — do not edit prior entries.
+
+- *2026-04-24* — **self-play viewer refactor to observer-based single-window.**
+  The shipped 2-screen viewer (2026-04-18) reparented both bots' SC2
+  windows side-by-side, but each pane showed one bot's fog-of-war-limited
+  camera and the two cropped perspectives didn't combine into a useful
+  strategic view. An investigation at
+  `documentation/investigations/observer-player-viewer-investigation.md`
+  confirmed that `sc2.player.Observer` is a first-class player type in
+  burnysc2 7.1.3's proto + Python classes, but `sc2.main._play_game` does
+  not wire it through end-to-end (reads `player.race` and `player.ai`
+  unconditionally, both missing on `Observer()`). A surgical monkey-patch
+  — same pattern as the existing port-collision patch in
+  `src/orchestrator/selfplay.py` — dispatches Observer instances to a
+  new `_play_observer` coroutine. Viewer refactored to single-pane
+  (observer window only; the two bot clients run offscreen on the
+  desktop). Costs ~2 GB extra RAM per match for the third SC2 client;
+  payoff is a neutral omniscient camera + full-map vision on one screen
+  + training-safety (the bots still see fog; only the observer sees
+  everything, so bot decisions are unaffected and the viewer is safe to
+  run during rated soaks). New plan at
+  `documentation/plans/selfplay-viewer-plan.md` (7 steps, blocking spike
+  at Step 1). Prior 2-screen plan archived at
+  `documentation/archived/selfplay-viewer-2-screen-plan.md`.
 
 - *2026-04-19* — **reordered Track 5 to put Phase 9 first.** Phase 9
   (improve-bot-evolve) is substrate, not just a phase: it ships the
