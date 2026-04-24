@@ -102,9 +102,21 @@ class TestListVersions:
 
 
 class TestCurrentVersion:
-    def test_current_version_reads_committed_pointer(self) -> None:
-        """The committed pointer in the real worktree resolves to ``v0``."""
-        assert registry.current_version() == "v0"
+    def test_current_version_matches_committed_pointer(self) -> None:
+        """``registry.current_version()`` equals the raw contents of ``current.txt``.
+
+        Reads the pointer file directly and compares; this preserves the
+        original intent (the registry honors the committed pointer) without
+        hardcoding ``v0``, which goes stale after every evolve promotion.
+        """
+        pointer = (
+            Path(__file__).resolve().parent.parent
+            / "bots"
+            / "current"
+            / "current.txt"
+        )
+        expected = pointer.read_text(encoding="utf-8").strip()
+        assert registry.current_version() == expected
 
     def test_current_version_missing_file_raises(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

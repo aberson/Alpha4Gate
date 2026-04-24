@@ -33,31 +33,42 @@ def _run_python(code: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_import_aliases_to_bots_v0() -> None:
-    """``import bots.current`` resolves to ``bots.v0`` (the current pointer)."""
+def test_import_aliases_to_current_version() -> None:
+    """``import bots.current`` resolves to ``bots.<current>`` (whatever current.txt says).
+
+    Reads the committed pointer dynamically rather than hardcoding ``v0``, so
+    the invariant under test is "the alias tracks the pointer" — which is what
+    the meta-path finder actually guarantees and the evolve pipeline relies on.
+    """
+    pointer = Path(__file__).resolve().parent.parent / "bots" / "current" / "current.txt"
+    current = pointer.read_text(encoding="utf-8").strip()
     result = _run_python(
         "import bots.current; print(bots.current.__name__)"
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
-    assert result.stdout.strip() == "bots.v0"
+    assert result.stdout.strip() == f"bots.{current}"
 
 
-def test_submodule_resolves_to_same_class() -> None:
-    """``bots.current.X`` and ``bots.v0.X`` yield the SAME class object.
+def test_submodule_resolves_to_same_class_via_current() -> None:
+    """``bots.current.X`` and ``bots.<current>.X`` yield the SAME class object.
 
     Identity (not just equality) is what matters — any downstream code that
     keys on class identity (isinstance checks, registries) relies on the meta
-    path finder collapsing the two import paths to one module.
+    path finder collapsing the two import paths to one module. The concrete
+    target version is read from the committed pointer at test entry so this
+    stays correct after evolve promotions.
     """
+    pointer = Path(__file__).resolve().parent.parent / "bots" / "current" / "current.txt"
+    current = pointer.read_text(encoding="utf-8").strip()
     result = _run_python(
         "from bots.current.learning.database import TrainingDB as A; "
-        "from bots.v0.learning.database import TrainingDB as B; "
+        f"from bots.{current}.learning.database import TrainingDB as B; "
         "print(A is B); print(A.__module__)"
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
     lines = result.stdout.strip().splitlines()
     assert lines[0] == "True"
-    assert lines[1] == "bots.v0.learning.database"
+    assert lines[1] == f"bots.{current}.learning.database"
 
 
 def test_help_delegates_to_bots_v0() -> None:
@@ -79,16 +90,28 @@ def test_help_delegates_to_bots_v0() -> None:
         assert choice in result.stdout
 
 
-def test_current_txt_is_v0() -> None:
-    """The committed ``bots/current/current.txt`` points at ``v0``.
+def test_current_txt_points_to_registered_version() -> None:
+    """The committed ``bots/current/current.txt`` names an existing version dir.
 
-    Directly reads the file — no import-side effects. This protects against a
-    future inadvertent edit of the pointer file as much as it documents the
-    current invariant.
+    Directly reads the file — no import-side effects. Instead of hardcoding
+    ``v0`` (which goes stale every time evolve promotes a new version), this
+    asserts the weaker-but-true invariant: the pointer names a directory that
+    exists on disk AND is listed by the registry. That's the contract callers
+    actually depend on.
     """
-    pointer = Path(__file__).resolve().parent.parent / "bots" / "current" / "current.txt"
+    repo_root = Path(__file__).resolve().parent.parent
+    pointer = repo_root / "bots" / "current" / "current.txt"
     assert pointer.is_file()
-    assert pointer.read_text(encoding="utf-8").strip() == "v0"
+    current = pointer.read_text(encoding="utf-8").strip()
+    assert current, "current.txt is empty"
+    assert (repo_root / "bots" / current).is_dir(), (
+        f"current.txt points at {current!r} but bots/{current}/ does not exist"
+    )
+    # Lazy import to avoid pulling in the orchestrator package at module load
+    # (keeps this file's other subprocess tests free of import-order concerns).
+    from orchestrator import registry
+
+    assert current in registry.list_versions()
 
 
 def test_invalid_version_in_current_txt_raises(tmp_path: Path) -> None:
