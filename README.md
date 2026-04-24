@@ -13,7 +13,6 @@ It plays, diagnoses what went wrong, produces code-level proposals, and only kee
 
 Advised drives progress against a known benchmark; evolve keeps the bot improving past it. They catch each other's blind spots.
 
-
 <table>
 <tr>
 <td width="33%" valign="top" align="center">
@@ -31,18 +30,22 @@ Advised drives progress against a known benchmark; evolve keeps the bot improvin
 </tr>
 </table>
 
-> **50% → 83%** win rate at SC2 difficulty 4 — reached via 6 code changes the agent wrote and validated itself.
+> **50% → 83%** win rate at SC2 difficulty 4 — reached via 6 code changes the advised loop wrote and validated itself.
+>
+> **v0 → v2** in one unattended overnight — the self-play arena auto-committed two new bot versions to master, each validated against its ancestor.
 
 ## What makes this different
 
 Most self-improving ML systems need a human in the loop for reward design, tuning, or debugging. This one closes that loop:
 
 - **Claude reads telemetry like a reviewer** — names the specific failure ("attacked before the economy caught up"), not just a scalar reward. Ranked fixes with reasoning.
-- **Fixes are real code changes.** With `--self-improve-code`, Claude edits the bot's source on a feature branch and must pass pytest / mypy / ruff before anything ships.
-- **Every fix is validated before commit.** A change that doesn't hold up over N games is auto-reverted — no silent regressions.
-- **You can watch it happen.** The dashboard streams every phase, proposal, rejection, and win-rate swing live while the agent runs unattended for hours.
+- **Proposals become real code.** Both loops land real commits on master (`[advised-auto]` or `[evo-auto]`). Every change must pass pytest / mypy / ruff before shipping.
+- **Every change is validated before commit.** Advised auto-reverts fixes that don't hold up over N games; evolve rolls back promotions that lose to their own parent. No silent regressions.
+- **You can watch it happen.** The dashboard streams every phase — proposals, rejections, win-rate swings, generation outcomes — live while the agent runs unattended for hours.
 
 The architecture is task-agnostic — SC2 is the test case because it gives fast, machine-readable outcomes.
+
+**Deep dives:** [Wiki](documentation/wiki/index.md) · [Active plan](documentation/plans/alpha4gate-master-plan.md)
 
 ---
 
@@ -123,7 +126,9 @@ A different kind of loop from the advised one — instead of validating one impr
       └─────────────────┘                      └─────────────────┘
 ```
 
-Two things are running: the **loop** and the **task** it's learning from. The dashboard has a tab tuned to each vantage point, plus `data/advised_run_state.json` as the single source of truth for which phase is executing right now. Stuck-loop detection, alert rules, and operator overrides all hang off these two views.
+Two things are running: the **loop** and the **task** it's learning from. The dashboard has a tab tuned to each vantage point, plus a state file that's the single source of truth for which phase is executing right now. Stuck-loop detection, alert rules, and operator overrides all hang off these views.
+
+For the advised loop that's the **Advisor tab** + `data/advised_run_state.json`; for evolve it's the **Evolution tab** + `data/evolve_run_state.json` (plus `data/evolve_pool.json` for the current pool and `data/evolve_results.jsonl` for per-phase outcomes). Same pattern, different loop.
 
 **Read the full monitoring guide:** [monitoring.md](documentation/wiki/monitoring.md)
 
@@ -154,7 +159,6 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 - **Reality check -** Harder opponents exposed that training scores lie — need honest exams.
 - **The big merge -** Three plans became one: every future bot is a snapshot that must beat its ancestors.
 - **Memory matters -** Added memory (LSTM) and a gentler training recipe — 19/20 wins at difficulty 3.
-- **The arena works -** Two bot versions fighting each other in separate sandboxes, validated.
 - **The arena -** Bot versions fight each other in sandboxed self-play. Elo ladder + promotion gate decides who ships.
 - **Overnight run, zero promotions -** Three compound 60% filters made the math impossible, dropped the redundant composition check.
 - **The arena produces winners -** 7 hours, v0 → v1 → v2 — the self-play loop ships its first two auto-promotions.
@@ -402,7 +406,7 @@ Special thanks to my friends for their support:
 - William Gathright
 - Willie Williams
 
-Also thanks to all the creators and companies who makde the mountain of tools this is built on (and anyone else I forgot).
+Also thanks to all the creators and companies who made the mountain of tools this is built on (and anyone else I forgot).
 
 </details>
 
