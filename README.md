@@ -76,19 +76,19 @@ The loop runs unattended for hours. Each cycle: play N games, Claude reads the r
 
   Each generation plays out as a tournament in the SC2 sandbox:
 
-         Fitness round                     Regression round
-         ─────────────                     ────────────────
-     imp_a ⚔ parent (9g)
-     imp_b ⚔ parent (9g)   winners
-     imp_c ⚔ parent (9g)   stacked  ────►  vN+1 ⚔ vN (9g)
-     imp_d ⚔ parent (9g)   into vN+1             │
-                                                 ▼
-                                          majority wins?
-                                          ┌──────┴──────┐
-                                         yes           no
-                                      commit vN+1   git revert
-                                      (lineage      (lineage
-                                       grows)       unchanged)
+         Fitness round                          Regression round
+         ─────────────                          ────────────────
+     imp_1 ⚔ parent (g games)
+     imp_2 ⚔ parent (g games)    winners
+        ⋮                        stacked  ────►  vN+1 ⚔ vN (g games)
+     imp_k ⚔ parent (g games)    into vN+1             │
+                                                       ▼
+                                              majority wins?
+                                              ┌──────┴──────┐
+                                             yes           no
+                                          commit vN+1   git revert
+                                          (lineage      (lineage
+                                           grows)       unchanged)
 ```
 
 A different kind of loop from the advised one — instead of validating one improvement at a time, the arena generates a pool of orthogonal candidates per generation and lets them compete. Claude proposes the pool; fitness winners get stacked into a new snapshot (with an import-check gate catching bad combinations); regression gates the promotion. Close-losers retry against the next parent; evicted imps get replaced. Every arrow in the lineage is a real auto-commit on master.
