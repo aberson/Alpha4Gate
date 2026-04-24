@@ -67,6 +67,35 @@ The loop runs unattended for hours. Each cycle: play N games, Claude reads the r
 
 ---
 
+## The self-play arena
+
+```
+                    ┌──────────────────────────────────────────────────────┐
+                    │          /improve-bot-evolve                         │
+                    │       generational self-play arena (4-6 hours)       │
+                    │                                                      │
+  ┌─────────┐       │   ┌─────────┐    ┌─────────┐    ┌─────────┐          │
+  │         │       │   │         │    │         │    │         │          │
+  │   THE   │◄─────────►│  POOL   │───►│ FITNESS │───►│  STACK  │          │
+  │   TASK  │       │   │         │    │         │    │         │          │
+  │         │       │   └─────────┘    └─────────┘    └────┬────┘          │
+  │ (SC2)   │◄──┐   │                                      │               │
+  │         │   │   │   ┌─────────┐    ┌─────────┐    ┌────▼────┐          │
+  │         │   └──────►│ REFRESH │◄───│ PROMOTE │◄───│ REGRESS │          │
+  │         │       │   │         │    │         │    │         │          │
+  └─────────┘       │   └─────────┘    └─────────┘    └─────────┘          │
+                    │         │                                            │
+                    │         └──────── loop back to POOL ──────────────►  │
+                    │                   (or stop if time's up / empty)     │
+                    └──────────────────────────────────────────────────────┘
+```
+
+A different kind of loop. The advised loop picks one improvement at a time and validates it; the arena generates a pool of orthogonal improvements per generation and lets them compete. Each generation: Claude proposes N candidates, each plays the current parent for a fitness batch, winners stack into a fresh snapshot with an import-check gate, the new version plays the prior parent (regression), and either auto-commits as `vN+1` or rolls back via `git revert`. Close-losers retry against the next parent; evicted imps get replaced. Parent lineage walks v0 → v1 → v2 → … on master, every step real.
+
+**Read the mechanism:** [improve-bot-evolve SKILL.md](.claude/skills/improve-bot-evolve/SKILL.md) · [gate-reduction plan](documentation/plans/evolve-gate-reduction-plan.md)
+
+---
+
 ## How we watch it run
 
 ```
