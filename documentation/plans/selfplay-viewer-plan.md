@@ -1,5 +1,26 @@
 # Self-play viewer — observer-based single-window
 
+> **STATUS: BLOCKED 2026-04-24** — both Step 1 spike paths failed. SC2
+> server caps API clients at 2 ("Only 1v1 is supported when using
+> multiple agents"); 3-process observer architectures are not buildable
+> on Windows. The fallback path 4.1(b) (`show_map` on one playing bot)
+> was also ruled out by Spike A — `debug_show_map()` changes
+> `RequestObservation` data, not just rendering, so it's training-unsafe.
+>
+> **Do not execute this plan as-is.** The viable paths forward are
+> documented in
+> [`documentation/investigations/observer-restriction-workarounds-investigation.md`](../investigations/observer-restriction-workarounds-investigation.md)
+> §4. Spike outcomes are recorded in
+> [`documentation/soak-2026-04-24-observer-spike.md`](../soak-2026-04-24-observer-spike.md).
+> If/when the viewer thread resumes, the next step is Spike C
+> (replay-stream-as-live) — the only remaining path that delivers
+> training-safe full-map self-play viewing.
+>
+> Viewer work is deferred pending the Linux-headless-training initiative
+> (see
+> [`documentation/investigations/headless-linux-training-investigation.md`](../investigations/headless-linux-training-investigation.md))
+> which may reshape requirements.
+
 ## 1. What This Feature Does
 
 Refactor the existing Alpha4Gate self-play viewer
