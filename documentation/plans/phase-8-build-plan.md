@@ -254,7 +254,7 @@ What to look for: 2 SC2 PIDs spawn per game (4 total observed in `ps -aux | grep
 ```bash
 for i in 1 2 3 4; do
   SC2PATH=~/StarCraftII uv run python scripts/selfplay.py --p1 v0 --p2 v0 --games 5 --map Simple64 \
-    --results-out data/selfplay_results.parallel-$i.jsonl &
+    --results-path data/selfplay_results.parallel-$i.jsonl &
 done
 wait
 # Monitor in another shell: ps -aux | grep SC2_x64 | awk '{sum+=$6} END {print sum/1024 " MB"}'
