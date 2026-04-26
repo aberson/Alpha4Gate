@@ -30,7 +30,13 @@ import sys
 import time
 from pathlib import Path
 
-os.environ.setdefault("SC2PATH", r"C:\Program Files (x86)\StarCraft II")
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT / "src"))
+
+from orchestrator.paths import resolve_sc2_path  # noqa: E402
+
+os.environ.setdefault("SC2PATH", str(resolve_sc2_path()))
 
 import asyncio
 

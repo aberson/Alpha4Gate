@@ -46,8 +46,9 @@ def load_settings(env_file: Path | None = None) -> Settings:
     else:
         load_dotenv(override=True)
 
-    sc2_path_str = os.getenv("SC2PATH", r"C:\Program Files (x86)\StarCraft II")
-    sc2_path = Path(sc2_path_str)
+    from orchestrator.paths import resolve_sc2_path
+
+    sc2_path = resolve_sc2_path()
 
     if not sc2_path.is_dir():
         msg = f"SC2 not found at {sc2_path}. Set SC2PATH in .env"

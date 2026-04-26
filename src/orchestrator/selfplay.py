@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from orchestrator.contracts import SelfPlayRecord
+from orchestrator.paths import resolve_sc2_path
 from orchestrator.registry import _repo_root, list_versions
 
 if TYPE_CHECKING:
@@ -654,7 +655,7 @@ def run_batch(
         One record per game played (up to *games*; fewer if
         *stop_event* interrupts the batch).
     """
-    os.environ.setdefault("SC2PATH", r"C:\Program Files (x86)\StarCraft II")
+    os.environ.setdefault("SC2PATH", str(resolve_sc2_path()))
     _install_port_collision_patch()
     _install_worker_thread_signal_patch()
     _validate_versions(p1, p2)

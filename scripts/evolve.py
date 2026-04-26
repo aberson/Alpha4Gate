@@ -70,6 +70,7 @@ if str(_REPO_ROOT / "src") not in sys.path:
 from orchestrator.evolve import (  # noqa: E402
     _restore_pointer as _primitive_restore_pointer,
 )
+from orchestrator.paths import resolve_sc2_path  # noqa: E402
 
 _log = logging.getLogger("evolve")
 
@@ -281,10 +282,8 @@ def check_git_clean(
 
 def check_sc2_installed() -> bool:
     """Return True iff the SC2 install dir is present."""
-    sc2_path = os.environ.get(
-        "SC2PATH", r"C:\Program Files (x86)\StarCraft II"
-    )
-    if Path(sc2_path).is_dir():
+    sc2_path = resolve_sc2_path()
+    if sc2_path.is_dir():
         return True
     _log.error(
         "SC2 install not found at %s. Set SC2PATH or install StarCraft II.",
