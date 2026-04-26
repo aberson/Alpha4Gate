@@ -162,12 +162,13 @@ No migrations. No backwards-compat shims. No new Python dependencies. The five `
 ```powershell
 wsl --install -d Ubuntu-22.04
 # Reboot if prompted, then on first WSL launch set username/password.
-wsl -d Ubuntu-22.04 -- bash -lc 'sudo apt-get update && sudo apt-get install -y python3.12 python3.12-venv build-essential curl unzip'
+# python3.12 is NOT in Ubuntu 22.04's default repos (Jammy ships 3.10), so the deadsnakes PPA is required:
+wsl -d Ubuntu-22.04 -- bash -lc 'sudo apt-get update && sudo apt-get install -y software-properties-common && sudo add-apt-repository -y ppa:deadsnakes/ppa && sudo apt-get update && sudo apt-get install -y python3.12 python3.12-venv build-essential curl unzip'
 wsl -d Ubuntu-22.04 -- bash -lc 'curl -LsSf https://astral.sh/uv/install.sh | sh'
-wsl -d Ubuntu-22.04 -- bash -lc 'source ~/.cargo/env 2>/dev/null; uv --version'
+wsl -d Ubuntu-22.04 -- bash -lc 'source ~/.local/bin/env 2>/dev/null || source ~/.cargo/env 2>/dev/null; uv --version'
 ```
 
-What to look for: Ubuntu prompt appears, `python3.12` resolves, `uv --version` returns a version string. Expect ~30 minutes wall-clock including the WSL kernel install and reboot.
+What to look for: Ubuntu prompt appears, `python3.12` resolves, `uv --version` returns a version string. Expect ~30 minutes wall-clock including the WSL kernel install and reboot. The modern uv installer (0.4+) writes to `~/.local/bin/env`; the older `~/.cargo/env` path is kept as a fallback.
 
 **Cleanup (if needed):** `wsl --unregister Ubuntu-22.04` from PowerShell removes the distro entirely; re-run Step 1 to start fresh. Use this if Spike 1 fails on a libc/SC2 mismatch and you want to retry on a different Ubuntu version.
 
@@ -180,19 +181,46 @@ What to look for: Ubuntu prompt appears, `python3.12` resolves, `uv --version` r
 - **Depends on:** 1
 - **HALT CONDITION:** 4-hour timebox. If the game fails to launch, the map fails to load, or the SC2 binary crashes on libc/libstdc++ mismatch, **stop here**. Update master plan as "Phase 8 deferred until Blizzard ships newer Linux package." Do not proceed to Step 3.
 
+**Pre-flight (one-time, four env vars).** Three classes of problem need preempting before any spike command runs: (a) WSL's auto-detected mode in burnysc2 silently runs the WINDOWS SC2 binary; (b) uv on `/mnt/c/...` fails on Linux chmod ops; (c) Ubuntu's stock `.bashrc` early-returns for non-interactive shells, so vars there don't reach `wsl -d ... -- bash -lc '...'`. All three are fixed by writing the right four env vars to `~/.profile` (NOT `~/.bashrc`).
+
+**Why each var:**
+
+- `UV_PROJECT_ENVIRONMENT=$HOME/venv-alpha4gate-linux` — pin uv's venv to a Linux-native ext4 path. The repo lives on `/mnt/c/...` (NTFS via DrvFS); uv's atomic-move + chmod operations during package install fail there with `Operation not permitted (os error 1)`. **Tested: simply naming `.venv-linux` (relative, on /mnt/c) crashes on the very first non-trivial wheel install.** Putting the venv on `~/...` (ext4 native) bypasses DrvFS entirely.
+- `SC2PATH=$HOME/StarCraftII` — burnysc2's `paths.py:14-48` Linux branch defaults to this; setting explicitly insulates against future package changes.
+- `SC2_WSL_DETECT=0` — bypass burnysc2's auto-detection. Without this, `sc2/wsl.py:73` returns `"WSL2"` (since `WSL_DISTRO_NAME` is set), which forces burnysc2 into WSL2 mode (Windows binary at `/mnt/c/Program Files (x86)/StarCraft II/Support64`, launched via `powershell.exe`). With it, `wsl.detect()` returns `None`, `platform_detect()` falls through to `"Linux"`, and burnysc2 uses `~/StarCraftII/Versions/Base*/SC2_x64` directly inside WSL.
+- `.bashrc` vs `.profile`: Ubuntu's default `.bashrc` has `case $- in *i*) ;; *) return;; esac` near the top, so any `export` at the END of `.bashrc` never executes for `wsl -- bash -lc '...'` calls. `.profile` runs for every login shell (interactive AND non-interactive via `-l`).
+- **Verification gotcha:** do NOT verify with `wsl -- bash -lc 'echo $UV_PROJECT_ENVIRONMENT'`. The outer (Windows-side) shell may expand `$UV_PROJECT_ENVIRONMENT` to empty BEFORE wsl sees it, returning a false-empty result even when the var is set inside wsl. Use `printenv` (named lookup, no expansion) instead.
+
+```bash
+echo 'export UV_PROJECT_ENVIRONMENT=$HOME/venv-alpha4gate-linux' >> ~/.profile
+echo 'export SC2PATH=$HOME/StarCraftII' >> ~/.profile
+echo 'export SC2_WSL_DETECT=0' >> ~/.profile
+# Verify in a FRESH login shell using printenv (NOT echo $VAR):
+wsl -d Ubuntu-22.04 -- bash -lc 'printenv UV_PROJECT_ENVIRONMENT SC2PATH SC2_WSL_DETECT'
+```
+
 **Operator commands (in WSL):**
 
 ```bash
 mkdir -p ~/StarCraftII && cd ~/StarCraftII
-wget https://blzdistsc2-a.akamaihd.net/Linux/SC2.4.10.zip
+wget https://blzdistsc2-a.akamaihd.net/Linux/SC2.4.10.zip   # ~4.1 GB (plan originally said ~2 GB; reality is 2x)
 unzip -P iagreetotheeula SC2.4.10.zip
-# Drop Simple64.SC2Map into ~/StarCraftII/Maps/ — copy from the Windows install via /mnt/c/...
-cp '/mnt/c/Program Files (x86)/StarCraft II/Maps/Simple64.SC2Map' ~/StarCraftII/Maps/
-cd <repo path on /mnt/c>
-SC2PATH=~/StarCraftII uv run python -m bots.v0 --role solo --map Simple64 --difficulty 1 --decision-mode rules
+# The zip extracts into a SECOND `StarCraftII/` subdir — flatten so $SC2PATH resolves directly:
+shopt -s dotglob && mv StarCraftII/* . && rmdir StarCraftII && shopt -u dotglob
+# Simple64.SC2Map IS bundled in the 4.10 package at Maps/Melee/. Copy to flat Maps/ to match Windows-install layout:
+cp ~/StarCraftII/Maps/Melee/Simple64.SC2Map ~/StarCraftII/Maps/
+# Linux SC2 4.10 looks up maps via lowercase `maps/` (case-sensitive FS); symlink so both cases resolve:
+ln -s ~/StarCraftII/Maps ~/StarCraftII/maps
+# Quick libc sanity check — if this lists "not found" libs, halt the spike (libc/libstdc++ mismatch):
+ldd ~/StarCraftII/Versions/Base*/SC2_x64 | grep -E "not found" && echo HALT
+cd /mnt/c/Users/abero/dev/Alpha4Gate
+uv sync                         # Creates ~/venv-alpha4gate-linux (~4.8 GB, ~2 min on warm cache)
+uv run python -m bots.v0 --role solo --map Simple64 --difficulty 1 --decision-mode rules --no-claude --game-time-limit 600
 ```
 
-What to look for: SC2 binary launches (no missing-library errors), Simple64 loads, bot enters game, game completes. Record `top` resident memory of `SC2_x64` at peak.
+What to look for: SC2 binary launches (no missing-library errors), Simple64 loads, bot enters game, game completes with a Result. Record peak `SC2_x64` resident memory via `pgrep SC2_x64 | xargs -I{} ps -o rss= -p {}` sampled every 1s during the game (the spike-1 record markdown documents the script). The `SC2PATH` env var honors the existing `setdefault`/`os.getenv` escape hatch in `bots/v0/config.py:49` — Step 5's resolver fix isn't needed for the spike to run.
+
+Spike 1 deliberately uses `--no-claude` (advisor not relevant to "does SC2 launch on Linux") and `--game-time-limit 600` (10 in-game minutes is enough for a difficulty-1 game; default 1800 is wasteful for a smoke test).
 
 ### Step 3: Operator — Spike 2: existing self-play unmodified on Linux (DECISIVE)
 

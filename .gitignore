@@ -10,6 +10,7 @@ build/
 # Virtual environments
 .venv/
 .venv-py312/
+.venv-linux/
 venv/
 
 # Environment
