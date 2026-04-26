@@ -24,11 +24,19 @@ Run from repo root:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
 import time
 from pathlib import Path
+
+import portpicker
+from sc2 import maps
+from sc2.data import Race
+from sc2.main import GameMatch, a_run_multiple_games
+from sc2.player import BotProcess
+from sc2.portconfig import Portconfig
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT / "src") not in sys.path:
@@ -37,15 +45,6 @@ if str(_REPO_ROOT / "src") not in sys.path:
 from orchestrator.paths import resolve_sc2_path  # noqa: E402
 
 os.environ.setdefault("SC2PATH", str(resolve_sc2_path()))
-
-import asyncio
-
-import portpicker
-from sc2 import maps
-from sc2.data import Race
-from sc2.main import GameMatch, a_run_multiple_games
-from sc2.player import BotProcess
-from sc2.portconfig import Portconfig
 
 # burnysc2 7.1.3 bug: Portconfig.contiguous_ports reserves only `start` with
 # portpicker. The 4 adjacent ports it picks for server/player LAN traffic are

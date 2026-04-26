@@ -89,6 +89,7 @@ here because they operate on different things.
 | [Frontend Dashboard](frontend.md) | 10 tabs, React components, WebSocket protocol, poll cadences |
 | [Domain Coupling](domain-coupling.md) | What's SC2-specific vs domain-agnostic |
 | [Testing](testing.md) | 1020 unit tests, SC2 integration tests, coverage map |
+| [Linux Dev Environment](linux-dev-environment.md) | WSL Ubuntu 22.04 setup — venv on ext4, env vars, gotchas |
 
 ---
 
