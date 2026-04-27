@@ -103,6 +103,7 @@ the heuristic formula is published in §5 of that investigation.
   §5 numerically on a hand-crafted snapshot, (b) clamp to [0, 1]
   works on extreme inputs, (c) `enemy_army_near_base=True` reduces
   score by exactly 0.30 vs `False`. Mypy strict + ruff clean.
+- **Status:** DONE (2026-04-27)
 
 ### Step N.2: DB migration + write-path
 
