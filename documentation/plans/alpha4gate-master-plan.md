@@ -204,7 +204,7 @@ Track 4 — Capability-F [F]          deferred; only if B/D/E insufficient      
 Track 6 — Multi-race   [G]          post-Phase-6 operational; Zerg then Terran via per-race bots/<race>_v0/ stacks
 Track 7 — Directed Practice  [H, I, J]   mini-games substrate → custom Protoss maps → role decision; investigation-blocked
 Track 8 — Observable         [K, L, M]   pool metadata → replay-stream-as-live viewer → NL-prompt seed selector
-Track 9 — Capability research [N, O, P, Q]  win-prob+give-up → scripted Hydra v1 → distillation → harvest-engineer skill
+Track 9 — Capability research [N ✅, O, P, Q]  win-prob+give-up → scripted Hydra v1 → distillation → harvest-engineer skill
 Track 10 — Statistical robust [R, S+]   Wilson CIs + SPRT (R) → backlog of further primitives
 ```
 
@@ -257,7 +257,7 @@ Tracks 7 / 8 / 9 / 10 (added 2026-04-27, append to Phase 9 ✅ root):
                                        ┌──────────────────────┬─────────────────────┼────────────────────┐
                                        ▼                      ▼                     ▼                    ▼
                           Track 7 (Directed)         Track 8 (Observable)    Track 9 (Research)    Track 10 (Stats)
-                          Phase H → I → J            Phase K → L → M         N → P / Q parallel    Phase R → S+
+                          Phase H → I → J            Phase K → L → M         N ✅ → P / Q parallel  Phase R → S+
                                                                              O scripted v1 anytime
                                                                              O-v2 deferred
 ```
@@ -269,7 +269,7 @@ move the needle).
 
 Tracks 7-10 are independent of each other and of the existing Track
 3-6 capability work; capacity-permitting they run in parallel. Track 9
-default sequencing: Phase N (win-prob, unblocked) → Phases P / Q in
+default sequencing: Phase N (win-prob, ✅ shipped 2026-04-27) → Phases P / Q in
 parallel after their investigations land. Phase O scripted v1 ships
 anytime after the Hydra investigation drafts the controller-switching
 contract; Phase O-v2 (learned controller) stays deferred alongside
@@ -1225,10 +1225,26 @@ in over more promoted versions.
 
 ## Phase N — Win-probability heuristic + give-up logic
 
-**Track:** Capability research. **Status:** Unblocked. Investigation
+**Track:** Capability research. **Status:** ✅ COMPLETE 2026-04-27. Investigation
 already done — see
 [win-probability-forecast-investigation.md](../investigations/win-probability-forecast-investigation.md).
 **Prerequisites:** Phase 5.
+
+**Shipped 2026-04-27** (commits `2f71f88`, `6ee238b`, `04d3e04`, `be12a02`,
+`2ab31a6`, `5b4a4ec`, `6ceea25`; issues #228–#233 closed): Option (c)
+heuristic in `bots/v0/learning/winprob_heuristic.py` (pure §5 formula,
+clamped to [0, 1]); `transitions.win_prob REAL` column via
+`_LATER_ADDED_COLS` migration; computed once per decision step in both
+`SC2Env.step` (PPO path) and `Alpha4GateBot._record_transition` (solo
+path); INFO log line every 10 iterations (`winprob=N.NN state=NAME`);
+`bots/v0/give_up.py::should_give_up` + 30-deep deque + idempotent
+`Alpha4GateBot._maybe_resign` calling `await self.client.leave()` once
+threshold (`winprob<0.05` for 30 steps **and** `game_time>480s`) is
+met. 26 new tests; smoke verified one Simple64 difficulty-5 game
+(Victory, 597s, 153 transitions all populating `win_prob`, range
+[0.0, 0.764] mean 0.39, 335 cadence-log lines arcing opening→attack).
+Phase O (Hydra meta-controller) can now consume the win-prob signal as
+its switching trigger.
 
 > **Build detail at
 > `documentation/plans/phase-n-build-plan.md`.**
@@ -1620,6 +1636,16 @@ Investigations that informed the current direction:
 
 Append-only — do not edit prior entries.
 
+- *2026-04-27* — **Phase N COMPLETE.** Six steps shipped (#228–#233)
+  on master 2f71f88..6ceea25: heuristic module, DB column +
+  migration, env + bot write-path, every-10-iteration INFO log line,
+  give-up trigger module, `Alpha4GateBot._maybe_resign` integration,
+  N.6 operator smoke gate. 26 new tests (1335 → 1361 baseline).
+  Smoke surfaced one defect (the bot's solo-mode write site missed
+  the `win_prob` kwarg) hotfixed in `5b4a4ec` with a regression
+  test. Phase N capabilities live in `bots/v0/`; production runtime
+  (`bots/current` → `bots/v2/`) doesn't pick them up until next
+  evolve promotion re-snapshots from v0. Phase O unblocked.
 - *2026-04-27* — **Utility / Observable split + four new tracks
   (7-10).** Plan-shape conversation pivoted the master plan from a
   single-substrate model to a two-stack model: Utility (training,

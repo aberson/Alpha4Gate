@@ -187,8 +187,9 @@ Staging timeout: 60 seconds max wait before forcing attack.
 
 ```
 bots/v0/
-├── bot.py                 # Orchestrator — on_step() pipeline (869 lines)
+├── bot.py                 # Orchestrator — on_step() pipeline (~1350 lines)
 ├── decision_engine.py     # StrategicState state machine + GameSnapshot
+├── give_up.py             # Pure should_give_up() trigger + thresholds (Phase N)
 ├── macro_manager.py       # Economy: workers, supply, production, expansion
 ├── micro.py               # Combat: target priority, kiting, focus fire
 ├── army_coherence.py      # Grouping: staging, critical mass, retreat
@@ -224,6 +225,7 @@ bots/v0/
     ├── database.py         # SQLite transitions + games
     ├── checkpoints.py      # Model save/load/prune
     ├── imitation.py        # Behavior cloning
+    ├── winprob_heuristic.py  # Per-step heuristic P(win) score (Phase N)
     └── hyperparams.py      # PPO config loader
 ```
 

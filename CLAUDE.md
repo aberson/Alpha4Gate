@@ -9,15 +9,15 @@ Goal: AI-vs-AI competition with transparent model introspection and autonomous s
 
 - Python 3.12, uv, burnysc2 v7.1.3, FastAPI, React+TypeScript+Vite
 - Deep learning: PyTorch, Stable Baselines 3 (PPO), SQLite for training data
-- Testing: pytest (1020 unit tests) + vitest (129 frontend tests), ruff, mypy strict mode
+- Testing: pytest (1361 unit tests) + vitest (143 frontend tests), ruff, mypy strict mode
 
 ## Commands
 
 ```bash
 uv sync                                    # Install deps
 uv run python -m bots.v0 --role solo --map Simple64  # Run game
-uv run python -m alpha4gate.runner --serve         # Dashboard API only
-uv run pytest                              # 916 unit tests
+uv run python -m bots.v0.runner --serve            # Dashboard API only
+uv run pytest                              # 1361 unit tests
 uv run pytest -m sc2                       # SC2 integration tests (SC2 must be running)
 uv run ruff check .                        # Lint
 uv run mypy src bots --strict              # Type check
@@ -53,7 +53,7 @@ All Phase 1 (rule-based) and Phase 2 (deep learning) features complete.
 Five improvement cycles done: army coherence, natural denial, neural training, strategic commands, defensive fortification.
 Wins reliably at difficulty 1-3, struggles at 4-5.
 Active plan: `documentation/plans/alpha4gate-master-plan.md` — platform + full-stack versioning + AlphaStar-style PPO upgrades. Always-up Phases 1–4.5 (daemon, evaluator, promotion gate, rollback, 10-tab dashboard) are the Baseline; full history in `documentation/archived/always-up-plan.md`.
-Master plan Phases A, 0, 1, 2, 3, 4, 5 all COMPLETE. Phase 4 added Elo ladder (`src/orchestrator/ladder.py`), cross-version promotion gate, CLI (`scripts/ladder.py`), `/api/ladder` endpoint, and Ladder dashboard tab (10th). Phase 5 added sandbox enforcement (`scripts/check_sandbox.py` + `.pre-commit-config.yaml`) and wired `check_promotion()` + `[advised-auto]` into `/improve-bot-advised`.
+Master plan Phases A, 0, 1, 2, 3, 4, 5 all COMPLETE. Phase 4 added Elo ladder (`src/orchestrator/ladder.py`), cross-version promotion gate, CLI (`scripts/ladder.py`), `/api/ladder` endpoint, and Ladder dashboard tab (10th). Phase 5 added sandbox enforcement (`scripts/check_sandbox.py` + `.pre-commit-config.yaml`) and wired `check_promotion()` + `[advised-auto]` into `/improve-bot-advised`. Phase 9 (improve-bot-evolve) operational, v0→v1→v2 auto-promoted overnight 2026-04-23. Phase 8 (Linux/Docker CI) shipped 2026-04-26. Phase N (winprob heuristic + give-up trigger) COMPLETE 2026-04-27 — `bots/v0/learning/winprob_heuristic.py`, `bots/v0/give_up.py`, `transitions.win_prob` column, every-10-step INFO log, `Alpha4GateBot._maybe_resign`. Live in `bots/v0/`; dormant in `bots/current/` (v2) until next evolve promotion re-snapshots from v0.
 Wiki: `documentation/wiki/index.md` — system diagram and deep-dive pages.
 
 **Important:** Do NOT import `bots.current` or `bots.<version>` from `src/orchestrator/` — triggers MetaPathFinder loop. Registry reads paths via pathlib.
