@@ -206,6 +206,14 @@ the heuristic formula is published in §5 of that investigation.
   with non-NULL `win_prob`.
 - **Done when:** All smoke checks green.
 - **Depends on:** N.5.
+- **Status:** DONE (2026-04-27) — 1 Simple64 difficulty-5 game (Victory,
+  597s, 153 transitions). win_prob populated on all 153 rows, range
+  [0.0, 0.764], mean 0.39. 335 `winprob=N.NN state=...` log lines
+  fired with the opening→attack arc. Smoke surfaced one N.2 defect
+  (Alpha4GateBot._record_transition, the solo-mode write site, was
+  missing the win_prob kwarg) — fixed in commit `5b4a4ec` with a
+  regression test pinning the bot path. Give-up trigger not exercised
+  (game won); deferred to a real losing game.
 
 ## 5. Tests
 
