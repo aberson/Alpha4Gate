@@ -181,6 +181,14 @@ the heuristic formula is published in §5 of that investigation.
   afterward with `result=Defeat`, (c) no `leave()` call when
   threshold not met.
 - **Depends on:** N.2 + N.4.
+- **Status:** DONE (2026-04-27) — `Alpha4GateBot._maybe_resign` owns
+  the per-step append + resign call; `__init__` initializes
+  `_winprob_history` (maxlen=GIVE_UP_WINDOW) and `_gave_up=False`.
+  5 mocked-client tests cover (a), (c), idempotence, and the
+  per-step always-append contract. Done-when (b) — `store_game()`
+  follow-through after `leave()` — is an env-layer concern beyond
+  the bot's direct control and is verified by the N.6 operator
+  smoke gate.
 
 ### Step N.6: Operator smoke gate
 

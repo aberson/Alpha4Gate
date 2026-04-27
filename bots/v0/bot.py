@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import deque
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
@@ -29,6 +30,11 @@ from bots.v0.commands.dispatch_guard import DispatchGuard
 from bots.v0.console import print_status
 from bots.v0.decision_engine import DecisionEngine, GameSnapshot, StrategicState
 from bots.v0.fortification import FortificationManager
+from bots.v0.give_up import (
+    GIVE_UP_PROB_THRESHOLD,
+    GIVE_UP_WINDOW,
+    should_give_up,
+)
 from bots.v0.learning import winprob_heuristic
 from bots.v0.learning.features import _FEATURE_SPEC
 from bots.v0.learning.neural_engine import DecisionMode, NeuralDecisionEngine
@@ -174,7 +180,7 @@ def _should_reissue_attack_to_position(
 
 def _maybe_log_winprob(
     iteration: int,
-    snapshot: GameSnapshot,
+    winprob: float,
     state_name: str,
     logger: logging.Logger,
 ) -> None:
@@ -184,11 +190,14 @@ def _maybe_log_winprob(
     surface from Phase N (see investigation §6).  Pulled out as a
     module-level pure helper so it can be unit-tested directly without
     standing up a burnysc2 BotAI.
+
+    The winprob is precomputed by the caller so that ``on_step`` and
+    ``_maybe_resign`` can share a single ``winprob_heuristic.score``
+    call per iteration (Phase N Step 5).
     """
     if iteration % 10 != 0:
         return
-    prob = winprob_heuristic.score(snapshot)
-    logger.info("winprob=%.2f state=%s", prob, state_name)
+    logger.info("winprob=%.2f state=%s", winprob, state_name)
 
 
 class Alpha4GateBot(BotAI):
@@ -284,6 +293,14 @@ class Alpha4GateBot(BotAI):
         self._last_army_hp: int = 0
         self._bleeding_since: float | None = None  # game time bleeding started
 
+        # Phase N Step 5: rolling win-probability history for the give-up trigger.
+        # Sized to GIVE_UP_WINDOW so should_give_up() inspects the full deque.
+        # Once we resign once, _gave_up flips True so we don't try to leave twice
+        # (await self.client.leave() is idempotent in burnysc2 but the side effects
+        # of repeated calls — extra log lines, extra audit entries — are noise).
+        self._winprob_history: deque[float] = deque(maxlen=GIVE_UP_WINDOW)
+        self._gave_up: bool = False
+
     def _build_snapshot(self) -> GameSnapshot:
         """Build a GameSnapshot from current bot state."""
         army_supply = 0
@@ -348,7 +365,12 @@ class Alpha4GateBot(BotAI):
         if self._neural_engine is not None:
             state = self._neural_engine.predict(snapshot)
 
-        _maybe_log_winprob(iteration, snapshot, state.value, _log)
+        # Phase N Step 5: compute the heuristic winprob once per iteration so
+        # the operator log line and the give-up trigger share a single score
+        # call (the helper and _maybe_resign both consume this value).
+        winprob = winprob_heuristic.score(snapshot)
+        _maybe_log_winprob(iteration, winprob, state.value, _log)
+        await self._maybe_resign(winprob, snapshot.game_time_seconds)
 
         # --- Command system: drain queue and execute ---
         settings = get_command_settings()
@@ -569,6 +591,31 @@ class Alpha4GateBot(BotAI):
             True if AI commands should be suppressed.
         """
         return game_time < self._ai_lockout_until
+
+    # ------------------------------------------------------------------ #
+    #  Give-up trigger (Phase N Step 5)
+    # ------------------------------------------------------------------ #
+
+    async def _maybe_resign(self, winprob: float, game_time: float) -> None:
+        """Append the current winprob to the rolling history; resign if due.
+
+        Implements the Phase N Step 5 give-up trigger.  Idempotent: once
+        ``self._gave_up`` is True, this method is a no-op beyond appending
+        to the history (we still record the score so any downstream
+        consumer of the deque sees the latest value).
+        """
+        self._winprob_history.append(winprob)
+        if self._gave_up:
+            return
+        if should_give_up(self._winprob_history, game_time):
+            _log.info(
+                "Resigning: winprob < %.2f for %d steps at game_time=%.1fs",
+                GIVE_UP_PROB_THRESHOLD,
+                GIVE_UP_WINDOW,
+                game_time,
+            )
+            await self.client.leave()
+            self._gave_up = True
 
     # ------------------------------------------------------------------ #
     #  Build order execution (OPENING phase)

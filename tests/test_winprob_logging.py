@@ -4,6 +4,11 @@ Phase N Step 3 wires a periodic operator-facing debug log line into
 ``Alpha4GateBot.on_step``.  The cadence and format are tested here against
 the pure module-level helper ``_maybe_log_winprob`` so we don't have to
 stand up a burnysc2 ``BotAI`` to pin the contract.
+
+Step 5 (Phase N) updated the helper to take a precomputed ``winprob: float``
+so the bot can share a single ``winprob_heuristic.score`` call between the
+operator log line and the give-up trigger.  These tests pass the score
+explicitly to mirror that contract.
 """
 
 from __future__ import annotations
@@ -57,7 +62,7 @@ def test_logs_at_iteration_zero(
     """Iteration 0 fires the cadence (``0 % 10 == 0``) and emits one record."""
     caplog.set_level(logging.INFO, logger=_LOGGER_NAME)
 
-    _maybe_log_winprob(0, _midrange_snapshot(), "attack", logger)
+    _maybe_log_winprob(0, score(_midrange_snapshot()), "attack", logger)
 
     records = [r for r in caplog.records if r.name == _LOGGER_NAME]
     assert len(records) == 1
@@ -69,10 +74,10 @@ def test_logs_every_tenth_iteration(
 ) -> None:
     """Across iterations 0..30 inclusive, exactly 4 records (0, 10, 20, 30)."""
     caplog.set_level(logging.INFO, logger=_LOGGER_NAME)
-    snap = _midrange_snapshot()
+    winprob = score(_midrange_snapshot())
 
     for i in range(31):
-        _maybe_log_winprob(i, snap, "attack", logger)
+        _maybe_log_winprob(i, winprob, "attack", logger)
 
     records = [r for r in caplog.records if r.name == _LOGGER_NAME]
     assert len(records) == 4
@@ -83,10 +88,10 @@ def test_does_not_log_off_cadence(
 ) -> None:
     """Off-cadence iterations (1, 5, 7, 9, 11) produce zero records."""
     caplog.set_level(logging.INFO, logger=_LOGGER_NAME)
-    snap = _midrange_snapshot()
+    winprob = score(_midrange_snapshot())
 
     for i in (1, 5, 7, 9, 11):
-        _maybe_log_winprob(i, snap, "attack", logger)
+        _maybe_log_winprob(i, winprob, "attack", logger)
 
     records = [r for r in caplog.records if r.name == _LOGGER_NAME]
     assert records == []
@@ -100,7 +105,7 @@ def test_log_format_matches_spec(
     snap = _midrange_snapshot()
     expected_prob = score(snap)
 
-    _maybe_log_winprob(0, snap, "attack", logger)
+    _maybe_log_winprob(0, expected_prob, "attack", logger)
 
     records = [r for r in caplog.records if r.name == _LOGGER_NAME]
     assert len(records) == 1
@@ -118,7 +123,7 @@ def test_uses_strategic_state_name(
     """A non-default ``state_name`` (e.g. ``"defend"``) appears verbatim."""
     caplog.set_level(logging.INFO, logger=_LOGGER_NAME)
 
-    _maybe_log_winprob(0, _midrange_snapshot(), "defend", logger)
+    _maybe_log_winprob(0, score(_midrange_snapshot()), "defend", logger)
 
     records = [r for r in caplog.records if r.name == _LOGGER_NAME]
     assert len(records) == 1
