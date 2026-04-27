@@ -138,6 +138,9 @@ the heuristic formula is published in §5 of that investigation.
 - **Done when:** Test asserts log line appears every 10 steps with
   matching format; manual smoke run shows lines in `backend.log`.
 - **Depends on:** N.2.
+- **Status:** DONE (2026-04-27) — cadence + format unit-tested via
+  `_maybe_log_winprob` helper; backend.log verification deferred to
+  N.6 operator smoke.
 
 ### Step N.4: Give-up module + unit tests
 

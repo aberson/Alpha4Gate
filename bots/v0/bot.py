@@ -29,6 +29,7 @@ from bots.v0.commands.dispatch_guard import DispatchGuard
 from bots.v0.console import print_status
 from bots.v0.decision_engine import DecisionEngine, GameSnapshot, StrategicState
 from bots.v0.fortification import FortificationManager
+from bots.v0.learning import winprob_heuristic
 from bots.v0.learning.features import _FEATURE_SPEC
 from bots.v0.learning.neural_engine import DecisionMode, NeuralDecisionEngine
 from bots.v0.learning.rewards import RewardCalculator
@@ -169,6 +170,25 @@ def _should_reissue_attack_to_position(
                 # Defensive: unexpected target type — fall through and re-issue.
                 return True
     return True
+
+
+def _maybe_log_winprob(
+    iteration: int,
+    snapshot: GameSnapshot,
+    state_name: str,
+    logger: logging.Logger,
+) -> None:
+    """Emit a heuristic-winprob log line every 10th iteration.
+
+    Used by ``Alpha4GateBot.on_step`` for the operator-facing debug
+    surface from Phase N (see investigation §6).  Pulled out as a
+    module-level pure helper so it can be unit-tested directly without
+    standing up a burnysc2 BotAI.
+    """
+    if iteration % 10 != 0:
+        return
+    prob = winprob_heuristic.score(snapshot)
+    logger.info("winprob=%.2f state=%s", prob, state_name)
 
 
 class Alpha4GateBot(BotAI):
@@ -327,6 +347,8 @@ class Alpha4GateBot(BotAI):
         # Neural override: let the trained model choose the strategic state
         if self._neural_engine is not None:
             state = self._neural_engine.predict(snapshot)
+
+        _maybe_log_winprob(iteration, snapshot, state.value, _log)
 
         # --- Command system: drain queue and execute ---
         settings = get_command_settings()
