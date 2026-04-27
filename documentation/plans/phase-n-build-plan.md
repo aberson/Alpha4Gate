@@ -91,6 +91,7 @@ the heuristic formula is published in §5 of that investigation.
 
 ### Step N.1: Heuristic module + unit tests
 
+- **Issue:** #228
 - **Problem:** Implement `score(snapshot)` per investigation §5
   formula. All inputs come from `GameSnapshot` fields that exist
   today; no DB reads inside the function.
@@ -105,6 +106,7 @@ the heuristic formula is published in §5 of that investigation.
 
 ### Step N.2: DB migration + write-path
 
+- **Issue:** #229
 - **Problem:** Add `win_prob REAL` to `transitions` via
   `_LATER_ADDED_COLS`. In `SC2Env.step`, compute
   `winprob_heuristic.score(snapshot)` once per decision step;
@@ -122,6 +124,7 @@ the heuristic formula is published in §5 of that investigation.
 
 ### Step N.3: Logger line
 
+- **Issue:** #230
 - **Problem:** In the bot's main step loop, log
   `winprob=%.2f state=%s` at INFO every 10 decision steps. Use the
   existing `bots.v0.logging` logger (not `print`).
@@ -135,6 +138,7 @@ the heuristic formula is published in §5 of that investigation.
 
 ### Step N.4: Give-up module + unit tests
 
+- **Issue:** #231
 - **Problem:** `should_give_up(history: deque[float], game_time:
   float) -> bool`. Returns True iff `len(history) >= 30` AND `all(p <
   0.05 for p in history[-30:])` AND `game_time > 480` (seconds).
@@ -151,6 +155,7 @@ the heuristic formula is published in §5 of that investigation.
 
 ### Step N.5: Give-up bot integration
 
+- **Issue:** #232
 - **Problem:** In bot's end-of-step hook, append current `win_prob`
   to a 30-deep deque; call `should_give_up`; on True, `await
   self.client.leave()`. Verify the leave path still triggers
@@ -167,6 +172,7 @@ the heuristic formula is published in §5 of that investigation.
 
 ### Step N.6: Operator smoke gate
 
+- **Issue:** #233
 - **Problem:** Run a real-SC2 1-game session against difficulty 5
   (a likely losing matchup): `python -m bots.v0 --role solo
   --map Simple64 --difficulty 5`. Verify (a) `win_prob` written

@@ -70,6 +70,7 @@ neither of which produces interesting exhibits.
 
 ### Step K.1: Pool metadata schema + file
 
+- **Issue:** #223
 - **Problem:** Define `data/pool_metadata.json` schema (§5). Write the
   schema as Python TypedDict in `src/orchestrator/pool_metadata.py`.
   Add load/save helpers with file-locking (concurrent evolve runs
@@ -85,6 +86,7 @@ neither of which produces interesting exhibits.
 
 ### Step K.2: Manifest extension
 
+- **Issue:** #224
 - **Problem:** Add `themes` and `notable_moments` to manifest schema.
   `snapshot_current()` writes `themes: []` and `notable_moments: []`
   by default. Add `set_themes()` and `add_notable_moment()` helpers
@@ -101,6 +103,7 @@ neither of which produces interesting exhibits.
 
 ### Step K.3: Build-order signature
 
+- **Issue:** #225
 - **Problem:** `extract_build_order_signature(game_id) ->
   list[tuple[str, int]]` — returns the first 5 minutes of unit/structure
   production as `[(unit_name, count), ...]` ranked by frequency. Read
@@ -120,6 +123,7 @@ neither of which produces interesting exhibits.
 
 ### Step K.4: API endpoint + dashboard surface
 
+- **Issue:** #226
 - **Problem:** `GET /api/pool/metadata` returns merged
   registry+ladder+metadata view. Decide tab-vs-extend during this
   step (read LadderTab; if extension is clean, extend; otherwise
@@ -137,6 +141,7 @@ neither of which produces interesting exhibits.
 
 ### Step K.5: Operator smoke gate
 
+- **Issue:** #227
 - **Problem:** Run `python -m orchestrator list`, verify themes +
   notable_moments fields surface; manually tag `v0` with
   `["baseline"]` theme via `set_themes("v0",
