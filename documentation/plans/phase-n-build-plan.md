@@ -158,6 +158,12 @@ the heuristic formula is published in §5 of that investigation.
   game_time=500, (d) deque maintenance trims oldest when length
   exceeds 30. Mypy + ruff clean.
 - **Depends on:** none (pure function with no game integration yet).
+- **Status:** DONE (2026-04-27) — `bots/v0/give_up.py` exposes
+  `should_give_up(history, game_time)` and three module-level
+  thresholds (`GIVE_UP_WINDOW=30`, `GIVE_UP_PROB_THRESHOLD=0.05`,
+  `GIVE_UP_TIME_THRESHOLD_SECONDS=480.0`). 11 tests cover all four
+  Done-when cases plus boundaries (strict `<` on prob, strict `>` on
+  time), longer-than-window slicing, no-mutation, and empty-history.
 
 ### Step N.5: Give-up bot integration
 
