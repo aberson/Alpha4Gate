@@ -53,6 +53,38 @@ The versioning substrate is the primary new investment; AlphaStar
 capabilities ride on top of it. The platform infrastructure from the
 always-up plan stays in place underneath.
 
+### Two stacks, one platform (2026-04-27)
+
+As of 2026-04-27 the platform splits its substrate into two stacks
+with disjoint operational requirements:
+
+- **Utility Stack** — training, evolution, intra-version promotion,
+  cross-version Elo, ladder, headless Linux + Docker batch runs. Two
+  SC2 clients per match. No viewer. Optimised for game throughput per
+  wall-clock hour. Phases 0-9, B/D/E/F, 6/7, R, P, O, N, Q, H/I/J live
+  here.
+- **Observable Stack** — exhibition matches between any two seed
+  models drawn from the version pool, watched via full-map exhibition
+  viewer. Decoupled from rated training. Phase L v1 uses
+  *replay-stream-as-live* (a third SC2 process tails the in-progress
+  match's replay file with ~1-5s lag) — bots play with normal fog so
+  exhibits are faithful to rated behavior. One off-the-pool match at
+  a time. Phases K/L/M live here.
+
+The two stacks share infrastructure (registry, snapshot, manifest,
+dashboard) but operate on disjoint code paths and disjoint SC2
+processes. A Utility soak and an Observable exhibition can run on
+the same box concurrently iff the Utility soak is on Linux/Docker
+(Phase 8) and the Observable exhibit is on Windows.
+
+The split was driven by the 2026-04-24 selfplay-viewer block: the SC2
+server caps at 2 API clients, so a third "watching" client during a
+2-bot rated match is unbuildable. Earlier viewer designs that proposed
+`disable_fog=True` on the playing bots are explicitly rejected — they
+change perception mid-game, which makes exhibits unfaithful to rated
+play. Replay-stream-as-live preserves rated-play fidelity at the cost
+of ~1-5s lag.
+
 ## Principles
 
 - **Transparency first.** Every decision, training cycle, promotion, and
@@ -170,6 +202,10 @@ Track 5 — Operational  [9, 6, 7]    NEXT — Phase 9 (improve-bot-evolve) is t
 Track 3 — Capability   [B, D, E]    per-version improvements inside bots/current/**             after Phase 9
 Track 4 — Capability-F [F]          deferred; only if B/D/E insufficient                        after Phase 9
 Track 6 — Multi-race   [G]          post-Phase-6 operational; Zerg then Terran via per-race bots/<race>_v0/ stacks
+Track 7 — Directed Practice  [H, I, J]   mini-games substrate → custom Protoss maps → role decision; investigation-blocked
+Track 8 — Observable         [K, L, M]   pool metadata → replay-stream-as-live viewer → NL-prompt seed selector
+Track 9 — Capability research [N, O, P, Q]  win-prob+give-up → scripted Hydra v1 → distillation → harvest-engineer skill
+Track 10 — Statistical robust [R, S+]   Wilson CIs + SPRT (R) → backlog of further primitives
 ```
 
 **Track 5 priority (2026-04-19 reorder):** Phase 9 (improve-bot-evolve)
@@ -214,12 +250,30 @@ Phase A ✅ → Phase 0 ✅ → Phase 1 ✅ → Phase 2 ✅ → Phase 3 ✅ → 
                                                                                      ▼
                                                                           Phase G (multi-race)
                                                                           Phase F (transformer; deferred)
+
+Tracks 7 / 8 / 9 / 10 (added 2026-04-27, append to Phase 9 ✅ root):
+                                                                          Phase 9 ✅
+                                                                                     │
+                                       ┌──────────────────────┬─────────────────────┼────────────────────┐
+                                       ▼                      ▼                     ▼                    ▼
+                          Track 7 (Directed)         Track 8 (Observable)    Track 9 (Research)    Track 10 (Stats)
+                          Phase H → I → J            Phase K → L → M         N → P / Q parallel    Phase R → S+
+                                                                             O scripted v1 anytime
+                                                                             O-v2 deferred
 ```
 
 Phase 9 is independent of B/D/E/6/7. Phase 7 is independent of 6/9. Once
 Phase 9 is operational, capability phases (B/D/E) can be driven by it
 autonomously (sibling-tournament selects which improvements actually
 move the needle).
+
+Tracks 7-10 are independent of each other and of the existing Track
+3-6 capability work; capacity-permitting they run in parallel. Track 9
+default sequencing: Phase N (win-prob, unblocked) → Phases P / Q in
+parallel after their investigations land. Phase O scripted v1 ships
+anytime after the Hydra investigation drafts the controller-switching
+contract; Phase O-v2 (learned controller) stays deferred alongside
+Phase F.
 
 ## Baseline (as of 2026-04-17)
 
@@ -946,6 +1000,476 @@ unaffected.
 
 ---
 
+## Phase H — Mini-game substrate (PySC2 + custom-map runner)
+
+**Track:** Directed Practice. **Status:** Investigation-blocked.
+**Prerequisites:** Phase 5;
+[mini-game-role-investigation.md](../investigations/mini-game-role-investigation.md)
+must conclude before scope finalises.
+
+> **Build detail TBD.** Build plan stub at
+> `documentation/plans/phase-h-build-plan.md` once investigation
+> concludes.
+
+**Goal:** Add a mini-game runner primitive to `src/orchestrator/` that
+can launch a PySC2 canonical mini-game with a snapshot of the bot's
+relevant capability code, record results, and return a structured
+score. Substrate phase — does not change rated play.
+
+### Scope summary
+
+PySC2 dependency, mini-game launcher, score schema, DB column for
+per-version mini-game results, smoke-gate on 1 PySC2 mini-game
+end-to-end. Will firm up post-investigation.
+
+### Tests
+
+TBD.
+
+### Effort
+
+~2-3 days (investigation-dependent).
+
+### Validation
+
+A `bots/v0/` mini-game run on `MoveToBeacon` returns a score within
+published PySC2 baselines.
+
+### Gate
+
+TBD per investigation outcome.
+
+### Kill criterion
+
+Investigation concludes mini-games are scorecard-only and the
+substrate cost is not justified by the analytical value; defer
+Phase H indefinitely.
+
+### Rollback
+
+Delete the runner module + DB column migration; PySC2 dep stays as
+no-op.
+
+---
+
+## Phase I — Custom Protoss mini-games
+
+**Track:** Directed Practice. **Status:** Future.
+**Prerequisites:** Phase H. Investigation §5.3 produces the
+priority-ordered candidate list.
+
+**Goal:** Author 2-5 custom SC2 maps targeting specific Protoss skill
+deficiencies (blink-stalker micro, attack-concave, force-field choke,
+storm-clump, phoenix-vs-mutas). Race-extension flag throughout —
+when Phase G ships Zerg, this track gets per-race subdirs.
+
+### Effort
+
+~1 day per map (SC2 editor) + ~0.5 day reward-shape per map.
+
+### Kill criterion
+
+Investigation §6 concludes custom maps don't justify cost vs PySC2
+alone.
+
+### Rollback
+
+Delete the maps; Phase H runner unaffected.
+
+---
+
+## Phase J — Mini-game role decision (gate / reward / scorecard)
+
+**Track:** Directed Practice. **Status:** Investigation-blocked.
+**Prerequisites:** Phase H; mini-game-role investigation conclusion.
+
+**Goal:** Wire the chosen role(s) into the evolve loop. If scorecard,
+slot into per-version manifest. If gate, slot into `run_fitness_eval`
+or as a new pre-gate. If reward, slot into curriculum pretraining.
+
+### Kill criterion
+
+None — phase shape *is* the decision; if no role ships, Phase J
+collapses into a Phase H sub-step.
+
+---
+
+## Phase K — Observable pool organisation + metadata
+
+**Track:** Observable. **Status:** Future.
+**Prerequisites:** Phase 4 (ladder) — the pool is the version registry
+plus tagging.
+
+> **Build detail at
+> `documentation/plans/phase-k-build-plan.md`.**
+
+**Goal:** Make the version registry searchable for "fun matchups."
+Add registry metadata: themed labels (Skytoss, Carrier-rush,
+Ground-army), notable-moments (first promotion, beat-vN-9-0),
+build-order signature, cross-version WR matrix (already exists via
+ladder).
+
+### Effort
+
+~1-2 days. Registry change + DB migration + dashboard view.
+
+### Validation
+
+A pool-pick API call returns a sensible matchup given text-or-tag
+input.
+
+### Kill criterion
+
+Registry metadata gets stale faster than it gets useful (more than
+50% of new versions land without tags). Switch to auto-tagging from
+manifest fingerprints.
+
+---
+
+## Phase L — Replay-stream-as-live exhibition viewer
+
+**Track:** Observable. **Status:** Future. Replaces the archived
+`selfplay-viewer-plan.md` (observer-based design blocked at the
+2-API-client server cap).
+**Prerequisites:** Phase 4. Includes blocking spike step.
+
+**Goal:** Spawn a 2-bot match (full fog, faithful to rated play)
+plus a third SC2 process running `run_replay` against the live
+in-progress replay file. The third process renders full-map vision
+with ~1-5s lag and is the window embedded in the themed pygame
+container. Bots play exactly as they would in rated play; only the
+exhibit lags.
+
+### Scope summary
+
+Spike-C step (blocking): verify burnysc2's `run_replay` can tail an
+in-progress `.SC2Replay` file end-to-end without race conditions or
+desync. If green, refactor `src/selfplay_viewer/` to single-pane;
+add `--exhibition` flag to `scripts/selfplay.py` that wires the
+replay-tail process; explicit "exhibition only — Observable Stack"
+guard in CLI help.
+
+**Known limitation (flagged 2026-04-27):** ~1-5s lag is by design.
+If lag feels unwatchable in practice, Phase L v2 = revisit
+at-game-time observer-as-API-client architectures (currently blocked
+by the 2-client cap; may unblock if burnysc2 changes upstream or we
+find a workaround).
+
+**Why not `disable_fog=True`?** Considered and rejected 2026-04-27 —
+changes the bots' perception (`enemy_units` returns full-map data),
+which makes exhibits unfaithful to rated play. The whole point of
+Observable is showing what the rated bots actually do.
+
+### Tests
+
+Unit tests for the single-pane refactor; replay-tail unit test
+against a recorded fixture; manual smoke-gate for visual fidelity.
+
+### Effort
+
+~1 week including spike. Spike alone is ~0.5 day; if it fails the
+phase reroutes to "investigate observer-as-API-client unblocks."
+
+### Validation
+
+A `python scripts/selfplay.py --exhibition --p1 v0 --p2 v0` produces
+one full-map-vision viewer window with ~1-5s lag; Utility-stack soak
+running concurrently is unaffected; no orphan SC2 processes after
+exit.
+
+### Gate
+
+Spike C green AND visual fidelity passes AND no Utility-stack
+regression.
+
+### Kill criterion
+
+Spike C reveals replay-tail desync or race conditions that can't be
+fixed in <2 days. Reroute to "Phase L deferred until observer-as-
+API-client substrate becomes feasible."
+
+### Rollback
+
+`git revert` the viewer revival; previously-archived
+`selfplay-viewer-observer-plan.md` stays archived; Observable Stack
+functionally pauses until L v2 or substrate change.
+
+---
+
+## Phase M — NL-prompt seed selector
+
+**Track:** Observable. **Status:** Future. **Prerequisites:** Phase K
+(metadata) + Phase L (viewer).
+
+**Goal:** A small Claude wrapper that takes a natural-language prompt
+("show me a game where the carrier-build bot loses to a defensive
+build") and translates to `(p1, p2, optional win-filter)` from the
+metadata-tagged registry, then launches a Phase L viewer with that
+matchup.
+
+### Effort
+
+~1 day.
+
+### Validation
+
+Three sample NL prompts each produce a runnable viewer match.
+
+### Kill criterion
+
+Metadata is too sparse for NL queries to land sensibly (>50% of
+queries fall back to "random"); defer until Phase K metadata fills
+in over more promoted versions.
+
+---
+
+## Phase N — Win-probability heuristic + give-up logic
+
+**Track:** Capability research. **Status:** Unblocked. Investigation
+already done — see
+[win-probability-forecast-investigation.md](../investigations/win-probability-forecast-investigation.md).
+**Prerequisites:** Phase 5.
+
+> **Build detail at
+> `documentation/plans/phase-n-build-plan.md`.**
+
+**Goal:** Ship Option (c) heuristic from the win-probability
+investigation as the per-step P(win) signal: heuristic formula in
+`bots/v0/learning/winprob_heuristic.py`, `win_prob` column added to
+`transitions`, INFO log line every 10 decision steps. Pair with a
+**give-up trigger** (`RequestLeaveGame`) that fires when
+`winprob < 0.05 for 30 consecutive decision steps AND game_time > 8 min`
+— saves wall-clock on lost games, enables "fold-em" behavior.
+
+### Scope summary
+
+5 build steps per win-prob investigation §8 + 1 give-up step.
+
+### Tests
+
+`tests/test_winprob_heuristic.py` (synthetic snapshots),
+`tests/test_give_up_trigger.py`.
+
+### Effort
+
+~1 day.
+
+### Validation
+
+Heuristic separates win-game and loss-game mean scores by ≥0.10
+absolute (already shown in investigation §5.1 at 0.145). Give-up
+trigger fires <5% of games in winning soaks, ≥30% in losing soaks.
+
+### Gate
+
+Both validation criteria.
+
+### Kill criterion
+
+Heuristic separation collapses on more recent versions (< 0.05).
+Pivot to Option (b) classifier per investigation §4.
+
+### Rollback
+
+Drop heuristic module + DB column; remove give-up trigger.
+
+---
+
+## Phase O — Hydra meta-controller (scripted v1)
+
+**Track:** Capability research. **Status:** Future. **Prerequisites:**
+Phase N (win-prob is the candidate switching signal). Hydra
+investigation runs in parallel, evaluating whether learned-controller
+**Phase O-v2** is worth doing post-v1.
+
+**Goal:** Ship a *scripted* meta-controller that dispatches among N
+themed expert sub-policies (Skytoss, Ground, Cheese-rush, etc.).
+Switching is rule-based (e.g.,
+`if winprob < 0.3 for 60s and enemy_air_supply > 8: switch_to(skytoss)`),
+not learned. Validates the prerequisite question — *do two themed
+experts beat one monolith?* — at a fraction of the cost of learned
+HRL, and produces the expert-registry / switching-API /
+debug-inspection plumbing that a learned v2 would also need.
+
+### Scope summary
+
+- Expert registry: each theme is its own `bots/<expert>_vN/`
+  directory, produced by a themed `improve-bot --theme=X` run.
+- Controller module: rule-based switcher, reads win-prob (from
+  Phase N) + game-state features, returns expert id.
+- Inference path: orchestrator loads multiple sub-policies, dispatches
+  per-step based on controller output.
+- Dashboard: per-step expert-id logged + visualized in Decisions tab.
+- A/B vs monolith parent: 20-game self-play, must beat parent by
+  ≥+10 Elo.
+
+### Tests
+
+`tests/test_hydra_controller.py`, `tests/test_hydra_dispatch.py`,
+`tests/test_hydra_expert_registry.py`.
+
+### Effort
+
+~1 week build + multi-day expert-training time.
+
+### Validation
+
+20-game self-play vs monolith parent shows ≥+10 Elo gain AND no
+expert collapse (controller dispatches each expert ≥10% of steps in
+≥50% of games).
+
+### Gate
+
+Both validation criteria.
+
+### Kill criterion
+
+After 1 week of build + first soak, scripted v1 fails to beat
+monolith parent OR controller collapses to a single expert in
+>50% of games. Learned v2 won't fix what scripted couldn't probe;
+defer Phase O entirely (and Phase O-v2) and document the negative
+result.
+
+### Rollback
+
+Delete the Hydra version; expert sub-policies stay in registry as
+their own `bots/<expert>_vN/` versions, no harm done.
+
+### Phase O-v2 (learned controller — deferred)
+
+Sits alongside Phase F as a deferred capstone item. Only revives if
+the Hydra investigation §6 concludes (a) scripted v1 produced a
+clear lift over monolith, AND (b) ablation analysis suggests a
+learned controller would lift further, AND (c) the chosen
+formulation is feasible CPU-only. See
+[hydra-hierarchical-ppo-investigation.md](../investigations/hydra-hierarchical-ppo-investigation.md).
+
+---
+
+## Phase P — Knowledge distillation + foundational pretraining
+
+**Track:** Capability research. **Status:** Investigation-blocked.
+**Prerequisites:** Phase 5;
+[knowledge-distillation-pretraining-investigation.md](../investigations/knowledge-distillation-pretraining-investigation.md)
+must conclude.
+
+**Goal:** Replace or augment the rule-engine-derived `v0_pretrain`
+with a richer teacher (pro replays, Claude advisor distribution,
+Hydra-experts distillation).
+
+### Scope summary
+
+TBD per investigation outcome.
+
+### Effort
+
+TBD. Pro-replay corpus access is the long pole if not locally
+available.
+
+### Kill criterion
+
+Investigation §6 concludes no licensing-clean corpus exists; defer
+Phase P; document the path to data partnership.
+
+---
+
+## Phase Q — harvest-engineer skill
+
+**Track:** Capability research. **Status:** Investigation-blocked.
+**Prerequisites:** Phase 5;
+[harvest-engineer-skill-scope-investigation.md](../investigations/harvest-engineer-skill-scope-investigation.md)
+must conclude.
+
+> **Build detail at
+> `documentation/plans/phase-q-build-plan.md`.**
+
+**Goal:** Reactive skill that ingests external knowledge (a pasted
+paper, or a "look into X" suggestion) and produces a scoped
+investigation/plan + optional implementation path. Differs from
+`/improve-bot-advised` by intake (papers vs game logs) and resolution
+(architectural vs code-edit).
+
+### Scope summary
+
+SKILL.md + sandbox-mode decision + output-artifact contract. v1 is
+Mode A only (paste-a-paper); Mode B (investigate-from-suggestion) is
+a thin wrapper.
+
+### Effort
+
+~1-2 days post-investigation.
+
+### Validation
+
+Three test runs on different paper inputs each produce an
+investigation doc that survives review.
+
+### Gate
+
+Output quality on three retroactive cases (papers that inspired
+existing investigations).
+
+### Kill criterion
+
+Investigation §6 concludes harvest is functionally indistinguishable
+from `/improve-bot-advised`; recommend extending advised's intake
+instead of new skill.
+
+---
+
+## Phase R — Statistical robustness (Wilson CIs + SPRT)
+
+**Track:** Statistical robustness. **Status:** Investigation-blocked.
+**Prerequisites:** Phase 9 (gates exist), Phase 8 (throughput unlocks
+matter);
+[soak-volume-statistical-robustness-investigation.md](../investigations/soak-volume-statistical-robustness-investigation.md)
+must conclude.
+
+**Goal:** Replace raw-count gate thresholds with Wilson 95% lower
+bound. Add SPRT early-stop in `run_fitness_eval` and
+`run_regression_eval`.
+
+### Scope summary
+
+Wilson interval helper + SPRT helper + gate-threshold contract update
++ dashboard schema bump (`useEvolveRun.ts` cacheKey + new fields).
+
+### Tests
+
+`tests/test_stats_primitives.py`,
+`tests/test_evolve_gates_with_wilson.py`.
+
+### Effort
+
+~1-2 days.
+
+### Validation
+
+Retrofit on past 5 evolve runs shows decision-flip rate ≤20% AND
+wall-clock saved ≥15% per generation. (Numbers come from
+investigation §5.)
+
+### Gate
+
+Both retrofit criteria.
+
+### Kill criterion
+
+Retrofit shows decision-flip rate >30% OR wall-clock saved <5%;
+investigation under-promised; revisit primitive choice.
+
+### Rollback
+
+Revert gate-threshold contract; primitives stay as helpers, unused.
+
+### Phase S+ backlog
+
+Build-order entropy metric, time-to-win distribution, per-difficulty
+WR breakdowns at high `n`, Bayesian gates with beta priors. Each is
+its own future phase, scoped by investigation §6 backlog.
+
+---
+
 ## Compute target
 
 Single Windows 11 box, CPU-only PyTorch (no CUDA). Phase F adds load —
@@ -970,11 +1494,25 @@ signal. GPU support explicitly out of scope.
 | 7 | 1 d build | 1 d build + 1 overnight validation | 3 d (heuristic tuning) |
 | 9 | 3 d code (steps 1–6) | 3–5 d code + 1 h smoke + overnight soak | 1 w (dev-apply sub-agent edge cases) |
 | F | 1.5 w | 2 w | 3 w (training destabilizes) |
+| H | 2 d | 3 d | 1 w (PySC2 integration friction) |
+| I | 1 d/map | 1.5 d/map | 3 d/map (SC2 editor learning curve) |
+| J | 1 d | 2 d | 1 w (gate tuning is noisy) |
+| K | 1 d | 2 d | 4 d (metadata schema iteration) |
+| L | 3 d | 1 w | 2 w (Spike C desync issues) |
+| M | 1 d | 1–2 d | 4 d (NL-prompt brittleness) |
+| N | 1 d | 1–2 d | 4 d (give-up trigger tuning) |
+| O (scripted v1) | 4 d | 1 w | 2 w (controller tuning + expert collapse) |
+| O-v2 (learned, deferred) | 2 w | 4–6 w | 8 w |
+| P | 1 w | 2 w | 4 w (corpus access blocker) |
+| Q | 1–2 d | 3 d | 1 w |
+| R | 1 d | 2 d | 1 w |
 | **Sub-total (A–E + 0–5 + 6 wire-up + 7 + 9)** | **~5 w** | **~7–8 w** | **~12–13 w** |
 | **+ 20% integration buffer** | +1.0 w | +1.6 w | +2.6 w |
 | **Total (excl. F)** | **~6 w** | **~9–10 w** | **~15 w** |
 | **+ F if chased** | +1.5 w | +2 w | +3 w |
 | **+ G (multi-race)** | +6 w | +8–10 w | +14 w |
+| **+ Tracks 7-10 (H/I/J + K/L/M + N/O/P/Q + R)** | +3 w | +6–8 w | +14 w |
+| **+ O-v2 if revived** | +2 w | +4–6 w | +8 w |
 
 ## What's NOT in this plan (deliberately)
 
@@ -1005,6 +1543,23 @@ signal. GPU support explicitly out of scope.
   always-up Phase 4; reconsider after Phase 6 operational soak.
 - **Disk rotation / compression for `reward_logs/`.** Deferred from
   always-up Phase 2; still monitor manually.
+- **`disable_fog=True` exhibition viewer.** Considered and rejected
+  2026-04-27 — changes bots' perception mid-game, makes exhibits
+  unfaithful to rated play. Phase L v1 uses replay-stream-as-live
+  instead. See Phase L "Why not `disable_fog=True`?" subsection.
+- **Cron-driven proactive harvest-engineer.** Reactive (Mode A + B)
+  ships in Phase Q; cron is deferred until reactive proves out.
+- **Bayesian gates with informative priors.** Phase R uses Wilson +
+  SPRT (frequentist); Bayesian sits in the Phase S+ backlog.
+- **Mini-games as a PPO reward shape integrated into rated games.**
+  The "reward role" from the mini-game investigation, if recommended,
+  applies to *curriculum pretraining* only. Rated full-SC2 game
+  reward stays as-is.
+- **Learned-controller Hydra v1.** Considered and rejected 2026-04-27
+  — scripted controller v1 (Phase O) ships first to validate the
+  expert-composition prerequisite cheaply. Learned controller is
+  Phase O-v2, deferred alongside Phase F until scripted v1 produces
+  evidence that warrants it.
 
 ## Historical phases (from the archived always-up plan)
 
@@ -1037,29 +1592,75 @@ steps) are closed as subsumed by full-stack versioning; see this plan's
 Features outside the versioning spine. Each has its own plan doc; they
 can be built in any order and don't block numbered phases.
 
-### Self-play viewer — observer-based single-window
+### Self-play viewer — moved to Track 8 (Observable Stack)
 
-Spawn a third SC2 client as a `sc2.player.Observer` with full-map vision
-(no fog) alongside the two bot clients, and reparent **only the observer
-window** into the themed pygame container. Requires a small monkey-patch
-to `sc2.main._play_game` (Observer players aren't dispatched through the
-default AI/human flow in burnysc2 7.1.3) and one extra SC2 process per
-match (~2 GB RAM). Refactors the previously-shipped two-pane viewer
-(`src/selfplay_viewer/`, 2026-04-18) to single-pane; keeps the SF2-themed
-backgrounds, overlay, and `s` size hotkey. Safe to run during rated
-training soaks because bots still play with fog — only the observer sees
-everything. Local developer experience only (no dashboard integration).
-Plan: [`documentation/plans/selfplay-viewer-plan.md`](./selfplay-viewer-plan.md).
-Investigation that motivated the refactor:
-[`documentation/investigations/observer-player-viewer-investigation.md`](../investigations/observer-player-viewer-investigation.md).
-Superseded prior plan archived at
-[`documentation/archived/selfplay-viewer-2-screen-plan.md`](../archived/selfplay-viewer-2-screen-plan.md).
+The previously-auxiliary self-play viewer is now Phase L on Track 8 as
+of the 2026-04-27 Utility/Observable split. The observer-based design
+(spawn a 3rd `sc2.player.Observer` SC2 client) is **archived as blocked**:
+SC2 server caps API clients at 2, so observer-as-API-client is
+unbuildable on this stack. The replacement (Phase L v1) uses
+**replay-stream-as-live** — a 3rd SC2 process tails the in-progress
+match's `.SC2Replay` file with ~1-5s lag. Bots still play with fog,
+exhibits are faithful to rated play. See Phase L for the full scope.
+
+Archived prior plans:
+- [`documentation/archived/selfplay-viewer-observer-plan.md`](../archived/selfplay-viewer-observer-plan.md)
+  (the observer-based design, blocked at the 2-client cap on 2026-04-24).
+- [`documentation/archived/selfplay-viewer-2-screen-plan.md`](../archived/selfplay-viewer-2-screen-plan.md)
+  (the original 2-pane fog-of-war reparenting design, superseded
+  2026-04-24).
+
+Investigations that informed the current direction:
+[`observer-player-viewer-investigation.md`](../investigations/observer-player-viewer-investigation.md),
+[`observer-restriction-workarounds-investigation.md`](../investigations/observer-restriction-workarounds-investigation.md).
 
 ---
 
 ## Plan history
 
 Append-only — do not edit prior entries.
+
+- *2026-04-27* — **Utility / Observable split + four new tracks
+  (7-10).** Plan-shape conversation pivoted the master plan from a
+  single-substrate model to a two-stack model: Utility (training,
+  evolution, headless) and Observable (exhibition, decoupled from
+  rated play). The pivot resolves the latent contradiction surfaced
+  by the 2026-04-24 selfplay-viewer block (SC2 server caps at 2 API
+  clients; viewer + evolve cannot share a substrate). Five new
+  investigations filed:
+  `mini-game-role-investigation.md` (gate vs reward vs scorecard),
+  `soak-volume-statistical-robustness-investigation.md` (Wilson +
+  SPRT under Phase 8 throughput),
+  `hydra-hierarchical-ppo-investigation.md` (post-v1 evaluation of
+  learned-controller v2 viability),
+  `knowledge-distillation-pretraining-investigation.md` (replay
+  corpus + Claude distillation),
+  `harvest-engineer-skill-scope-investigation.md` (paper-intake
+  skill v1 scope). Four new tracks added: Track 7 (Directed
+  Practice — mini-games, Phase H/I/J), Track 8 (Observable
+  Exhibition — pool metadata, replay-stream-as-live viewer, NL-prompt
+  seed selector, Phase K/L/M), Track 9 (Capability research —
+  win-prob + give-up, scripted Hydra v1, distillation,
+  harvest-engineer, Phase N/O/P/Q), Track 10 (Statistical robustness —
+  Wilson + SPRT, Phase R + Phase S+ backlog). All 4 tracks
+  append-only; no existing phase renumbered. Phase L v1 chose
+  replay-stream-as-live over `disable_fog=True` because the latter
+  changes bots' perception mid-game and makes exhibits unfaithful to
+  rated play. Phase O ships **scripted v1** of Hydra first (rule-
+  based meta-controller over themed expert sub-policies); learned-
+  controller v2 is deferred alongside Phase F as a capstone, only
+  revived if scripted v1 produces evidence warranting it.
+  `documentation/plans/selfplay-viewer-plan.md` archived to
+  `documentation/archived/selfplay-viewer-observer-plan.md`
+  (superseded by Phase L). Auxiliary-features section's "Self-play
+  viewer" entry rewritten to point at Phase L. Time-budget table
+  gained Phase H–R rows; "What's NOT in this plan" gained
+  `disable_fog=True` viewer rejection, learned-Hydra-v1 rejection,
+  cron-driven harvest rejection, Bayesian gates deferral, mini-game
+  reward-shape scope limit. Decision graph extended with the four
+  new tracks branching off Phase 9 ✅. Hydra investigation reframed
+  from "scope the build" to "post-v1 evaluation"; investigation
+  timeline relaxed.
 
 - *2026-04-24* — **self-play viewer refactor to observer-based single-window.**
   The shipped 2-screen viewer (2026-04-18) reparented both bots' SC2
