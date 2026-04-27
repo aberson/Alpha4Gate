@@ -271,6 +271,54 @@ class TestRewriteImports:
         assert "from bots.cand_x.army_coherence" in rewritten
         assert "from bots.v0.army_coherence" not in rewritten
 
+    def test_source_override_reads_explicit_version_not_pointer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``source=v0`` must copy from v0 even when current points elsewhere.
+
+        Use case: folding a non-current branch (e.g. v0 with feature work)
+        into a new version without first flipping ``bots/current/current.txt``.
+        Pins that the imports get rewritten relative to the explicit source,
+        the manifest parent records the explicit source, and current.txt
+        atomically advances to the new snapshot.
+        """
+        monkeypatch.setattr(registry, "_repo_root", lambda: tmp_path)
+        monkeypatch.setattr(snapshot, "_repo_root", lambda: tmp_path)
+        v0 = _seed_version(tmp_path, "v0")
+        (v0 / "bot.py").write_text(
+            "from bots.v0.give_up import should_give_up\n",
+            encoding="utf-8",
+        )
+        _seed_version(tmp_path, "v2")
+        _seed_current(tmp_path, "v2")  # pointer says v2; we want to fold v0
+
+        target = snapshot.snapshot_current(name="v3", source="v0")
+
+        # Imports rewritten from v0 (the explicit source), not v2 (the pointer).
+        rewritten = (target / "bot.py").read_text(encoding="utf-8")
+        assert "from bots.v3.give_up" in rewritten
+        assert "from bots.v0.give_up" not in rewritten
+
+        # Manifest parent records the explicit source verbatim.
+        manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
+        assert manifest["parent"] == "v0"
+
+        # Pointer advances atomically to the new snapshot (existing behavior).
+        pointer = tmp_path / "bots" / "current" / "current.txt"
+        assert pointer.read_text(encoding="utf-8") == "v3"
+
+    def test_source_override_missing_version_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``source`` pointing at a nonexistent version raises FileNotFoundError."""
+        monkeypatch.setattr(registry, "_repo_root", lambda: tmp_path)
+        monkeypatch.setattr(snapshot, "_repo_root", lambda: tmp_path)
+        _seed_version(tmp_path, "v0")
+        _seed_current(tmp_path, "v0")
+
+        with pytest.raises(FileNotFoundError):
+            snapshot.snapshot_current(name="v3", source="v_does_not_exist")
+
 
 class TestNextVersionName:
     def test_next_after_v0(
@@ -327,3 +375,26 @@ class TestSnapshotBotScript:
         assert rc == 1
         err = capsys.readouterr().err
         assert "does not exist" in err
+
+    def test_from_flag_overrides_current_pointer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``--from v0`` must snapshot from v0 even when current points elsewhere."""
+        monkeypatch.setattr(registry, "_repo_root", lambda: tmp_path)
+        monkeypatch.setattr(snapshot, "_repo_root", lambda: tmp_path)
+        v0 = _seed_version(tmp_path, "v0")
+        (v0 / "bot.py").write_text(
+            "from bots.v0.give_up import should_give_up\n",
+            encoding="utf-8",
+        )
+        _seed_version(tmp_path, "v2")
+        _seed_current(tmp_path, "v2")
+
+        from scripts.snapshot_bot import main as snap_main
+
+        rc = snap_main(["--from", "v0", "--name", "v3"])
+        assert rc == 0
+
+        target = tmp_path / "bots" / "v3"
+        rewritten = (target / "bot.py").read_text(encoding="utf-8")
+        assert "from bots.v3.give_up" in rewritten

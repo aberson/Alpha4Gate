@@ -121,12 +121,19 @@ def _rewrite_imports(target_dir: Path, old_pkg: str, new_pkg: str) -> int:
     return touched
 
 
-def snapshot_current(name: str | None = None) -> Path:
-    """Snapshot the current bot version to a new ``bots/<name>/`` directory.
+def snapshot_current(
+    name: str | None = None, source: str | None = None
+) -> Path:
+    """Snapshot a bot version to a new ``bots/<name>/`` directory.
 
     Args:
         name: Version name for the snapshot. Auto-increments from the highest
             existing ``vN`` if not provided.
+        source: Source version name to snapshot from. Defaults to the current
+            pointer (``bots/current/current.txt``). Pass an explicit version
+            (e.g. ``"v0"``) to fold a non-current branch into a new version
+            without first flipping the current pointer. The new manifest's
+            ``parent`` field records this value verbatim.
 
     Returns:
         Path to the newly created version directory.
@@ -135,7 +142,7 @@ def snapshot_current(name: str | None = None) -> Path:
         FileNotFoundError: If the source version directory does not exist.
         FileExistsError: If the target version directory already exists.
     """
-    source_version = current_version()
+    source_version = source if source is not None else current_version()
     source_dir = get_version_dir(source_version)
 
     if not source_dir.is_dir():
