@@ -7,10 +7,15 @@ fallback table:
 
 * ``$SC2PATH`` — honored first, regardless of platform. Always wins.
 * Windows (``sys.platform == "win32"``) → ``C:\\Program Files (x86)\\StarCraft II``.
-* WSL2 (Linux kernel with ``microsoft`` in ``/proc/version``) →
-  ``/mnt/c/Program Files (x86)/StarCraft II`` (the Windows install
-  reachable through DrvFS — convenient for ad-hoc WSL invocations
-  without a Linux SC2 install).
+* WSL2 (Linux kernel with ``microsoft`` in ``/proc/version``):
+    * If ``SC2_WSL_DETECT=0`` (the Phase 8 pure-Linux opt-in) →
+      ``~/StarCraftII`` (matches the WSL Ubuntu-22.04 install convention;
+      necessary because burnysc2 in pure-Linux mode launches the Linux
+      ``SC2_x64`` binary, which only exists at the native-Linux layout).
+    * Otherwise → ``/mnt/c/Program Files (x86)/StarCraft II`` (the Windows
+      install reachable through DrvFS — convenient for ad-hoc WSL
+      invocations without a Linux SC2 install, paired with burnysc2's
+      auto-detected WSL2 mode that runs ``SC2_x64.exe`` via PowerShell).
 * Linux native → ``~/StarCraftII`` (Blizzard's documented Linux layout;
   matches the Phase 8 WSL Ubuntu-22.04 install convention).
 * Anything else (macOS, BSDs) → :class:`RuntimeError`.
@@ -63,6 +68,8 @@ def resolve_sc2_path() -> Path:
         return _WINDOWS_DEFAULT
     if sys.platform == "linux":
         if _is_wsl():
+            if os.environ.get("SC2_WSL_DETECT") == "0":
+                return Path.home() / "StarCraftII"
             return _WSL_DEFAULT
         return Path.home() / "StarCraftII"
 
