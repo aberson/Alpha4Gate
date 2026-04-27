@@ -240,9 +240,43 @@ the heuristic formula is published in §5 of that investigation.
 - Give-up trigger fires ≥ 30% of games in losing soaks (against
   difficulty 5 on `bots/v0` — known-bad matchup).
 
+### Soak verdict (2026-04-27)
+
+Two soaks ran headless on WSL2 Ubuntu 22.04 via
+`scripts/phase_n_soak_run.sh` (4-way parallel against the Linux
+SC2 4.10 binary; ~4.5× speedup over sequential).
+
+**First soak** — 10 diff-2 + 10 diff-5, 20 games, 7m22s wall
+(`logs/phase-n-soak/20260427T214744Z`). Gates 2 and 3 PASS; gate 1
+borderline FAIL at separation +0.085. Root cause: diff 5 is no longer
+a losing matchup for v0 (10 games came out 5W/5L), so the loss bucket
+collected close-call give-up losses with elevated mid-game win_prob
+(LOSS mean 0.283 vs investigation's 0.197). The "diff 5 known-bad
+matchup" framing in the third bullet above pre-dated the 2026-04-19
+baseline measurement of 54% WR at Hard
+(`project_v0_rules_diff5_baseline.md`).
+
+**Tiebreaker soak** — 5 diff-2 + 5 diff-7 (VeryHard), 10 games, 5m53s
+wall (`logs/phase-n-soak/20260427T221008Z`). With diff 7 supplying
+real stomp losses, all three gates PASS:
+
+| Gate                                | Actual | Threshold |
+|-------------------------------------|--------|-----------|
+| Heuristic separation (WIN − LOSS)   | +0.167 | ≥ 0.10    |
+| Give-up rate at diff 2 (winning)    |   0%   | < 5%      |
+| Give-up rate at diff 7 (losing)     |  60%   | ≥ 30%     |
+
+Diff 7 also surprised: 2W/3L (40% WR at VeryHard), notably stronger
+than memory suggested.
+
+**Design correction:** future Phase-N-related soaks should use diff 7,
+not diff 5, as the loss bucket. Diff 5 is now a balanced matchup for
+v0 and produces ambiguous loss-bucket signal.
+
 ## 8. Gate
 
-All three validation criteria.
+All three validation criteria. **Met 2026-04-27** — see §7 Soak
+verdict.
 
 ## 9. Kill criterion
 
