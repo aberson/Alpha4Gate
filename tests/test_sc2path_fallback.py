@@ -50,6 +50,35 @@ class TestLinuxNative:
 class TestWSL:
     def test_wsl_uses_mnt_c_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("SC2PATH", raising=False)
+        monkeypatch.delenv("SC2_WSL_DETECT", raising=False)
+        monkeypatch.setattr(paths.sys, "platform", "linux")
+        monkeypatch.setattr(paths, "_is_wsl", lambda: True)
+        assert paths.resolve_sc2_path() == Path(
+            "/mnt/c/Program Files (x86)/StarCraft II"
+        )
+
+    def test_wsl_with_sc2_wsl_detect_zero_uses_home_starcraftii(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # Phase 8 pure-Linux opt-in: when SC2_WSL_DETECT=0, burnysc2 stays
+        # in Linux mode and tries to launch the binary at
+        # <SC2PATH>/Versions/Base*/SC2_x64 (no .exe). The /mnt/c install
+        # only has SC2_x64.exe, so the resolver must point at the
+        # native-Linux layout instead. Caught by Phase 8 Step 7 smoke gate.
+        monkeypatch.delenv("SC2PATH", raising=False)
+        monkeypatch.setenv("SC2_WSL_DETECT", "0")
+        monkeypatch.setattr(paths.sys, "platform", "linux")
+        monkeypatch.setattr(paths, "_is_wsl", lambda: True)
+        monkeypatch.setattr(paths.Path, "home", classmethod(lambda cls: tmp_path))
+        assert paths.resolve_sc2_path() == tmp_path / "StarCraftII"
+
+    def test_wsl_with_sc2_wsl_detect_nonzero_keeps_mnt_c(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Only the literal value "0" triggers the pure-Linux branch; any
+        # other value (including "1") leaves the WSL2-mode default in place.
+        monkeypatch.delenv("SC2PATH", raising=False)
+        monkeypatch.setenv("SC2_WSL_DETECT", "1")
         monkeypatch.setattr(paths.sys, "platform", "linux")
         monkeypatch.setattr(paths, "_is_wsl", lambda: True)
         assert paths.resolve_sc2_path() == Path(
