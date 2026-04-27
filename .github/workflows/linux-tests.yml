@@ -1,0 +1,58 @@
+name: linux-tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# Cancel superseded runs on the same ref so PRs don't pile up.
+concurrency:
+  group: linux-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ruff + mypy + pytest (ubuntu-22.04 / py3.12)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.11.7"
+
+      # Phase 8 spec: cache uv downloads keyed on uv.lock at ~/.cache/uv.
+      # Hits whenever uv.lock is unchanged, regardless of branch.
+      - name: Cache uv downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-py3.12-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-py3.12-
+
+      # `--extra dev` is required: pytest/ruff/mypy/httpx/pre-commit live
+      # under [project.optional-dependencies] dev. A bare `uv sync`
+      # produces a runtime-only venv (see wiki/linux-dev-environment.md).
+      - name: Sync dev environment
+        run: uv sync --frozen --extra dev
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Type-check (mypy --strict)
+        run: uv run mypy src bots --strict
+
+      # No SC2 install on the GitHub-hosted runner; deselect via marker
+      # rather than file-ignore so the gate survives test relocations.
+      # `pytest -m sc2` integration tests run only on a real SC2 host.
+      - name: Unit tests (no sc2 marker)
+        run: uv run pytest -m "not sc2"

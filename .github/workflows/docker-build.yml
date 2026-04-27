@@ -1,0 +1,52 @@
+name: docker-build
+
+# The Phase 8 Dockerfile is added in Step 9. This workflow's `paths`
+# filter means it does NOT fire on PRs that don't touch the listed
+# files — so it stays inert until Step 9 lands the Dockerfile + the
+# first PR that exercises a `docker build`. End-to-end validation
+# (intentional Dockerfile typo caught) belongs to Step 9.
+on:
+  push:
+    branches: [master]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/docker-build.yml
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/docker-build.yml
+
+concurrency:
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: docker build (no push)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build-only, no registry push. Image stays on the runner and is
+      # discarded when the job ends. Catches Dockerfile regressions
+      # (apt typos, COPY-before-uv-sync ordering, missing build-args)
+      # before they hit a deployment host.
+      - name: Build worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: alpha4gate-worker:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
