@@ -13,14 +13,12 @@ on:
       - .dockerignore
       - pyproject.toml
       - uv.lock
-      - .github/workflows/docker-build.yml
   pull_request:
     paths:
       - Dockerfile
       - .dockerignore
       - pyproject.toml
       - uv.lock
-      - .github/workflows/docker-build.yml
 
 concurrency:
   group: docker-build-${{ github.ref }}
