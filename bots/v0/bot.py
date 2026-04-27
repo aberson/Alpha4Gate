@@ -371,6 +371,12 @@ class Alpha4GateBot(BotAI):
         winprob = winprob_heuristic.score(snapshot)
         _maybe_log_winprob(iteration, winprob, state.value, _log)
         await self._maybe_resign(winprob, snapshot.game_time_seconds)
+        # If we just resigned (or already had), bail out before any further
+        # client.* awaits — Linux SC2 4.10 returns ProtocolError("A game has
+        # not been started yet") for queries issued after self.client.leave().
+        # Windows SC2 happens to be more lenient mid-teardown; Linux is not.
+        if self._gave_up:
+            return
 
         # --- Command system: drain queue and execute ---
         settings = get_command_settings()
