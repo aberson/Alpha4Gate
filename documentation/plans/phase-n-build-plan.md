@@ -122,6 +122,8 @@ the heuristic formula is published in §5 of that investigation.
   win_prob column populated on next write); 1-game live SC2 run
   produces non-NULL win_prob values across all transitions.
 - **Depends on:** N.1.
+- **Status:** DONE (2026-04-27) — DB+migration unit-tested; live-game
+  verification deferred to N.6 operator smoke.
 
 ### Step N.3: Logger line
 

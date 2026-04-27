@@ -29,6 +29,7 @@ from bots.v0.decision_engine import (
 from bots.v0.learning.database import TrainingDB
 from bots.v0.learning.features import FEATURE_DIM, encode
 from bots.v0.learning.rewards import RewardCalculator
+from bots.v0.learning.winprob_heuristic import score as _winprob_score
 
 _log = logging.getLogger(__name__)
 
@@ -382,6 +383,7 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
                 next_state=curr_raw if not done else None,
                 done=done,
                 action_probs=info.get("action_probs"),
+                win_prob=info.get("win_prob"),
             )
 
         self._last_snapshot = info.get("snapshot")
@@ -1021,6 +1023,7 @@ def _make_training_bot(
                         else self.decision_engine.state.value
                     ),
                     "action_probs": _action_probs,
+                    "win_prob": _winprob_score(snapshot),
                 }
                 if timed_out:
                     _log.info(

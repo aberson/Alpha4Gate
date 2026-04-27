@@ -219,6 +219,7 @@ _LATER_ADDED_COLS: list[tuple[str, str]] = [
     ("next_enemy_capital_count", "INTEGER DEFAULT 0"),
     ("next_enemy_cloak_count", "INTEGER DEFAULT 0"),
     ("action_probs", "TEXT DEFAULT NULL"),
+    ("win_prob", "REAL DEFAULT NULL"),
 ]
 
 
@@ -329,6 +330,7 @@ class TrainingDB:
         next_state: NDArray[np.float32] | None = None,
         done: bool = False,
         action_probs: list[float] | None = None,
+        win_prob: float | None = None,
     ) -> None:
         """Insert a single (s, a, r, s') transition.
 
@@ -337,6 +339,7 @@ class TrainingDB:
 
         action_probs: optional list of action probabilities from the neural
         engine, stored as JSON text.
+        win_prob: optional heuristic P(win) for the (s, a) pair, in [0, 1].
         """
         values: list[Any] = [game_id, step_index, game_time]
         values.extend(int(v) for v in state)
@@ -348,13 +351,14 @@ class TrainingDB:
             values.extend([None] * BASE_GAME_FEATURE_DIM)
         values.append(1 if done else 0)
         values.append(json.dumps(action_probs) if action_probs is not None else None)
+        values.append(float(win_prob) if win_prob is not None else None)
 
         cols = (
             ["game_id", "step_index", "game_time"]
             + _STATE_COLS
             + ["action", "reward"]
             + _NEXT_STATE_COLS
-            + ["done", "action_probs"]
+            + ["done", "action_probs", "win_prob"]
         )
         placeholders = ", ".join("?" * len(values))
         col_str = ", ".join(cols)

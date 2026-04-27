@@ -418,3 +418,37 @@ class TestLegacySchemaMigration:
         # Second open re-runs migration on the now-already-migrated table
         db2 = TrainingDB(legacy_path)
         db2.close()
+
+    def test_winprob_populates_on_write_after_migration(
+        self, tmp_path: Path
+    ) -> None:
+        """After migrating a legacy DB, store_transition must persist win_prob.
+
+        Phase N Step 2 "Done when": the new ``win_prob`` column not only
+        gets ALTERed in by ``_migrate_columns`` but also accepts writes
+        through ``store_transition(win_prob=...)``.
+        """
+        import sqlite3
+
+        legacy_path = tmp_path / "legacy.db"
+        self._create_legacy_db(legacy_path)
+
+        db = TrainingDB(legacy_path)
+        try:
+            db.store_game("g1", "Simple64", 1, "win", 60.0, 1.0, "v0")
+            state = np.zeros(FEATURE_DIM, dtype=np.float32)
+            db.store_transition(
+                "g1", 0, 60.0, state, action=2, reward=0.1, win_prob=0.55
+            )
+        finally:
+            db.close()
+
+        conn = sqlite3.connect(str(legacy_path))
+        try:
+            row = conn.execute(
+                "SELECT win_prob FROM transitions WHERE game_id = 'g1'"
+            ).fetchone()
+        finally:
+            conn.close()
+        assert row is not None
+        assert row[0] == pytest.approx(0.55)
