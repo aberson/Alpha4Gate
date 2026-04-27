@@ -31,9 +31,6 @@ import os
 import sys
 from pathlib import Path
 
-if sys.platform != "win32":
-    raise RuntimeError("intentional CI validation break — DO NOT MERGE")
-
 __all__ = ["resolve_sc2_path"]
 
 
