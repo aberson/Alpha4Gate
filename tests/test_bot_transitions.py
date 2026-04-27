@@ -55,9 +55,9 @@ class TestRecordTransitionActionProbs:
         snap2 = _default_snapshot(game_time_seconds=82.0)
 
         # First call sets prev state
-        bot._record_transition(snap1, StrategicState.OPENING)
+        bot._record_transition(snap1, StrategicState.OPENING, 0.5)
         # Second call stores the transition
-        bot._record_transition(snap2, StrategicState.EXPAND)
+        bot._record_transition(snap2, StrategicState.EXPAND, 0.5)
 
         row = db._conn.execute("SELECT action_probs FROM transitions").fetchone()
         assert row is not None
@@ -74,8 +74,8 @@ class TestRecordTransitionActionProbs:
         snap1 = _default_snapshot(game_time_seconds=60.0)
         snap2 = _default_snapshot(game_time_seconds=82.0)
 
-        bot._record_transition(snap1, StrategicState.OPENING)
-        bot._record_transition(snap2, StrategicState.ATTACK)
+        bot._record_transition(snap1, StrategicState.OPENING, 0.5)
+        bot._record_transition(snap2, StrategicState.ATTACK, 0.5)
 
         import json
 
@@ -93,8 +93,8 @@ class TestRecordTransitionActionProbs:
         snap1 = _default_snapshot(game_time_seconds=60.0)
         snap2 = _default_snapshot(game_time_seconds=82.0)
 
-        bot._record_transition(snap1, StrategicState.OPENING)
-        bot._record_transition(snap2, StrategicState.EXPAND)
+        bot._record_transition(snap1, StrategicState.OPENING, 0.5)
+        bot._record_transition(snap2, StrategicState.EXPAND, 0.5)
 
         row = db._conn.execute("SELECT action_probs FROM transitions").fetchone()
         assert row is not None

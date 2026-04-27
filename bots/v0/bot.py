@@ -444,7 +444,7 @@ class Alpha4GateBot(BotAI):
 
         # --- Record transition for training DB (every 22 steps) ---
         if self._training_db is not None and iteration % 22 == 0:
-            self._record_transition(snapshot, state)
+            self._record_transition(snapshot, state, winprob)
 
         # --- Worker distribution: transfer probes to unsaturated bases/gas ---
         await self.distribute_workers()
@@ -514,7 +514,9 @@ class Alpha4GateBot(BotAI):
     #  Transition recording for training
     # ------------------------------------------------------------------ #
 
-    def _record_transition(self, snapshot: GameSnapshot, state: StrategicState) -> None:
+    def _record_transition(
+        self, snapshot: GameSnapshot, state: StrategicState, winprob: float
+    ) -> None:
         """Record a (s, a, r, s') transition into the training DB."""
         assert self._training_db is not None
         # Raw (un-normalized) feature vector for DB storage
@@ -544,6 +546,7 @@ class Alpha4GateBot(BotAI):
                 next_state=raw,
                 done=False,
                 action_probs=action_probs,
+                win_prob=winprob,
             )
             self._transition_step += 1
 
@@ -557,6 +560,11 @@ class Alpha4GateBot(BotAI):
             return
         state_dict = asdict(self._prev_snapshot) if self._prev_snapshot else {}
         reward = self._reward_calc.compute_step_reward(state_dict, is_terminal=True, result=result)
+        winprob = (
+            winprob_heuristic.score(self._prev_snapshot)
+            if self._prev_snapshot is not None
+            else None
+        )
         self._training_db.store_transition(
             game_id=self._game_id or "unknown",
             step_index=self._transition_step,
@@ -566,6 +574,7 @@ class Alpha4GateBot(BotAI):
             reward=reward,
             next_state=None,
             done=True,
+            win_prob=winprob,
         )
 
     # ------------------------------------------------------------------ #

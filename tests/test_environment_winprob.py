@@ -75,3 +75,40 @@ def test_store_transition_default_win_prob_is_null(
         conn.close()
     assert row is not None
     assert row[0] is None
+
+
+def test_bot_record_transition_passes_win_prob_to_store(
+    db: TrainingDB, tmp_path: Path
+) -> None:
+    """``Alpha4GateBot._record_transition`` must thread ``winprob`` to the DB.
+
+    Phase N Step 2 wired the env-mediated path (``SC2Env.step`` →
+    ``info["win_prob"]`` → ``store_transition``).  The solo entry
+    (``python -m bots.v0 --role solo``) records via
+    ``Alpha4GateBot._record_transition`` instead, which calls
+    ``store_transition`` directly.  This test pins the bot-side path so
+    a missing ``win_prob=`` kwarg surfaces here, not as silent NULLs in
+    a real soak (the gap that motivated this test, found in N.6 smoke).
+    """
+    from bots.v0.bot import Alpha4GateBot
+    from bots.v0.decision_engine import GameSnapshot, StrategicState
+    from bots.v0.learning.rewards import RewardCalculator
+
+    bot = Alpha4GateBot.__new__(Alpha4GateBot)
+    bot._training_db = db
+    bot._game_id = "solo-test"
+    bot._transition_step = 0
+    bot._reward_calc = RewardCalculator()
+    bot._neural_engine = None
+    bot._prev_obs = np.zeros(FEATURE_DIM, dtype=np.float32)
+    bot._prev_action = 0
+    bot._prev_snapshot = GameSnapshot()
+
+    db.store_game("solo-test", "Simple64", 1, "win", 300.0, 0.0, "v0")
+    bot._record_transition(GameSnapshot(supply_used=20), StrategicState.OPENING, 0.42)
+
+    row = db._conn.execute(
+        "SELECT win_prob FROM transitions WHERE game_id = 'solo-test'"
+    ).fetchone()
+    assert row is not None
+    assert row[0] == pytest.approx(0.42)
