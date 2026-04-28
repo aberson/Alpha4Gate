@@ -14,6 +14,7 @@ via ``python -m bots.vN``.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -54,6 +55,56 @@ def _drvfs_safe_copytree(src: Path, dst: Path) -> None:
             _drvfs_safe_copytree(src_path, dst_path)
         else:
             shutil.copyfile(src_path, dst_path)
+
+
+def _drvfs_safe_rmtree(path: Path) -> None:
+    """Recursive delete that survives DrvFS and Windows read-only files.
+
+    ``shutil.rmtree``'s built-in retry path on a read-only file calls
+    ``os.chmod`` to clear the bit before re-attempting ``unlink``.  On
+    ``/mnt/c`` (NTFS-via-DrvFS) the chmod itself raises EPERM, so the
+    retry fails and the whole rmtree aborts — leaving evolve's
+    ``bots/cand_*/`` scratch dirs orphaned on disk after every rollback.
+
+    This walks the tree depth-first calling ``unlink``/``rmdir`` directly.
+    On PermissionError we attempt a single ``os.chmod(0o777)`` retry and
+    swallow chmod failures (DrvFS will refuse, ext4 will accept).
+    Symlinks are unlinked, never followed.
+
+    Mirrors ``_drvfs_safe_copytree``: on Windows native and pure ext4 it
+    is a strict subset of ``shutil.rmtree``; on DrvFS it is the only path
+    that completes.
+    """
+    if not path.exists() and not path.is_symlink():
+        return
+    if path.is_symlink() or not path.is_dir():
+        _drvfs_unlink(path)
+        return
+    for child in path.iterdir():
+        if child.is_dir() and not child.is_symlink():
+            _drvfs_safe_rmtree(child)
+        else:
+            _drvfs_unlink(child)
+    try:
+        path.rmdir()
+    except PermissionError:
+        try:
+            os.chmod(path, 0o777)
+        except OSError:
+            pass
+        path.rmdir()
+
+
+def _drvfs_unlink(path: Path) -> None:
+    """``unlink`` with one chmod-and-retry, swallowing chmod failures."""
+    try:
+        path.unlink()
+    except PermissionError:
+        try:
+            os.chmod(path, 0o777)
+        except OSError:
+            pass
+        path.unlink()
 
 
 def _next_version_name() -> str:

@@ -389,6 +389,74 @@ class TestDrvfsSafeCopytree:
             snapshot._drvfs_safe_copytree(src, dst)
 
 
+class TestDrvfsSafeRmtree:
+    """Tests for ``snapshot._drvfs_safe_rmtree`` — DrvFS-friendly recursive delete.
+
+    Pins the contract that lets evolve's rollback path clean up
+    ``bots/cand_*/`` scratch dirs on WSL with a ``/mnt/c``-mounted repo:
+    delete the tree without aborting when ``os.chmod`` raises EPERM.  See
+    issue #238 for the orphan-dir backlog the missing helper produced.
+    """
+
+    def test_removes_nested_tree(self, tmp_path: Path) -> None:
+        root = tmp_path / "victim"
+        root.mkdir()
+        (root / "top.txt").write_text("top", encoding="utf-8")
+        (root / "sub").mkdir()
+        (root / "sub" / "nested.txt").write_text("nested", encoding="utf-8")
+        (root / "sub" / "deeper").mkdir()
+        (root / "sub" / "deeper" / "deep.bin").write_bytes(b"\x00\x01")
+
+        snapshot._drvfs_safe_rmtree(root)
+
+        assert not root.exists()
+
+    def test_missing_path_is_noop(self, tmp_path: Path) -> None:
+        """Mirrors ``shutil.rmtree(ignore_errors=True)`` for the missing case."""
+        snapshot._drvfs_safe_rmtree(tmp_path / "does_not_exist")
+
+    def test_survives_chmod_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """DrvFS reproduction: ``os.chmod`` raises EPERM, rmtree must still finish.
+
+        The fallback path triggers when ``unlink`` raises ``PermissionError``
+        (e.g. read-only file on Windows).  ``shutil.rmtree``'s built-in
+        retry calls ``os.chmod`` first; on DrvFS that chmod raises and the
+        whole rmtree aborts.  We swallow the chmod failure and re-attempt
+        unlink.  This test forces the chmod path then asserts completion.
+        """
+        import os as _os
+
+        root = tmp_path / "victim"
+        root.mkdir()
+        (root / "a.txt").write_text("a", encoding="utf-8")
+
+        original_unlink = Path.unlink
+        original_chmod = _os.chmod
+        unlink_calls = {"n": 0}
+
+        def _flaky_unlink(self: Path, **kwargs: object) -> None:
+            unlink_calls["n"] += 1
+            if unlink_calls["n"] == 1:
+                raise PermissionError("simulated read-only")
+            original_unlink(self, **kwargs)  # type: ignore[arg-type]
+
+        def _failing_chmod(*_a: object, **_kw: object) -> None:
+            raise PermissionError("DrvFS refused chmod")
+
+        monkeypatch.setattr(Path, "unlink", _flaky_unlink)
+        monkeypatch.setattr(_os, "chmod", _failing_chmod)
+
+        snapshot._drvfs_safe_rmtree(root)
+
+        # restore so tmp_path teardown succeeds
+        monkeypatch.setattr(_os, "chmod", original_chmod)
+
+        assert not root.exists()
+        assert unlink_calls["n"] >= 2  # original raise + retry
+
+
 class TestNextVersionName:
     def test_next_after_v0(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

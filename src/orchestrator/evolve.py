@@ -52,7 +52,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import time
 import uuid
 from collections.abc import Callable
@@ -66,6 +65,7 @@ from orchestrator.registry import (
     current_version,
     list_versions,
 )
+from orchestrator.snapshot import _drvfs_safe_rmtree
 
 _log = logging.getLogger(__name__)
 
@@ -388,11 +388,17 @@ def _count_wins(records: list[SelfPlayRecord], a: str, b: str) -> tuple[int, int
 
 
 def _safe_rmtree(path: Path) -> None:
-    """Delete *path* recursively, logging at WARNING on failure."""
+    """Delete *path* recursively, logging at WARNING on failure.
+
+    Delegates to ``_drvfs_safe_rmtree`` so rollback on ``/mnt/c`` (NTFS
+    via DrvFS) does not orphan ``bots/cand_*/`` scratch dirs when
+    ``shutil.rmtree``'s read-only chmod-retry path raises EPERM. See
+    ``feedback_evolve_drvfs_copy2_fails`` for the deletion analogue.
+    """
     if not path.exists():
         return
     try:
-        shutil.rmtree(path, ignore_errors=False)
+        _drvfs_safe_rmtree(path)
     except OSError:
         _log.warning(
             "failed to clean up candidate directory %s; leaving on disk",
