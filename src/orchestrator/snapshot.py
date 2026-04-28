@@ -5,8 +5,11 @@ to ``bots/vN+1/`` with a new ``VERSION`` file and a fresh ``manifest.json``
 carrying the parent, git SHA, timestamp, Elo snapshot, and feature/action-space
 fingerprints. Updates ``bots/current/current.txt`` to point at the new version.
 
-The copy is a full ``shutil.copytree`` — checkpoints, training.db, reward_logs,
-everything. Each version is independently bootable via ``python -m bots.vN``.
+The copy walks the full source tree (checkpoints, training.db, reward_logs,
+everything) via ``_drvfs_safe_copytree`` — a ``shutil.copytree`` substitute
+that skips ``chmod`` and ``copystat`` so evolve's candidate snapshots succeed
+under WSL on a ``/mnt/c``-mounted repo. Each version is independently bootable
+via ``python -m bots.vN``.
 """
 
 from __future__ import annotations
@@ -27,6 +30,30 @@ from orchestrator.registry import (
 )
 
 __all__ = ["snapshot_current"]
+
+
+def _drvfs_safe_copytree(src: Path, dst: Path) -> None:
+    """Recursive copy that preserves only file *content* — no chmod/copystat.
+
+    ``shutil.copytree`` defaults to ``copy2``, which calls ``chmod`` per file
+    and ``copystat`` per directory.  Both raise ``[Errno 1] Operation not
+    permitted`` on ``/mnt/c`` (NTFS-via-DrvFS) when running from WSL because
+    DrvFS does not represent POSIX permissions.  evolve's per-eval candidate
+    snapshots crash on this; see ``feedback_evolve_drvfs_copy2_fails``.
+
+    Mode bits, atime, and mtime are not load-bearing for evolve's scratch
+    ``cand_*/`` directories — Python's import system does not consult file
+    mode, and SB3 checkpoint loading uses ``zipfile`` (also mode-agnostic).
+    On Windows native and pure-Linux ext4, this helper is a strict subset
+    of ``copytree``'s behavior; on DrvFS it is the only thing that works.
+    """
+    dst.mkdir(parents=True, exist_ok=False)
+    for src_path in src.iterdir():
+        dst_path = dst / src_path.name
+        if src_path.is_dir():
+            _drvfs_safe_copytree(src_path, dst_path)
+        else:
+            shutil.copyfile(src_path, dst_path)
 
 
 def _next_version_name() -> str:
@@ -158,8 +185,10 @@ def snapshot_current(
             f"Target version directory already exists: {target_dir}"
         )
 
-    # Copy the full source tree
-    shutil.copytree(source_dir, target_dir)
+    # Copy the full source tree.  Uses _drvfs_safe_copytree (not
+    # shutil.copytree) so evolve's per-eval candidate snapshots succeed
+    # under WSL when the repo lives on /mnt/c — see the helper's docstring.
+    _drvfs_safe_copytree(source_dir, target_dir)
 
     # Rewrite absolute imports `from bots.<source>.*` -> `from bots.<new>.*`
     # so the snapshot is actually self-contained at the Python level.

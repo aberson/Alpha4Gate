@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -318,6 +319,74 @@ class TestRewriteImports:
 
         with pytest.raises(FileNotFoundError):
             snapshot.snapshot_current(name="v3", source="v_does_not_exist")
+
+
+class TestDrvfsSafeCopytree:
+    """Tests for ``snapshot._drvfs_safe_copytree`` — DrvFS-friendly snapshot copy.
+
+    Pins the contract that lets evolve run on WSL with a ``/mnt/c``-mounted
+    repo: copy file content faithfully across nested dirs without invoking
+    ``chmod`` or ``shutil.copystat`` (both raise EPERM on DrvFS).  See
+    ``feedback_evolve_drvfs_copy2_fails`` for the reproduction.
+    """
+
+    def test_copies_nested_content_faithfully(self, tmp_path: Path) -> None:
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "top.txt").write_text("top", encoding="utf-8")
+        (src / "sub").mkdir()
+        (src / "sub" / "nested.txt").write_text("nested", encoding="utf-8")
+        (src / "sub" / "deeper").mkdir()
+        (src / "sub" / "deeper" / "deep.bin").write_bytes(b"\x00\x01\x02")
+
+        dst = tmp_path / "dst"
+        snapshot._drvfs_safe_copytree(src, dst)
+
+        assert (dst / "top.txt").read_text(encoding="utf-8") == "top"
+        assert (dst / "sub" / "nested.txt").read_text(encoding="utf-8") == "nested"
+        assert (dst / "sub" / "deeper" / "deep.bin").read_bytes() == b"\x00\x01\x02"
+
+    def test_does_not_call_chmod_or_copystat(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Pin the DrvFS-safe contract: chmod / copystat must NOT be invoked.
+
+        On DrvFS-mounted /mnt/c, either call raises EPERM and crashes the
+        snapshot.  This test would have caught the original bug.
+        """
+        chmod_calls: list[tuple[object, ...]] = []
+        copystat_calls: list[tuple[object, ...]] = []
+
+        import os as _os
+
+        monkeypatch.setattr(
+            _os, "chmod", lambda *a, **kw: chmod_calls.append(a)
+        )
+        monkeypatch.setattr(
+            shutil, "copystat", lambda *a, **kw: copystat_calls.append(a)
+        )
+
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "a.py").write_text("x = 1\n", encoding="utf-8")
+        (src / "sub").mkdir()
+        (src / "sub" / "b.py").write_text("y = 2\n", encoding="utf-8")
+
+        snapshot._drvfs_safe_copytree(src, tmp_path / "dst")
+
+        assert chmod_calls == [], f"chmod was called: {chmod_calls}"
+        assert copystat_calls == [], f"copystat was called: {copystat_calls}"
+
+    def test_dst_must_not_exist(self, tmp_path: Path) -> None:
+        """Mirrors ``shutil.copytree`` default: refuse to overwrite existing dst."""
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "x").write_text("x", encoding="utf-8")
+        dst = tmp_path / "dst"
+        dst.mkdir()  # pre-create
+
+        with pytest.raises(FileExistsError):
+            snapshot._drvfs_safe_copytree(src, dst)
 
 
 class TestNextVersionName:
