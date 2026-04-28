@@ -15,15 +15,19 @@ Advised drives progress against a known benchmark; evolve keeps the bot improvin
 
 <table>
 <tr>
-<td width="33%" valign="top" align="center">
+<td width="25%" valign="top" align="center">
 <a href="documentation/images/advisor-completed.png"><img src="documentation/images/advisor-completed.png" alt="Advisor Control Panel showing a completed autonomous improvement run" width="100%"></a>
 <br/><sub><b>Self-improvement loop</b><br/>6 fixes proposed, validated, committed</sub>
 </td>
-<td width="33%" valign="top" align="center">
+<td width="25%" valign="top" align="center">
+<a href="documentation/images/evolution-running.png"><img src="documentation/images/evolution-running.png" alt="Evolution tab showing a live improve-bot-evolve run with fitness pool, stack apply, and import check" width="100%"></a>
+<br/><sub><b>Self-play arena</b><br/>Live evolve run — fitness pool, stack apply, regression</sub>
+</td>
+<td width="25%" valign="top" align="center">
 <a href="documentation/images/sc2-gameplay.gif"><img src="documentation/images/sc2-gameplay.gif" alt="Live capture — SC2 gameplay, dashboard Decision Log, and backend logs side-by-side" width="100%"></a>
 <br/><sub><b>Live capture</b><br/>Game, advisor decisions, and backend logs streaming together</sub>
 </td>
-<td width="33%" valign="top" align="center">
+<td width="25%" valign="top" align="center">
 <a href="documentation/images/reward-trends.png"><img src="documentation/images/reward-trends.png" alt="Reward Trends — per-rule reward contribution over recent games" width="100%"></a>
 <br/><sub><b>Monitoring</b><br/>Per-rule reward contribution over recent games</sub>
 </td>
