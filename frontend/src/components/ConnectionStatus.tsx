@@ -18,6 +18,7 @@
 
 import { useApi } from "../hooks/useApi";
 import type { AdvisedRunState } from "../hooks/useAdvisedRun";
+import { useSubstrateInfo } from "../hooks/useSystemInfo";
 
 interface TrainingStatusPing {
   // We don't actually care about the body — just that the call
@@ -50,6 +51,10 @@ export function ConnectionStatus() {
     { pollMs: POLL_MS }
   );
   const advisedActive = advisedData?.status === "running" || advisedData?.status === "paused";
+  const { data: substrate } = useSubstrateInfo();
+  const wslReady =
+    substrate?.wsl.available === true && substrate?.wsl.sc2_binary_present === true;
+  const wslLabel = substrate?.wsl.distro ?? "WSL";
 
   let color: string;
   let label: string;
@@ -129,6 +134,39 @@ export function ConnectionStatus() {
             }}
           />
           Advisor
+        </span>
+      ) : null}
+      {wslReady ? (
+        <span
+          title={
+            substrate?.wsl.kernel
+              ? `WSL substrate ready: ${wslLabel} (kernel ${substrate.wsl.kernel}); SC2 binary at ${substrate.wsl.sc2_path}`
+              : `WSL substrate ready: ${wslLabel}`
+          }
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "4px",
+            marginLeft: "8px",
+            padding: "2px 8px",
+            borderRadius: "4px",
+            backgroundColor: "rgba(99, 102, 241, 0.15)",
+            color: "#6366f1",
+            fontSize: "0.85em",
+            fontWeight: 600,
+          }}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              display: "inline-block",
+              width: "6px",
+              height: "6px",
+              borderRadius: "50%",
+              backgroundColor: "#6366f1",
+            }}
+          />
+          {wslLabel}
         </span>
       ) : null}
     </div>

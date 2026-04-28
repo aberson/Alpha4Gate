@@ -1350,6 +1350,44 @@ async def get_evolve_results() -> dict[str, Any]:
     return {"rounds": rounds}
 
 
+@app.get("/api/system/substrate")
+async def get_system_substrate() -> dict[str, Any]:
+    """Return host platform + WSL distro info for the Live tab badge.
+
+    Cheap (cached 30 s).  Tells the operator at a glance whether SC2 is
+    running on the Windows host, inside a WSL2 VM, or both.
+    """
+    from bots.v3.system_info import get_substrate_info
+
+    return get_substrate_info()
+
+
+@app.get("/api/system/wsl-processes")
+async def get_system_wsl_processes() -> dict[str, Any]:
+    """Return SC2 + python processes inside the WSL VM.
+
+    Complements ``/api/processes`` (Windows-host only) so the Processes
+    tab no longer undercounts when evolve runs on the WSL substrate.
+    Returns ``{"available": False, "processes": []}`` when WSL is
+    unreachable so the frontend can render an "unavailable" state.
+    """
+    from bots.v3.system_info import get_wsl_processes
+
+    return get_wsl_processes()
+
+
+@app.get("/api/system/resources")
+async def get_system_resources() -> dict[str, Any]:
+    """Return Windows host + WSL VM RAM and ``/mnt/c`` disk-free gauge.
+
+    Surfaces the host-RAM-starvation condition that caused 2026-04-28's
+    SC2-spawn timeouts before it bites again.  Cached 3 s.
+    """
+    from bots.v3.system_info import get_resources
+
+    return get_resources()
+
+
 @app.get("/api/processes")
 async def get_processes() -> dict[str, Any]:
     """Get full system process/state status."""

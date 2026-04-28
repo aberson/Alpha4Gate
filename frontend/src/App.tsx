@@ -14,6 +14,8 @@ import { RewardTrends } from "./components/RewardTrends";
 import { AdvisedControlPanel } from "./components/AdvisedControlPanel";
 import { AdvisedImprovements } from "./components/AdvisedImprovements";
 import { ProcessMonitor } from "./components/ProcessMonitor";
+import { ResourceGauge } from "./components/ResourceGauge";
+import { WslProcessesPanel } from "./components/WslProcessesPanel";
 import { AlertsPanel } from "./components/AlertsPanel";
 import { LadderTab } from "./components/LadderTab";
 import { EvolutionTab } from "./components/EvolutionTab";
@@ -168,7 +170,13 @@ function App() {
             <AdvisedImprovements />
           </>
         )}
-        {tab === "processes" && <ProcessMonitor />}
+        {tab === "processes" && (
+          <>
+            <ProcessMonitor />
+            <ResourceGauge />
+            <WslProcessesPanel />
+          </>
+        )}
         {tab === "ladder" && <LadderTab />}
         {tab === "evolution" && <EvolutionTab />}
         {tab === "alerts" && (
