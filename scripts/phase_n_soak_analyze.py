@@ -116,7 +116,7 @@ def main(manifest_path: str) -> int:
     loss_mean = _mean(loss_means)
     sep = win_mean - loss_mean
     print()
-    print(f"heuristic mean win_prob (per-game avg, then averaged across games):")
+    print("heuristic mean win_prob (per-game avg, then averaged across games):")
     print(f"  WIN games  (n={len(win_means):>2}):  {win_mean:.3f}")
     print(f"  LOSS games (n={len(loss_means):>2}):  {loss_mean:.3f}")
     print(f"  separation:                  {sep:+.3f}")
@@ -139,7 +139,8 @@ def main(manifest_path: str) -> int:
 
     # 1. Heuristic separation >= 0.10 absolute.
     sep_pass = abs(sep) >= 0.10 and sep > 0  # win > loss is the meaningful direction
-    print(f"[{'PASS' if sep_pass else 'FAIL'}] (1) Heuristic separation |WIN_mean - LOSS_mean| >= 0.10  "
+    status = "PASS" if sep_pass else "FAIL"
+    print(f"[{status}] (1) Heuristic separation |WIN_mean - LOSS_mean| >= 0.10  "
           f"(actual: {sep:+.3f})")
     pass_all &= sep_pass
 
