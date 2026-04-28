@@ -121,18 +121,28 @@ def _build_substrate_info() -> dict[str, Any]:
         kernel = _run_wsl(["uname", "-r"])
         if kernel is not None:
             wsl["kernel"] = kernel.strip()
-        # ``echo $SC2PATH`` from a login shell so ~/.profile is sourced
-        sc2_path = _run_wsl(["bash", "-lc", "printf '%s' \"$SC2PATH\""])
-        if sc2_path:
+        # ``$SC2PATH`` parameter expansion silently returns empty through
+        # ``wsl -- bash -lc "echo $SC2PATH"`` even when the var IS set;
+        # single-quoted awk also breaks (the wsl bridge strips the quotes).
+        # ``env | grep | cut`` survives because it needs no shell quoting.
+        sc2_path = _run_wsl(
+            ["bash", "-lc", "env | grep ^SC2PATH= | cut -d= -f2-"]
+        )
+        if sc2_path and sc2_path.strip():
             sc2_path_clean = sc2_path.strip()
             wsl["sc2_path"] = sc2_path_clean
-            check_cmd = (
-                f"test -f \"{sc2_path_clean}/Versions/Base75689/SC2_x64\""
-                " && echo yes"
+            # ``find`` survives Blizzard publishing newer Linux SC2 versions
+            # (Base75689 was 4.10; future bumps would silently break a
+            # hardcoded path check).
+            binary = _run_wsl(
+                [
+                    "bash",
+                    "-lc",
+                    f"find {sc2_path_clean} -maxdepth 4 -name SC2_x64 "
+                    "-type f -print -quit 2>/dev/null",
+                ]
             )
-            wsl["sc2_binary_present"] = bool(
-                _run_wsl(["bash", "-lc", check_cmd])
-            )
+            wsl["sc2_binary_present"] = bool(binary and binary.strip())
     return {
         "backend_platform": backend_platform,
         "wsl": wsl,
