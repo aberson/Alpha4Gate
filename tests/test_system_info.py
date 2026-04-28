@@ -92,10 +92,17 @@ class TestSubstrateInfo:
         def _fake_run_wsl(cmd: list[str], timeout: float = 3.0) -> str | None:
             if cmd == ["uname", "-r"]:
                 return "5.15.0-microsoft-WSL2\n"
-            if cmd[:2] == ["bash", "-lc"] and "$SC2PATH" in cmd[2]:
-                return "/home/abero/StarCraftII"
-            if cmd[:2] == ["bash", "-lc"] and "test -f" in cmd[2]:
-                return "yes\n"
+            # NB: real production probe uses ``env | grep | cut`` because
+            # ``$SC2PATH`` parameter expansion AND single-quoted awk
+            # scripts both fail through the wsl/bash bridge.
+            if (
+                cmd[:2] == ["bash", "-lc"]
+                and "SC2PATH" in cmd[2]
+                and "grep" in cmd[2]
+            ):
+                return "/home/abero/StarCraftII\n"
+            if cmd[:2] == ["bash", "-lc"] and "find" in cmd[2] and "SC2_x64" in cmd[2]:
+                return "/home/abero/StarCraftII/Versions/Base75689/SC2_x64\n"
             return None
 
         monkeypatch.setattr(system_info, "_run_wsl", _fake_run_wsl)
