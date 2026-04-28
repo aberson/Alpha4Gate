@@ -277,7 +277,7 @@ def _run_ladder(args: argparse.Namespace) -> None:
     ws_url = f"ws://{args.LadderServer}:{args.GamePort}/sc2api"
 
     _log.info(
-        "bots.v0 ladder entry: role=%s ws=%s start_port=%s",
+        "bots.v3 ladder entry: role=%s ws=%s start_port=%s",
         args.role,
         ws_url,
         args.StartPort,

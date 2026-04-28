@@ -255,7 +255,7 @@ def _start_server(settings: Settings, daemon: bool = False) -> None:
             _log.info("Training daemon auto-started (--daemon flag)")
 
     uvicorn.run(
-        "bots.v0.api:app",
+        "bots.v3.api:app",
         host="0.0.0.0",
         port=settings.web_ui_port,
         reload=False,
@@ -292,7 +292,7 @@ def _start_server_background(settings: Settings) -> None:
         evolve_dir=_repo_root() / "data",
     )
     config = uvicorn.Config(
-        "bots.v0.api:app",
+        "bots.v3.api:app",
         host="0.0.0.0",
         port=settings.web_ui_port,
         reload=False,

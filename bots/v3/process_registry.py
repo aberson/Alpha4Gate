@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 # Command-line substrings that identify "one of our" processes.
-_OUR_CMDLINE_TAGS: tuple[str, ...] = ("bots.v0", "bots.current")
+_OUR_CMDLINE_TAGS: tuple[str, ...] = ("bots.v3", "bots.current")
 
 
 def _is_ours(cmdline: str) -> bool:
@@ -159,10 +159,10 @@ def _summarize_cmdline(cmdline: str) -> str:
     lower = cmdline.lower()
     if _is_ours(lower):
         # Extract the key flags and label by whichever tag actually matched
-        # Label by whichever tag matched (bots.v0 or bots.current).
+        # Label by whichever tag matched (bots.v3 or bots.current).
         parts = cmdline.split()
         flags = [p for p in parts if p.startswith("--")]
-        label = next((tag for tag in _OUR_CMDLINE_TAGS if tag in lower), "bots.v0")
+        label = next((tag for tag in _OUR_CMDLINE_TAGS if tag in lower), "bots.v3")
         return label + " " + " ".join(flags)
     if "node" in lower and "vite" in lower:
         return "vite dev server"

@@ -609,7 +609,7 @@ async def debug_raise_error(
     message = "Synthetic alerts pre-flight test"
     if request is not None and isinstance(request.get("message"), str):
         message = request["message"]
-    debug_logger = logging.getLogger("bots.v0.debug")
+    debug_logger = logging.getLogger("bots.v3.debug")
     debug_logger.error("synthetic error: %s", message)
     return {"status": "ok", "logged": message}
 
@@ -1647,7 +1647,7 @@ async def restart_server() -> dict[str, str]:
     # Build the command to start the new backend.
     # Never inherit --daemon — the improvement loop skill should be the
     # one that starts the daemon, not a UI restart button.
-    cmd = [sys.executable, "-m", "bots.v0.runner", "--serve"]
+    cmd = [sys.executable, "-m", "bots.v3.runner", "--serve"]
     if _daemon is not None and _daemon.is_running():
         _daemon.stop()
         _log.info("Daemon stopped for restart (will NOT restart with --daemon)")
