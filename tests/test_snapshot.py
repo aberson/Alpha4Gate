@@ -222,12 +222,13 @@ class TestRewriteImports:
         assert touched == 0
         assert (target / "bot.py").read_text(encoding="utf-8") == src
 
-    def test_prose_containing_bots_v0_not_rewritten(
-        self, tmp_path: Path
-    ) -> None:
-        """A docstring or comment mentioning ``bots.v0`` must not get rewritten.
+    def test_prose_self_reference_rewritten(self, tmp_path: Path) -> None:
+        """Aggressive mode (#236): self-ref in docstring/comment/string IS rewritten.
 
-        Only ``^import`` and ``^from`` at a line start should match.
+        Stale string-literal self-references after a snapshot break the
+        backend's uvicorn module path, subprocess respawn, and
+        ``_OUR_CMDLINE_TAGS`` process detection — so prose, comments,
+        and string literals all need to follow the rename.
         """
         target = tmp_path / "bots" / "v1"
         target.mkdir(parents=True)
@@ -238,8 +239,53 @@ class TestRewriteImports:
         )
         (target / "note.py").write_text(src, encoding="utf-8")
         touched = snapshot._rewrite_imports(target, "v0", "v1")
+        assert touched == 1
+        out = (target / "note.py").read_text(encoding="utf-8")
+        assert out == (
+            '"""Uses bots.v1 internally — see docs."""\n'
+            "# bots.v1 is the parent\n"
+            "x = 'bots.v1 in a string'\n"
+        )
+
+    def test_string_literal_module_path_rewritten(self, tmp_path: Path) -> None:
+        """The recurring victim shapes from #236: uvicorn arg, -m argv, logger name."""
+        target = tmp_path / "bots" / "v4"
+        target.mkdir(parents=True)
+        src = (
+            'uvicorn.run("bots.v3.api:app", host="0.0.0.0")\n'
+            'cmd = [sys.executable, "-m", "bots.v3.runner", "--serve"]\n'
+            'log = logging.getLogger("bots.v3.debug")\n'
+            '_OUR_CMDLINE_TAGS = ("bots.v3", "bots.current")\n'
+        )
+        (target / "runner.py").write_text(src, encoding="utf-8")
+        touched = snapshot._rewrite_imports(target, "v3", "v4")
+        assert touched == 1
+        out = (target / "runner.py").read_text(encoding="utf-8")
+        assert 'uvicorn.run("bots.v4.api:app"' in out
+        assert '"-m", "bots.v4.runner"' in out
+        assert 'logging.getLogger("bots.v4.debug")' in out
+        # bots.current sibling reference must be preserved.
+        assert '"bots.current"' in out
+        # No stray bots.v3 references remain.
+        assert "bots.v3" not in out
+
+    def test_word_boundary_prevents_substring_match(self, tmp_path: Path) -> None:
+        """``bots.v3`` rewrite must NOT match ``bots.v30`` (different version).
+
+        Pins the ``\\b`` anchor at the right edge — without it the
+        substring rewrite would corrupt cross-version references on
+        any future double-digit version.
+        """
+        target = tmp_path / "bots" / "v4"
+        target.mkdir(parents=True)
+        src = (
+            "from bots.v30.something import X\n"
+            "alias = 'bots.v300'\n"
+        )
+        (target / "x.py").write_text(src, encoding="utf-8")
+        touched = snapshot._rewrite_imports(target, "v3", "v4")
         assert touched == 0
-        assert (target / "note.py").read_text(encoding="utf-8") == src
+        assert (target / "x.py").read_text(encoding="utf-8") == src
 
     def test_nested_files_rewritten(self, tmp_path: Path) -> None:
         target = tmp_path / "bots" / "v1"

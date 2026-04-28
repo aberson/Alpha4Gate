@@ -137,64 +137,45 @@ def _git_sha() -> str:
         return "unknown"
 
 
-_IMPORT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    # `from bots.<old>.X import Y`  ->  `from bots.<new>.X import Y`
-    (re.compile(r"^(\s*from\s+bots\.)([A-Za-z0-9_]+)(\.[^\s]+\s+import\b)"), r"\1__NEW__\3"),
-    # `from bots.<old> import X`    ->  `from bots.<new> import X`
-    (re.compile(r"^(\s*from\s+bots\.)([A-Za-z0-9_]+)(\s+import\b)"), r"\1__NEW__\3"),
-    # `import bots.<old>.X`          ->  `import bots.<new>.X`
-    (re.compile(r"^(\s*import\s+bots\.)([A-Za-z0-9_]+)(\.[^\s]+)"), r"\1__NEW__\3"),
-    # `import bots.<old>`            ->  `import bots.<new>`
-    (re.compile(r"^(\s*import\s+bots\.)([A-Za-z0-9_]+)(\s*(?:#.*)?$)"), r"\1__NEW__\3"),
-)
-
-
 def _rewrite_imports(target_dir: Path, old_pkg: str, new_pkg: str) -> int:
-    """Rewrite ``bots.<old_pkg>`` imports to ``bots.<new_pkg>`` across *target_dir*.
+    """Rewrite every ``bots.<old_pkg>`` reference to ``bots.<new_pkg>`` across *target_dir*.
 
-    Without this, a snapshot at ``bots/cand_xyz/`` still has absolute
-    imports like ``from bots.v0.army_coherence import X`` — at runtime
-    those resolve to the ORIGINAL ``bots/v0/`` code, not the snapshot.
-    Any change the sub-agent makes to ``bots/cand_xyz/*.py`` (other than
-    the entrypoint ``__main__.py``'s bare module-level imports) is
-    silently ignored because the in-process call graph flows through
-    ``bots.v0.*``.
+    "Aggressive" mode (issue #236, user direction 2026-04-28): rewrites
+    ANY occurrence of ``bots.<old_pkg>`` in any ``.py`` file — imports,
+    string literals (``"bots.v3.api:app"``), subprocess argv tuples,
+    process-detection tags, log messages, comments, docstrings, prose.
+    A snapshot is meant to be an independently-bootable copy of the
+    source version, and stale string-literal self-references break:
 
-    Returns the number of files touched. Line-by-line regex rewrite
-    (not AST) because:
+    * Backend serving — ``uvicorn.run("bots.v3.api:app", ...)`` keeps
+      the parent module loaded under the new name's directory.
+    * Subprocess respawn — ``[sys.executable, "-m", "bots.v3.runner"]``
+      launches the wrong version.
+    * Process detection — ``_OUR_CMDLINE_TAGS = ("bots.v3", ...)``
+      misses "our" processes after promotion.
+    * Logger names — ``logging.getLogger("bots.v3.debug")`` writes to
+      the wrong logger tree.
 
-    * The rewrite targets only four concrete ``import``/``from`` shapes
-      at line starts. False positives would require a bots.<old> token
-      appearing at column 0 inside a raw string, which is astronomically
-      unlikely in this codebase.
-    * AST-based rewrite is ~20× slower per file; per-snapshot it would
-      add seconds while each round is already 30+ minutes of games.
-    * Keeping the rewrite regex-shaped makes the matched shapes trivially
-      inspectable in the diff if a future snapshot surfaces a miss.
+    Returns the number of files touched. Single-pass ``re.sub`` over
+    each file's full text using a ``\\b``-anchored regex; this catches
+    every documented victim shape without an AST walk.
 
-    Only old_pkg matches are rewritten — an import of
-    ``bots.other_version.*`` is left untouched, so a hand-crafted
-    candidate that pulls from a sibling version keeps doing so.
+    Cross-version references (``bots.other_version``, ``bots.current``,
+    ``bots.v3`` when ``old_pkg == "v4"``) are preserved — the regex
+    only matches the literal source token with both-side word
+    boundaries, so ``bots.v3`` is not a substring of ``bots.v30``.
     """
+    pattern = re.compile(rf"\bbots\.{re.escape(old_pkg)}\b")
+    replacement = f"bots.{new_pkg}"
     touched = 0
     for py in target_dir.rglob("*.py"):
         try:
             text = py.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        new_lines: list[str] = []
-        file_changed = False
-        for line in text.splitlines(keepends=True):
-            out = line
-            for pat, repl in _IMPORT_PATTERNS:
-                m = pat.match(out)
-                if m and m.group(2) == old_pkg:
-                    out = pat.sub(repl.replace("__NEW__", new_pkg), out)
-                    file_changed = True
-                    break
-            new_lines.append(out)
-        if file_changed:
-            py.write_text("".join(new_lines), encoding="utf-8")
+        new_text, n = pattern.subn(replacement, text)
+        if n:
+            py.write_text(new_text, encoding="utf-8")
             touched += 1
     return touched
 
