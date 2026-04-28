@@ -1293,8 +1293,16 @@ Drop heuristic module + DB column; remove give-up trigger.
 
 ## Phase O — Hydra meta-controller (scripted v1)
 
-**Track:** Capability research. **Status:** Future. **Prerequisites:**
-Phase N (win-prob is the candidate switching signal). Hydra
+**Track:** Capability research. **Status:** Future — **paused 2026-04-28**
+pending evolve parallelization. Hydra's themed-expert architecture
+generates one `bots/<expert>_vN/` per theme; without parallel evolve,
+training 4-6 experts sequentially is days of wall-clock that compresses
+to hours with parallelism. User direction 2026-04-28: ship a
+parallelization sub-plan first (engine + storage + frontend, see
+`memory/project_post_phase_n_direction_2026_04_28.md` and
+`memory/project_evolve_parallelism_deferred.md`), then return to O.
+**Prerequisites:** Phase N (✅ shipped, win-prob is the candidate
+switching signal); evolve parallelization sub-plan (TBD). Hydra
 investigation runs in parallel, evaluating whether learned-controller
 **Phase O-v2** is worth doing post-v1.
 
