@@ -1113,6 +1113,49 @@ def test_git_revert_evo_auto_uses_two_stage_revert(
         assert "ADVISED_AUTO" not in env
 
 
+def test_git_commit_evo_auto_resets_index_when_commit_fails(
+    cli: ModuleType,
+) -> None:
+    """If ``git commit`` fails after ``git add`` staged ``bots/<vN>/``,
+    the commit primitive must drop the staged content itself.
+
+    Without this cleanup the staged paths leak into the NEXT generation's
+    commit (``git_commit_evo_auto`` does a plain ``git commit -m msg``
+    with no pathspec and no ``-a``, which commits everything currently
+    staged). The commit function owns the mess it staged, so it owns
+    cleaning up on the failure path. Mirrors the revert path's contract.
+    """
+    commands: list[list[str]] = []
+
+    def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(list(argv))
+        if argv[:2] == ["git", "add"]:
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+        if argv[:2] == ["git", "commit"]:
+            return subprocess.CompletedProcess(
+                argv, 1, stdout="", stderr="hook blocked commit"
+            )
+        if argv[:2] == ["git", "reset"]:
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+        raise AssertionError(f"unexpected argv: {argv!r}")
+
+    ok, sha = cli.git_commit_evo_auto(
+        "v1",
+        3,
+        ["imp-a"],
+        run=fake_run,
+    )
+    assert ok is False
+    assert sha is None
+    # Sequence: git add, git commit (fails), git reset HEAD -- .
+    assert [c[:2] for c in commands] == [
+        ["git", "add"],
+        ["git", "commit"],
+        ["git", "reset"],
+    ]
+    assert commands[2] == ["git", "reset", "HEAD", "--", "."]
+
+
 def test_git_revert_evo_auto_resets_index_when_commit_fails(
     cli: ModuleType,
 ) -> None:

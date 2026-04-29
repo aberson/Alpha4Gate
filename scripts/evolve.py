@@ -928,6 +928,7 @@ def git_commit_evo_auto(
         )
     except (FileNotFoundError, OSError) as exc:
         _log.warning("git add failed for %s: %s", new_version, exc)
+        _reset_staged_promote(run=run)
         return False, None
     if add_result.returncode != 0:
         _log.warning(
@@ -936,6 +937,7 @@ def git_commit_evo_auto(
             new_version,
             add_result.stderr,
         )
+        _reset_staged_promote(run=run)
         return False, None
 
     # --no-verify: EVO_AUTO already restricts staged paths to bots/<vN>/*
@@ -954,6 +956,7 @@ def git_commit_evo_auto(
         )
     except (FileNotFoundError, OSError) as exc:
         _log.warning("git commit failed for %s: %s", new_version, exc)
+        _reset_staged_promote(run=run)
         return False, None
     if commit_result.returncode != 0:
         _log.warning(
@@ -962,6 +965,7 @@ def git_commit_evo_auto(
             generation,
             commit_result.stderr,
         )
+        _reset_staged_promote(run=run)
         return False, None
 
     # Capture the promote commit SHA so a subsequent regression rollback
@@ -987,6 +991,39 @@ def git_commit_evo_auto(
         sha,
     )
     return True, sha
+
+
+def _reset_staged_promote(
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> None:
+    """Clear any staged changes left behind by a failed promote commit.
+
+    ``git_commit_evo_auto`` stages ``bots/<vN>/`` + ``current.txt`` before
+    ``git commit``; if the commit returns non-zero or raises, the staged
+    diff lingers and the next generation's bare ``git commit -m`` would
+    pick it up. Run ``git reset HEAD -- .`` to clean the index without
+    touching the working tree. Never raises — best-effort.
+
+    Today's WSL pre-commit hook regression was the obvious trigger but
+    the same leak hits any commit-fail path (disk full, hook regression,
+    transient git error). Always cleaning up matches the revert primitive's
+    contract — own the mess you stage.
+    """
+    try:
+        run(
+            ["git", "reset", "HEAD", "--", "."],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=str(_REPO_ROOT),
+        )
+    except (FileNotFoundError, OSError) as exc:
+        _log.warning(
+            "git reset (post-failed-promote cleanup) failed: %s; "
+            "index may still carry staged promote diff",
+            exc,
+        )
 
 
 def _reset_staged_revert(
