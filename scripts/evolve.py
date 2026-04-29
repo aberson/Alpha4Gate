@@ -1474,6 +1474,20 @@ def _stack_apply_and_promote(
                 restore_exc,
             )
 
+    # Defense against leftover dirs from a prior run whose ``git revert``
+    # didn't fully clean the working tree (e.g. revert commit failed
+    # mid-way, manual intervention, or revert of a commit that included
+    # a manifest write that became dirty before revert ran). Without this
+    # sweep, ``snapshot_fn`` raises ``FileExistsError`` and the round is
+    # wasted even though the imps are sound.
+    if new_version_dir.exists():
+        _log.warning(
+            "stack-apply: leftover %s found from prior run; "
+            "removing before fresh snapshot",
+            new_version_dir,
+        )
+        _safe_rmtree(new_version_dir)
+
     try:
         if snapshot_fn is not None:
             snapshot_fn()

@@ -31,6 +31,7 @@ semantic).
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -166,7 +167,27 @@ Concrete change (this is the instruction — follow it literally):
 Working directory (cwd): a snapshot of the bot codebase. Modify files
 under this directory only. When finished, print a single line listing
 the files you modified and nothing else.
+
+IMPORTANT: any file path you see above is a path relative to your CWD.
+Use bare filenames or `./X` to address them. NEVER edit any file under
+`bots/` outside your CWD; reading or editing a sibling version's files
+(e.g. a path like ``bots/vN/foo.py`` while your CWD is a different
+``bots/...`` snapshot) is a sandbox violation that will cause the round
+to be discarded.
 """
+
+
+# Regex used to strip parent-version path prefixes (``bots/vN/``) from
+# advisor-emitted imp text. Without this, a sub-agent given an imp like
+# "In bots/v3/foo.py..." resolves the path against the repo root and
+# edits the parent (caught by ``_assert_scope`` only after a wasted
+# attempt). Stripping ``bots/v3/`` leaves the bare filename, which the
+# sub-agent's cwd-rooted Edit tool resolves correctly.
+_PARENT_PATH_RE = re.compile(r"bots/v\d+/")
+
+
+def _sanitize_imp_paths(text: str) -> str:
+    return _PARENT_PATH_RE.sub("", text)
 
 
 # ---------------------------------------------------------------------------
@@ -387,8 +408,8 @@ def _invoke_subagent(
         title=imp.title,
         rank=imp.rank,
         expected_impact=imp.expected_impact,
-        description=imp.description,
-        concrete_change=imp.concrete_change,
+        description=_sanitize_imp_paths(imp.description),
+        concrete_change=_sanitize_imp_paths(imp.concrete_change),
     )
     if feedback:
         user_prompt = f"{feedback}\n\n---\n\n{user_prompt}"
@@ -426,6 +447,13 @@ def _invoke_subagent(
             input=user_prompt,
             capture_output=True,
             text=True,
+            # Force UTF-8 — Windows defaults to cp1252 which can't encode
+            # non-ASCII chars common in advisor-generated imp text
+            # (em-dashes, arrows, smart quotes). Without this the stdin
+            # writer thread raises UnicodeEncodeError before the
+            # sub-agent receives the prompt.
+            encoding="utf-8",
+            errors="replace",
             check=False,
             timeout=timeout,
             cwd=str(version_dir),

@@ -28,6 +28,7 @@ from orchestrator.evolve_dev_apply import (
     DevApplyValidationError,
     _collect_candidate_py_snapshot,
     _diff_py_snapshots,
+    _sanitize_imp_paths,
     spawn_dev_subagent,
 )
 
@@ -599,3 +600,93 @@ class TestSpawnDevSubagent:
         ]
         # Only the initial invocation — no retries for scope violations.
         assert len(claude_calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Path sanitization (fix for stack-apply DevApplyOutOfScopeError on imps that
+# reference the parent's path in concrete_change)
+# ---------------------------------------------------------------------------
+
+
+class TestSanitizeImpPaths:
+    """``_sanitize_imp_paths`` strips ``bots/vN/`` prefixes from imp text
+    so the sub-agent doesn't follow them out of its cwd. Reason: imp
+    descriptions from the advisor are written against the parent (e.g.
+    ``In bots/v3/scouting.py``); during stack-apply the cwd is the new
+    candidate (``bots/v4/``) and following the literal path edits the
+    parent — caught by ``_assert_scope`` only after a wasted attempt.
+    """
+
+    def test_strips_single_reference(self) -> None:
+        text = "In bots/v3/scouting.py, add a method `escort_army`."
+        assert _sanitize_imp_paths(text) == (
+            "In scouting.py, add a method `escort_army`."
+        )
+
+    def test_strips_multiple_references(self) -> None:
+        text = (
+            "Edit bots/v3/bot.py and bots/v3/macro_manager.py to wire "
+            "the new helper. Reference: bots/v3/decision_engine.py:273."
+        )
+        assert _sanitize_imp_paths(text) == (
+            "Edit bot.py and macro_manager.py to wire the new helper. "
+            "Reference: decision_engine.py:273."
+        )
+
+    def test_handles_arbitrary_version_number(self) -> None:
+        # Future-proof: works for v0, v1, v12, v999, …
+        assert _sanitize_imp_paths("bots/v0/x.py") == "x.py"
+        assert _sanitize_imp_paths("bots/v12/y.py") == "y.py"
+        assert _sanitize_imp_paths("bots/v999/z.py") == "z.py"
+
+    def test_leaves_cand_paths_alone(self) -> None:
+        # cand_xxx paths should NOT be stripped — those are intermediate
+        # and shouldn't appear in advisor text anyway, but keep the rule
+        # narrow.
+        text = "In bots/cand_abc123/foo.py"
+        assert _sanitize_imp_paths(text) == text
+
+    def test_empty_string(self) -> None:
+        assert _sanitize_imp_paths("") == ""
+
+    def test_text_without_path(self) -> None:
+        text = "Refactor the foo helper to take a Bar argument."
+        assert _sanitize_imp_paths(text) == text
+
+    def test_invoke_subagent_passes_sanitized_text_to_claude(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """End-to-end: imp.concrete_change with bots/v3/ becomes bare
+        filename in the prompt sent to ``claude -p`` via stdin."""
+        repo_root = tmp_path
+        cand = repo_root / "bots" / "cand_x"
+        cand.mkdir(parents=True)
+        (cand / "foo.py").write_text("x = 1\n", encoding="utf-8")
+        monkeypatch.setattr(
+            "orchestrator.registry._repo_root",
+            lambda: repo_root,
+        )
+        imp = Improvement(
+            rank=1,
+            title="path-sanitize test",
+            type="dev",
+            description="Reference: bots/v3/scouting.py:42",
+            principle_ids=["1"],
+            expected_impact="—",
+            concrete_change="Edit bots/v3/foo.py to add a stub.",
+        )
+
+        fake = FakeRun()
+        fake.subagent_result = _CompletedProc(stdout="done")
+
+        spawn_dev_subagent(
+            cand, imp, run=fake, validate=False
+        )
+
+        claude_calls = [c for c in fake.calls if c[0] and c[0][0] == "claude"]
+        assert len(claude_calls) == 1
+        stdin_text = claude_calls[0][1].get("input", "")
+        assert "bots/v3/foo.py" not in stdin_text
+        assert "bots/v3/scouting.py" not in stdin_text
+        assert "Edit foo.py to add a stub." in stdin_text
+        assert "Reference: scouting.py:42" in stdin_text
