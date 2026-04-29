@@ -1665,6 +1665,146 @@ class TestGeneratePool:
         assert batch.call_count == 0
         assert claude.call_count == 1
 
+    def test_priors_block_appears_in_prompt_when_path_set(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Setting ``prior_imps_path`` injects a Prior high-performers section."""
+        self._setup(tmp_path, monkeypatch)
+        priors_file = tmp_path / "favorites.json"
+        priors_file.write_text(
+            json.dumps(
+                {
+                    "favorites": [
+                        {
+                            "title": "DEFEND/FORTIFY stuck-state timeout",
+                            "type": "dev",
+                            "description": "(unused in prompt)",
+                            "principle_ids": ["§3", "§29"],
+                            "expected_impact": "(unused)",
+                            "concrete_change": (
+                                "In bots/v0/decision_engine.py, add a 90s "
+                                "timeout in DEFEND/FORTIFY."
+                            ),
+                            "files_touched": ["bots/v0/decision_engine.py"],
+                            "track_record": {
+                                "fitness_observations": [
+                                    {"score": "5-0"},
+                                    {"score": "3-2"},
+                                ],
+                            },
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        claude = _ScriptedClaude([json.dumps(_well_formed_pool(5))])
+        batch = _BatchRecorder([(1, 1, 1)])
+
+        generate_pool(
+            "v0",
+            mirror_games=3,
+            pool_size=5,
+            run_batch_fn=batch,
+            claude_fn=claude,
+            prior_imps_path=priors_file,
+        )
+
+        prompt = claude.prompts[0]
+        assert "## Prior high-performers" in prompt
+        assert "DEFEND/FORTIFY stuck-state timeout" in prompt
+        assert "§3, §29" in prompt
+        # Track record summary surfaces best-of-N + observation count.
+        assert "best 5/5 in 2 fitness observations" in prompt
+
+    def test_priors_paths_rewritten_to_current_parent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """v3-era priors get their bots/v3/ paths rewritten for a v5 parent."""
+        self._setup(tmp_path, monkeypatch, parent="v5")
+        priors_file = tmp_path / "favorites.json"
+        priors_file.write_text(
+            json.dumps(
+                {
+                    "favorites": [
+                        {
+                            "title": "v3-era imp",
+                            "type": "dev",
+                            "description": "",
+                            "principle_ids": [],
+                            "expected_impact": "",
+                            "concrete_change": (
+                                "In bots/v3/army_coherence.py edit "
+                                "ArmyCoherenceManager.should_attack."
+                            ),
+                            "files_touched": ["bots/v3/army_coherence.py"],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        claude = _ScriptedClaude([json.dumps(_well_formed_pool(5))])
+        batch = _BatchRecorder([(1, 1, 1)])
+
+        generate_pool(
+            "v5",
+            mirror_games=3,
+            pool_size=5,
+            run_batch_fn=batch,
+            claude_fn=claude,
+            prior_imps_path=priors_file,
+        )
+
+        prompt = claude.prompts[0]
+        # Both the structured files_touched and the prose path got rewritten.
+        # The unrewritten "bots/v3/" string would only appear if the
+        # rewriter missed something.
+        assert "bots/v5/army_coherence.py" in prompt
+        assert "bots/v3/army_coherence.py" not in prompt
+
+    def test_priors_block_absent_when_path_unset(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``prior_imps_path=None`` produces a prompt without the priors block.
+
+        Regression guard: existing pool-gen behavior must be unchanged
+        for runs that don't opt in.
+        """
+        self._setup(tmp_path, monkeypatch)
+        claude = _ScriptedClaude([json.dumps(_well_formed_pool(5))])
+        batch = _BatchRecorder([(1, 1, 1)])
+
+        generate_pool(
+            "v0",
+            mirror_games=3,
+            pool_size=5,
+            run_batch_fn=batch,
+            claude_fn=claude,
+        )
+
+        assert "## Prior high-performers" not in claude.prompts[0]
+
+    def test_priors_missing_file_does_not_abort(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A missing/malformed priors file is logged and skipped, not raised."""
+        self._setup(tmp_path, monkeypatch)
+        claude = _ScriptedClaude([json.dumps(_well_formed_pool(5))])
+        batch = _BatchRecorder([(1, 1, 1)])
+
+        pool = generate_pool(
+            "v0",
+            mirror_games=3,
+            pool_size=5,
+            run_batch_fn=batch,
+            claude_fn=claude,
+            prior_imps_path=tmp_path / "does-not-exist.json",
+        )
+
+        assert len(pool) == 5
+        assert "## Prior high-performers" not in claude.prompts[0]
+
 
 class TestDefaultClaudeFn:
     """The real subprocess wrapper — unit-tested via monkeypatched subprocess.run."""

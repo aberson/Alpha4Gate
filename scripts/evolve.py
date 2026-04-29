@@ -217,6 +217,19 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--priors-path",
+        type=Path,
+        default=None,
+        help=(
+            "Curated favorites JSON file (output of "
+            "scripts/curate_evolve_favorites.py). When set, the favorites "
+            "are folded into Claude's pool-gen prompt as soft priors — "
+            "Claude can refine, propose alternatives, or set them aside. "
+            "If unset, defaults to data/evolve_favorites.json when that "
+            "file exists; otherwise no priors are used."
+        ),
+    )
+    parser.add_argument(
         "--post-training-cycles",
         type=int,
         default=0,
@@ -1694,6 +1707,15 @@ def run_loop(
         )
         return 1
 
+    # Resolve priors path: explicit flag wins, else default-if-file-exists.
+    # No-favorites is the silent default — pre-existing users without a
+    # curated set see no behavior change.
+    priors_path: Path | None = args.priors_path
+    if priors_path is None:
+        _default_priors = _REPO_ROOT / "data" / "evolve_favorites.json"
+        if _default_priors.exists():
+            priors_path = _default_priors
+
     # --- Pool generation (or resume) ---
     pool: list[Improvement]
     per_item_state: dict[int, PerItemState]
@@ -1790,6 +1812,8 @@ def run_loop(
                 pool_kwargs["claude_fn"] = claude_fn
             if run_batch_fn is not None:
                 pool_kwargs["run_batch_fn"] = run_batch_fn
+            if priors_path is not None:
+                pool_kwargs["prior_imps_path"] = priors_path
             pool = generate_pool_fn(parent_start, **pool_kwargs)
         except Exception as exc:
             _log.error("evolve: pool generation failed: %s", exc, exc_info=True)
@@ -2271,6 +2295,8 @@ def run_loop(
                     fresh_kwargs["claude_fn"] = claude_fn
                 if run_batch_fn is not None:
                     fresh_kwargs["run_batch_fn"] = run_batch_fn
+                if priors_path is not None:
+                    fresh_kwargs["prior_imps_path"] = priors_path
                 fresh_imps = generate_pool_fn(parent_current, **fresh_kwargs)
             except Exception as exc:
                 _log.warning(

@@ -189,6 +189,7 @@ def _build_args(
         crash_log_path=tmp_path / "evolve_crashes.jsonl",
         run_log=run_log if run_log is not None else tmp_path / "run.md",
         resume=False,
+        priors_path=None,
         post_training_cycles=0,
         backend_url="http://localhost:8765",
     )

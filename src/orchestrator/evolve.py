@@ -1071,7 +1071,7 @@ Mirror games run (parent vs parent): {mirror_games}
 ## Guiding principles (full)
 
 {principles}
-
+{priors_block}
 ## Output schema
 
 Return a JSON array of EXACTLY {pool_size} improvement objects, ordered by \
@@ -1137,6 +1137,7 @@ def _build_prompt(
     log_tails: str,
     source_tree: list[str],
     principles: str,
+    priors_block: str = "",
 ) -> str:
     """Assemble the Claude prompt from the collected context blocks."""
     tree_text = (
@@ -1153,7 +1154,102 @@ def _build_prompt(
         log_tails=log_tails,
         source_tree=tree_text,
         principles=principles,
+        priors_block=priors_block,
     )
+
+
+_VERSION_PATH_RE = re.compile(r"\bbots/v\d+/")
+
+
+def _rewrite_version_paths(text: str, parent: str) -> str:
+    """Rewrite ``bots/vN/`` path references to point at ``parent``.
+
+    Curated favorites carry paths from whichever version they were
+    observed under (e.g. ``bots/v3/bot.py``); when those imps get
+    suggested as priors against a newer parent (v5), the paths need
+    to follow. Applied to ``concrete_change`` text and each entry of
+    ``files_touched``. ``description`` text is left alone (paths don't
+    appear there in the curated samples).
+    """
+    return _VERSION_PATH_RE.sub(f"bots/{parent}/", text)
+
+
+def _format_priors_block(parent: str, priors_path: Path) -> str:
+    """Format curated favorites into a prompt section.
+
+    Returns the block (with leading + trailing newlines) ready to drop
+    into the ``{priors_block}`` placeholder, OR an empty string if the
+    file is missing, malformed, or has no entries. Never raises — a
+    bad priors file should not abort pool generation.
+    """
+    try:
+        payload = json.loads(priors_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError) as exc:
+        _log.warning(
+            "priors file %s unusable (%s); skipping priors block",
+            priors_path,
+            exc,
+        )
+        return ""
+
+    favorites = payload.get("favorites") or []
+    if not favorites:
+        return ""
+
+    lines: list[str] = [
+        "",
+        "## Prior high-performers (reference, NOT mandatory)",
+        "",
+        (
+            "These improvements have passed fitness against this parent or "
+            "an ancestor in past evolve runs. You may include them verbatim, "
+            "refine them, propose stronger alternatives, or set them aside "
+            "if you have better ideas. They are listed for context, not as "
+            "templates to copy. Path references have been rewritten to "
+            f"target bots/{parent}/."
+        ),
+        "",
+    ]
+    for fav in favorites:
+        title = fav.get("title", "(untitled)")
+        principle_ids = fav.get("principle_ids") or []
+        files_touched = [
+            _rewrite_version_paths(p, parent)
+            for p in (fav.get("files_touched") or [])
+        ]
+        track = fav.get("track_record") or {}
+        fitness_obs = track.get("fitness_observations") or []
+        if fitness_obs:
+            best = max(
+                int(obs.get("score", "0-0").split("-")[0])
+                for obs in fitness_obs
+            )
+            track_summary = (
+                f"best {best}/5 in {len(fitness_obs)} fitness "
+                f"observation{'s' if len(fitness_obs) != 1 else ''}"
+            )
+        else:
+            track_summary = "no track record recorded"
+        # Trim concrete_change to ~280 chars so the priors block scales
+        # to ~10 imps without dominating the prompt; full text is
+        # available in data/evolve_favorites.json if Claude needs it.
+        change = _rewrite_version_paths(
+            fav.get("concrete_change") or "(no concrete_change recorded)",
+            parent,
+        )
+        if len(change) > 280:
+            change = change[:277] + "..."
+        lines.extend(
+            [
+                f"### {title}",
+                f"- principles: {', '.join(principle_ids) or '(none)'}",
+                f"- track record: {track_summary}",
+                f"- files_touched: {files_touched or '(none)'}",
+                f"- summary: {change}",
+                "",
+            ]
+        )
+    return "\n".join(lines)
 
 
 _CLAUDE_POOL_MODEL_DEFAULT = "opus"
@@ -1217,6 +1313,7 @@ def generate_pool(
     claude_fn: Callable[[str], str] | None = None,
     on_pool_gen_event: Callable[[dict[str, Any]], None] | None = None,
     skip_mirror: bool = False,
+    prior_imps_path: Path | None = None,
 ) -> list[Improvement]:
     """Generate a pool of improvements via mirror self-play + Claude advisor.
 
@@ -1240,6 +1337,14 @@ def generate_pool(
         Claude. Used by the generation-boundary pool-refresh, where the
         mirror signal from a freshly-promoted parent is less informative
         than simply asking for more imps.
+    prior_imps_path:
+        Optional path to a curated favorites JSON file (the output shape
+        of ``scripts/curate_evolve_favorites.py``). When set, the
+        favorites are formatted into a ``## Prior high-performers``
+        section and dropped into the prompt as soft suggestions —
+        Claude can refine them, propose alternatives, or set them aside.
+        Path references inside each prior are rewritten to target the
+        current parent. Missing or malformed file is logged and skipped.
     """
     if run_batch_fn is None:
         from orchestrator import selfplay
@@ -1306,6 +1411,12 @@ def generate_pool(
             "advisor must fall back to general SC2 Protoss knowledge)"
         )
 
+    priors_block = (
+        _format_priors_block(parent, prior_imps_path)
+        if prior_imps_path is not None
+        else ""
+    )
+
     prompt = _build_prompt(
         parent=parent,
         pool_size=pool_size,
@@ -1315,6 +1426,7 @@ def generate_pool(
         log_tails=log_tails,
         source_tree=source_tree,
         principles=principles,
+        priors_block=priors_block,
     )
     _log.info(
         "generate_pool: calling claude_fn (prompt=%d chars) for pool of %d",
