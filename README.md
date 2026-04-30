@@ -1,6 +1,6 @@
 # Alpha4Gate
 
-![Python](https://img.shields.io/badge/python-3.12-blue) [![linux-tests](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml/badge.svg?branch=master)](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml) ![pytest](https://img.shields.io/badge/pytest-1361%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-143%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
+![Python](https://img.shields.io/badge/python-3.12-blue) [![linux-tests](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml/badge.svg?branch=master)](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml) ![pytest](https://img.shields.io/badge/pytest-1337%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-112%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
 
 An AI agent that teaches itself to get better at a task with — zero human input.
 
@@ -124,9 +124,9 @@ A different kind of loop from the advised one — instead of validating one impr
         observe the loop                         observe the game
                │                                        │
       ┌────────┴────────┐                      ┌────────┴────────┐
-      │ Advisor tab     │                      │ Live tab        │
-      │ run log         │                      │ /ws/game        │
-      │ state.json      │                      │ JSONL logs      │
+      │ Advisor tab     │                      │ JSONL logs      │
+      │ Evolution tab   │                      │ SC2 client      │
+      │ state.json      │                      │ replays/        │
       └─────────────────┘                      └─────────────────┘
 ```
 
@@ -186,9 +186,8 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 | Frontend | React + TypeScript + Vite | Live dashboard with game state streaming |
 | Deep learning | PyTorch + Stable Baselines 3 | PPO policy network for strategic decisions |
 | Training data | SQLite | Structured (s,a,r,s') transition storage |
-| Charts | Recharts 3.8 | Per-rule reward trend visualization |
-| Testing (Python) | pytest | 1361 unit tests, SC2 integration markers |
-| Testing (Frontend) | vitest + jsdom + @testing-library/react | 143 component / hook / lib tests |
+| Testing (Python) | pytest | 1337 unit tests, SC2 integration markers |
+| Testing (Frontend) | vitest + jsdom + @testing-library/react | 112 component / hook / lib tests |
 | Linting | ruff + mypy | Strict type checking, consistent style |
 
 </details>
@@ -248,16 +247,12 @@ cd frontend && npm run dev
 
 | Tab | Purpose |
 |---|---|
-| Live | Real-time game state stream (WebSocket) |
-| Stats | Cross-game win rates and aggregate stats from training.db |
-| Decisions | Live decision log with rule firings and Claude advice |
-| Training | Model comparison + improvement timeline + checkpoint list + reward rule editor |
-| Loop | Daemon state, trigger evaluation, full daemon control panel |
 | Advisor | Live advised-run status, loop controls, strategic hints, reward injection |
-| Improvements | Recent promotions/rollbacks + per-rule reward trend chart |
+| Evolution | Live `improve-bot-evolve` run — fitness pool, stack apply, regression, generation outcomes |
+| Improvements | Unified timeline of advised + evolve improvements with source filter (refresh-on-demand) |
 | Processes | Live system process monitor, port status, state files, backend restart |
 | Alerts | Severity-filtered alert list with ack/dismiss + unread badge in nav |
-| Ladder | Cross-version Elo ladder, match history, promotion gate status |
+| Help | Renders `documentation/wiki/operator-commands.md` from disk |
 
 In-app `AlertToast` lives at the App root and shows new alerts as they fire, regardless of which tab is active.
 
@@ -292,16 +287,13 @@ What still works without Claude:
 | Rule-based play vs SC2 AI | `uv run python -m bots.v0.runner --no-claude --difficulty 3` |
 | Batch runs + stats aggregation | `--batch 10 --no-claude` |
 | Neural (PPO) play and training | Rule-based or hybrid decision mode; training loop is Claude-free |
-| Dashboard — Live, Stats, Decisions, Training, Loop, Improvements, Processes, Alerts | All tabs render and update as normal |
-| Build order editor + reward rule editor | Pure local config |
-| Command panel — Human Only / Hybrid modes | Natural-language command parser runs locally |
+| Dashboard — Evolution, Improvements, Processes, Alerts, Help | All non-Advisor tabs render and update as normal |
 | Daemon loop (auto-training, promotion, rollback) | Does not call Claude |
 
 What needs Claude:
 
 - **Advisor tab** and the `/improve-bot-advised` autonomous improvement loop
-- **Live strategic advice** shown on the Live tab mid-game
-- **AI-Assisted command mode** (falls back gracefully if unavailable)
+- **Mid-game strategic advice** — the bot's `claude_advisor.py` subprocess (visible in JSONL game logs and surfaced on the Advisor tab when an advised run is active)
 
 Quick start without Claude:
 
@@ -321,7 +313,7 @@ bash scripts/start-dev.sh
 ### Testing
 
 ```bash
-uv run pytest              # 1361 unit tests (no SC2 needed)
+uv run pytest              # 1337 unit tests (no SC2 needed)
 uv run pytest -m sc2       # SC2 integration tests (SC2 must be running)
 uv run ruff check .        # Lint
 uv run mypy src bots --strict  # Type check
@@ -344,8 +336,8 @@ Alpha4Gate/
 │   └── ...                  # scouting, config, macro, micro, etc.
 ├── bots/current/            # Thin pointer package (MetaPathFinder → v0)
 ├── src/orchestrator/        # Version registry, snapshots, self-play, Elo ladder
-├── tests/                   # 1313 unit tests (+ SC2 integration markers)
-├── frontend/                # React + TypeScript dashboard (Vite, 10 tabs)
+├── tests/                   # 1337 unit tests (+ SC2 integration markers)
+├── frontend/                # React + TypeScript dashboard (Vite, 6 tabs)
 ├── scripts/                 # Live test, training analysis, sandbox hook
 ├── documentation/wiki/      # Project wiki (start with index.md)
 ├── documentation/plans/     # Active plans (alpha4gate-master-plan.md)

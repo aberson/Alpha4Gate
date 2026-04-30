@@ -1,86 +1,90 @@
 # Frontend Dashboard
 
-React SPA for live game observation, training metrics, command input, and autonomous
-loop transparency.
+React SPA for autonomous-loop transparency: advised runs, evolve generations,
+unified improvements timeline, system health, and alert triage.
 
-> **At a glance:** 10-tab SPA (Live, Stats, Decisions, Training, Loop,
-> Advisor, Improvements, Processes, Alerts, Ladder) built with React + TypeScript + Vite. Live game data via
-> WebSocket (real-time). Training and loop metrics via REST polling (5s, with exceptions below). Seven custom
-> hooks handle WebSocket connections, API calls, and client-side alerting. All frontend
-> code is domain-agnostic — it renders whatever JSON the backend sends. Unit tests run
-> under vitest + jsdom.
+> **At a glance:** 6-tab SPA (Advisor, Evolution, Improvements, Processes,
+> Alerts, Help) built with React + TypeScript + Vite. Live state via REST
+> polling (3–10s, with exceptions below); the in-app alert engine runs
+> client-side over the polled snapshots. All frontend code is domain-agnostic
+> — it renders whatever JSON the backend sends. Unit tests run under
+> vitest + jsdom (112 passing).
 
 ## Purpose & Design
 
-The dashboard provides transparency into what the bot is doing and how it's performing. The tab layout maps directly onto the autonomous loop phases from [improve-bot-advised-architecture.md](improve-bot-advised-architecture.md) + [monitoring.md](monitoring.md).
+The dashboard mirrors how the project is actually used: autonomous
+`/improve-bot-advised` and `/improve-bot-evolve` runs, with system monitoring
+and alerts as support. The original 12-tab layout (one tab per phase added
+during Phases 1–9) was trimmed in the dashboard refactor of 2026-04-29 — six
+of the dropped tabs had never been used in practice and the
+`RecentImprovements` / `AdvisedImprovements` / `RewardTrends` triple was
+consolidated into a single `ImprovementsTab` with a source filter.
 
 ### Tab layout
 
 | Tab | Component(s) | Data source | Refresh | Loop phase |
 |-----|-------------|-------------|---------|---|
-| **Live** | LiveView + CommandPanel | `/ws/game` + `/ws/commands` | Real-time WebSocket | THE TASK |
-| **Stats** | Stats | `/api/stats` + `/api/games` (training.db) | 10s poll | PLAY + TEST |
-| **Decisions** | DecisionQueue | `/api/decision-log` + `/ws/decisions` | Initial fetch + live | THINK + THE TASK |
-| **Training** | TrainingDashboard + ModelComparison + CheckpointList + RewardRuleEditor | `/api/training/*` + `/api/reward-rules` | 5s poll + one-time | TRAIN |
-| **Loop** | LoopStatus + TriggerControls | `/api/training/daemon` + `/api/training/status` + `/api/training/start`/`stop` | 5s poll + on-demand | TRAIN |
-| **Advisor** | AdvisedControlPanel | `/api/advised/state` + `/api/advised/control` | 3s / 10s poll + on-demand | All 6 outer-loop phases |
-| **Improvements** | AdvisedImprovements + RecentImprovements + RewardTrends | `/api/improvements` + `/api/training/promotions/history` + `/api/training/reward-trends` | 5-10s poll | COMMIT + TRAIN |
-| **Processes** | ProcessMonitor | `/api/processes` | 5s poll | Cross-cutting (liveness) |
-| **Alerts** | AlertsPanel (+ AlertToast overlay) | `useAlerts` hook (derives from `/api/training/*` polls) | 5s poll | Cross-cutting |
-| **Ladder** | LadderTab | `/api/ladder` (reads `data/bot_ladder.json`) | 10s poll | Cross-cutting (Elo standings) |
+| **Advisor** | AdvisedControlPanel | `/api/advised/state` + `/api/advised/control` | 3s / 10s poll + on-demand | All advised-loop phases |
+| **Evolution** | EvolutionTab | `/api/evolve/state` + `/api/evolve/control` + `/api/evolve/current-round` + `/api/evolve/pool` + `/api/evolve/results` | Polled (per-endpoint) + on-demand | Self-play arena |
+| **Improvements** | ImprovementsTab | `/api/improvements/unified` (advised + evolve) | Refresh-on-demand | COMMIT (both loops) |
+| **Processes** | ProcessMonitor + ResourceGauge + WslProcessesPanel | `/api/processes` + `/api/system/*` (separate router) | 5s poll | Cross-cutting (liveness) |
+| **Alerts** | AlertsPanel (+ AlertToast overlay) | `useAlerts` hook (derives from polled training/advised endpoints) | 5s poll | Cross-cutting |
+| **Help** | HelpTab | `/api/operator-commands` (reads `documentation/wiki/operator-commands.md` from disk) | One-time fetch | — |
 
-The Advisor tab is the single source of truth for outer-loop state — it reads `bots/v0/data/advised_run_state.json` via `/api/advised/state` and writes `bots/v0/data/advised_run_control.json` via `/api/advised/control`.
+The Advisor tab is the single source of truth for advised-loop state — it
+reads `data/advised_run_state.json` via `/api/advised/state` and writes
+`data/advised_run_control.json` via `/api/advised/control`. The Evolution tab
+plays the same role for `data/evolve_run_state.json` and friends.
 
 ### What each component shows
 
-**LiveView:** Game time, minerals, gas, supply, score, strategic state. Unit and
-structure lists. Claude advice (when present). Side panel: CommandPanel.
+**AdvisedControlPanel:** Live advised-run status (idle / running / paused),
+current iteration / wall-clock budget, last result block (validation wins,
+files changed, principles cited), strategic-hint injection form, and stop /
+reset-loop buttons. Pulls from `useAdvisedRun`.
 
-**CommandPanel:** Text input with autocomplete from primitives vocabulary. Command
-history (last 20) with status badges (queued/executed/failed/rejected). Mode selector
-(AI-Assisted/Human Only/Hybrid). Mute toggle. Collapsible settings (Claude interval,
-lockout duration).
+**EvolutionTab:** Live evolve-run status, current parent / generation,
+fitness pool with per-imp rank + outcome, current-round game record,
+generations-promoted counter, and a feed of recent results from
+`evolve_results.jsonl`. Pulls from `useEvolveRun`.
 
-**TrainingDashboard:** Current checkpoint name, total games, total transitions, DB size,
-checkpoint count. Win rate table: last 10/50/100/overall.
+**ImprovementsTab:** Unified table of advised + evolve improvements pulled
+from `/api/improvements/unified`. Header has filter pills (All / Advised /
+Evolve) + entry count + manual refresh button. Each row has timestamp,
+source badge, title, outcome badge, metric blurb, and truncated principles
++ files-changed lists. Click a row to expand for full description, full
+principle list, and full files list. Empty state and stale-data banner
+handled via `useApi`.
 
-**CheckpointList:** Table of all checkpoints with metadata (type, agreement, win rate,
-difficulty). Best checkpoint marked with indicator.
+**ProcessMonitor:** Live process inventory and health (Python, SC2, backend
+listeners). Restart and kill-daemon controls.
 
-**RewardRuleEditor:** Editable table of reward rules — ID, description, reward value
-(number input), active toggle. Save button persists via PUT.
+**ResourceGauge:** Host CPU / memory / disk gauges sourced from the
+`/api/system/*` endpoints in a separate FastAPI router.
 
-**Stats:** Total wins/losses, per-difficulty win-rate table, and an expandable browsable game list from training.db. Click a game row to see a step-by-step reward timeline with fired rules (the former Games tab, consolidated into Stats in commit `b6c00c6`).
+**WslProcessesPanel:** WSL-side process inventory (relevant for Phase 8
+Linux soaks); same separate-router source.
 
-**DecisionQueue:** Last 20 state transitions: game step, from/to state, reason, Claude
-advice.
+**AlertsPanel:** Full alert history with severity filter, ack/dismiss
+actions, "mark all read", and "clear history". Persisted to `localStorage`
+via `alertStorage.ts`.
 
-**ModelComparison:** Per-checkpoint win rate table. Pulls `/api/training/models`.
+**AlertToast:** Transient overlay that appears when a new alert fires this
+poll, auto-dismissing after a timeout. Clicking it jumps to the Alerts tab.
 
-**ImprovementTimeline:** Chronological model-version table with win-rate delta arrows — component exists at `frontend/src/components/ImprovementTimeline.tsx` but is not currently wired into a tab; `RecentImprovements` on the Improvements tab supersedes it.
+**HelpTab:** Renders `documentation/wiki/operator-commands.md` from disk via
+`react-markdown` + `remark-gfm`. The backend re-reads the markdown on each
+request, so an edit to the `.md` surfaces here on the next page load
+without a frontend rebuild.
 
-**LoopStatus:** Daemon state (idle/checking/training), last run, next check, runs
-completed, trigger preview, transitions-since-last counter, reward-log disk usage
-(`reward_logs_size_bytes` from `/api/training/status`).
+**ConnectionStatus:** Header connection dot + advised-run badge mounted at
+the App shell, outside the tab switch.
 
-**TriggerControls:** Start/stop daemon buttons gated by a ConfirmDialog. Editable
-daemon config (check interval, min transitions, min hours, cycles per run, games per
-cycle) persisted via `PUT /api/training/daemon/config`.
+**StaleDataBanner:** Reusable stale-data warning shown by tabs whose
+`useApi` hook reports a fetch error or staleness threshold exceeded.
 
-**RecentImprovements:** Last N entries from `/api/training/promotions/history`,
-separating promotions from rollbacks (a rollback is `promoted: false` with a
-`reason` starting with `rollback:`). Shows win-rate delta, difficulty, timestamp.
-
-**RewardTrends:** Per-rule reward contribution table derived from
-`/api/training/reward-trends?games=N`. Shows total reward, fire count, average
-per fire, and share of total reward across the window.
-
-**AlertsPanel:** Full alert history with severity filter, ack/dismiss actions,
-"mark all read", and "clear history". Persisted to `localStorage` via
-`alertStorage.ts`.
-
-**AlertToast:** Transient overlay that appears when a new alert fires this poll,
-auto-dismissing after a timeout. Clicking it jumps to the Alerts tab.
+**ConfirmDialog:** Reusable confirm modal (used by AdvisedControlPanel for
+stop / reset-loop confirmations).
 
 ---
 
@@ -90,29 +94,25 @@ auto-dismissing after a timeout. Clicking it jumps to the Alerts tab.
 
 | Hook | Purpose | Details |
 |------|---------|---------|
-| `useWebSocket({url, onMessage, reconnectInterval})` | Generic WS client | Auto-reconnect (3s default), JSON parsing, cleanup on unmount |
-| `useGameState()` | Live game state | Wraps useWebSocket for `/ws/game`, returns `{gameState, connected}` |
-| `useBuildOrders()` | Build order CRUD | GET/POST/DELETE via `/api/build-orders`, returns `{orders, loading, createOrder, deleteOrder, refresh}` (backend API remains; no longer used by a visible tab) |
-| `useDaemonStatus()` | Loop status polling | 5s poll of `/api/training/daemon` + `/api/training/status`, returns merged `{daemon, status, error}` |
-| `useAlerts()` | Client-side alert engine | 5s poll of training endpoints, runs `alertRules.ts` over the snapshot, persists via `alertStorage.ts`, returns `{alerts, ackedIds, unreadCount, newAlertsThisPoll, ackAlert, dismissAlert, markAllRead, clearHistory}` |
+| `useApi<T>(endpoint, opts)` | Generic REST polling hook | Optional `pollMs`, returns `{data, isLoading, isStale, lastSuccess, refetch}`. IndexedDB cache keyed by endpoint + schema version. |
+| `useAdvisedRun()` | Advised run state polling + control mutations | 3s state poll + 10s control poll. Mutations via PUT. |
+| `useEvolveRun()` | Evolve run state + pool + results polling | Per-endpoint polling cadences inside the hook. |
+| `useDaemonStatus()` | Daemon + training-status polling | 5s poll of `/api/training/daemon` + `/api/training/status`. Currently only consumed by `useAlerts` for daemon-state alert rules — the dashboard refactor removed the Loop tab driver. |
+| `useAlerts()` | Client-side alert engine | 5s poll of training + advised + promotions endpoints, runs `alertRules.ts` over the snapshot, persists via `alertStorage.ts`. |
+| `useSystemInfo()` | Host resource snapshots | Backs ResourceGauge + WslProcessesPanel; reads the `/api/system/*` router. |
 
 ### Polling intervals
 
 | Component | Interval | Method |
 |-----------|----------|--------|
-| LiveView | Real-time | WebSocket |
-| CommandPanel | Real-time | WebSocket + initial REST |
 | AdvisedControlPanel (state) | 3000ms | `useAdvisedRun` / `useApi` poll |
 | AdvisedControlPanel (control) | 10000ms | `useAdvisedRun` / `useApi` poll |
-| TrainingDashboard | 5000ms | setInterval + fetch |
-| ModelComparison | 5000ms | setInterval + fetch |
-| LoopStatus (via `useDaemonStatus`) | 5000ms | setInterval + fetch |
-| RecentImprovements / RewardTrends | 5000ms | setInterval + fetch |
-| Stats | 10000ms | setInterval + fetch |
-| ProcessMonitor | 5000ms | setInterval + fetch |
+| EvolutionTab | per-endpoint inside `useEvolveRun` | `useApi` polls |
+| ImprovementsTab | refresh-on-demand only | `useApi` (no `pollMs`) |
+| ProcessMonitor / ResourceGauge / WslProcessesPanel | 5000ms | `useApi` / `useSystemInfo` |
 | AlertToast / AlertsPanel (via `useAlerts`) | 5000ms | setInterval + fetch, rules evaluated client-side |
+| HelpTab | one-time fetch on mount | `useApi` (no `pollMs`) |
 | Everything else | One-time | useEffect fetch on mount |
-| WebSocket reconnect | 3000ms | useWebSocket hook |
 
 ---
 
@@ -120,8 +120,8 @@ auto-dismissing after a timeout. Clicking it jumps to the Alerts tab.
 
 **Stack:** React 18 + TypeScript + Vite. Dev server on `:3000`, proxies to backend `:8765`.
 
-**Routing:** Tab-based via `useState<Tab>("live")` — no React Router, just conditional
-rendering based on active tab.
+**Routing:** Tab-based via `useState<Tab>("advisor")` — no React Router, just conditional
+rendering based on active tab. Default tab is `advisor`.
 
 **Frontend is domain-agnostic:** Components render whatever JSON the API returns. Unit
 type names, strategic states, and command vocabulary come from the backend. No SC2
@@ -130,10 +130,10 @@ concepts are hardcoded in the frontend.
 ### In-app alert system
 
 Alerts are generated client-side — there is no alert backend. The `useAlerts` hook
-polls the training endpoints on the usual 5s interval, builds a `TrainingSnapshot`,
-and evaluates the rules defined in `alertRules.ts` against it. Each rule has a stable
-ID, a severity (`info`/`warning`/`critical`), and a threshold. Alerts are deduplicated
-by ID over time.
+polls the training + advised + promotions endpoints on the usual 5s interval, builds
+a snapshot, and evaluates the rules defined in `alertRules.ts` against it. Each rule
+has a stable ID, a severity (`info`/`warning`/`critical`), and a threshold. Alerts are
+deduplicated by ID over time.
 
 State is persisted to `localStorage` via `alertStorage.ts`: the full alert history,
 the set of acknowledged IDs, and a "cleared-before" watermark. Acks and dismissals
@@ -150,41 +150,34 @@ badge on the tab button.
 Unit tests run via vitest with jsdom. Config lives in `frontend/vitest.config.ts`;
 global setup is `frontend/src/test/setup.ts`; a smoke test lives at
 `frontend/src/test/sanity.test.ts`. Per-component tests sit alongside their source
-as `*.test.tsx` / `*.test.ts`. Run with `npm run test:run`.
+as `*.test.tsx` / `*.test.ts`. Run with `npm test -- --run` or `npm run test:run`.
 
 | File | Purpose |
 |------|---------|
-| `frontend/src/App.tsx` | Tab routing + top-level alert overlay |
-| `frontend/src/components/LiveView.tsx` | Live game display |
-| `frontend/src/components/CommandPanel.tsx` | Command input + history |
-| `frontend/src/components/TrainingDashboard.tsx` | Training metrics |
-| `frontend/src/components/ModelComparison.tsx` | Per-checkpoint win rate table |
-| `frontend/src/components/ImprovementTimeline.tsx` | Chronological win-rate delta table |
-| `frontend/src/components/CheckpointList.tsx` | Model checkpoints |
-| `frontend/src/components/RewardRuleEditor.tsx` | Reward rule editing |
-| `frontend/src/components/Stats.tsx` | Per-difficulty win rates + expandable game history with reward timeline |
-| `frontend/src/components/DecisionQueue.tsx` | Decision log |
-| `frontend/src/components/ProcessMonitor.tsx` | Live process inventory and health |
-| `frontend/src/components/AdvisedImprovements.tsx` | Advisor-driven improvement history |
-| `frontend/src/components/ConfirmDialog.tsx` | Reusable confirm modal (used by TriggerControls) |
-| `frontend/src/components/LoopStatus.tsx` | Daemon state + trigger preview + disk usage |
-| `frontend/src/components/TriggerControls.tsx` | Start/stop daemon + editable config |
-| `frontend/src/components/RecentImprovements.tsx` | Promotions + rollbacks timeline |
-| `frontend/src/components/RewardTrends.tsx` | Per-rule reward contribution table |
-| `frontend/src/components/AlertToast.tsx` | Transient new-alert overlay |
-| `frontend/src/components/AlertsPanel.tsx` | Full alert history + filter + ack |
+| `frontend/src/App.tsx` | 6-tab routing + top-level alert overlay + ConnectionStatus |
 | `frontend/src/components/AdvisedControlPanel.tsx` | Advisor tab: live status, loop controls, hints, reward injection |
+| `frontend/src/components/EvolutionTab.tsx` | Evolution tab: pool + current round + results feed |
+| `frontend/src/components/ImprovementsTab.tsx` | Unified advised + evolve improvements timeline |
+| `frontend/src/components/ProcessMonitor.tsx` | Live process inventory and health |
+| `frontend/src/components/ResourceGauge.tsx` | Host CPU/memory/disk gauges |
+| `frontend/src/components/WslProcessesPanel.tsx` | WSL-side process inventory |
+| `frontend/src/components/AlertsPanel.tsx` | Full alert history + filter + ack |
+| `frontend/src/components/AlertToast.tsx` | Transient new-alert overlay |
+| `frontend/src/components/HelpTab.tsx` | Renders `operator-commands.md` via react-markdown |
 | `frontend/src/components/ConnectionStatus.tsx` | Header connection dot + advised-run badge |
-| `frontend/src/components/LadderTab.tsx` | Elo standings table + head-to-head grid (Phase 4) |
 | `frontend/src/components/StaleDataBanner.tsx` | Reusable stale-data warning banner |
-| `frontend/src/hooks/useWebSocket.ts` | Generic WS hook |
-| `frontend/src/hooks/useGameState.ts` | Game state WS hook |
-| `frontend/src/hooks/useDaemonStatus.ts` | Daemon + training status polling |
-| `frontend/src/hooks/useAlerts.ts` | Client-side alert engine + persistence |
-| `frontend/src/hooks/useApi.ts` | Generic REST polling hook with stale detection |
+| `frontend/src/components/ConfirmDialog.tsx` | Reusable confirm modal |
+| `frontend/src/components/CommandPanel.tsx` | (orphan — not currently mounted; predates refactor) |
+| `frontend/src/components/BuildOrderEditor.tsx` | (orphan — not currently mounted; predates refactor) |
+| `frontend/src/hooks/useApi.ts` | Generic REST polling hook with stale detection + IndexedDB cache |
 | `frontend/src/hooks/useAdvisedRun.ts` | Advised run state polling + control mutations |
+| `frontend/src/hooks/useEvolveRun.ts` | Evolve run state + pool + results polling |
+| `frontend/src/hooks/useDaemonStatus.ts` | Daemon + training status polling (consumed only by `useAlerts`) |
+| `frontend/src/hooks/useAlerts.ts` | Client-side alert engine + persistence |
+| `frontend/src/hooks/useSystemInfo.ts` | Host resource snapshots backing the Processes tab |
 | `frontend/src/lib/alertRules.ts` | Alert rule definitions and evaluator |
 | `frontend/src/lib/alertStorage.ts` | `localStorage` persistence for alerts |
+| `frontend/src/lib/idbCache.ts` | IndexedDB cache used by `useApi` |
 | `frontend/vitest.config.ts` | Vitest config (jsdom + global setup) |
 | `frontend/src/test/setup.ts` | Global test setup (matchers, mocks) |
 | `frontend/src/test/sanity.test.ts` | Smoke test that the vitest stack loads |
