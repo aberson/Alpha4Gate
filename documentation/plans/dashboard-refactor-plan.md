@@ -276,6 +276,7 @@ Vitest covering:
 - **Type:** operator
 - **Produces:** Pass/fail observation in the PR description; a small markdown record at `documentation/soak-test-runs/dashboard-refactor-smoke-<TS>.md`.
 - **Done when:** Operator confirms the new dashboard renders, surviving features behave normally, and Improvements timeline shows real data from both sources.
+- **Status:** DONE (2026-04-30) — operator smoke test PASS. Initial "No help content available" finding traced to a non-running backend (the soak does not start `--serve`); after `uv run python -m bots.v0.runner --serve` came up, the dashboard rendered correctly. Lesson captured: the dashboard surface needs an explicit backend instance separate from any evolve/soak process.
 
 ---
 
