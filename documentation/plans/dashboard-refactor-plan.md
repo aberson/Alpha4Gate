@@ -228,6 +228,7 @@ Vitest covering:
 - **Problem:** Implement `GET /api/improvements/unified` per §5 spec. Read `improvement_log.json` and `evolve_results.jsonl`, normalise into the unified schema, sort by timestamp desc, apply optional source / limit filters.
 - **Produces:** Updated `bots/v0/api.py`; new test class in `tests/test_api.py` with cases: (a) only advised, (b) only evolve, (c) both, (d) source filter, (e) limit.
 - **Done when:** New tests pass; mypy strict still 0 issues; ruff clean.
+- **Status:** DONE (2026-04-29)
 
 ### Step 3: Build ImprovementsTab
 

@@ -972,6 +972,242 @@ async def get_promotion_latest() -> dict[str, Any]:
     return {"latest": latest}
 
 
+# --- Unified Improvements (advised + evolve) ---
+#
+# The unified endpoint feeds the single Improvements timeline tab on the
+# refactored dashboard. It pulls advised-run entries from
+# ``improvement_log.json`` and evolve-run entries from
+# ``evolve_results.jsonl``, normalises both into a common shape, then
+# merges and sorts by timestamp desc. Both source files are CROSS-VERSION
+# (repo-root ``data/``) so we read from ``_evolve_dir``, which the runner
+# pins to repo-root regardless of which bot version is current.
+
+_PHASE_ORDINAL: dict[str, int] = {"fitness": 0, "stack_apply": 1, "regression": 2}
+
+
+def _slugify(text: str) -> str:
+    """Lowercase + dash-separate a title for a fallback id.
+
+    Used only when the canonical evolve-row candidate identifier is
+    missing — in practice the on-disk file always has ``candidate``,
+    but the spec calls for a deterministic fallback.
+    """
+    cleaned = "".join(ch.lower() if ch.isalnum() else "-" for ch in text)
+    while "--" in cleaned:
+        cleaned = cleaned.replace("--", "-")
+    return cleaned.strip("-")
+
+
+def _normalize_advised_metric(metrics: dict[str, Any] | None) -> str | None:
+    """Build a short metric blurb from an advised-run ``metrics`` dict.
+
+    Preference order matches the spec: validation_wins → observation_wins
+    → first single int/string field → None when empty.
+    """
+    if not metrics:
+        return None
+    if "validation_wins" in metrics and "validation_total" in metrics:
+        return (
+            f"{metrics['validation_wins']}/{metrics['validation_total']} "
+            "wins (validation)"
+        )
+    if "validation_wins" in metrics:
+        # Fall back to a single value if total is absent.
+        return f"{metrics['validation_wins']} wins (validation)"
+    if "observation_wins" in metrics and "observation_total" in metrics:
+        return (
+            f"{metrics['observation_wins']}/{metrics['observation_total']} "
+            "wins (observation)"
+        )
+    if "observation_wins" in metrics:
+        return f"{metrics['observation_wins']} wins (observation)"
+    for key, value in metrics.items():
+        if isinstance(value, int | str):
+            return f"{key}: {value}"
+    return None
+
+
+_ADVISED_OUTCOME_MAP: dict[str, str] = {
+    "pass": "promoted",
+    "stopped": "discarded",
+    "fail": "discarded",
+}
+
+
+def _normalize_advised_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """Map one row from ``improvement_log.json`` to the unified shape."""
+    run_id = entry.get("run_id", "unknown")
+    iteration = entry.get("iteration", 0)
+    fallback_id = f"advised-{run_id}-iter{iteration}"
+    return {
+        "id": entry.get("id") or fallback_id,
+        "source": "advised",
+        "timestamp": entry.get("timestamp"),
+        "title": entry.get("title", ""),
+        "description": entry.get("description", ""),
+        "type": entry.get("type", "training"),
+        "outcome": _ADVISED_OUTCOME_MAP.get(
+            entry.get("result", ""), entry.get("result", "")
+        ),
+        "metric": _normalize_advised_metric(entry.get("metrics")),
+        "principles": entry.get("principles", []) or [],
+        "files_changed": entry.get("files_changed", []) or [],
+    }
+
+
+def _candidate_identifier(candidate: Any) -> str | None:
+    """Pull a stable identifier from the evolve ``candidate`` field.
+
+    Real on-disk rows store ``candidate`` as a plain string (e.g.
+    ``"cand_8346016e"``); the spec describes it as a dict with
+    ``name``/``id``. Handle both shapes so the rollup works on whatever
+    schema variant the file has.
+    """
+    if isinstance(candidate, str) and candidate:
+        return candidate
+    if isinstance(candidate, dict):
+        for key in ("name", "id"):
+            value = candidate.get(key)
+            if isinstance(value, str) and value:
+                return value
+    return None
+
+
+def _evolve_metric(row: dict[str, Any]) -> str | None:
+    """Build a ``"X-Y vs <parent>"`` blurb from an evolve canonical row."""
+    wins_cand = row.get("wins_cand")
+    wins_parent = row.get("wins_parent")
+    parent = row.get("parent", "?")
+    if isinstance(wins_cand, int) and isinstance(wins_parent, int):
+        return f"{wins_cand}-{wins_parent} vs {parent}"
+    return None
+
+
+def _normalize_evolve_rollup(
+    title: str,
+    generation: int,
+    rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Collapse all phase rows for one (title, generation) imp into one entry.
+
+    Sort by phase ordinal (fitness < stack_apply < regression). When the
+    same phase appears multiple times (multiple stack_apply attempts),
+    the latest by timestamp wins; rows without a timestamp fall back to
+    file order via the ``_file_order`` key injected by the caller.
+    """
+    def _row_sort_key(row: dict[str, Any]) -> tuple[int, str, int]:
+        phase = row.get("phase", "")
+        return (
+            _PHASE_ORDINAL.get(phase, 99),
+            row.get("timestamp") or "",
+            row.get("_file_order", 0),
+        )
+
+    sorted_rows = sorted(rows, key=_row_sort_key)
+    canonical = sorted_rows[-1]
+    imp = canonical.get("imp") or {}
+    candidate_id = _candidate_identifier(canonical.get("candidate"))
+    if candidate_id is None:
+        candidate_id = _slugify(title) or f"gen{generation}"
+    entry_id = f"evolve-gen{generation}-{candidate_id}"
+    return {
+        "id": entry_id,
+        "source": "evolve",
+        "timestamp": canonical.get("timestamp"),
+        "title": title,
+        "description": imp.get("description", ""),
+        "type": imp.get("type", "training"),
+        "outcome": canonical.get("outcome", ""),
+        "metric": _evolve_metric(canonical),
+        "principles": imp.get("principle_ids", []) or [],
+        "files_changed": imp.get("files_touched", []) or [],
+    }
+
+
+def _load_advised_improvements(path: Path) -> list[dict[str, Any]]:
+    """Read ``improvement_log.json`` and normalise each entry. Empty on miss."""
+    if not path.exists():
+        return []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    entries = raw.get("improvements") if isinstance(raw, dict) else None
+    if not isinstance(entries, list):
+        return []
+    return [
+        _normalize_advised_entry(entry)
+        for entry in entries
+        if isinstance(entry, dict)
+    ]
+
+
+def _load_evolve_improvements(path: Path) -> list[dict[str, Any]]:
+    """Read ``evolve_results.jsonl`` + collapse phase rows per imp+gen."""
+    if not path.exists():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+
+    groups: dict[tuple[str, int], list[dict[str, Any]]] = {}
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            row = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        imp = row.get("imp")
+        if not isinstance(imp, dict):
+            continue
+        title = imp.get("title")
+        generation = row.get("generation")
+        if not isinstance(title, str) or not isinstance(generation, int):
+            continue
+        # Inject file-order tiebreaker for rollup ordering.
+        row["_file_order"] = index
+        groups.setdefault((title, generation), []).append(row)
+
+    return [
+        _normalize_evolve_rollup(title, generation, rows)
+        for (title, generation), rows in groups.items()
+    ]
+
+
+@app.get("/api/improvements/unified")
+async def get_improvements_unified(
+    source: str | None = Query(default=None, pattern="^(advised|evolve)$"),
+    limit: int = Query(default=50, ge=1, le=500),
+) -> dict[str, Any]:
+    """Return a unified timeline of advised + evolve improvements.
+
+    Pulls ``improvement_log.json`` and ``evolve_results.jsonl`` from the
+    cross-version data dir, normalises both into a common entry shape,
+    merges and sorts by timestamp descending, then applies the optional
+    ``source`` filter and ``limit`` cap. Missing source files produce an
+    empty list (no error). The legacy ``/api/improvements`` endpoint
+    stays intact for back-compat until the dashboard refactor finishes.
+    """
+    advised_path = _evolve_dir / "improvement_log.json"
+    evolve_path = _evolve_dir / _EVOLVE_RESULTS_FILE
+
+    entries: list[dict[str, Any]] = []
+    if source != "evolve":
+        entries.extend(_load_advised_improvements(advised_path))
+    if source != "advised":
+        entries.extend(_load_evolve_improvements(evolve_path))
+
+    # Sort by timestamp descending. Entries without a timestamp sort to
+    # the end (treated as the empty string, which compares smallest).
+    entries.sort(key=lambda e: e.get("timestamp") or "", reverse=True)
+    return {"improvements": entries[:limit]}
+
+
 @app.get("/api/improvements")
 async def get_improvements() -> dict[str, Any]:
     """Get the improvement log (changes made by improve-bot-advised runs)."""

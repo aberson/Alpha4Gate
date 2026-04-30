@@ -761,6 +761,375 @@ class TestEvolveEndpoints:
         assert data["stacked_titles"] == []
 
 
+class TestImprovementsUnifiedEndpoint:
+    """`/api/improvements/unified` merges advised + evolve sources into one
+    timeline keyed off the dashboard refactor plan §5. Both source files
+    live at ``_evolve_dir`` (cross-version). The test fixture leaves
+    ``evolve_dir`` defaulted to ``data_dir`` so we stage both files in the
+    same tmp_path / "data" directory."""
+
+    @staticmethod
+    def _advised_file(tmp_path: Path, entries: list[dict[str, object]]) -> None:
+        path = tmp_path / "data" / "improvement_log.json"
+        path.write_text(
+            json.dumps({"improvements": entries}), encoding="utf-8"
+        )
+
+    @staticmethod
+    def _evolve_file(tmp_path: Path, rows: list[dict[str, object]]) -> None:
+        path = tmp_path / "data" / "evolve_results.jsonl"
+        path.write_text(
+            "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+        )
+
+    @staticmethod
+    def _advised_entry(
+        run_id: str = "20260412-2007",
+        iteration: int = 1,
+        timestamp: str = "2026-04-12T20:50:00Z",
+        title: str = "Stronger mineral floating penalties",
+        result: str = "pass",
+        metrics: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        return {
+            "id": f"advised-{run_id}-iter{iteration}",
+            "timestamp": timestamp,
+            "run_id": run_id,
+            "iteration": iteration,
+            "title": title,
+            "type": "training",
+            "description": "Tweaked thresholds.",
+            "principles": ["§4.2 Resource Spending"],
+            "result": result,
+            "metrics": (
+                metrics
+                if metrics is not None
+                else {"validation_wins": 7, "validation_total": 10}
+            ),
+            "files_changed": ["data/reward_rules.json"],
+        }
+
+    @staticmethod
+    def _evolve_row(
+        phase: str,
+        generation: int,
+        title: str,
+        outcome: str,
+        timestamp: str | None,
+        candidate: object = "cand_2e57ef46",
+        wins_cand: int = 3,
+        wins_parent: int = 2,
+        parent: str = "v3",
+    ) -> dict[str, object]:
+        row: dict[str, object] = {
+            "phase": phase,
+            "generation": generation,
+            "parent": parent,
+            "imp": {
+                "rank": 1,
+                "title": title,
+                "type": "dev",
+                "description": f"{title} body.",
+                "principle_ids": ["4.1", "22"],
+                "files_touched": ["bots/v3/macro_manager.py"],
+            },
+            "candidate": candidate,
+            "record": [],
+            "wins_cand": wins_cand,
+            "wins_parent": wins_parent,
+            "games": wins_cand + wins_parent,
+            "outcome": outcome,
+            "reason": "",
+        }
+        if timestamp is not None:
+            row["timestamp"] = timestamp
+        return row
+
+    def test_only_advised_when_evolve_file_missing(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        self._advised_file(tmp_path, [self._advised_entry()])
+        resp = client.get("/api/improvements/unified")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["improvements"]) == 1
+        entry = data["improvements"][0]
+        assert entry["source"] == "advised"
+        assert entry["id"] == "advised-20260412-2007-iter1"
+        assert entry["outcome"] == "promoted"
+        assert entry["metric"] == "7/10 wins (validation)"
+        assert entry["principles"] == ["§4.2 Resource Spending"]
+        assert entry["files_changed"] == ["data/reward_rules.json"]
+
+    def test_advised_outcome_mapping(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        self._advised_file(
+            tmp_path,
+            [
+                self._advised_entry(iteration=1, result="pass"),
+                self._advised_entry(
+                    iteration=2,
+                    timestamp="2026-04-12T21:00:00Z",
+                    result="stopped",
+                ),
+                self._advised_entry(
+                    iteration=3,
+                    timestamp="2026-04-12T21:10:00Z",
+                    result="fail",
+                ),
+            ],
+        )
+        resp = client.get("/api/improvements/unified")
+        outcomes = {e["id"]: e["outcome"] for e in resp.json()["improvements"]}
+        assert outcomes["advised-20260412-2007-iter1"] == "promoted"
+        assert outcomes["advised-20260412-2007-iter2"] == "discarded"
+        assert outcomes["advised-20260412-2007-iter3"] == "discarded"
+
+    def test_advised_metric_falls_back(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        self._advised_file(
+            tmp_path,
+            [
+                self._advised_entry(
+                    iteration=1,
+                    metrics={"observation_wins": 4, "observation_total": 5},
+                ),
+                self._advised_entry(
+                    iteration=2,
+                    timestamp="2026-04-12T21:00:00Z",
+                    metrics={},
+                ),
+            ],
+        )
+        resp = client.get("/api/improvements/unified")
+        entries = {e["id"]: e for e in resp.json()["improvements"]}
+        assert (
+            entries["advised-20260412-2007-iter1"]["metric"]
+            == "4/5 wins (observation)"
+        )
+        assert entries["advised-20260412-2007-iter2"]["metric"] is None
+
+    def test_only_evolve_when_advised_file_missing(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        self._evolve_file(
+            tmp_path,
+            [
+                self._evolve_row(
+                    "fitness",
+                    generation=2,
+                    title="Comeback probe-rebuild push",
+                    outcome="fitness-pass",
+                    timestamp="2026-04-25T10:00:00Z",
+                ),
+            ],
+        )
+        resp = client.get("/api/improvements/unified")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["improvements"]) == 1
+        entry = data["improvements"][0]
+        assert entry["source"] == "evolve"
+        assert entry["id"] == "evolve-gen2-cand_2e57ef46"
+        assert entry["outcome"] == "fitness-pass"
+        assert entry["metric"] == "3-2 vs v3"
+        assert entry["type"] == "dev"
+        assert entry["principles"] == ["4.1", "22"]
+        assert entry["files_changed"] == ["bots/v3/macro_manager.py"]
+
+    def test_both_sources_merged_and_sorted_desc(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        self._advised_file(
+            tmp_path,
+            [
+                self._advised_entry(
+                    iteration=1, timestamp="2026-04-12T20:50:00Z"
+                ),
+                self._advised_entry(
+                    iteration=2, timestamp="2026-04-26T11:00:00Z"
+                ),
+            ],
+        )
+        self._evolve_file(
+            tmp_path,
+            [
+                self._evolve_row(
+                    "fitness",
+                    generation=2,
+                    title="Imp A",
+                    outcome="fitness-pass",
+                    timestamp="2026-04-25T10:00:00Z",
+                ),
+                self._evolve_row(
+                    "fitness",
+                    generation=3,
+                    title="Imp B",
+                    outcome="fitness-pass",
+                    timestamp="2026-04-27T09:00:00Z",
+                ),
+            ],
+        )
+        resp = client.get("/api/improvements/unified")
+        timestamps = [e["timestamp"] for e in resp.json()["improvements"]]
+        assert timestamps == sorted(timestamps, reverse=True)
+        # Newest entry is the gen-3 evolve row from 04-27.
+        first = resp.json()["improvements"][0]
+        assert first["source"] == "evolve"
+        assert first["title"] == "Imp B"
+
+    def test_source_filter_advised(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        self._advised_file(tmp_path, [self._advised_entry()])
+        self._evolve_file(
+            tmp_path,
+            [
+                self._evolve_row(
+                    "fitness",
+                    generation=2,
+                    title="Imp A",
+                    outcome="fitness-pass",
+                    timestamp="2026-04-25T10:00:00Z",
+                ),
+            ],
+        )
+        resp = client.get("/api/improvements/unified?source=advised")
+        sources = {e["source"] for e in resp.json()["improvements"]}
+        assert sources == {"advised"}
+
+    def test_source_filter_evolve(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        self._advised_file(tmp_path, [self._advised_entry()])
+        self._evolve_file(
+            tmp_path,
+            [
+                self._evolve_row(
+                    "fitness",
+                    generation=2,
+                    title="Imp A",
+                    outcome="fitness-pass",
+                    timestamp="2026-04-25T10:00:00Z",
+                ),
+            ],
+        )
+        resp = client.get("/api/improvements/unified?source=evolve")
+        sources = {e["source"] for e in resp.json()["improvements"]}
+        assert sources == {"evolve"}
+
+    def test_limit_caps_response(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        self._advised_file(
+            tmp_path,
+            [
+                self._advised_entry(
+                    iteration=i,
+                    timestamp=f"2026-04-12T20:{50 + i:02d}:00Z",
+                )
+                for i in range(1, 6)
+            ],
+        )
+        resp = client.get("/api/improvements/unified?limit=2")
+        data = resp.json()
+        assert len(data["improvements"]) == 2
+        # Default sort desc: the two newest iterations come back.
+        ids = [e["id"] for e in data["improvements"]]
+        assert ids == [
+            "advised-20260412-2007-iter5",
+            "advised-20260412-2007-iter4",
+        ]
+
+    def test_evolve_rollup_collapses_phases(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """Multiple phase rows for the same (title, generation) collapse to
+        one entry; the canonical row is the one with the highest phase
+        ordinal (regression > stack_apply > fitness)."""
+        self._evolve_file(
+            tmp_path,
+            [
+                self._evolve_row(
+                    "fitness",
+                    generation=2,
+                    title="Imp A",
+                    outcome="fitness-pass",
+                    timestamp="2026-04-25T10:00:00Z",
+                ),
+                self._evolve_row(
+                    "stack_apply",
+                    generation=2,
+                    title="Imp A",
+                    outcome="stack-apply-pass",
+                    timestamp="2026-04-25T10:30:00Z",
+                ),
+                self._evolve_row(
+                    "regression",
+                    generation=2,
+                    title="Imp A",
+                    outcome="regression-rollback",
+                    timestamp="2026-04-25T11:00:00Z",
+                ),
+            ],
+        )
+        resp = client.get("/api/improvements/unified")
+        data = resp.json()
+        # Three input rows collapse to one unified entry.
+        assert len(data["improvements"]) == 1
+        entry = data["improvements"][0]
+        assert entry["outcome"] == "regression-rollback"
+        # The canonical row carries the regression-phase timestamp.
+        assert entry["timestamp"] == "2026-04-25T11:00:00Z"
+
+    def test_evolve_rollup_collapses_multiple_stack_apply_attempts(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """When the same phase repeats (multiple stack_apply attempts),
+        the latest by timestamp wins."""
+        self._evolve_file(
+            tmp_path,
+            [
+                self._evolve_row(
+                    "fitness",
+                    generation=2,
+                    title="Imp A",
+                    outcome="fitness-pass",
+                    timestamp="2026-04-25T10:00:00Z",
+                ),
+                self._evolve_row(
+                    "stack_apply",
+                    generation=2,
+                    title="Imp A",
+                    outcome="stack-apply-commit-fail",
+                    timestamp="2026-04-25T10:20:00Z",
+                ),
+                self._evolve_row(
+                    "stack_apply",
+                    generation=2,
+                    title="Imp A",
+                    outcome="stack-apply-pass",
+                    timestamp="2026-04-25T10:40:00Z",
+                ),
+            ],
+        )
+        resp = client.get("/api/improvements/unified")
+        data = resp.json()
+        assert len(data["improvements"]) == 1
+        # Highest phase ordinal present is stack_apply; the latest
+        # attempt is the canonical row.
+        assert data["improvements"][0]["outcome"] == "stack-apply-pass"
+
+    def test_both_files_missing_returns_empty(
+        self, client: TestClient
+    ) -> None:
+        resp = client.get("/api/improvements/unified")
+        assert resp.status_code == 200
+        assert resp.json() == {"improvements": []}
+
+
 class TestRewardRulesEndpoints:
     def test_get_empty_rules(self, client: TestClient) -> None:
         resp = client.get("/api/reward-rules")
