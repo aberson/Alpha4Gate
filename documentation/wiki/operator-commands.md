@@ -362,7 +362,7 @@ feature branch — verify before committing (memory
 
 ## Skills (slash commands)
 
-The `/` slash-skills available in this project (run inside Claude Code):
+The `/` slash-skills installed in this project (run inside Claude Code):
 
 ```
 /improve-bot                 # autonomous bot-improvement run (long; PPO-driven)
@@ -376,10 +376,24 @@ The `/` slash-skills available in this project (run inside Claude Code):
 /plan-feature                # plan a new feature/phase
 /plan-review                 # audit a plan for gaps
 /repo-update                 # post-phase docs+git wrap-up
+/repo-sync                   # sync GitHub issues to current plan structure
 /session-wrap                # prepare context handoff to next session
-/ultrareview                 # multi-agent cloud review of current branch
-/review-pr <num>             # review a PR
+/review-pr <num>             # review a PR (multi-pass gauntlet)
 /review-prompt               # improve a rough prompt
+```
+
+### Built-in Claude Code commands
+
+Shipped with the Claude Code CLI itself (not installed as skills):
+
+```
+/help                        # list available commands + usage
+/clear                       # clear the current conversation context
+/config                      # adjust simple settings (theme, model, etc.)
+/fast                        # toggle Fast Mode (Opus 4.6 only)
+/ultrareview                 # multi-agent cloud review of current branch
+                             #   /ultrareview <PR#> reviews a GitHub PR instead.
+                             #   User-triggered + billed; Claude can't launch it.
 ```
 
 Run `/help` inside Claude Code to see the canonical list.
