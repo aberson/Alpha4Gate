@@ -41,15 +41,6 @@ def clean_error_buffer() -> Iterator[None]:
     get_error_log_buffer().reset()
 
 
-class TestStatusEndpoint:
-    def test_idle_status(self, client: TestClient) -> None:
-        resp = client.get("/api/status")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["state"] == "idle"
-        assert data["game_step"] is None
-
-
 class TestOperatorCommandsEndpoint:
     """`/api/operator-commands` reads the wiki doc from disk so the Help
     dashboard tab stays in sync with the on-disk markdown without a
@@ -65,102 +56,6 @@ class TestOperatorCommandsEndpoint:
         # heading from the doc; if the doc is renamed the test breaks
         # which is the right signal.
         assert "# Operator commands" in data["markdown"]
-
-
-class TestStatsEndpoint:
-    def test_empty_stats(self, client: TestClient) -> None:
-        resp = client.get("/api/stats")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["total_games"] == 0
-        assert data["recent_games"] == []
-
-    def test_stats_from_db(self, client: TestClient, tmp_path: Path) -> None:
-        import sqlite3
-
-        db_path = tmp_path / "data" / "training.db"
-        conn = sqlite3.connect(str(db_path))
-        conn.execute(
-            "CREATE TABLE games (game_id TEXT, map_name TEXT, "
-            "difficulty INTEGER, result TEXT, duration_secs REAL, "
-            "total_reward REAL, model_version TEXT, created_at TEXT)"
-        )
-        conn.execute(
-            "INSERT INTO games VALUES "
-            "('g1','Simple64',1,'win',300,5.0,'v1','2026-01-01T00:00:00')"
-        )
-        conn.commit()
-        conn.close()
-        resp = client.get("/api/stats")
-        data = resp.json()
-        assert data["total_games"] == 1
-        assert data["overall"]["wins"] == 1
-
-
-class TestBuildOrderEndpoints:
-    def test_empty_build_orders(self, client: TestClient) -> None:
-        resp = client.get("/api/build-orders")
-        assert resp.status_code == 200
-        assert resp.json()["orders"] == []
-
-    def test_create_and_get(self, client: TestClient) -> None:
-        order = {
-            "name": "Test Build",
-            "steps": [{"supply": 14, "action": "build", "target": "Pylon"}],
-        }
-        create_resp = client.post("/api/build-orders", json=order)
-        assert create_resp.status_code == 200
-        assert create_resp.json()["created"] is True
-        assert create_resp.json()["id"] == "test-build"
-
-        get_resp = client.get("/api/build-orders")
-        assert len(get_resp.json()["orders"]) == 1
-
-    def test_delete_build_order(self, client: TestClient) -> None:
-        order = {
-            "id": "test",
-            "name": "Test",
-            "steps": [],
-        }
-        client.post("/api/build-orders", json=order)
-        del_resp = client.delete("/api/build-orders/test")
-        assert del_resp.json()["deleted"] is True
-
-        get_resp = client.get("/api/build-orders")
-        assert len(get_resp.json()["orders"]) == 0
-
-    def test_delete_nonexistent(self, client: TestClient) -> None:
-        resp = client.delete("/api/build-orders/nonexistent")
-        assert resp.json()["deleted"] is False
-
-
-class TestDecisionLogEndpoint:
-    def test_empty_log(self, client: TestClient) -> None:
-        resp = client.get("/api/decision-log")
-        assert resp.status_code == 200
-        assert resp.json()["entries"] == []
-
-    def test_log_from_file(self, client: TestClient, tmp_path: Path) -> None:
-        entries = {"entries": [{"from_state": "opening", "to_state": "expand"}]}
-        (tmp_path / "data" / "decision_audit.json").write_text(json.dumps(entries))
-        resp = client.get("/api/decision-log")
-        assert len(resp.json()["entries"]) == 1
-
-
-class TestGameEndpoints:
-    def test_start_game(self, client: TestClient) -> None:
-        resp = client.post("/api/game/start", json={"map": "Simple64", "difficulty": "Easy"})
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "starting"
-
-    def test_start_batch(self, client: TestClient) -> None:
-        resp = client.post(
-            "/api/game/batch",
-            json={"count": 5, "map": "Simple64", "difficulty": "Easy"},
-        )
-        assert resp.status_code == 200
-        assert resp.json()["count"] == 5
-        assert resp.json()["status"] == "running"
 
 
 class TestTrainingEndpoints:
@@ -196,150 +91,33 @@ class TestTrainingEndpoints:
         data = resp.json()
         assert data["reward_logs_size_bytes"] == len(payload_a) + len(payload_b)
 
-    def test_reward_trends_empty_no_directory(self, client: TestClient) -> None:
-        resp = client.get("/api/training/reward-trends")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["rules"] == []
-        assert data["n_games"] == 0
-        assert isinstance(data["generated_at"], str)
-
-    def test_reward_trends_populated(self, client: TestClient, tmp_path: Path) -> None:
-        reward_logs = tmp_path / "data" / "reward_logs"
-        reward_logs.mkdir()
-        game_a_lines = [
-            {
-                "game_time": 1.0,
-                "total_reward": 0.3,
-                "fired_rules": [
-                    {"id": "army_supply_growth", "reward": 0.1},
-                    {"id": "expand_bonus", "reward": 0.2},
-                ],
-                "is_terminal": False,
-                "result": None,
-            },
-            {
-                "game_time": 2.0,
-                "total_reward": 0.4,
-                "fired_rules": [
-                    {"id": "army_supply_growth", "reward": 0.4},
-                ],
-                "is_terminal": True,
-                "result": "win",
-            },
-        ]
-        game_b_lines = [
-            {
-                "game_time": 1.5,
-                "total_reward": 0.25,
-                "fired_rules": [
-                    {"id": "army_supply_growth", "reward": 0.25},
-                ],
-                "is_terminal": True,
-                "result": "loss",
-            },
-        ]
-        (reward_logs / "game_a.jsonl").write_text(
-            "\n".join(json.dumps(r) for r in game_a_lines) + "\n",
-            encoding="utf-8",
-        )
-        (reward_logs / "game_b.jsonl").write_text(
-            "\n".join(json.dumps(r) for r in game_b_lines) + "\n",
-            encoding="utf-8",
-        )
-
-        resp = client.get("/api/training/reward-trends")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["n_games"] == 2
-        rules_by_id = {r["rule_id"]: r for r in data["rules"]}
-        assert set(rules_by_id.keys()) == {"army_supply_growth", "expand_bonus"}
-        assert rules_by_id["army_supply_growth"]["total_contribution"] == pytest.approx(
-            0.1 + 0.4 + 0.25
-        )
-        # army_supply_growth appeared in both games
-        assert len(rules_by_id["army_supply_growth"]["points"]) == 2
-        assert rules_by_id["army_supply_growth"]["contribution_per_game"] == pytest.approx(
-            (0.1 + 0.4 + 0.25) / 2
-        )
-        # expand_bonus only appeared in game_a
-        assert rules_by_id["expand_bonus"]["total_contribution"] == pytest.approx(0.2)
-        assert len(rules_by_id["expand_bonus"]["points"]) == 1
-
-    def test_reward_trends_default_games_param(self, client: TestClient) -> None:
-        resp = client.get("/api/training/reward-trends")
-        assert resp.status_code == 200
-        assert resp.json()["n_games"] == 0
-
-    def test_reward_trends_explicit_games_param(self, client: TestClient) -> None:
-        resp = client.get("/api/training/reward-trends?games=10")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["rules"] == []
-        assert data["n_games"] == 0
-
-    def test_reward_trends_games_below_min(self, client: TestClient) -> None:
-        resp = client.get("/api/training/reward-trends?games=0")
-        assert resp.status_code == 422
-
-    def test_reward_trends_games_above_max(self, client: TestClient) -> None:
-        resp = client.get("/api/training/reward-trends?games=1001")
-        assert resp.status_code == 422
-
-    def test_reward_trends_games_non_numeric(self, client: TestClient) -> None:
-        resp = client.get("/api/training/reward-trends?games=abc")
-        assert resp.status_code == 422
-
     def test_training_history_empty(self, client: TestClient) -> None:
         resp = client.get("/api/training/history")
         assert resp.status_code == 200
         data = resp.json()
         assert data.get("total_games", 0) == 0 or data.get("games") == []
 
-    def test_training_checkpoints_empty(self, client: TestClient) -> None:
-        resp = client.get("/api/training/checkpoints")
+
+class TestDaemonStatusEndpoints:
+    """`/api/training/daemon` and `/api/training/triggers` feed
+    ``useDaemonStatus`` -> ``useAlerts`` (Alerts tab). Reclassified KEPT
+    in dashboard refactor Step 6 because the Alerts pipeline depends on
+    them even after the Loop tab is gone."""
+
+    def test_daemon_status_returns_payload(self, client: TestClient) -> None:
+        resp = client.get("/api/training/daemon")
         assert resp.status_code == 200
-        assert resp.json()["checkpoints"] == []
+        data = resp.json()
+        # Daemon is configured but not running in the test fixture.
+        assert "running" in data
+        assert data["running"] is False
 
-    def test_training_start(self, client: TestClient) -> None:
-        resp = client.post("/api/training/start", json={"mode": "rl"})
+    def test_triggers_returns_payload(self, client: TestClient) -> None:
+        resp = client.get("/api/training/triggers")
         assert resp.status_code == 200
-        assert resp.json()["status"] == "started"
-        # Clean up: stop the daemon
-        client.post("/api/training/stop")
-
-    def test_training_stop(self, client: TestClient) -> None:
-        resp = client.post("/api/training/stop")
-        assert resp.status_code == 200
-
-    def test_training_models_empty(self, client: TestClient) -> None:
-        resp = client.get("/api/training/models")
-        assert resp.status_code == 200
-        assert resp.json()["models"] == []
-
-    def test_training_models_with_data(self, client: TestClient, tmp_path: Path) -> None:
-        from bots.v0.learning.database import TrainingDB
-
-        db = TrainingDB(tmp_path / "data" / "training.db")
-        db.store_game("g0", "Simple64", 1, "win", 300.0, 5.0, "v1")
-        db.store_game("g1", "Simple64", 1, "loss", 300.0, -5.0, "v1")
-        db.store_game("g2", "Simple64", 2, "win", 300.0, 5.0, "v2")
-        db.close()
-
-        resp = client.get("/api/training/models")
-        assert resp.status_code == 200
-        models = resp.json()["models"]
-        assert len(models) == 2
-        assert models[0]["model_version"] == "v1"
-        assert models[0]["wins"] == 1
-        assert models[0]["losses"] == 1
-        assert models[0]["total"] == 2
-        assert models[0]["win_rate"] == 0.5
-        assert models[0]["first_game"] is not None
-        assert models[0]["last_game"] is not None
-        assert models[1]["model_version"] == "v2"
-        assert models[1]["wins"] == 1
-        assert models[1]["total"] == 1
+        data = resp.json()
+        assert "would_trigger" in data
+        assert "transitions_since_last" in data
 
 
 class TestErrorLogStatusFields:
@@ -373,50 +151,6 @@ class TestErrorLogStatusFields:
         assert record["level"] == "ERROR"
         assert "bots.v0.test_api" in record["logger"]
         assert "synthetic test error 42" in record["message"]
-
-
-class TestDebugRaiseErrorEndpoint:
-    """Phase 4.5 #68: synthetic error trigger for soak-test pre-flight."""
-
-    def test_returns_404_when_flag_unset(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("DEBUG_ENDPOINTS", raising=False)
-        resp = client.post("/api/debug/raise_error", json={})
-        assert resp.status_code == 404
-        # And the buffer count must not have moved.
-        assert get_error_log_buffer().snapshot()[0] == 0
-
-    def test_returns_200_and_logs_when_flag_set(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("DEBUG_ENDPOINTS", "1")
-        resp = client.post("/api/debug/raise_error", json={})
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["status"] == "ok"
-        assert body["logged"] == "Synthetic alerts pre-flight test"
-        total, records = get_error_log_buffer().snapshot()
-        assert total == 1
-        assert "synthetic error: Synthetic alerts pre-flight test" in records[0]["message"]
-
-    def test_custom_message_is_used(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("DEBUG_ENDPOINTS", "1")
-        resp = client.post("/api/debug/raise_error", json={"message": "operator preflight"})
-        assert resp.status_code == 200
-        assert resp.json()["logged"] == "operator preflight"
-        _, records = get_error_log_buffer().snapshot()
-        assert "operator preflight" in records[0]["message"]
-
-    def test_flag_accepts_truthy_values(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        for value in ("true", "TRUE", "yes", "1"):
-            monkeypatch.setenv("DEBUG_ENDPOINTS", value)
-            resp = client.post("/api/debug/raise_error", json={})
-            assert resp.status_code == 200, f"value={value!r}"
 
 
 class TestAdvisedEndpoints:
@@ -1128,33 +862,3 @@ class TestImprovementsUnifiedEndpoint:
         resp = client.get("/api/improvements/unified")
         assert resp.status_code == 200
         assert resp.json() == {"improvements": []}
-
-
-class TestRewardRulesEndpoints:
-    def test_get_empty_rules(self, client: TestClient) -> None:
-        resp = client.get("/api/reward-rules")
-        assert resp.status_code == 200
-        assert resp.json()["rules"] == []
-
-    def test_put_and_get_rules(self, client: TestClient) -> None:
-        rules = {
-            "rules": [
-                {
-                    "id": "test-rule",
-                    "description": "Test",
-                    "condition": {"field": "minerals", "op": ">", "value": 500},
-                    "requires": None,
-                    "reward": 0.1,
-                    "active": True,
-                }
-            ]
-        }
-        resp = client.put("/api/reward-rules", json=rules)
-        assert resp.status_code == 200
-        assert resp.json()["updated"] is True
-        assert resp.json()["rule_count"] == 1
-
-        # Verify it persisted
-        resp2 = client.get("/api/reward-rules")
-        assert len(resp2.json()["rules"]) == 1
-        assert resp2.json()["rules"][0]["id"] == "test-rule"

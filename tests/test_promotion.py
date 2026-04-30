@@ -445,85 +445,6 @@ class TestTrainerNoLongerMarksBest:
         assert get_best_name(tmp_path / "cp") is None
 
 
-class TestPromotionApiEndpoints:
-    def test_get_promotions_empty(self, tmp_path: Path) -> None:
-        from bots.v0.api import app, configure
-        from fastapi.testclient import TestClient
-
-        data_dir = tmp_path / "data"
-        log_dir = tmp_path / "logs"
-        replay_dir = tmp_path / "replays"
-        data_dir.mkdir()
-        log_dir.mkdir()
-        replay_dir.mkdir()
-        configure(data_dir, log_dir, replay_dir)
-
-        # Reset the module-level promotion manager to avoid state leaks
-        import bots.v0.api as api_mod
-
-        api_mod._promotion_manager = None
-
-        client = TestClient(app)
-        resp = client.get("/api/training/promotions")
-        assert resp.status_code == 200
-        assert resp.json()["promotions"] == []
-
-    def test_manual_promote_requires_checkpoint(self, tmp_path: Path) -> None:
-        from bots.v0.api import app, configure
-        from fastapi.testclient import TestClient
-
-        data_dir = tmp_path / "data"
-        log_dir = tmp_path / "logs"
-        replay_dir = tmp_path / "replays"
-        data_dir.mkdir()
-        log_dir.mkdir()
-        replay_dir.mkdir()
-        configure(data_dir, log_dir, replay_dir)
-
-        import bots.v0.api as api_mod
-
-        api_mod._promotion_manager = None
-
-        client = TestClient(app)
-        resp = client.post("/api/training/promote", json={})
-        assert resp.status_code == 400
-        assert "checkpoint is required" in resp.json()["error"]
-
-    def test_manual_promote_success(self, tmp_path: Path) -> None:
-        from bots.v0.api import app, configure
-        from fastapi.testclient import TestClient
-
-        data_dir = tmp_path / "data"
-        log_dir = tmp_path / "logs"
-        replay_dir = tmp_path / "replays"
-        data_dir.mkdir()
-        log_dir.mkdir()
-        replay_dir.mkdir()
-        configure(data_dir, log_dir, replay_dir)
-
-        import bots.v0.api as api_mod
-
-        api_mod._promotion_manager = None
-        api_mod._evaluator = None
-
-        # Create a checkpoint to promote
-        cp_dir = data_dir / "checkpoints"
-        cp_dir.mkdir()
-        model = _mock_model()
-        save_checkpoint(model, cp_dir, "v5")
-
-        client = TestClient(app)
-        resp = client.post("/api/training/promote", json={"checkpoint": "v5"})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "promoted"
-        assert data["checkpoint"] == "v5"
-
-        # Verify it shows in promotions history
-        resp2 = client.get("/api/training/promotions")
-        assert len(resp2.json()["promotions"]) == 1
-
-
 class TestActionDistributionShift:
     def test_l1_distance_identical(self) -> None:
         dist = [0.2, 0.3, 0.5]
@@ -789,12 +710,6 @@ class TestPromotionHistoryApiEndpoints:
         assert resp.status_code == 200
         assert resp.json()["history"] == []
 
-    def test_latest_empty(self, tmp_path: Path) -> None:
-        client = self._setup_api(tmp_path)
-        resp = client.get("/api/training/promotions/latest")
-        assert resp.status_code == 200
-        assert resp.json()["latest"] is None
-
     def test_history_with_data(self, tmp_path: Path) -> None:
         client = self._setup_api(tmp_path)
 
@@ -822,21 +737,6 @@ class TestPromotionHistoryApiEndpoints:
         data = resp.json()["history"]
         assert len(data) == 1
         assert data[0]["new_checkpoint"] == "v2"
-
-    def test_latest_with_data(self, tmp_path: Path) -> None:
-        client = self._setup_api(tmp_path)
-
-        history_path = tmp_path / "data" / "promotion_history.json"
-        entries = [
-            {"new_checkpoint": "v1", "promoted": True},
-            {"new_checkpoint": "v2", "promoted": False},
-        ]
-        history_path.write_text(json.dumps(entries), encoding="utf-8")
-
-        resp = client.get("/api/training/promotions/latest")
-        assert resp.status_code == 200
-        assert resp.json()["latest"]["new_checkpoint"] == "v2"
-
 
 class TestPromotionReasonCodes:
     """Each promotion path stamps a stable machine-readable ``reason_code``.

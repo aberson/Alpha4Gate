@@ -62,14 +62,19 @@ class TestBuildParser:
 
 class TestStartServerBackground:
     def test_server_starts_and_responds(self, tmp_path: Path) -> None:
-        """Verify the background server starts and /api/commands/mode returns 200."""
+        """Verify the background server starts and /api/training/status returns 200.
+
+        Dashboard refactor Step 6 retired ``/api/commands/mode``; the
+        Alerts pipeline endpoint ``/api/training/status`` is the
+        canonical liveness probe now.
+        """
         port = _free_port()
         settings = _make_settings(tmp_path, port)
 
         _start_server_background(settings)
 
         # Poll until server is ready (max 5s)
-        url = f"http://localhost:{port}/api/commands/mode"
+        url = f"http://localhost:{port}/api/training/status"
         resp = None
         for _ in range(50):
             try:
@@ -84,5 +89,5 @@ class TestStartServerBackground:
         assert resp is not None
         assert resp.status_code == 200
         data = resp.json()
-        assert "mode" in data
+        assert "training_active" in data
 

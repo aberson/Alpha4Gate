@@ -267,42 +267,17 @@ def daemon_client(tmp_path: Path) -> TestClient:
 
 
 class TestDaemonEndpoints:
+    """Dashboard refactor Step 6: ``/api/training/start``,
+    ``/api/training/stop`` were retired with the Loop tab; only
+    ``/api/training/daemon`` (status read for the Alerts pipeline)
+    survives."""
+
     def test_daemon_status(self, daemon_client: TestClient) -> None:
         resp = daemon_client.get("/api/training/daemon")
         assert resp.status_code == 200
         data = resp.json()
         assert data["running"] is False
         assert data["state"] == "idle"
-
-    def test_start_daemon(self, daemon_client: TestClient) -> None:
-        resp = daemon_client.post("/api/training/start", json={})
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "started"
-
-        # Verify running
-        status = daemon_client.get("/api/training/daemon").json()
-        assert status["running"] is True
-
-        # Stop for cleanup
-        daemon_client.post("/api/training/stop")
-
-    def test_start_already_running(self, daemon_client: TestClient) -> None:
-        daemon_client.post("/api/training/start", json={})
-        resp = daemon_client.post("/api/training/start", json={})
-        assert resp.json()["status"] == "already_running"
-        daemon_client.post("/api/training/stop")
-
-    def test_stop_not_running(self, daemon_client: TestClient) -> None:
-        resp = daemon_client.post("/api/training/stop")
-        assert resp.json()["status"] == "not_running"
-
-    def test_stop_running_daemon(self, daemon_client: TestClient) -> None:
-        daemon_client.post("/api/training/start", json={})
-        resp = daemon_client.post("/api/training/stop")
-        assert resp.json()["status"] == "stopped"
-
-        status = daemon_client.get("/api/training/daemon").json()
-        assert status["running"] is False
 
 
 # ------------------------------------------------------------------
@@ -472,10 +447,6 @@ class TestExistingTrainingEndpointsStillWork:
         resp = daemon_client.get("/api/training/history")
         assert resp.status_code == 200
 
-    def test_training_checkpoints(self, daemon_client: TestClient) -> None:
-        resp = daemon_client.get("/api/training/checkpoints")
-        assert resp.status_code == 200
-
 
 # ------------------------------------------------------------------
 # Trigger & config API endpoint tests
@@ -498,35 +469,6 @@ class TestTriggerEndpoint:
         data = resp.json()
         assert data["would_trigger"] is True
         assert data["transitions_since_last"] == 600
-
-
-class TestDaemonConfigEndpoint:
-    def test_update_config(self, daemon_client: TestClient) -> None:
-        resp = daemon_client.put(
-            "/api/training/daemon/config",
-            json={"min_transitions": 200, "cycles_per_run": 3},
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "updated"
-        assert data["config"]["min_transitions"] == 200
-        assert data["config"]["cycles_per_run"] == 3
-
-    def test_update_config_ignores_unknown(self, daemon_client: TestClient) -> None:
-        resp = daemon_client.put(
-            "/api/training/daemon/config",
-            json={"bogus": 42, "min_transitions": 100},
-        )
-        assert resp.status_code == 200
-        assert resp.json()["config"]["min_transitions"] == 100
-
-    def test_config_reflected_in_status(self, daemon_client: TestClient) -> None:
-        daemon_client.put(
-            "/api/training/daemon/config",
-            json={"games_per_cycle": 20},
-        )
-        status = daemon_client.get("/api/training/daemon").json()
-        assert status["config"]["games_per_cycle"] == 20
 
 
 # ------------------------------------------------------------------
@@ -974,55 +916,6 @@ class TestDifficultyRevertOnRollback:
 # ------------------------------------------------------------------
 # Curriculum API endpoint tests
 # ------------------------------------------------------------------
-
-
-class TestCurriculumEndpoints:
-    def test_get_curriculum_defaults(self, daemon_client: TestClient) -> None:
-        resp = daemon_client.get("/api/training/curriculum")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["current_difficulty"] == 1
-        assert data["max_difficulty"] == 10
-        assert data["win_rate_threshold"] == 0.8
-        assert data["last_advancement"] is None
-
-    def test_put_curriculum(self, daemon_client: TestClient) -> None:
-        resp = daemon_client.put(
-            "/api/training/curriculum",
-            json={"current_difficulty": 5, "max_difficulty": 8},
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["current_difficulty"] == 5
-        assert data["max_difficulty"] == 8
-
-        # Verify reflected in GET
-        resp2 = daemon_client.get("/api/training/curriculum")
-        assert resp2.json()["current_difficulty"] == 5
-        assert resp2.json()["max_difficulty"] == 8
-
-    def test_put_curriculum_partial(self, daemon_client: TestClient) -> None:
-        """Only specified fields are updated."""
-        daemon_client.put(
-            "/api/training/curriculum",
-            json={"current_difficulty": 3},
-        )
-        resp = daemon_client.get("/api/training/curriculum")
-        data = resp.json()
-        assert data["current_difficulty"] == 3
-        # Others remain at defaults
-        assert data["max_difficulty"] == 10
-
-    def test_put_curriculum_persists(self, daemon_client: TestClient, tmp_path: Path) -> None:
-        """PUT persists to daemon_config.json on disk."""
-        daemon_client.put(
-            "/api/training/curriculum",
-            json={"current_difficulty": 7},
-        )
-        config_path = tmp_path / "data" / "daemon_config.json"
-        assert config_path.exists()
-        loaded = load_daemon_config(config_path)
-        assert loaded.current_difficulty == 7
 
 
 class TestCrashedCyclesSkipPromotion:

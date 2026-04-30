@@ -342,12 +342,15 @@ def _run_single_game(
     elif shutil.which("claude") is None:
         _log.info("ClaudeAdvisor: disabled (claude CLI not found on PATH)")
     else:
-        from bots.v0.api import ws_manager
         from bots.v0.claude_advisor import ClaudeAdvisor
 
+        # Dashboard refactor Step 6: ``/ws/decisions`` was retired, so
+        # there is no live WebSocket broadcast target for the advisor.
+        # ``ws_manager=None`` makes ``record_decision`` skip the
+        # broadcast and just persist to ``decision_audit.json``.
         claude_advisor = ClaudeAdvisor(
             data_dir=settings.data_dir,
-            ws_manager=ws_manager,
+            ws_manager=None,
         )
 
     # Always-on reward logging (unless opted out)
@@ -456,12 +459,15 @@ def _run_batch(settings: Settings, args: argparse.Namespace) -> None:
     elif shutil.which("claude") is None:
         _log.info("ClaudeAdvisor: disabled (claude CLI not found on PATH)")
     else:
-        from bots.v0.api import ws_manager
         from bots.v0.claude_advisor import ClaudeAdvisor
 
+        # Dashboard refactor Step 6: ``/ws/decisions`` was retired, so
+        # there is no live WebSocket broadcast target for the advisor.
+        # ``ws_manager=None`` makes ``record_decision`` skip the
+        # broadcast and just persist to ``decision_audit.json``.
         claude_advisor = ClaudeAdvisor(
             data_dir=settings.data_dir,
-            ws_manager=ws_manager,
+            ws_manager=None,
         )
 
     # Determine model_version label for this batch

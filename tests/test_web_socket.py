@@ -69,48 +69,8 @@ class TestLifespanRegistered:
         assert app.router.lifespan_context is not None
 
 
-class TestWSGameEndpointBroadcast:
-    """Integration test: queue_broadcast → _drain_and_broadcast_once → WS client receives."""
-
-    def test_ws_client_receives_broadcast(self) -> None:
-        import asyncio
-        from pathlib import Path
-
-        from bots.v0.api import _drain_and_broadcast_once, app, configure
-        from fastapi.testclient import TestClient
-
-        # Configure with temp dirs so app doesn't complain
-        configure(Path("data"), Path("logs"), Path("replays"))
-
-        # Drain leftover
-        drain_broadcast_queue()
-
-        client = TestClient(app)
-        sample = {
-            "game_time_seconds": 42.0,
-            "minerals": 300,
-            "vespene": 100,
-            "supply_used": 20,
-            "supply_cap": 30,
-            "units": ["Stalker"],
-            "strategic_state": "attack",
-        }
-
-        with client.websocket_connect("/ws/game") as ws:
-            # Queue a broadcast entry from the "game thread"
-            queue_broadcast(sample)
-
-            # Drain and broadcast (what the lifespan loop does each tick)
-            loop = asyncio.new_event_loop()
-            try:
-                count = loop.run_until_complete(_drain_and_broadcast_once())
-            finally:
-                loop.close()
-
-            assert count == 1
-
-            # The WS client should have received the message
-            data = ws.receive_json()
-            assert data["game_time_seconds"] == 42.0
-            assert data["minerals"] == 300
-            assert data["strategic_state"] == "attack"
+# Dashboard refactor Step 6 retired ``/ws/game`` along with the
+# ``_drain_and_broadcast_once`` helper; the queue-drain machinery is now
+# silent (the new lifespan loop drains queues into /dev/null to keep the
+# bot-thread queues bounded — there is no surviving WS client for an
+# integration test to hook into).

@@ -254,6 +254,7 @@ Vitest covering:
 - **Problem:** Remove every endpoint marked DROP in Step 1's audit. Update or remove their backend tests in `tests/test_api*.py`.
 - **Produces:** Smaller `bots/v0/api.py`; smaller backend test count.
 - **Done when:** Pytest passes; mypy strict 0 issues; ruff clean.
+- **Status:** DONE (2026-04-29) — 35 endpoints removed (32 REST + 3 WS), `/api/training/daemon` + `/api/training/triggers` reclassified KEPT (Alerts pipeline). bots/v0/api.py 2160→1120 lines. tests/test_api_commands.py deleted; 8 other test files trimmed. mypy clean (348 files), ruff clean, full pytest 1337/1358. bots/v0/runner.py updated (2× `ws_manager=None`); minimal silent `_drain_queues_loop` kept to drain leftover bot.py-side queues.
 
 ### Step 7: Fix the AdvisedControlPanel test + delete audit doc
 

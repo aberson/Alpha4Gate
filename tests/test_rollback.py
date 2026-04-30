@@ -349,71 +349,9 @@ class TestPromoteTracksPreviousBest:
 
 
 class TestRollbackApiEndpoint:
-    def test_manual_rollback_success(self, tmp_path: Path) -> None:
-        from bots.v0.api import app, configure
-        from fastapi.testclient import TestClient
-
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        cp_dir = data_dir / "checkpoints"
-        cp_dir.mkdir()
-
-        # Set up manifest with v5 as best, v4 as previous
-        manifest = {"checkpoints": [], "best": "v5", "previous_best": "v4"}
-        (cp_dir / "manifest.json").write_text(
-            json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
-        )
-
-        # Create a DB so the endpoint can open it
-        db = TrainingDB(data_dir / "training.db")
-        db.close()
-
-        configure(data_dir=data_dir, log_dir=tmp_path / "logs", replay_dir=tmp_path / "replays")
-        client = TestClient(app)
-
-        resp = client.post("/api/training/rollback", json={"checkpoint": "v4"})
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["status"] == "rolled_back"
-        assert body["old_best"] == "v5"
-        assert body["new_best"] == "v4"
-
-        # Verify manifest was updated
-        assert get_best_name(cp_dir) == "v4"
-
-    def test_manual_rollback_no_checkpoint(self, tmp_path: Path) -> None:
-        from bots.v0.api import app, configure
-        from fastapi.testclient import TestClient
-
-        configure(
-            data_dir=tmp_path / "data",
-            log_dir=tmp_path / "logs",
-            replay_dir=tmp_path / "replays",
-        )
-        client = TestClient(app)
-
-        resp = client.post("/api/training/rollback", json={})
-        assert resp.status_code == 400
-
-    def test_manual_rollback_same_checkpoint(self, tmp_path: Path) -> None:
-        from bots.v0.api import app, configure
-        from fastapi.testclient import TestClient
-
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        cp_dir = data_dir / "checkpoints"
-        cp_dir.mkdir()
-
-        manifest = {"checkpoints": [], "best": "v5"}
-        (cp_dir / "manifest.json").write_text(
-            json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
-        )
-
-        configure(data_dir=data_dir, log_dir=tmp_path / "logs", replay_dir=tmp_path / "replays")
-        client = TestClient(app)
-
-        resp = client.post("/api/training/rollback", json={"checkpoint": "v5"})
-        assert resp.status_code == 400
+    """Dashboard refactor Step 6 retired ``/api/training/rollback``;
+    only ``/api/training/daemon`` (status read for the Alerts pipeline)
+    survives, and the daemon payload still includes ``last_rollback``."""
 
     def test_daemon_status_includes_rollback(self, tmp_path: Path) -> None:
         from bots.v0.api import app, configure
