@@ -776,6 +776,93 @@ class TestRunFitnessEval:
         )
         assert result.bucket == "pass"
 
+    def test_early_stop_when_candidate_locks_pass(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Once cand reaches the strict-majority threshold, remaining games
+        are skipped — bucket can't change. Saves ~2-3 games per eval. The
+        outer ``games`` count is preserved (still drives bucket math)."""
+        _redirect_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_pointer(tmp_path, "v0")
+
+        # 9-game eval; threshold = 5. Cand wins games 1-5 in a row → stop
+        # at game 5, never play games 6-9. Without early-stop the fake
+        # would emit 9 records.
+        def early_stop_batch(
+            p1: str,
+            p2: str,
+            games: int,
+            map_name: str,
+            **kwargs: Any,
+        ) -> list[SelfPlayRecord]:
+            on_game_end = kwargs.get("on_game_end")
+            stop_event = kwargs.get("stop_event")
+            records: list[SelfPlayRecord] = []
+            for i in range(games):
+                if stop_event is not None and stop_event.is_set():
+                    break
+                rec = _record(p1, p2, p1, f"g-{i}")
+                records.append(rec)
+                if on_game_end is not None:
+                    on_game_end(rec)
+            return records
+
+        result = run_fitness_eval(
+            parent="v0",
+            imp=_simple_training_imp(),
+            games=9,
+            run_batch_fn=early_stop_batch,
+            candidate_namer=_single_namer("cand_es"),
+        )
+        assert result.bucket == "pass"
+        assert result.wins_candidate == 5
+        assert result.wins_parent == 0
+        # Outer threshold preserved even though only 5 of 9 games played.
+        assert result.games == 9
+        assert len(result.record) == 5
+
+    def test_early_stop_when_parent_dominates(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Symmetric early-stop: when parent reaches threshold, cand can no
+        longer pass; remaining games skipped. Bucket = fail (or close on
+        the edge case wins_cand == threshold-1)."""
+        _redirect_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_pointer(tmp_path, "v0")
+
+        def early_stop_batch(
+            p1: str,
+            p2: str,
+            games: int,
+            map_name: str,
+            **kwargs: Any,
+        ) -> list[SelfPlayRecord]:
+            on_game_end = kwargs.get("on_game_end")
+            stop_event = kwargs.get("stop_event")
+            records: list[SelfPlayRecord] = []
+            for i in range(games):
+                if stop_event is not None and stop_event.is_set():
+                    break
+                rec = _record(p1, p2, p2, f"g-{i}")
+                records.append(rec)
+                if on_game_end is not None:
+                    on_game_end(rec)
+            return records
+
+        result = run_fitness_eval(
+            parent="v0",
+            imp=_simple_training_imp(),
+            games=9,
+            run_batch_fn=early_stop_batch,
+            candidate_namer=_single_namer("cand_es2"),
+        )
+        assert result.bucket == "fail"
+        assert result.wins_candidate == 0
+        assert result.wins_parent == 5
+        assert len(result.record) == 5
+
 
 
 class TestRunRegressionEval:
@@ -891,6 +978,87 @@ class TestRunRegressionEval:
         assert (events[1]["wins_new"], events[1]["wins_prior"]) == (1, 0)
         assert (events[2]["wins_new"], events[2]["wins_prior"]) == (2, 0)
         assert (events[3]["wins_new"], events[3]["wins_prior"]) == (3, 0)
+
+    def test_early_stop_when_new_parent_locks_pass(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Once new parent reaches strict majority, regression is locked
+        pass — remaining games skipped. Saves ~2-3 games per generation."""
+        _redirect_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_version(tmp_path, "v1")
+        _seed_pointer(tmp_path, "v1")
+
+        def early_stop_batch(
+            p1: str,
+            p2: str,
+            games: int,
+            map_name: str,
+            **kwargs: Any,
+        ) -> list[SelfPlayRecord]:
+            on_game_end = kwargs.get("on_game_end")
+            stop_event = kwargs.get("stop_event")
+            records: list[SelfPlayRecord] = []
+            for i in range(games):
+                if stop_event is not None and stop_event.is_set():
+                    break
+                rec = _record(p1, p2, p1, f"g-{i}")
+                records.append(rec)
+                if on_game_end is not None:
+                    on_game_end(rec)
+            return records
+
+        result = run_regression_eval(
+            new_parent="v1",
+            prior_parent="v0",
+            games=9,
+            run_batch_fn=early_stop_batch,
+        )
+        assert result.rolled_back is False
+        assert result.wins_new == 5
+        assert result.wins_prior == 0
+        assert result.games == 9
+        assert len(result.record) == 5
+
+    def test_early_stop_when_prior_parent_locks_rollback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Once prior parent reaches strict majority, new parent can't pass
+        — regression locks rollback, remaining games skipped."""
+        _redirect_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_version(tmp_path, "v1")
+        _seed_pointer(tmp_path, "v1")
+
+        def early_stop_batch(
+            p1: str,
+            p2: str,
+            games: int,
+            map_name: str,
+            **kwargs: Any,
+        ) -> list[SelfPlayRecord]:
+            on_game_end = kwargs.get("on_game_end")
+            stop_event = kwargs.get("stop_event")
+            records: list[SelfPlayRecord] = []
+            for i in range(games):
+                if stop_event is not None and stop_event.is_set():
+                    break
+                rec = _record(p1, p2, p2, f"g-{i}")
+                records.append(rec)
+                if on_game_end is not None:
+                    on_game_end(rec)
+            return records
+
+        result = run_regression_eval(
+            new_parent="v1",
+            prior_parent="v0",
+            games=9,
+            run_batch_fn=early_stop_batch,
+        )
+        assert result.rolled_back is True
+        assert result.wins_new == 0
+        assert result.wins_prior == 5
+        assert len(result.record) == 5
 
 # ---------------------------------------------------------------------------
 # generate_pool

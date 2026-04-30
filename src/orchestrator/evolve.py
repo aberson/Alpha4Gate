@@ -58,6 +58,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -582,18 +583,24 @@ def run_fitness_eval(
                 },
             )
 
-        batch_kwargs: dict[str, Any] = {
-            "game_time_limit": game_time_limit,
-            "hard_timeout": hard_timeout,
-        }
-        if on_event is not None:
-            live = [0, 0]  # [wins_cand, wins_parent]
+        # Early-stop: once either side has the strict-majority threshold
+        # the bucket is locked — remaining games can't change pass/close/fail.
+        # Saves ~2-3 games per evaluation (no effect on bucket assignment).
+        # ``run_batch`` checks ``stop_event`` between games; the on_game_end
+        # callback is wired unconditionally so the live tally runs even when
+        # the orchestrator passes no event sink.
+        pass_threshold = games // 2 + 1
+        live = [0, 0]  # [wins_cand, wins_parent]
+        stop_event = threading.Event()
 
-            def _on_game_end(record: SelfPlayRecord) -> None:
-                if record.winner == cand_name:
-                    live[0] += 1
-                elif record.winner == parent:
-                    live[1] += 1
+        def _on_game_end(record: SelfPlayRecord) -> None:
+            if record.winner == cand_name:
+                live[0] += 1
+            elif record.winner == parent:
+                live[1] += 1
+            if max(live) >= pass_threshold:
+                stop_event.set()
+            if on_event is not None:
                 _safe_emit(
                     on_event,
                     {
@@ -603,7 +610,12 @@ def run_fitness_eval(
                     },
                 )
 
-            batch_kwargs["on_game_end"] = _on_game_end
+        batch_kwargs: dict[str, Any] = {
+            "game_time_limit": game_time_limit,
+            "hard_timeout": hard_timeout,
+            "on_game_end": _on_game_end,
+            "stop_event": stop_event,
+        }
 
         record = run_batch_fn(
             cand_name,
@@ -700,18 +712,21 @@ def run_regression_eval(
             },
         )
 
-    batch_kwargs: dict[str, Any] = {
-        "game_time_limit": game_time_limit,
-        "hard_timeout": hard_timeout,
-    }
-    if on_event is not None:
-        live = [0, 0]
+    # Early-stop mirrors run_fitness_eval: once either side reaches strict
+    # majority, the rolled_back outcome is locked — saves ~2-3 games per
+    # regression. Wired unconditionally so the tally runs without on_event.
+    needed = games // 2 + 1
+    live = [0, 0]
+    stop_event = threading.Event()
 
-        def _on_game_end(record: SelfPlayRecord) -> None:
-            if record.winner == new_parent:
-                live[0] += 1
-            elif record.winner == prior_parent:
-                live[1] += 1
+    def _on_game_end(record: SelfPlayRecord) -> None:
+        if record.winner == new_parent:
+            live[0] += 1
+        elif record.winner == prior_parent:
+            live[1] += 1
+        if max(live) >= needed:
+            stop_event.set()
+        if on_event is not None:
             _safe_emit(
                 on_event,
                 {
@@ -721,7 +736,12 @@ def run_regression_eval(
                 },
             )
 
-        batch_kwargs["on_game_end"] = _on_game_end
+    batch_kwargs: dict[str, Any] = {
+        "game_time_limit": game_time_limit,
+        "hard_timeout": hard_timeout,
+        "on_game_end": _on_game_end,
+        "stop_event": stop_event,
+    }
 
     record = run_batch_fn(
         new_parent,
@@ -731,7 +751,6 @@ def run_regression_eval(
         **batch_kwargs,
     )
     wins_new, wins_prior = _count_wins(record, new_parent, prior_parent)
-    needed = games // 2 + 1
     rolled_back = wins_new < needed
 
     if rolled_back:
