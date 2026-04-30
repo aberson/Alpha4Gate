@@ -771,8 +771,19 @@ def write_run_state(
     pool_remaining_count: int,
     last_result: dict[str, Any] | None,
     generation_index: int = 0,
+    run_id: str | None = None,
+    concurrency: int | None = None,
 ) -> None:
-    """Write ``evolve_run_state.json`` — dashboard run state."""
+    """Write ``evolve_run_state.json`` — dashboard run state.
+
+    ``run_id`` and ``concurrency`` are populated by the parallel-evolve
+    dispatcher (Step 4 of the evolve-parallelization plan) so the
+    ``/api/evolve/running-rounds`` endpoint can filter per-worker round
+    files by the active run's id and pad to the active concurrency.
+    Both default to ``None`` so single-flight + legacy callers keep
+    byte-identical output (the keys are still emitted with ``None``
+    values for shape stability).
+    """
     payload: dict[str, Any] = {
         "status": status,
         "parent_start": parent_start,
@@ -786,6 +797,8 @@ def write_run_state(
         "resurrections_remaining": resurrections_remaining,
         "pool_remaining_count": pool_remaining_count,
         "last_result": last_result,
+        "run_id": run_id,
+        "concurrency": concurrency,
     }
     _atomic_write_json(state_path, payload)
 
@@ -2361,6 +2374,8 @@ def run_loop(
         run_id,
     )
 
+    concurrency_int = int(getattr(args, "concurrency", 1) or 1)
+
     def _write_state(
         *,
         status: str,
@@ -2387,6 +2402,8 @@ def run_loop(
             ),
             pool_remaining_count=_count_active(per_item_state),
             last_result=last_result,
+            run_id=run_id,
+            concurrency=concurrency_int,
         )
 
     # Write an initial "running" state so a watchdog can see us mid-startup.

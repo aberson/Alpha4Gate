@@ -1691,3 +1691,110 @@ def test_run_loop_aborts_if_master_has_phantom_promote_at_startup(
     assert "'v0'" in err  # disk value
     assert "'v1'" in err  # HEAD value
     assert "git checkout bots/current/current.txt" in err
+
+
+# ---------------------------------------------------------------------------
+# 17. write_run_state — run_id + concurrency persistence (Step 4)
+# ---------------------------------------------------------------------------
+
+
+def _state_kwargs(**overrides: Any) -> dict[str, Any]:
+    """Default kwargs for write_run_state in unit tests."""
+    base: dict[str, Any] = {
+        "status": "running",
+        "parent_start": "v3",
+        "parent_current": "v3",
+        "started_at": "2026-04-29T10:00:00+00:00",
+        "wall_budget_hours": 8.0,
+        "generations_completed": 0,
+        "generations_promoted": 0,
+        "evictions": 0,
+        "resurrections_remaining": 0,
+        "pool_remaining_count": 0,
+        "last_result": None,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_write_run_state_defaults_persist_run_id_concurrency_as_none(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """Without ``run_id``/``concurrency`` (single-flight + legacy callers),
+    both fields are persisted as JSON ``null`` so the dashboard's
+    ``EvolveRunState`` interface always has the keys present."""
+    state_path = tmp_path / "evolve_run_state.json"
+    cli.write_run_state(state_path, **_state_kwargs())
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    assert payload["run_id"] is None
+    assert payload["concurrency"] is None
+    # All other expected fields still present.
+    for key in (
+        "status",
+        "parent_start",
+        "parent_current",
+        "started_at",
+        "wall_budget_hours",
+        "generation_index",
+        "generations_completed",
+        "generations_promoted",
+        "evictions",
+        "resurrections_remaining",
+        "pool_remaining_count",
+        "last_result",
+    ):
+        assert key in payload
+
+
+def test_write_run_state_persists_run_id_and_concurrency_when_provided(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """Parallel dispatcher (concurrency>1) writes both fields verbatim."""
+    state_path = tmp_path / "evolve_run_state.json"
+    cli.write_run_state(
+        state_path,
+        run_id="abc12345",
+        concurrency=4,
+        **_state_kwargs(),
+    )
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    assert payload["run_id"] == "abc12345"
+    assert payload["concurrency"] == 4
+
+
+def test_run_loop_persists_run_id_and_concurrency_into_state_file(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end: ``run_loop`` writes run_state with the dispatcher's
+    ``run_id`` + ``args.concurrency``, so the API + dashboard see them
+    on every state poll. Pool exhausts immediately so the loop exits
+    cleanly without spawning any workers."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    args = _build_args(tmp_path, pool_size=1, no_commit=True)
+    args.concurrency = 3
+
+    pool = _make_pool(1)
+    fitness = _ScriptedFitness(["fail"])
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=fitness,
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        current_version_fn=lambda: "v3",
+    )
+    assert rc == 0
+
+    payload = json.loads(args.state_path.read_text(encoding="utf-8"))
+    # run_id is uuid.uuid4().hex[:8] — generated unconditionally inside
+    # run_loop. Verify shape, not exact value.
+    assert isinstance(payload["run_id"], str)
+    assert len(payload["run_id"]) == 8
+    # concurrency comes through verbatim from args.concurrency.
+    assert payload["concurrency"] == 3

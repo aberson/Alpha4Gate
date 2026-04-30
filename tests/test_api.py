@@ -234,6 +234,9 @@ class TestEvolveEndpoints:
         assert data["status"] == "idle"
         # Idle skeleton carries the new generation-phase keys so the
         # frontend can destructure without null-coalescing every field.
+        # ``run_id`` + ``concurrency`` are Step 4 additions for the
+        # parallel-evolve dashboard; they live alongside the rest of the
+        # run-state shape so single-flight callers see them as ``None``.
         for key in (
             "parent_start",
             "parent_current",
@@ -246,6 +249,8 @@ class TestEvolveEndpoints:
             "resurrections_remaining",
             "pool_remaining_count",
             "last_result",
+            "run_id",
+            "concurrency",
         ):
             assert key in data
             assert data[key] is None
@@ -493,6 +498,576 @@ class TestEvolveEndpoints:
         assert data["games_played"] is None
         # Skeleton backfill gives non-null defaults for list fields.
         assert data["stacked_titles"] == []
+
+    # --- Step 4: parallel-evolve running-rounds endpoint ---
+
+    @staticmethod
+    def _write_run_state(
+        tmp_path: Path,
+        *,
+        run_id: str | None,
+        concurrency: int | None,
+        parent_current: str = "v3",
+    ) -> None:
+        state = {
+            "status": "running",
+            "parent_start": parent_current,
+            "parent_current": parent_current,
+            "started_at": "2026-04-29T10:00:00+00:00",
+            "wall_budget_hours": 8.0,
+            "generation_index": 1,
+            "generations_completed": 0,
+            "generations_promoted": 0,
+            "evictions": 0,
+            "resurrections_remaining": 0,
+            "pool_remaining_count": 4,
+            "last_result": None,
+            "run_id": run_id,
+            "concurrency": concurrency,
+        }
+        (tmp_path / "data" / "evolve_run_state.json").write_text(
+            json.dumps(state)
+        )
+
+    @staticmethod
+    def _write_round_file(
+        tmp_path: Path,
+        *,
+        worker_id: int,
+        run_id: str,
+        active: bool = True,
+        phase: str = "fitness",
+        imp_title: str = "tweak macro",
+        candidate: str = "cand_a1b2c3d4",
+        games_played: int = 2,
+        games_total: int = 5,
+        score_cand: int = 1,
+        score_parent: int = 1,
+    ) -> None:
+        entry = {
+            "active": active,
+            "generation": 1,
+            "phase": phase,
+            "imp_title": imp_title,
+            "imp_rank": 1,
+            "imp_index": worker_id,
+            "candidate": candidate,
+            "stacked_titles": [],
+            "new_parent": None,
+            "prior_parent": None,
+            "games_played": games_played,
+            "games_total": games_total,
+            "score_cand": score_cand,
+            "score_parent": score_parent,
+            "updated_at": "2026-04-29T14:32:11+00:00",
+            "worker_id": worker_id,
+            "run_id": run_id,
+        }
+        (tmp_path / "data" / f"evolve_round_{worker_id}.json").write_text(
+            json.dumps(entry)
+        )
+
+    def test_running_rounds_idle_when_run_state_missing(
+        self, client: TestClient
+    ) -> None:
+        """No run-state file → all-idle response (no parallel run in progress)."""
+        resp = client.get("/api/evolve/running-rounds")
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "active": False,
+            "concurrency": None,
+            "run_id": None,
+            "rounds": [],
+        }
+
+    def test_running_rounds_idle_when_concurrency_none(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """Run-state file present but ``concurrency=None`` (single-flight) →
+        all-idle response so the dashboard knows no parallel run is
+        in progress."""
+        self._write_run_state(tmp_path, run_id="abc12345", concurrency=None)
+        resp = client.get("/api/evolve/running-rounds")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["active"] is False
+        assert body["concurrency"] is None
+        assert body["run_id"] is None
+        assert body["rounds"] == []
+
+    def test_running_rounds_pads_idle_slots_to_concurrency(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """concurrency=4 with only 1 round file → 4 entries, 3 idle skeletons."""
+        self._write_run_state(tmp_path, run_id="run00001", concurrency=4)
+        self._write_round_file(tmp_path, worker_id=0, run_id="run00001")
+        resp = client.get("/api/evolve/running-rounds")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["active"] is True
+        assert body["concurrency"] == 4
+        assert body["run_id"] == "run00001"
+        assert len(body["rounds"]) == 4
+
+        # Worker 0 is active.
+        assert body["rounds"][0]["worker_id"] == 0
+        assert body["rounds"][0]["active"] is True
+        assert body["rounds"][0]["phase"] == "fitness"
+        assert body["rounds"][0]["candidate"] == "cand_a1b2c3d4"
+        # parent is projected from run_state.parent_current.
+        assert body["rounds"][0]["parent"] == "v3"
+
+        # Workers 1-3 are idle skeletons with worker_id stamped.
+        for wid in (1, 2, 3):
+            slot = body["rounds"][wid]
+            assert slot["worker_id"] == wid
+            assert slot["active"] is False
+            assert slot["phase"] is None
+            assert slot["candidate"] is None
+            assert slot["parent"] is None
+
+        # Full key-set assertion: idle skeleton must carry exactly the
+        # 11 documented per-worker fields. Pinning the full set
+        # prevents silent drift between the active-slot shape and the
+        # idle skeleton (e.g. adding a field to one but not the other).
+        idle_slot = body["rounds"][1]
+        assert set(idle_slot.keys()) == {
+            "worker_id",
+            "active",
+            "phase",
+            "imp_title",
+            "candidate",
+            "parent",
+            "games_played",
+            "games_total",
+            "score_cand",
+            "score_parent",
+            "updated_at",
+        }
+
+    def test_running_rounds_filters_stale_run_id(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """4 round files (2 with current run_id, 2 with ``stale``) → only the
+        2 current ones surface; the other 2 worker slots become idle."""
+        self._write_run_state(tmp_path, run_id="run00002", concurrency=4)
+        self._write_round_file(tmp_path, worker_id=0, run_id="run00002")
+        self._write_round_file(tmp_path, worker_id=1, run_id="stale")
+        self._write_round_file(tmp_path, worker_id=2, run_id="run00002")
+        self._write_round_file(tmp_path, worker_id=3, run_id="stale")
+        resp = client.get("/api/evolve/running-rounds")
+        body = resp.json()
+        assert body["active"] is True
+        assert len(body["rounds"]) == 4
+        assert body["rounds"][0]["active"] is True
+        assert body["rounds"][1]["active"] is False
+        assert body["rounds"][2]["active"] is True
+        assert body["rounds"][3]["active"] is False
+
+    def test_running_rounds_full_4_workers(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """All 4 round files present and current → 4 active rounds."""
+        self._write_run_state(tmp_path, run_id="run00003", concurrency=4)
+        for wid in range(4):
+            self._write_round_file(
+                tmp_path,
+                worker_id=wid,
+                run_id="run00003",
+                imp_title=f"imp #{wid}",
+                candidate=f"cand_{wid:08x}",
+                games_played=wid,
+            )
+        resp = client.get("/api/evolve/running-rounds")
+        body = resp.json()
+        assert body["active"] is True
+        assert body["concurrency"] == 4
+        assert body["run_id"] == "run00003"
+        assert len(body["rounds"]) == 4
+        for wid in range(4):
+            slot = body["rounds"][wid]
+            assert slot["worker_id"] == wid
+            assert slot["active"] is True
+            assert slot["imp_title"] == f"imp #{wid}"
+            assert slot["candidate"] == f"cand_{wid:08x}"
+            assert slot["games_played"] == wid
+
+    def test_running_rounds_response_shape_is_lean(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """Per-worker entries omit dispatcher-level fields (imp_rank,
+        imp_index, stacked_titles, new_parent, prior_parent) — those
+        are leaner than the legacy ``current-round`` shape."""
+        self._write_run_state(tmp_path, run_id="run00004", concurrency=1)
+        self._write_round_file(tmp_path, worker_id=0, run_id="run00004")
+        resp = client.get("/api/evolve/running-rounds")
+        slot = resp.json()["rounds"][0]
+        for absent in ("imp_rank", "imp_index", "stacked_titles",
+                       "new_parent", "prior_parent"):
+            assert absent not in slot, (
+                f"running-rounds slot should not carry {absent!r}: {slot}"
+            )
+        # The shape we DO promise.
+        for present in ("worker_id", "active", "phase", "imp_title",
+                        "candidate", "parent", "games_played",
+                        "games_total", "score_cand", "score_parent",
+                        "updated_at"):
+            assert present in slot, (
+                f"running-rounds slot missing {present!r}: {slot}"
+            )
+
+    # --- Step 4: backwards-compat shim on /api/evolve/current-round ---
+
+    def test_current_round_existing_takes_priority_at_concurrency_1(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """At concurrency=1 the legacy ``evolve_current_round.json`` file is
+        the sole source of truth — single-flight callers see no change."""
+        live = {
+            "active": True,
+            "generation": 4,
+            "phase": "fitness",
+            "imp_title": "Single-flight imp",
+            "imp_rank": 1,
+            "imp_index": 0,
+            "candidate": "cand_legacy",
+            "stacked_titles": [],
+            "new_parent": None,
+            "prior_parent": None,
+            "games_played": 1,
+            "games_total": 5,
+            "score_cand": 0,
+            "score_parent": 1,
+            "updated_at": "2026-04-29T14:00:00+00:00",
+        }
+        (tmp_path / "data" / "evolve_current_round.json").write_text(
+            json.dumps(live)
+        )
+        # Even when run_state has concurrency=1, the legacy file wins.
+        self._write_run_state(tmp_path, run_id="run00005", concurrency=1)
+        resp = client.get("/api/evolve/current-round")
+        data = resp.json()
+        assert data["active"] is True
+        assert data["imp_title"] == "Single-flight imp"
+        assert data["candidate"] == "cand_legacy"
+
+    def test_current_round_backwards_compat_falls_back_to_running_rounds(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """At concurrency>1 with no ``evolve_current_round.json``, returns
+        the first running round (shaped to the legacy CurrentRound iface)."""
+        self._write_run_state(tmp_path, run_id="run00006", concurrency=4)
+        # Worker 0 is idle; worker 1 is the first active.
+        self._write_round_file(
+            tmp_path,
+            worker_id=0,
+            run_id="run00006",
+            active=False,
+        )
+        self._write_round_file(
+            tmp_path,
+            worker_id=1,
+            run_id="run00006",
+            imp_title="Parallel imp 1",
+            candidate="cand_parallel1",
+        )
+        resp = client.get("/api/evolve/current-round")
+        data = resp.json()
+        assert data["active"] is True
+        assert data["imp_title"] == "Parallel imp 1"
+        assert data["candidate"] == "cand_parallel1"
+        # Full 14-field legacy-shape projection: pin every key in the
+        # ``_EVOLVE_CURRENT_ROUND_IDLE`` skeleton (besides ``active``,
+        # already asserted above) so a future refactor can't shrink the
+        # shape and break frontend destructuring.
+        for key in (
+            "generation",
+            "phase",
+            "imp_title",
+            "imp_rank",
+            "imp_index",
+            "candidate",
+            "stacked_titles",
+            "new_parent",
+            "prior_parent",
+            "games_played",
+            "games_total",
+            "score_cand",
+            "score_parent",
+            "updated_at",
+        ):
+            assert key in data, f"legacy field {key!r} missing from response"
+
+    def test_current_round_falls_back_to_idle_when_no_active_rounds(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """At concurrency>1 with no current-round file AND no active worker
+        rounds, the endpoint returns the idle skeleton (not a stale entry)."""
+        self._write_run_state(tmp_path, run_id="run00007", concurrency=4)
+        # All worker rounds inactive.
+        for wid in range(4):
+            self._write_round_file(
+                tmp_path,
+                worker_id=wid,
+                run_id="run00007",
+                active=False,
+            )
+        resp = client.get("/api/evolve/current-round")
+        data = resp.json()
+        assert data["active"] is False
+
+    def test_current_round_skips_stale_run_id_in_fallback(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """Stale-file guard also applies to the backwards-compat fallback."""
+        self._write_run_state(tmp_path, run_id="run00008", concurrency=2)
+        # Only worker 0 has a current entry; worker 1 is from a prior run.
+        self._write_round_file(
+            tmp_path,
+            worker_id=0,
+            run_id="stale",
+            imp_title="stale imp",
+        )
+        self._write_round_file(
+            tmp_path,
+            worker_id=1,
+            run_id="run00008",
+            imp_title="fresh imp",
+        )
+        resp = client.get("/api/evolve/current-round")
+        data = resp.json()
+        assert data["active"] is True
+        assert data["imp_title"] == "fresh imp"
+
+
+# ---------------------------------------------------------------------------
+# Step 4: re-run the load-bearing parallel-evolve endpoint invariants against
+# ``bots.v3.api`` (the version named in the plan) and ``bots.v4.api`` (the
+# production runtime per ``bots/current``). The base ``TestEvolveEndpoints``
+# class loads ``bots.v0.api``; the two sibling classes below pin the same
+# three invariants on v3 and v4 so a future drift between versions is caught.
+# v1 and v2 are dormant historical snapshots — no code path imports them, so
+# they're left out of this matrix.
+# ---------------------------------------------------------------------------
+
+
+def _make_versioned_client(
+    app_module: str, tmp_path: Path
+) -> TestClient:
+    """Configure + return a TestClient for one of the per-version
+    ``bots.v*.api`` modules. Each module exposes its own ``app`` and
+    ``configure`` symbols (FastAPI ``app`` is a module-level global)."""
+    import importlib
+
+    api_mod = importlib.import_module(app_module)
+    data_dir = tmp_path / "data"
+    log_dir = tmp_path / "logs"
+    replay_dir = tmp_path / "replays"
+    data_dir.mkdir()
+    log_dir.mkdir()
+    replay_dir.mkdir()
+    api_mod.configure(data_dir, log_dir, replay_dir)
+    return TestClient(api_mod.app)
+
+
+class TestEvolveEndpointsV3:
+    """Three load-bearing parallel-evolve invariants against ``bots.v3.api``.
+
+    Mirrors three tests from ``TestEvolveEndpoints`` (which loads
+    ``bots.v0.api``):
+    * ``test_running_rounds_full_4_workers``
+    * ``test_running_rounds_filters_stale_run_id``
+    * ``test_current_round_existing_takes_priority_at_concurrency_1``
+    """
+
+    @pytest.fixture()
+    def client(self, tmp_path: Path) -> TestClient:
+        return _make_versioned_client("bots.v3.api", tmp_path)
+
+    def test_running_rounds_full_4_workers(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        TestEvolveEndpoints._write_run_state(
+            tmp_path, run_id="run00003", concurrency=4
+        )
+        for wid in range(4):
+            TestEvolveEndpoints._write_round_file(
+                tmp_path,
+                worker_id=wid,
+                run_id="run00003",
+                imp_title=f"imp #{wid}",
+                candidate=f"cand_{wid:08x}",
+                games_played=wid,
+            )
+        resp = client.get("/api/evolve/running-rounds")
+        body = resp.json()
+        assert body["active"] is True
+        assert body["concurrency"] == 4
+        assert body["run_id"] == "run00003"
+        assert len(body["rounds"]) == 4
+        for wid in range(4):
+            slot = body["rounds"][wid]
+            assert slot["worker_id"] == wid
+            assert slot["active"] is True
+            assert slot["imp_title"] == f"imp #{wid}"
+            assert slot["candidate"] == f"cand_{wid:08x}"
+            assert slot["games_played"] == wid
+
+    def test_running_rounds_filters_stale_run_id(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        TestEvolveEndpoints._write_run_state(
+            tmp_path, run_id="run00002", concurrency=4
+        )
+        TestEvolveEndpoints._write_round_file(
+            tmp_path, worker_id=0, run_id="run00002"
+        )
+        TestEvolveEndpoints._write_round_file(
+            tmp_path, worker_id=1, run_id="stale"
+        )
+        TestEvolveEndpoints._write_round_file(
+            tmp_path, worker_id=2, run_id="run00002"
+        )
+        TestEvolveEndpoints._write_round_file(
+            tmp_path, worker_id=3, run_id="stale"
+        )
+        resp = client.get("/api/evolve/running-rounds")
+        body = resp.json()
+        assert body["active"] is True
+        assert len(body["rounds"]) == 4
+        assert body["rounds"][0]["active"] is True
+        assert body["rounds"][1]["active"] is False
+        assert body["rounds"][2]["active"] is True
+        assert body["rounds"][3]["active"] is False
+
+    def test_current_round_existing_takes_priority_at_concurrency_1(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        live = {
+            "active": True,
+            "generation": 4,
+            "phase": "fitness",
+            "imp_title": "Single-flight imp",
+            "imp_rank": 1,
+            "imp_index": 0,
+            "candidate": "cand_legacy",
+            "stacked_titles": [],
+            "new_parent": None,
+            "prior_parent": None,
+            "games_played": 1,
+            "games_total": 5,
+            "score_cand": 0,
+            "score_parent": 1,
+            "updated_at": "2026-04-29T14:00:00+00:00",
+        }
+        (tmp_path / "data" / "evolve_current_round.json").write_text(
+            json.dumps(live)
+        )
+        TestEvolveEndpoints._write_run_state(
+            tmp_path, run_id="run00005", concurrency=1
+        )
+        resp = client.get("/api/evolve/current-round")
+        data = resp.json()
+        assert data["active"] is True
+        assert data["imp_title"] == "Single-flight imp"
+        assert data["candidate"] == "cand_legacy"
+
+
+class TestEvolveEndpointsV4:
+    """Same three invariants against ``bots.v4.api`` — production runtime
+    via ``bots/current`` -> v4."""
+
+    @pytest.fixture()
+    def client(self, tmp_path: Path) -> TestClient:
+        return _make_versioned_client("bots.v4.api", tmp_path)
+
+    def test_running_rounds_full_4_workers(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        TestEvolveEndpoints._write_run_state(
+            tmp_path, run_id="run00003", concurrency=4
+        )
+        for wid in range(4):
+            TestEvolveEndpoints._write_round_file(
+                tmp_path,
+                worker_id=wid,
+                run_id="run00003",
+                imp_title=f"imp #{wid}",
+                candidate=f"cand_{wid:08x}",
+                games_played=wid,
+            )
+        resp = client.get("/api/evolve/running-rounds")
+        body = resp.json()
+        assert body["active"] is True
+        assert body["concurrency"] == 4
+        assert body["run_id"] == "run00003"
+        assert len(body["rounds"]) == 4
+        for wid in range(4):
+            slot = body["rounds"][wid]
+            assert slot["worker_id"] == wid
+            assert slot["active"] is True
+            assert slot["imp_title"] == f"imp #{wid}"
+            assert slot["candidate"] == f"cand_{wid:08x}"
+            assert slot["games_played"] == wid
+
+    def test_running_rounds_filters_stale_run_id(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        TestEvolveEndpoints._write_run_state(
+            tmp_path, run_id="run00002", concurrency=4
+        )
+        TestEvolveEndpoints._write_round_file(
+            tmp_path, worker_id=0, run_id="run00002"
+        )
+        TestEvolveEndpoints._write_round_file(
+            tmp_path, worker_id=1, run_id="stale"
+        )
+        TestEvolveEndpoints._write_round_file(
+            tmp_path, worker_id=2, run_id="run00002"
+        )
+        TestEvolveEndpoints._write_round_file(
+            tmp_path, worker_id=3, run_id="stale"
+        )
+        resp = client.get("/api/evolve/running-rounds")
+        body = resp.json()
+        assert body["active"] is True
+        assert len(body["rounds"]) == 4
+        assert body["rounds"][0]["active"] is True
+        assert body["rounds"][1]["active"] is False
+        assert body["rounds"][2]["active"] is True
+        assert body["rounds"][3]["active"] is False
+
+    def test_current_round_existing_takes_priority_at_concurrency_1(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        live = {
+            "active": True,
+            "generation": 4,
+            "phase": "fitness",
+            "imp_title": "Single-flight imp",
+            "imp_rank": 1,
+            "imp_index": 0,
+            "candidate": "cand_legacy",
+            "stacked_titles": [],
+            "new_parent": None,
+            "prior_parent": None,
+            "games_played": 1,
+            "games_total": 5,
+            "score_cand": 0,
+            "score_parent": 1,
+            "updated_at": "2026-04-29T14:00:00+00:00",
+        }
+        (tmp_path / "data" / "evolve_current_round.json").write_text(
+            json.dumps(live)
+        )
+        TestEvolveEndpoints._write_run_state(
+            tmp_path, run_id="run00005", concurrency=1
+        )
+        resp = client.get("/api/evolve/current-round")
+        data = resp.json()
+        assert data["active"] is True
+        assert data["imp_title"] == "Single-flight imp"
+        assert data["candidate"] == "cand_legacy"
 
 
 class TestImprovementsUnifiedEndpoint:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -12,10 +13,26 @@ from typing import Any
 # Command-line substrings that identify "one of our" processes.
 _OUR_CMDLINE_TAGS: tuple[str, ...] = ("bots.v0", "bots.current")
 
+# Parallel-evolve worker SC2 children carry ``--bot bots.cand_<uuid>`` in
+# their argv. Without this, they would land in the "Other" / "unknown"
+# bucket on the WSL processes panel during a parallel run. Expressed as a
+# substring + a regex extractor so the label resolver can show the actual
+# candidate prefix (``bots.cand_a1b2c3d4``) rather than the generic
+# ``bots.v0`` fallback.
+_CAND_CMDLINE_SUBSTR: str = "bots.cand_"
+_CAND_CMDLINE_RE: re.Pattern[str] = re.compile(r"\bbots\.cand_[a-f0-9]+")
+
 
 def _is_ours(cmdline: str) -> bool:
-    """Return True if ``cmdline`` (already lower-cased) matches any of our tags."""
-    return any(tag in cmdline for tag in _OUR_CMDLINE_TAGS)
+    """Return True if ``cmdline`` (already lower-cased) matches any of our tags.
+
+    Recognizes the explicit-version tags (``bots.v0``, ``bots.current``)
+    and the parallel-evolve candidate prefix (``bots.cand_<uuid>``) so
+    worker SC2 children show up as ours during a parallel run.
+    """
+    if any(tag in cmdline for tag in _OUR_CMDLINE_TAGS):
+        return True
+    return _CAND_CMDLINE_SUBSTR in cmdline
 
 
 @dataclass
@@ -158,11 +175,21 @@ def _summarize_cmdline(cmdline: str) -> str:
     # Truncate long paths, keep the meaningful parts
     lower = cmdline.lower()
     if _is_ours(lower):
-        # Extract the key flags and label by whichever tag actually matched
-        # Label by whichever tag matched (bots.v0 or bots.current).
+        # Extract the key flags and label by whichever tag actually
+        # matched. The candidate prefix (``bots.cand_<uuid>``) wins
+        # over the generic version tags so a parallel-evolve worker
+        # SC2 child shows the candidate that owns it; otherwise fall
+        # back to ``bots.v0`` / ``bots.current``.
         parts = cmdline.split()
         flags = [p for p in parts if p.startswith("--")]
-        label = next((tag for tag in _OUR_CMDLINE_TAGS if tag in lower), "bots.v0")
+        cand_match = _CAND_CMDLINE_RE.search(lower)
+        if cand_match is not None:
+            label = cand_match.group(0)
+        else:
+            label = next(
+                (tag for tag in _OUR_CMDLINE_TAGS if tag in lower),
+                "bots.v0",
+            )
         return label + " " + " ".join(flags)
     if "node" in lower and "vite" in lower:
         return "vite dev server"

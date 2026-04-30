@@ -324,6 +324,7 @@ Spike 3 (`scripts/spike3_launch.sh`) already validated this exact topology: 4 se
 
   **(b) Update `bots/v3/process_registry.py:13`:** Change `_OUR_CMDLINE_TAGS = ("bots.v3", "bots.current")` to also recognize `bots.cand_*` workers. Easiest implementation: keep the tuple but extend `_is_ours()` (line 18) and the label resolver (line 165) with an explicit `cmdline.contains("bots.cand_")` check. Worker SC2 children carry `--bot bots.cand_<uuid>` in their argv, so the substring match suffices. Without this, the dashboard's WSL processes panel shows worker SC2 PIDs as "Other" instead of "bots.cand_*".
 - **Issue:** #244
+- **Status:** DONE (2026-04-30) — code-review gauntlet 4/4, iter 2 after gauntlet trimmed asymmetric edit scope (reverted v1/v2 api.py, extended v0 process_registry for symmetry) + filled v3/v4 endpoint test gaps + v4 process_registry test gaps + full idle/legacy shape assertions; pytest 1406+20 (+31 vs Step-3 baseline); mypy strict + ruff clean. Real-SC2 e2e (curl /api/evolve/running-rounds during real parallel run) deferred to operator post-merge.
 - **Flags:** `--reviewers code`
 - **Produces:** New endpoint; backwards-compat shim; updated process detection; contract tests asserting endpoint shape with 0, 1, 4 round files present AND with stale (wrong-`run_id`) files present (must NOT appear in the response).
 - **Done when:**

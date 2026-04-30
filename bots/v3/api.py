@@ -1202,6 +1202,8 @@ _EVOLVE_IDLE_STATE: dict[str, Any] = {
     "resurrections_remaining": None,
     "pool_remaining_count": None,
     "last_result": None,
+    "run_id": None,
+    "concurrency": None,
 }
 
 _EVOLVE_DEFAULT_CONTROL: dict[str, Any] = {
@@ -1295,15 +1297,164 @@ async def get_evolve_current_round() -> dict[str, Any]:
     skeleton ``{"active": False, ...}`` when no phase is in progress / no
     file exists. The Evolution dashboard tab polls this at ~2s cadence so
     operators see score changes between phase-boundary writes.
+
+    Backwards-compat shim (Step 4 of the evolve-parallelization plan):
+    at ``concurrency=1`` the legacy ``evolve_current_round.json`` is the
+    sole source of truth (single-flight callers see no change). At
+    ``concurrency>1`` the dispatcher does NOT write the legacy file, so
+    we fall back to the per-worker round-state files (filtered by the
+    active ``run_id``) and return the first running round shaped to the
+    legacy ``EvolveCurrentRound`` interface. This keeps the Evolution
+    dashboard tab usable at parallel concurrencies without forcing a
+    frontend cut-over.
     """
     data = _read_json_file(_evolve_dir / _EVOLVE_CURRENT_ROUND_FILE)
+    if data is not None and data.get("active"):
+        # Single-flight legacy path: the file exists and is active —
+        # return it (merged over the idle skeleton for shape stability).
+        merged = dict(_EVOLVE_CURRENT_ROUND_IDLE)
+        merged.update(data)
+        return merged
+
+    # Parallel-evolve fallback: scan per-worker round-state files
+    # filtered by the current run's ``run_id``. Return the first active
+    # round, padded to the legacy current-round shape.
+    run_state = _read_json_file(_evolve_dir / _EVOLVE_STATE_FILE) or {}
+    active_run_id = run_state.get("run_id")
+    if active_run_id:
+        for path in sorted(_evolve_dir.glob("evolve_round_*.json")):
+            entry = _read_json_file(path)
+            if entry is None:
+                continue
+            if entry.get("run_id") != active_run_id:
+                continue
+            if not entry.get("active"):
+                continue
+            merged = dict(_EVOLVE_CURRENT_ROUND_IDLE)
+            # Only copy keys recognised by the legacy interface so the
+            # response shape matches single-flight output exactly.
+            for key in _EVOLVE_CURRENT_ROUND_IDLE:
+                if key in entry:
+                    merged[key] = entry[key]
+            merged["active"] = True
+            return merged
+
     if data is None:
         return dict(_EVOLVE_CURRENT_ROUND_IDLE)
-    # Merge over the idle skeleton so callers can always destructure the
-    # full shape, even if the on-disk file is missing a field.
+    # File exists but is inactive — preserve historical behavior of
+    # returning whatever the file contained, merged over the idle shape.
     merged = dict(_EVOLVE_CURRENT_ROUND_IDLE)
     merged.update(data)
     return merged
+
+
+# Per-worker round entry shape returned by ``/api/evolve/running-rounds``.
+# Strict subset of the legacy ``EvolveCurrentRound`` interface — no
+# ``imp_rank``/``imp_index``/``stacked_titles``/``new_parent``/
+# ``prior_parent`` (those are dispatcher-level, not per-worker).
+_EVOLVE_RUNNING_ROUND_IDLE: dict[str, Any] = {
+    "worker_id": None,
+    "active": False,
+    "phase": None,
+    "imp_title": None,
+    "candidate": None,
+    "parent": None,
+    "games_played": None,
+    "games_total": None,
+    "score_cand": None,
+    "score_parent": None,
+    "updated_at": None,
+}
+
+
+@app.get("/api/evolve/running-rounds")
+async def get_evolve_running_rounds() -> dict[str, Any]:
+    """Read all per-worker round-state files for the active parallel run.
+
+    Returns ``{"active": False, "concurrency": None, "run_id": None,
+    "rounds": []}`` when no parallel run is in progress (no run-state
+    file, or ``concurrency`` is ``None``). Otherwise returns a
+    fixed-length ``rounds`` array padded to ``concurrency`` length: each
+    slot is either an active per-worker entry (when its
+    ``evolve_round_<wid>.json`` exists with the current ``run_id``) or
+    an all-null idle skeleton.
+
+    Stale-file guard (Decision D-6 of the evolve-parallelization plan):
+    we filter ``evolve_round_*.json`` by the run-state's ``run_id`` so
+    leftover files from a prior run cannot pollute the response. The
+    dispatcher's startup cleanup is the primary defence; this filter is
+    the safety net for the race between cleanup and a still-dying prior
+    worker.
+    """
+    run_state = _read_json_file(_evolve_dir / _EVOLVE_STATE_FILE)
+    if run_state is None:
+        return {
+            "active": False,
+            "concurrency": None,
+            "run_id": None,
+            "rounds": [],
+        }
+
+    concurrency = run_state.get("concurrency")
+    run_id = run_state.get("run_id")
+    if concurrency is None or run_id is None:
+        return {
+            "active": False,
+            "concurrency": None,
+            "run_id": None,
+            "rounds": [],
+        }
+
+    # The per-worker files don't carry ``parent`` — the dispatcher's
+    # ``parent_current`` (from run_state) is the canonical parent for all
+    # active workers in a generation, so we project it onto each slot.
+    parent_current = run_state.get("parent_current")
+
+    # Index per-worker files by worker_id, filtered by run_id.
+    by_worker: dict[int, dict[str, Any]] = {}
+    for path in _evolve_dir.glob("evolve_round_*.json"):
+        entry = _read_json_file(path)
+        if entry is None:
+            continue
+        if entry.get("run_id") != run_id:
+            continue
+        wid = entry.get("worker_id")
+        if not isinstance(wid, int):
+            continue
+        by_worker[wid] = entry
+
+    rounds: list[dict[str, Any]] = []
+    for wid in range(int(concurrency)):
+        entry = by_worker.get(wid)
+        if entry is None:
+            slot = dict(_EVOLVE_RUNNING_ROUND_IDLE)
+            slot["worker_id"] = wid
+            rounds.append(slot)
+            continue
+        slot = dict(_EVOLVE_RUNNING_ROUND_IDLE)
+        slot["worker_id"] = wid
+        slot["active"] = bool(entry.get("active", False))
+        slot["parent"] = parent_current
+        for key in (
+            "phase",
+            "imp_title",
+            "candidate",
+            "games_played",
+            "games_total",
+            "score_cand",
+            "score_parent",
+            "updated_at",
+        ):
+            if key in entry:
+                slot[key] = entry[key]
+        rounds.append(slot)
+
+    return {
+        "active": True,
+        "concurrency": int(concurrency),
+        "run_id": run_id,
+        "rounds": rounds,
+    }
 
 
 @app.get("/api/evolve/pool")
