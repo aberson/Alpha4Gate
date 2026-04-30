@@ -268,6 +268,7 @@ Vitest covering:
 - **Problem:** The cheat sheet mentions tabs that no longer exist. Update the "Run on Windows" + watching-task sections to reflect the new tab list.
 - **Produces:** Updated `documentation/wiki/operator-commands.md`.
 - **Done when:** No stale tab references in the doc.
+- **Status:** DONE (2026-04-29) — no edits needed. operator-commands.md is CLI/process-focused and never named specific dashboard tabs (e.g. "Live tab", "Training tab"). The Ladder section there points at `scripts/ladder.py` (CLI), which still works; LadderTab UI is gone but the CLI is unchanged. Verified by grep against all 14 deleted component names — zero hits.
 
 ### Step 9: Manual smoke test
 
