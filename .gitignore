@@ -25,6 +25,9 @@ venv/
 # Claude Code local settings (per-developer permission overrides)
 .claude/settings.local.json
 
+# Soak monitor gist ID (per-developer; written by scripts/publish_soak_state.py)
+.soak-monitor-gist.id
+
 # OS
 Thumbs.db
 Desktop.ini
