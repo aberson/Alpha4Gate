@@ -1584,7 +1584,7 @@ signal. GPU support explicitly out of scope.
 | E | 1 w | 1 w | 2 w (SB3 override painful) |
 | 6 | 2 h code | open-ended soak | ongoing |
 | 7 | 1 d build | 1 d build + 1 overnight validation | 3 d (heuristic tuning) |
-| 8 | 4 d (Steps 1-10) + 24h soak (Step 11) | 5 d (actual: 2026-04-25 → 2026-04-29) + 24h soak | 1 w (Linux-specific surprises in soak) |
+| 8 | 4 d (Steps 1-10) + 8 h soak (Step 11) | 5 d (actual: 2026-04-25 → 2026-04-29) + 8 h soak | 1 w (Linux-specific surprises in soak) |
 | 9 | 3 d code (steps 1–6) | 3–5 d code + 1 h smoke + overnight soak | 1 w (dev-apply sub-agent edge cases) |
 | F | 1.5 w | 2 w | 3 w (training destabilizes) |
 | H | 2 d | 3 d | 1 w (PySC2 integration friction) |
@@ -1712,6 +1712,23 @@ Investigations that informed the current direction:
 ## Plan history
 
 Append-only — do not edit prior entries.
+
+- *2026-04-29* — **Phase 8 Step 11 wall-clock revised: 24 h → 8 h.**
+  Step 11's original 24-hour figure was pattern-matched from
+  "production soak duration" conventions rather than derived from
+  specific failure-mode analysis. The validated Phase 9 baseline soak
+  `20260423-2052` was 7h 15m and produced 2 promotions; Linux-specific
+  failure modes (parallel startup races, replay-path quirks, SQLite
+  WAL contention) all manifest within ~2-4 h if they exist. 8 h
+  satisfies every Step 11 done-when item (promotion count, per-game
+  wall-clock vs Windows baseline, no orphaned SC2 processes, sandbox
+  hook integrity) with same-day feedback. Build doc updated in §3
+  scope, §6 design decisions, §9 testing strategy, and Step 11
+  itself; the soak-record file convention changed from
+  `evolve-linux-24h-<TS>.md` to `evolve-linux-8h-<TS>.md`. A 2-hour
+  check-in pattern is now documented inside Step 11 — operator
+  inspects `data/evolve_run_state.json` + recent commits + log tail
+  before letting the remaining ~6 h proceed unattended.
 
 - *2026-04-29* — **Phase 8 Steps 9 + 10 SHIPPED, Step 12 REMOVED.**
   Step 9 (multi-stage Dockerfile + `.dockerignore` + cloud-deployment

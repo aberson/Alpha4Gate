@@ -48,7 +48,7 @@ A fresh-context model needs this orientation:
 - One smoke-gate game on Linux end-to-end.
 - GitHub Actions Linux CI workflow for unit tests + ruff + mypy (no `-m sc2`).
 - Dockerfile for a headless-Linux SC2 worker image (no orchestration scaffolding).
-- 24-hour Phase 9 evolve soak on Linux as the long-observation step.
+- 8-hour Phase 9 evolve soak on Linux as the long-observation step (revised from 24 h on 2026-04-29 — see §6 + Step 11 rationale).
 - Master-plan Phase 8 section + plan-history entry + reclamation note.
 - Conditional Spike 4: cloud-cost dry run on AWS spot instance.
 
@@ -93,7 +93,7 @@ A fresh-context model needs this orientation:
 | `.dockerignore` | New | Excludes `.venv*/`, `data/`, `logs/`, `bots/v*/data/`, `frontend/node_modules/`, replays |
 | `documentation/soak-test-runs/spike-{1,2,3}-<TS>.md` | New (per spike attempt) | Operator records; `<TS>` = `YYYYMMDD-HHMM` so re-runs after a halt-and-fix don't overwrite |
 | `documentation/soak-test-runs/phase-8-smoke-gate-<TS>.md` | New | Smoke-gate record |
-| `documentation/soak-test-runs/evolve-linux-24h-<TS>.md` | New | 24-hour soak report |
+| `documentation/soak-test-runs/evolve-linux-8h-<TS>.md` | New | 8-hour soak report |
 
 No migrations. No backwards-compat shims. No new Python dependencies. The five `SC2PATH` defaults all use `setdefault`/`os.getenv` — the env-var override mechanism already exists.
 
@@ -139,9 +139,9 @@ No migrations. No backwards-compat shims. No new Python dependencies. The five `
 
 **Cloud scaffolding: Dockerfile only, no AWS task def, no cloud dry-run.** A buildable Docker image is the smallest unit that proves "this can run in the cloud" without committing to any specific cloud provider. ECS/Fargate task definitions, IAM scaffolding, secrets management, and orchestration are deferred to a future plan that would be triggered if parallel-evolve-at-scale becomes a binding motivation. The original plan (drafted 2026-04-24) included a conditional Step 12 that ran a 24h soak on `c5.2xlarge` spot to put numbers on cloud cost-effectiveness; Step 12 was removed 2026-04-29 because the dev-box + WSL2 4-way unlock (Spike 3) is sufficient at current scale, and cloud's operational tax (credentials, spot reclaims, rsync, lifecycle) outweighs the small cost savings. Alternative considered: full AWS scaffolding. Rejected — premature for Phase 8.
 
-**Smoke gate before any soak.** Step 7 is a mandatory one-game end-to-end run on Linux with real components (no mocks) before Step 11's 24-hour soak. Catches the producer/consumer drift class of bug — "SC2PATH fix shipped, but the daemon doesn't see it"; "DB writer works in unit tests but the new platform path breaks SQLite locking" — that mocked unit tests miss by definition. Per plan-feature skill rule.
+**Smoke gate before any soak.** Step 7 is a mandatory one-game end-to-end run on Linux with real components (no mocks) before Step 11's 8-hour soak. Catches the producer/consumer drift class of bug — "SC2PATH fix shipped, but the daemon doesn't see it"; "DB writer works in unit tests but the new platform path breaks SQLite locking" — that mocked unit tests miss by definition. Per plan-feature skill rule.
 
-**24-hour observation soak on real Linux.** Phase 8 is observability-adjacent infrastructure for autonomous behavior (Phase 9 evolve). Per plan-feature skill rule, the build steps include a deliberate observation phase with realistic inputs, run long enough to expose Linux-specific time-dependent failures: parallel-startup races (per burnysc2's serialization warning in `main.py:694-703`), EGL teardown bugs, signal-handler differences, replay-path quirks. 24 hours matches the wall-clock of a non-trivial Phase 9 evolve run with multiple promotion attempts.
+**8-hour observation soak on real Linux** (revised from 24 h on 2026-04-29). Phase 8 is observability-adjacent infrastructure for autonomous behavior (Phase 9 evolve). Per plan-feature skill rule, the build steps include a deliberate observation phase with realistic inputs, run long enough to expose Linux-specific time-dependent failures: parallel-startup races (per burnysc2's serialization warning in `main.py:694-703`), EGL teardown bugs, signal-handler differences, replay-path quirks. The original 24-hour figure was pattern-matched from "production soak duration" conventions; the validated Windows Phase 9 baseline soak `20260423-2052` was actually 7h 15m and produced 2 promotions, which is the "non-trivial run" the plan referenced. 8 hours satisfies every Step 11 done-when item with same-day feedback, and Linux-specific failure modes manifest within ~2-4 h if they exist. A 2-hour check-in (described in Step 11) catches early failures before committing the full budget.
 
 **No data migration.** Per-version `training.db`, `reward_rules.json`, `hyperparams.json`, and checkpoints are all `pathlib.Path` + relative paths + cross-platform formats. SB3 checkpoints zip cleanly cross-platform. SQLite DBs move cross-platform via file copy. **The 5 SC2PATH defaults are the entire migration surface.**
 
@@ -316,31 +316,56 @@ What to look for: 8 SC2 processes coexist (4 games × 2 each), per-process RAM �
 - **Done when:** master plan reads coherently; Phase 8 pointer links to `phase-8-build-plan.md`; no stale "Phase 8 skipped" claims; time-budget totals recompute correctly; `documentation/wiki/index.md` updated if it lists phases.
 - **Depends on:** 9
 
-### Step 11: WAIT — 24-hour Phase 9 evolve soak on Linux
+### Step 11: WAIT — 8-hour Phase 9 evolve soak on Linux (with 2h check-in)
 
 - **Type:** wait
 - **Issue:** #
-- **Produces:** `documentation/soak-test-runs/evolve-linux-24h-<TS>.md`; measured promotion count; per-game wall-clock vs Windows baseline; per-instance RAM under sustained load
-- **Done when:** 24-hour Phase 9 evolve cycle completes on a Linux box (WSL or Dockerfile per Step 9); morning report shows promotion count, per-game wall-clock, and parallel throughput; no orphaned SC2 processes (`pgrep SC2_x64` returns empty after teardown); pre-commit hook still rejects out-of-sandbox commits during the run.
+- **Produces:** `documentation/soak-test-runs/evolve-linux-8h-<TS>.md`; measured promotion count; per-game wall-clock vs Windows baseline; per-instance RAM under sustained load
+- **Done when:** 8-hour Phase 9 evolve cycle completes on Linux (WSL recommended over Dockerfile for direct git access by the `EVO_AUTO=1` commit path); morning report shows promotion count, per-game wall-clock, and parallel throughput; no orphaned SC2 processes (`pgrep SC2_x64` returns empty after teardown); pre-commit hook still rejects out-of-sandbox commits during the run.
 - **Depends on:** 10
-- **MANDATORY long-observation step per plan-feature skill rules.** Only way to expose Linux-specific time-dependent failures (parallel startup races per burnysc2's `main.py:694-703` warning, EGL teardown bugs, signal-handler differences, replay-path quirks per `controller.py:65-78`).
+- **Long-observation step per plan-feature skill rules.** Exposes Linux-specific time-dependent failures (parallel startup races per burnysc2's `main.py:694-703` warning, EGL teardown bugs, signal-handler differences, replay-path quirks per `controller.py:65-78`).
 
-**Output path convention:** match the existing Phase 9 evolve convention (`scripts/evolve.py` writes per-version snapshots under `data-snapshots/` per memory `project_evolve_redesigned.md`). Verify by reading `scripts/evolve.py --help` and the actual argparse before running — do NOT guess the flag name. The soak-record markdown lives at `documentation/soak-test-runs/evolve-linux-24h-<TS>.md` regardless.
+**Why 8 h, not 24 h** (revised 2026-04-29): the original plan called for 24 hours, pattern-matched from "production soak duration" conventions. The validated Phase 9 baseline soak `20260423-2052` was 7h 15m and produced 2 promotions; that's the "non-trivial Phase 9 run" the plan referenced. Linux-specific failure modes (parallel startup races, replay-path quirks, SQLite WAL contention) all manifest within ~2-4 h if they exist; tripling the wall-clock to 24 h adds little additional confidence at this stage. 8 h satisfies every done-when item with same-day feedback. If Step 11 surfaces a slow-developing failure that an 8-h run can't catch, run a follow-up extended soak with stronger motivation.
 
-**Flag semantics:** `--hours 24` (wall-clock budget; evolve.py's `DaemonConfig.max_runs` and pool-exhaustion guard handle early termination), `--games-per-eval 9` (matches the validated baseline soak `20260423-2052`), `--pool-size 4` (4 generated improvements per round). See `documentation/plans/phase-9-build-plan.md` Step 4 + `scripts/evolve.py --help` for full semantics.
+**Two-hour check-in pattern.** The first generation (pool-gen + 4 imps × 9 games of fitness + stack-apply + regression) typically completes in roughly 2-3 hours. Operator launches the run, returns at the +2 h mark, inspects state:
+
+- `data/evolve_run_state.json` shows `generation_index >= 1` and `status: "running"` → soak is healthy, walk away.
+- `last_result.outcome` is a recognised state (`fitness-pass`, `fitness-fail`, `stack-apply-pass`, `regression-pass`, `regression-rollback`) → soak is healthy.
+- Crash row (`outcome: "crash"`) or process gone but state file says `running` → fix the underlying issue before letting the remaining ~6 h proceed.
+
+The check-in is informal — no separate done-when item, just the operator's standard "is this thing actually working" inspection before committing the rest of the night to the run. Documented here so future operators don't accidentally watch the run continuously.
+
+**Output path convention:** match the existing Phase 9 evolve convention (`scripts/evolve.py` writes per-version snapshots under `data-snapshots/` per memory `project_evolve_redesigned.md`). Verify by reading `scripts/evolve.py --help` and the actual argparse before running — do NOT guess the flag name. The soak-record markdown lives at `documentation/soak-test-runs/evolve-linux-8h-<TS>.md` regardless.
+
+**Flag semantics:** `--hours 8` (wall-clock budget; evolve.py's `DaemonConfig.max_runs` and pool-exhaustion guard handle early termination), `--games-per-eval 9` (matches the validated baseline soak `20260423-2052`), `--pool-size 4` (4 generated improvements per round). See `documentation/plans/phase-9-build-plan.md` Step 4 + `scripts/evolve.py --help` for full semantics.
 
 **Hang behavior:** the existing watchdog in `bots/v0/learning/environment.py` (`SC2Env.step` 30m soft / 45m hard per memory `feedback_orchestrator_hang_blocks_everything.md`) bounds individual game wall-clock. If `evolve.py` itself hangs at the orchestrator level, kill the Python process (`pkill -f scripts/evolve.py`); `pgrep SC2_x64` should return empty within 30 seconds as child processes drain. Document any hang in the morning report.
 
-**Operator commands (in WSL or container):**
+**Operator commands (in WSL):**
 
 ```bash
-SC2PATH=~/StarCraftII EVO_AUTO=1 uv run python scripts/evolve.py \
-  --hours 24 --games-per-eval 9 --pool-size 4
+cd /mnt/c/Users/abero/dev/Alpha4Gate
+SC2PATH=~/StarCraftII \
+SC2_WSL_DETECT=0 \
+UV_PROJECT_ENVIRONMENT=$HOME/venv-alpha4gate-linux \
+EVO_AUTO=1 \
+nohup uv run python scripts/evolve.py \
+    --hours 8 --games-per-eval 9 --pool-size 4 \
+    > logs/evolve-linux-8h-$(date +%Y%m%d-%H%M).log 2>&1 &
+echo "PID: $!"
 # Output dir comes from scripts/evolve.py defaults — do not pass a custom --results-out
 # unless the actual flag exists in argparse.
 ```
 
-What to look for in the morning report: ≥ 2 promotion attempts (matches Windows baseline soak `20260423-2052`); per-game wall-clock < 60% of Windows baseline (the parallel-throughput unlock); zero `pgrep SC2_x64` processes after run; pre-commit hook log shows `[evo-auto]` commits accepted, no out-of-sandbox attempts.
+**Two-hour check-in command:**
+
+```bash
+cat data/evolve_run_state.json
+git log --oneline --since="2 hours ago" | grep "evo-auto" || echo "no evo-auto commits yet"
+tail -20 logs/evolve-linux-8h-*.log
+```
+
+What to look for in the morning report: ≥ 1 promotion attempt (Windows baseline at 7h 15m landed 2 promotions; 8h Linux should land at least one); per-game wall-clock vs Windows baseline (today's v3→v4 promotion soak averaged ~100 s/game); zero `pgrep SC2_x64` processes after run; pre-commit hook log shows `[evo-auto]` commits accepted, no out-of-sandbox attempts.
 
 **Phase ends after Step 11.** Step 12 (cloud cost dry-run) was removed 2026-04-29 — see plan-history entry. The dev-box / WSL2 4-way unlock from Spike 3 is sufficient for the Phase 9 evolve workload at current scale; the AWS-spot operational tax (credentials, spot reclaims, rsync-back, lifecycle) outweighs the cost savings. If parallel-evolve-at-scale becomes motivated later, that's a future plan with stronger justification than "let's see if cloud could work."
 
@@ -385,7 +410,7 @@ What to look for in the morning report: ≥ 2 promotion attempts (matches Window
 
 **Smoke gate (Step 7):** one real `bots.v0.runner` game on Linux, end-to-end, no mocks. The deliverable is "the pipeline can complete one real cycle without crashing" — pass/fail of any business logic is out of scope. Per plan-feature skill rule.
 
-**Long observation (Step 11):** 24-hour Phase 9 evolve on Linux. Proves the entire autonomous training loop survives sustained Linux operation. Per plan-feature skill rule for autonomous-behavior infrastructure.
+**Long observation (Step 11):** 8-hour Phase 9 evolve on Linux (revised from 24 h on 2026-04-29 — see §6 rationale). Proves the entire autonomous training loop survives sustained Linux operation. Per plan-feature skill rule for autonomous-behavior infrastructure.
 
 **CI gating (Step 8):** the new Linux workflow becomes a required check on PRs. Catches future Windows-only regressions in cross-platform code paths.
 
