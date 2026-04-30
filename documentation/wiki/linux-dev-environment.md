@@ -81,6 +81,19 @@ The `--extra dev` flag is required: `pytest`, `ruff`, `mypy`, `httpx`, and `pre-
 
 For unit tests + lint + typecheck, you can skip this section. For anything that actually plays a game, install SC2 4.10 Linux per the [Spike 1 commands](../soak-test-runs/spike-1-hello-world-linux-sc2-20260425-2218.md#operator-commands-actually-executed-with-deviations-from-plan).
 
+### 7. Configure git identity (required for evolve commits)
+
+`scripts/evolve.py` runs `git commit` inside the WSL distro to land `[evo-auto]` promotions. WSL has its own `~/.gitconfig` separate from the Windows `%USERPROFILE%\.gitconfig`. Without identity set, every commit fails with exit 128 (`fatal: empty ident name (for <user@host.localdomain>) not allowed`) and strong fitness winners silently retry-cap into `evicted` after three benched rounds.
+
+```bash
+git config --global user.email "you@example.com"
+git config --global user.name "Your Name"
+git config --global --get user.email  # confirm non-empty
+git config --global --get user.name   # confirm non-empty
+```
+
+> **Symptom on the Evolution dashboard:** strong fitness winners (5/9, 6/9, 7/9 wins) reappear across consecutive generations marked `r1`, `r2`, `r3`, then flip to `evicted` with no promotions. Diagnosed on the [2026-04-30 soak failure](../soak-test-runs/evolve-2026-04-30T05-30-07+00-00.md) — 7 generations, ~10 strong winners, 0 promotions, 100% `stack-apply-commit-fail` rate.
+
 ## Verification
 
 These three commands are the Phase 8 Step 6 done-when. All must succeed against the freshly-synced WSL venv:
@@ -109,6 +122,7 @@ A consolidated list of foot-guns documented in memory and in the Spike 1 finding
 | 7 | Bare `wsl` opens the wrong distro | Default distro is Ubuntu 24.04, not Ubuntu-22.04 | Always pass `-d Ubuntu-22.04` |
 | 8 | `pidof SC2_x64` returns empty inside a backgrounded subshell | Cause not isolated; observed 305 consecutive empty results during Spike 1 RSS sampling | Scan `/proc/[0-9]*/exe` directly for SC2 detection |
 | 9 | `ps -p A B C -o rss=` (space-separated PIDs) returns empty on procps-ng | procps-ng quirk | Use comma-separated (`ps -p A,B,C`) or per-PID `/proc/$pid/status` |
+| 10 | Every evolve generation logs `stack-apply-commit-fail` despite passing fitness winners; dashboard shows benched winners flipping to `evicted` at `r3` | WSL `~/.gitconfig` has empty `user.email` / `user.name`; `git commit` returns 128 (`Author identity unknown`) | Set `git config --global user.email`/`user.name` inside the distro (step 7) |
 
 ## What this DOES NOT cover
 
