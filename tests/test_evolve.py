@@ -376,6 +376,44 @@ class TestApplyImprovement:
         restored = Improvement.from_json(imp.to_json())
         assert restored == imp
 
+    def test_fitness_result_json_round_trip(self) -> None:
+        """``FitnessResult`` round-trips losslessly through to_json/from_json.
+
+        Used by the parallel-evolve worker (Step 2 of the
+        evolve-parallelization plan) to ferry the result back to the
+        dispatcher across a result file. The instance is frozen so equality
+        is by value.
+        """
+        imp = _make_imp(
+            rank=1,
+            title="bump expansion",
+            type_="training",
+            description="more expansions",
+            principle_ids=["econ-1"],
+            expected_impact="+5% WR",
+            concrete_change=_training_patch(
+                "reward_rules.json", {"expansion_bonus": 3.0}
+            ),
+        )
+        records = [
+            _record("cand", "v0", "cand", match_id="m1"),
+            _record("cand", "v0", "v0", match_id="m2"),
+            _record("cand", "v0", None, match_id="m3"),
+        ]
+        original = FitnessResult(
+            parent="v0",
+            candidate="cand",
+            imp=imp,
+            record=records,
+            wins_candidate=1,
+            wins_parent=1,
+            games=3,
+            bucket="close",
+            reason="fitness close: 1-1 vs parent v0 over 3 games",
+        )
+        restored = FitnessResult.from_json(original.to_json())
+        assert restored == original
+
 # ---------------------------------------------------------------------------
 # Phase primitives (fitness / regression)
 # ---------------------------------------------------------------------------

@@ -287,6 +287,7 @@ Spike 3 (`scripts/spike3_launch.sh`) already validated this exact topology: 4 se
 ### Step 2: Per-worker live-state file shape + `evolve_worker.py` CLI
 
 - **Problem:** Add `scripts/evolve_worker.py` — a one-shot CLI taking `--parent --imp-json --worker-id --result-path` and pass-throughs for game-eval args. It calls `orchestrator.evolve.run_fitness_eval` for one imp, writes live-progress to `data/evolve_round_<worker_id>.json` via temp+rename atomically, writes the final result JSON to `--result-path`. Exits 0 on success, non-zero on crash. New module `scripts/evolve_round_state.py` (or extension to existing) for the file-write helpers used by both this worker and the dispatcher in step 3.
+- **Status:** DONE (2026-04-30) — code-review gauntlet 4/4, iter 2 after gauntlet flagged narrow-catch + run_id falsy-fallback + main-return-int convention + over-pinning trims; pytest 1355+20 (+16 vs baseline); mypy strict + ruff clean. Real-SC2 e2e validation deferred to operator post-merge.
 - **Issue:** #242
 - **Flags:** `--reviewers code --isolation worktree`
 - **Produces:** `scripts/evolve_worker.py`; round-state helpers; unit tests in `tests/test_evolve_worker.py` covering arg parsing, state-file atomicity, and crash exit codes.

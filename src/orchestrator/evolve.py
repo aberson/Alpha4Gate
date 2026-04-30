@@ -166,6 +166,47 @@ class FitnessResult:
     bucket: FitnessBucket
     reason: str
 
+    def to_json(self) -> str:
+        """Serialize to a JSON string.
+
+        Used by the parallel-evolve worker to ferry ``FitnessResult`` from
+        a worker subprocess back to the dispatcher across a result file.
+        Round-trips losslessly via :meth:`from_json`.
+        """
+        payload: dict[str, Any] = {
+            "parent": self.parent,
+            "candidate": self.candidate,
+            "imp": dataclasses.asdict(self.imp),
+            "record": [dataclasses.asdict(r) for r in self.record],
+            "wins_candidate": self.wins_candidate,
+            "wins_parent": self.wins_parent,
+            "games": self.games,
+            "bucket": self.bucket,
+            "reason": self.reason,
+        }
+        return json.dumps(payload)
+
+    @classmethod
+    def from_json(cls, data: str | bytes) -> FitnessResult:
+        payload = json.loads(data)
+        # Delegate imp deserialization to ``Improvement.from_json`` so the
+        # forward-compat ``files_touched`` setdefault lives in exactly one
+        # place. The next time ``Improvement`` gains an optional field,
+        # only its own ``from_json`` needs to learn about it.
+        imp = Improvement.from_json(json.dumps(payload["imp"]))
+        record = [SelfPlayRecord(**r) for r in payload.get("record", [])]
+        return cls(
+            parent=payload["parent"],
+            candidate=payload["candidate"],
+            imp=imp,
+            record=record,
+            wins_candidate=payload["wins_candidate"],
+            wins_parent=payload["wins_parent"],
+            games=payload["games"],
+            bucket=cast(FitnessBucket, payload["bucket"]),
+            reason=payload["reason"],
+        )
+
 
 @dataclass(frozen=True)
 class RegressionResult:

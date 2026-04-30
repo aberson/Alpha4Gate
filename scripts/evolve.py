@@ -46,7 +46,7 @@ import sys
 import time
 import traceback
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -71,6 +71,19 @@ from orchestrator.evolve import (  # noqa: E402
     _restore_pointer as _primitive_restore_pointer,
 )
 from orchestrator.paths import resolve_sc2_path  # noqa: E402
+
+# Round-state helpers extracted to ``scripts/evolve_round_state.py`` so the
+# parallel-evolve worker (Step 2 of the evolve-parallelization plan) can
+# share them without circular-importing this orchestration loop.
+sys.path.insert(0, str(_REPO_ROOT / "scripts"))
+from evolve_round_state import (  # noqa: E402
+    CurrentRoundPayload,
+    clear_current_round_state,
+    write_current_round_state,
+)
+from evolve_round_state import (  # noqa: E402
+    atomic_write_json as _round_state_atomic_write_json,
+)
 
 _log = logging.getLogger("evolve")
 
@@ -423,30 +436,11 @@ def _now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
-_ATOMIC_REPLACE_RETRY_DELAYS = (0.05, 0.1, 0.2, 0.4, 0.8)
-
-
-def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    """Write *payload* as pretty-printed, sorted JSON, atomically.
-
-    On Windows, ``os.replace`` fails with ``PermissionError`` if any process
-    holds an open handle on the target — which happens whenever the backend
-    ``--serve`` is polling these state files. Retry a few times with backoff
-    before giving up; the races are short-lived.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    for delay in _ATOMIC_REPLACE_RETRY_DELAYS:
-        try:
-            tmp.replace(path)
-            return
-        except PermissionError:
-            time.sleep(delay)
-    tmp.replace(path)
+# Re-exported from ``scripts/evolve_round_state.py`` (Step 2 extraction).
+# Kept under the old private name so the rest of this module — which uses
+# ``_atomic_write_json`` for several other state files — does not need to
+# change shape.
+_atomic_write_json = _round_state_atomic_write_json
 
 
 def write_pool_state(
@@ -667,70 +661,9 @@ def append_crash_log(
 # ---------------------------------------------------------------------------
 # Current-round JSON (live per-game progress)
 # ---------------------------------------------------------------------------
-
-
-@dataclass
-class CurrentRoundPayload:
-    """Mutable payload used to update ``evolve_current_round.json``.
-
-    One instance per generation, updated in place as phases progress. The
-    ``to_dict`` output is the exact shape read by
-    :meth:`frontend/src/components/EvolutionTab.tsx` — keep in lock-step.
-    """
-
-    generation: int = 0
-    # Phases: starting / mirror_games / claude_prompt / fitness /
-    # stack_apply / regression / pool_refresh.
-    phase: str = "starting"
-    imp_title: str | None = None
-    imp_rank: int | None = None
-    imp_index: int | None = None
-    candidate: str | None = None
-    stacked_titles: list[str] = field(default_factory=list)
-    new_parent: str | None = None
-    prior_parent: str | None = None
-    games_played: int = 0
-    games_total: int = 0
-    score_cand: int = 0
-    score_parent: int = 0
-
-    def reset_progress(self, total: int) -> None:
-        self.games_played = 0
-        self.games_total = total
-        self.score_cand = 0
-        self.score_parent = 0
-
-    def to_dict(self, *, active: bool = True) -> dict[str, Any]:
-        return {
-            "active": active,
-            "generation": self.generation,
-            "phase": self.phase,
-            "imp_title": self.imp_title,
-            "imp_rank": self.imp_rank,
-            "imp_index": self.imp_index,
-            "candidate": self.candidate,
-            "stacked_titles": list(self.stacked_titles),
-            "new_parent": self.new_parent,
-            "prior_parent": self.prior_parent,
-            "games_played": self.games_played,
-            "games_total": self.games_total,
-            "score_cand": self.score_cand,
-            "score_parent": self.score_parent,
-            "updated_at": _now_iso(),
-        }
-
-
-def write_current_round_state(path: Path, payload: CurrentRoundPayload) -> None:
-    """Write the live per-game progress file (active=True)."""
-    _atomic_write_json(path, payload.to_dict(active=True))
-
-
-def clear_current_round_state(path: Path) -> None:
-    """Mark the current-round file inactive between phases."""
-    _atomic_write_json(
-        path, {"active": False, "updated_at": _now_iso()}
-    )
-
+# ``CurrentRoundPayload`` + ``write_current_round_state`` +
+# ``clear_current_round_state`` live in ``scripts/evolve_round_state.py``
+# (Step 2 of the evolve-parallelization plan). Imported above.
 
 # ---------------------------------------------------------------------------
 # Run state (dashboard-facing)
