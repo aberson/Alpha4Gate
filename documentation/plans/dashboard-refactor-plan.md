@@ -242,6 +242,7 @@ Vitest covering:
 - **Problem:** Replace the current 12-tab nav with 5–6 tabs (final list in §5 of the conversation log: Advisor, Evolution, Improvements, Processes, Alerts, Help). Update `Tab` type union, button list, render dispatch.
 - **Produces:** Updated `App.tsx`.
 - **Done when:** App renders with 5–6 tab buttons; clicking each shows the correct component; Tab type union has only the kept names.
+- **Status:** DONE (2026-04-29)
 
 ### Step 5: Delete frontend components
 
