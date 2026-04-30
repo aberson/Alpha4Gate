@@ -41,7 +41,7 @@ A fresh-context model needs this orientation:
 
 **In scope:**
 
-- Spike 1, 2, 3 (and conditional Spike 4) per investigation §11.
+- Spike 1, 2, 3 per investigation §11. (Conditional Spike 4 / Step 12 cloud cost dry-run was removed 2026-04-29 — see plan history.)
 - WSL2 Ubuntu 22.04 dev environment setup as the spike platform.
 - Replace 5 hardcoded Windows `SC2PATH` defaults with platform-aware fallbacks.
 - Document Linux dev-environment recipe (uv, Python 3.12, dev-dep follow-up).
@@ -56,7 +56,7 @@ A fresh-context model needs this orientation:
 
 - pysc2 migration (rejected by investigation).
 - Self-play viewer revival on Linux (no headless renderer; out of scope by design).
-- AWS-specific orchestration (ECS/Fargate task definitions, IAM roles, secrets management). Dockerfile only in Phase 8; cloud orchestration becomes a future plan if Step 12 cost-dry-run shows it's worth it.
+- AWS-specific orchestration (ECS/Fargate task definitions, IAM roles, secrets management). Dockerfile only in Phase 8; cloud orchestration is a future plan if/when parallel-evolve-at-scale becomes a binding motivation.
 - `pytest -m sc2` on a self-hosted Linux CI runner. Unit tests only.
 - Cross-platform replay file normalization (the Linux replay-path quirk in burnysc2 §4.7) — deferred unless the soak surfaces it.
 - Per-version Linux venvs. Shared repo deps stay shared.
@@ -137,7 +137,7 @@ No migrations. No backwards-compat shims. No new Python dependencies. The five `
 
 **CI: unit tests only on Linux, no `pytest -m sc2`.** A self-hosted Linux runner with the headless package preinstalled is feasible but adds ongoing maintenance (image updates, runner uptime). Phase 8 takes the cheap path: GitHub-hosted Ubuntu runner, unit tests + lint + type-check only. `-m sc2` integration tests stay on Windows for now. If Phase 9 evolve starts gating on Linux-specific behavior, a self-hosted runner becomes a future plan. Alternative considered: self-hosted runner. Rejected for Phase 8 scope; defer until justified.
 
-**Cloud scaffolding: Dockerfile only, no AWS task def.** A buildable Docker image is the smallest unit that proves "this can run in the cloud" without committing to any specific cloud provider. ECS/Fargate task definitions, IAM scaffolding, secrets management, and orchestration are deferred to a future plan that would be triggered if Step 12 (conditional cloud cost dry-run) shows the unlock is worth the operator overhead. Alternative considered: full AWS scaffolding. Rejected — premature for Phase 8; the Dockerfile + cloud run-book is sufficient to prove viability.
+**Cloud scaffolding: Dockerfile only, no AWS task def, no cloud dry-run.** A buildable Docker image is the smallest unit that proves "this can run in the cloud" without committing to any specific cloud provider. ECS/Fargate task definitions, IAM scaffolding, secrets management, and orchestration are deferred to a future plan that would be triggered if parallel-evolve-at-scale becomes a binding motivation. The original plan (drafted 2026-04-24) included a conditional Step 12 that ran a 24h soak on `c5.2xlarge` spot to put numbers on cloud cost-effectiveness; Step 12 was removed 2026-04-29 because the dev-box + WSL2 4-way unlock (Spike 3) is sufficient at current scale, and cloud's operational tax (credentials, spot reclaims, rsync, lifecycle) outweighs the small cost savings. Alternative considered: full AWS scaffolding. Rejected — premature for Phase 8.
 
 **Smoke gate before any soak.** Step 7 is a mandatory one-game end-to-end run on Linux with real components (no mocks) before Step 11's 24-hour soak. Catches the producer/consumer drift class of bug — "SC2PATH fix shipped, but the daemon doesn't see it"; "DB writer works in unit tests but the new platform path breaks SQLite locking" — that mocked unit tests miss by definition. Per plan-feature skill rule.
 
@@ -342,18 +342,7 @@ SC2PATH=~/StarCraftII EVO_AUTO=1 uv run python scripts/evolve.py \
 
 What to look for in the morning report: ≥ 2 promotion attempts (matches Windows baseline soak `20260423-2052`); per-game wall-clock < 60% of Windows baseline (the parallel-throughput unlock); zero `pgrep SC2_x64` processes after run; pre-commit hook log shows `[evo-auto]` commits accepted, no out-of-sandbox attempts.
 
-**Graceful degradation:** if per-game wall-clock lands in the 60-100% range of Windows baseline (the unlock is real but smaller than the 3x estimate), accept the partial unlock and **skip Step 12** — cloud is not justified at < 2x throughput improvement. Ship Phase 8 with the SC2PATH fix + CI + Dockerfile as the deliverable; the dev-loop and CI improvements are independently valuable. Document the degradation in the master-plan plan-history entry.
-
-### Step 12 (conditional): Cloud cost dry-run (Spike 4 from investigation)
-
-- **Type:** conditional
-- **Issue:** #
-- **Produces:** cost-per-promotion benchmark; `documentation/soak-test-runs/evolve-cloud-c5-2xlarge-<TS>.md`
-- **Done when:** 24-hour cloud soak on `c5.2xlarge` spot instance completes via the Dockerfile from Step 9; cost ($spot × hours) and promotion count tallied; recommendation appended to master plan ("cloud-soak primary" vs "stay dev-box primary").
-- **Depends on:** 11
-- **Conditional predicate:** **only run** if Step 11 shows ≥ 2x throughput improvement vs Windows baseline. Otherwise the cloud unlock isn't worth the operator overhead — defer to a future plan triggered by separate motivation (e.g. parallel evolve at scale).
-
-**Credentials:** use `aws configure` on the host issuing the spot-instance request to inject credentials into the AWS CLI's local config (`~/.aws/credentials`). Do NOT bake credentials into the Docker image or environment variables. Do NOT commit credentials to the repo. The instance itself runs the prebuilt worker image (built locally per Step 9), no AWS API calls happen from inside the container.
+**Phase ends after Step 11.** Step 12 (cloud cost dry-run) was removed 2026-04-29 — see plan-history entry. The dev-box / WSL2 4-way unlock from Spike 3 is sufficient for the Phase 9 evolve workload at current scale; the AWS-spot operational tax (credentials, spot reclaims, rsync-back, lifecycle) outweighs the cost savings. If parallel-evolve-at-scale becomes motivated later, that's a future plan with stronger justification than "let's see if cloud could work."
 
 ---
 
@@ -362,7 +351,7 @@ What to look for in the morning report: ≥ 2 promotion attempts (matches Window
 | Item | Risk | Mitigation |
 |---|---|---|
 | 4.10 Linux package incompatible with burnysc2 v7.1.3 + Simple64 | Phase dies; biggest risk per investigation §9.1 | Spike 1 settles in 2-4 hours. If dead, defer phase to "wait for newer Linux package" with master-plan note. |
-| Per-instance RAM saving smaller than estimated (~1.5 GB instead of ~600 MB) | Throughput unlock shrinks 3x → 1.5x; cloud cost-effectiveness questionable | Spike 3 measures actual numbers. If shrinks, drop Step 12 (cloud dry run); ship Steps 5-10 + Step 11 as a partial Phase 8 (still useful for CI + dev-loop hygiene). |
+| Per-instance RAM saving smaller than estimated (~1.5 GB instead of ~600 MB) | Throughput unlock shrinks 3x → 1.5x; the dev-box parallelism unlock is correspondingly smaller | Spike 3 measured actual numbers (~600 MB confirmed). If a future spike re-measures and shrinks, the Phase 8 deliverable is still useful for CI + dev-loop + reproducibility. |
 | burnysc2 Linux serialization (50s/instance startup) bottlenecks parallel scaling | Spike 3 looks bad; the 4-way unlock is theoretical not practical | Spike 3 is the definitive test. Mitigation: long-lived SC2 pool with serial startup + parallel game-play (architecture change, not in Phase 8 scope; would be its own future plan). |
 | Map version mismatch — Simple64 from current Blizzard CDN doesn't load on 4.10 client | Training-data parity broken; Linux is its own siloed env | Spike 1 settles. If broken: either source a 4.10-era Simple64 or accept Linux trains on a forked map set (master-plan note required). |
 | Linux replay-path quirk (burnysc2 §4.7) breaks replay-saving in self-play | Replays unusable in 24h soak | Verified in Spike 2; if broken, hardlink replays into `~/Documents/StarCraft II/Replays/` or normalize paths in a post-Spike step (small follow-up, not blocking). |

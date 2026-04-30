@@ -198,7 +198,7 @@ Per phase:
 ```
 Track 1 — Validation   [Phase A]    on current src/alpha4gate/                                  ✅
 Track 2 — Versioning   [0–5]        subprocess spike → bots/v0/ → registry → self-play → ladder → sandbox  ✅
-Track 5 — Operational  [9, 6, 7]    NEXT — Phase 9 (improve-bot-evolve) is the priority; substrate-not-just-phase
+Track 5 — Operational  [8, 9, 6, 7]  Phase 8 (Linux training substrate) ✅ Steps 1-10 shipped, Step 11 24h soak pending; Phase 9 (improve-bot-evolve) operational
 Track 3 — Capability   [B, D, E]    per-version improvements inside bots/current/**             after Phase 9
 Track 4 — Capability-F [F]          deferred; only if B/D/E insufficient                        after Phase 9
 Track 6 — Multi-race   [G]          post-Phase-6 operational; Zerg then Terran via per-race bots/<race>_v0/ stacks
@@ -229,19 +229,19 @@ Phase A ✅ → Phase 0 ✅ → Phase 1 ✅ → Phase 2 ✅ → Phase 3 ✅ → 
                                                                                        │
                                                                                        ▼
                                                                           ┌───────────────────────┐
-                                                                          │  Phase 9              │  ← NEXT (substrate)
+                                                                          │  Phase 9 ✅           │  ← OPERATIONAL
                                                                           │  improve-bot-evolve   │
-                                                                          │  Steps 1–8            │
+                                                                          │  Steps 1–9 shipped    │
                                                                           │  #154–#161            │
                                                                           └──────────┬────────────┘
                                                                                      │
-                                ┌────────────────────────────────────────────────────┤
-                                ▼                                                    ▼
-                          Phase 7 (advised staleness)                    Phase B / D / E (capabilities,
-                          standalone, operational                         driven by Phase 9 loop;
-                          improvement)                                    individual phase order
-                                                                          determined by what shows up
-                                                                          in evolve runs)
+                ┌─────────────────────────────────┬──────────────────────────────────┤
+                ▼                                 ▼                                  ▼
+          Phase 8 (headless Linux substrate;     Phase 7 (advised staleness)    Phase B / D / E (capabilities,
+          parallel substrate; Steps 1-10         standalone, operational         driven by Phase 9 loop;
+          shipped 2026-04-29; Step 11 24h        improvement)                    individual phase order
+          soak pending — independent of                                          determined by what shows up
+          Phase 9 mechanics)                                                     in evolve runs)
                                                                                      │
                                                                                      ▼
                                                                           Phase 6 (cross-version PPO regime;
@@ -755,6 +755,73 @@ No data migrations.
 
 ---
 
+## Phase 8 — Headless Linux SC2 training infrastructure
+
+**Status: Steps 1-9 SHIPPED 2026-04-29.** Step 10 (this section) shipped same day. Step 11 (24-hour Linux evolve soak — MANDATORY observation per plan-feature skill rule) is the only remaining work. Step 12 (cloud cost dry-run on AWS spot) was removed 2026-04-29 — see plan history.
+
+**Track:** Operational. **Prerequisites:** Phase 5 (sandbox + skill integration). Independent of Phase 9 evolve, Phase 6 self-play, Phase 7 advised-staleness, and capability phases B/D/E.
+
+> **Build detail and per-step problem statements live in
+> `documentation/plans/phase-8-build-plan.md`. Read that document
+> before starting work on this phase — the impact tables, design
+> decisions, risks/open questions, and testing strategy are canonical
+> there, not summarised here.**
+
+**Goal:** Port the training pipeline to **Blizzard's headless Linux SC2 package** (`SC2.x86_64`, distributed at `https://blzdistsc2-a.akamaihd.net/Linux/`). Headless Linux SC2 has no renderer, runs in 400-800 MB of RAM per process (vs ~1.5-2.5 GB for Windows retail), and is the substrate AlphaStar used for production-scale RL on SC2. The ~3× per-instance memory reduction translates into ~3× more parallel games per box, which compounds across every operational training phase (Phase 9 evolve, Phase 6 self-play).
+
+**Slot reclamation:** the original 2026-04-19 renumber that pushed evolve to Phase 9 left Phase 8 intentionally empty. Phase 8 reclaims that slot rather than renumbering Phase 9 (which would mean renaming 8 GitHub issue titles `#154-#161`).
+
+### Scope summary
+
+Eleven build steps:
+
+| # | Deliverable | Status |
+|---|-------------|--------|
+| 1 | Operator: WSL2 Ubuntu 22.04 dev environment | DONE |
+| 2 | Spike 1 — hello-world Linux SC2 (DECISIVE) | DONE |
+| 3 | Spike 2 — existing self-play unmodified on Linux (DECISIVE) | DONE |
+| 4 | Spike 3 — 4-way parallel self-play (DECISIVE on unlock size) | DONE |
+| 5 | Platform-aware `SC2PATH` resolver (`src/orchestrator/paths.py`) | DONE |
+| 6 | Linux dev-deps install + `uv sync` verification | DONE |
+| 7 | Smoke gate — one-game pipeline on Linux, no mocks | DONE |
+| 8 | Linux CI workflow (unit tests + ruff + mypy) | DONE (`f6d3412`) |
+| 9 | Multi-stage Dockerfile + `.dockerignore` + cloud-deployment runbook | DONE (`11bfc6f`) |
+| 10 | Master-plan integration (this section, decision graph, time budget) | DONE |
+| 11 | 24-hour Linux evolve soak (MANDATORY observation) | PENDING |
+
+### Tests
+
+Per the build doc — covered exhaustively there. Headline:
+
+- `tests/test_sc2path_fallback.py`: platform-conditional tests for the resolver. No SC2 install needed.
+- `.github/workflows/linux-tests.yml`: GitHub-hosted Ubuntu 22.04 runner; pytest (no `-m sc2`) + ruff + mypy on every PR.
+- `.github/workflows/docker-build.yml`: build-only Docker image check on PRs touching `Dockerfile` / lockfile.
+- `.github/workflows/docker-build.yml` validates the Dockerfile against drift; the image is built locally per Blizzard's AI/ML license (no public registry pushes).
+
+### Effort
+
+Steps 1-10 shipped in roughly 5 days of operator + agent work spread across 2026-04-25 → 2026-04-29. Step 11 is a 24-hour wall-clock observation.
+
+### Validation
+
+Step 11 morning report shows: ≥ 2 promotion attempts (matches the Windows baseline soak `20260423-2052`); per-game wall-clock vs Windows baseline; per-instance RAM under sustained load; zero orphaned `SC2_x64` processes after teardown; pre-commit hook still rejects out-of-sandbox commits during the run.
+
+### Gate
+
+- All 5 `Step 9` done-when items pass (validated 2026-04-29; build + smoke + CMD override + non-root + cache reuse).
+- Step 11 produces a soak-test record under `documentation/soak-test-runs/evolve-linux-24h-<TS>.md`.
+- No Linux-specific regressions in `linux-tests.yml` after Phase 8 ships.
+
+### Kill criterion
+
+Step 11 surfaces a sustained-Linux failure mode (parallel-startup race, SQLite WAL contention, replay-path quirk per burnysc2 §4.7) that doesn't reproduce on Windows AND doesn't have an obvious fix. In that case the Phase 8 deliverable is partial — keep the SC2PATH resolver + Linux CI + Dockerfile (independently useful for reproducibility, dev-loop hygiene, regression catching), defer the throughput-unlock claim to a future plan.
+
+### Rollback
+
+Revert Phase 8 commits on `src/orchestrator/paths.py`, `bots/v{0,1,2}/config.py`, `scripts/{evolve,spike_subprocess_selfplay}.py`, `src/orchestrator/selfplay.py`, the two GitHub workflows, the `Dockerfile` + `.dockerignore`. SKILL.md / wiki additions are self-contained. No data migrations.
+
+---
+
 ## Phase 9 — improve-bot-evolve (sibling-tournament evolutionary loop)
 
 **Status: OPERATIONAL** — Steps 1-9 shipped. Post-Step-10 gate reduction (see below) landed 2026-04-24 and validated by soak `20260423-2052`: 2 net promotions in 7h 15m (v0 → v1 → v2), 0 rollbacks, 0 crashes. Baseline 20260422-0824 (3-gate pipeline) produced 0 promotions in 10.33h. 1313 pytest + 143 vitest.
@@ -770,9 +837,10 @@ integration). Independent of B/D/E/6/7 — ships standalone.
 
 **Note on numbering:** This phase is **Phase 9** (not Phase 8) to match
 the existing `#154–#161` issue titles ("Phase 9 Step N: ...") cut
-before the plan-merge. There is no Phase 8 in the master plan — that
-slot is intentionally skipped, similar to how Phase C was dropped in an
-earlier merge. See plan history (2026-04-19 renumber entry) for context.
+before the plan-merge. The previously-empty Phase 8 slot was reclaimed
+2026-04-29 by the headless-Linux training infrastructure (see Phase 8
+section above). See plan history (2026-04-19 renumber + 2026-04-24
+Phase 8 plan-add + 2026-04-29 Phase 8 ship entries) for context.
 
 **Goal:** Drive cross-version improvement via discrete A/B selection
 between two sibling snapshots of the parent, with Claude-generated
@@ -1516,6 +1584,7 @@ signal. GPU support explicitly out of scope.
 | E | 1 w | 1 w | 2 w (SB3 override painful) |
 | 6 | 2 h code | open-ended soak | ongoing |
 | 7 | 1 d build | 1 d build + 1 overnight validation | 3 d (heuristic tuning) |
+| 8 | 4 d (Steps 1-10) + 24h soak (Step 11) | 5 d (actual: 2026-04-25 → 2026-04-29) + 24h soak | 1 w (Linux-specific surprises in soak) |
 | 9 | 3 d code (steps 1–6) | 3–5 d code + 1 h smoke + overnight soak | 1 w (dev-apply sub-agent edge cases) |
 | F | 1.5 w | 2 w | 3 w (training destabilizes) |
 | H | 2 d | 3 d | 1 w (PySC2 integration friction) |
@@ -1643,6 +1712,26 @@ Investigations that informed the current direction:
 ## Plan history
 
 Append-only — do not edit prior entries.
+
+- *2026-04-29* — **Phase 8 Steps 9 + 10 SHIPPED, Step 12 REMOVED.**
+  Step 9 (multi-stage Dockerfile + `.dockerignore` + cloud-deployment
+  runbook) shipped on commit `11bfc6f`; all 5 done-when items pass
+  (`docker build`, smoke gate Result.Victory, CMD override via
+  `scripts/selfplay.py`, non-root `alpha4gate` user uid=1000,
+  sc2-base + python-base cache reuse on code-only rebuild). Step 10
+  (this section + Track structure + decision graph + time-budget
+  table + Phase 9 numbering note) completed same day. Step 12
+  (conditional cloud cost dry-run on AWS spot) was REMOVED — the
+  dev-box + WSL2 4-way parallel unlock from Spike 3 is sufficient
+  for the Phase 9 evolve workload at current scale, and the AWS
+  operational tax (credentials, spot reclaims, rsync-back, instance
+  lifecycle) outweighs the small spot-pricing cost savings. If
+  parallel-evolve-at-scale becomes a binding motivation later,
+  cloud orchestration ships as its own future plan with stronger
+  justification than "let's see if cloud could work." Phase 8
+  reclaimed the previously-empty Phase 8 slot per the 2026-04-19
+  renumber. Step 11 (24-hour Linux evolve soak — MANDATORY
+  observation) is the only remaining Phase 8 work.
 
 - *2026-04-27* — **Phase N COMPLETE.** Six steps shipped (#228–#233)
   on master 2f71f88..6ceea25: heuristic module, DB column +

@@ -101,4 +101,4 @@ here because they operate on different things.
 2. **Key Interfaces** — public API, data flow
 3. **Implementation Notes** — internal details (marked "verify against code" — these can drift)
 
-**For the active plan:** See [alpha4gate-master-plan.md](../plans/alpha4gate-master-plan.md) for the current roadmap. Phases A, 0–5 complete. Next: Phase B (observation), capability phases (D, E, F), Phase 6 (autonomous self-play), Phase G (multi-race: Zerg then Terran).
+**For the active plan:** See [alpha4gate-master-plan.md](../plans/alpha4gate-master-plan.md) for the current roadmap. Phases A, 0–5 complete. Phase 9 (improve-bot-evolve) operational; v0→v4 via successive promotions. Phase 8 (headless Linux training infrastructure) Steps 1-10 shipped, Step 11 24h soak pending. Phase N (win-prob heuristic + give-up) shipped. Next: Phase 8 Step 11 (Linux soak), Phase 7 (advised staleness), capability phases (B, D, E, F).
