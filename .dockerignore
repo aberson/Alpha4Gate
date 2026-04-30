@@ -1,0 +1,59 @@
+# Phase 8 Step 9 — keep the build context small.
+#
+# Without this file Docker sends ~3 GB of context (mostly .venv, mypy
+# cache, frontend node_modules, and accumulated logs/replays/data
+# snapshots). With this trim the context drops to <50 MB.
+
+# Build artifacts — regenerated inside the container by `uv sync`
+.venv/
+.venv-py312/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+**/__pycache__/
+*.pyc
+*.pyo
+build/
+dist/
+*.egg-info/
+
+# Frontend — the headless worker doesn't need React or its 160 MB of
+# node_modules. If a future container needs to serve the dashboard,
+# build a separate image.
+frontend/
+node_modules/
+
+# Per-user / generated state — gitignored anyway
+data/
+data-snapshots/
+logs/
+replays/
+documentation/soak-test-runs/
+bots/v*/data/checkpoints/
+.ui-dashboard-evidence/
+
+# Documentation — not needed at runtime; the soak-test-runs subtree
+# alone can grow to many GB. Plans, wikis, and investigations stay on
+# the host repo.
+documentation/
+
+# IDE + local config
+.idea/
+.vscode/
+.claude/
+
+# Git
+.git/
+.gitattributes
+
+# Coverage + ad-hoc artifacts
+htmlcov/
+.coverage
+*.log
+*.log.err
+
+# Editor backups
+*~
+*.swp
+*.swo
+.DS_Store
