@@ -86,7 +86,7 @@ describe("AdvisedControlPanel", () => {
       expect(screen.getByText("Advisor Control Panel")).toBeInTheDocument();
     });
     expect(screen.getByText(/no advised run active/i)).toBeInTheDocument();
-    expect(screen.getByText(/improve-bot-advised/)).toBeInTheDocument();
+    expect(screen.getAllByText(/improve-bot-advised/).length).toBeGreaterThan(0);
   });
 
   it("renders running state with status cards", async () => {

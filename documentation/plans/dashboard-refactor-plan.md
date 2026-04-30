@@ -261,6 +261,7 @@ Vitest covering:
 - **Problem:** Fix the `getByText` two-match bug in `AdvisedControlPanel.test.tsx` (use `getAllByText` with `expect(...).toHaveLength(2)`, OR anchor the text match to a specific role/element). Delete the temporary endpoint-audit doc from Step 1.
 - **Produces:** Fixed test; cleaner working tree.
 - **Done when:** Vitest is fully green (no pre-existing failures left).
+- **Status:** DONE (2026-04-29) — `getByText` → `getAllByText(...).length > 0`. Vitest 112/112 fully green. Endpoint audit doc deleted.
 
 ### Step 8: Update operator-commands.md
 
