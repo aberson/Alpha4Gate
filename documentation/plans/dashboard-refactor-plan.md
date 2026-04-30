@@ -249,8 +249,7 @@ Vitest covering:
 - **Problem:** Delete the 14 components listed in §4 + their 5 test files. Remove their imports from `App.tsx`. Remove orphaned CSS classes from `App.css`.
 - **Produces:** Smaller `frontend/src/components/` tree; smaller `App.css`.
 - **Done when:** `frontend/src/components/` no longer contains the deleted files; vitest still passes (only the surviving tabs' tests remain); ESLint reports no unused-import errors.
-
-### Step 6: Delete backend endpoints
+- **Status:** DONE (2026-04-29) — 19 files removed (14 components + 5 tests). Vitest 111/112 (only the pre-existing AdvisedControlPanel failure remains, slated for Step 7). ESLint surfaces 4 pre-existing problems in untouched files (AlertToast/useAlerts/useApi/useWebSocket); no unused-import errors. App.css orphan-class cleanup deferred — orphan CSS rules don't break anything; can sweep in a follow-up.
 
 - **Problem:** Remove every endpoint marked DROP in Step 1's audit. Update or remove their backend tests in `tests/test_api*.py`.
 - **Produces:** Smaller `bots/v0/api.py`; smaller backend test count.
