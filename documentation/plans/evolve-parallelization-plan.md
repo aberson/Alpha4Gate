@@ -305,6 +305,7 @@ Spike 3 (`scripts/spike3_launch.sh`) already validated this exact topology: 4 se
   - **Budget-breach (Decision D-5):** On wall-clock breach, set a "stop dispatching" flag; let in-flight workers finish naturally (up to their per-worker timeout). Don't SIGTERM in-flight workers on budget breach — only on operator interrupt.
   - **Justification comments:** Add inline `# Decision D-1` / `# Decision D-2` / `# Decision D-3` / `# Decision D-5` / `# Decision D-6` / `# Decision D-7` markers at each implementation site, referencing §6 of this plan.
 - **Issue:** #243
+- **Status:** DONE (2026-04-30) — code-review gauntlet 4/4 with iter 2 after gauntlet flagged SIGINT-halts-dispatcher + signal-handler-half-install-leak + in-flight-cleanup-on-exception + imp_json-stage-leak + 3 test gaps + 1 test-trim; pytest 1375+20 (+20 vs Step-2 baseline); mypy strict + ruff clean. Real-SC2 e2e (Ctrl+C test, two-workers-spawn, stale-file on real disk) deferred to operator post-merge.
 - **Flags:** `--reviewers code --isolation worktree`
 - **Produces:** `--concurrency` flag; dispatcher loop; signal handlers; integration tests in `tests/test_evolve_parallel.py` using a mocked-subprocess fixture (real subprocesses are too slow for unit tests). The fixture must cover: out-of-order completion (worker 3 finishes before worker 1), each of the four failure modes from D-7, signal-during-dispatch (SIGINT mid-flight), budget-breach mid-flight, and the run_id stale-file-cleanup path.
 - **Done when:**

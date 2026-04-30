@@ -41,10 +41,12 @@ import dataclasses
 import json
 import logging
 import os
+import signal
 import subprocess
 import sys
 import time
 import traceback
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -258,6 +260,18 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Base URL of the Alpha4Gate backend API. Used by the "
             "--post-training-cycles hook. Default: http://localhost:8765."
+        ),
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help=(
+            "Number of parallel fitness-eval workers per generation. "
+            "Default 1 takes the byte-identical serial code path "
+            "(no subprocess overhead). N>1 fans out via "
+            "scripts/evolve_worker.py subprocesses (Decision D-1 / D-3 "
+            "of evolve-parallelization-plan.md)."
         ),
     )
     return parser
@@ -1507,6 +1521,730 @@ def _stack_apply_and_promote(
 
 
 # ---------------------------------------------------------------------------
+# Parallel fitness-phase dispatcher (Step 3 of evolve-parallelization-plan)
+# ---------------------------------------------------------------------------
+
+
+# Bucket key used by the parallel dispatcher's failure-mode taxonomy when a
+# worker hangs past its wall-clock cap (Decision D-7). Defined as a constant
+# so the test harness can monkey-patch it without scanning string literals.
+_HANG_BUCKET = "hang"
+_DISPATCH_FAIL_BUCKET = "dispatch-fail"
+_MALFORMED_BUCKET = "malformed"
+_CRASH_BUCKET = "crash"
+
+# Poll cadence for the parallel dispatcher's in-flight Popen.poll() loop.
+# 0.5s matches the spec in §7 Step 3 of the evolve-parallelization plan;
+# kept as a module-level constant so tests can shrink it to keep wall-clock
+# bounded.
+_PARALLEL_POLL_INTERVAL_S = 0.5
+
+
+@dataclass
+class _DispatchedImp:
+    """Bookkeeping for one in-flight worker subprocess.
+
+    The parallel dispatcher keeps a ``dict[Popen, _DispatchedImp]`` so it can
+    associate a completed worker with the imp it was evaluating, the
+    timestamp it started (for hang detection), and the temp-file paths it
+    needs to unlink after reading the result.
+    """
+
+    idx: int
+    imp: Improvement
+    started_at: float
+    imp_json_path: Path
+    result_path: Path
+
+
+def _make_hang_exc(timeout_s: float) -> TimeoutError:
+    """Build a fake exception for a hung worker so crash-row helpers work."""
+    return TimeoutError(
+        f"worker exceeded {timeout_s:.1f}s wall-clock cap; SIGKILLed"
+    )
+
+
+def _make_malformed_exc(reason: str) -> RuntimeError:
+    """Build a fake exception for a malformed result file."""
+    return RuntimeError(f"worker result-file invalid: {reason}")
+
+
+def _make_crash_exc(returncode: int) -> RuntimeError:
+    """Build a fake exception for a non-zero worker exit."""
+    return RuntimeError(f"worker exited non-zero: returncode={returncode}")
+
+
+def _make_dispatch_fail_exc(orig: BaseException) -> RuntimeError:
+    """Build a fake exception for a dispatch failure (Popen() raised)."""
+    return RuntimeError(
+        f"subprocess.Popen() raised {type(orig).__name__}: {orig}"
+    )
+
+
+def _unlink_quiet(path: Path) -> None:
+    """Best-effort unlink — silently swallow OS errors on cleanup paths."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        _log.debug("evolve: cleanup unlink failed for %s: %s", path, exc)
+
+
+def _cleanup_stale_round_files(state_dir: Path) -> int:
+    """Decision D-6: unlink any pre-existing per-worker round-state files.
+
+    Returns the number of files unlinked. Called at parent-dispatcher
+    startup so an aborted prior run's slot files cannot pollute today's
+    dashboard. The ``run_id`` filter on the API endpoint is the safety
+    net for the race between this cleanup and a still-dying prior worker.
+
+    Finding #4: also mop up stale ``evolve_imp_*.json`` and
+    ``evolve_result_*.json`` files left behind by a prior run that
+    exited mid-dispatch (process kill, reboot, etc.). The dispatcher's
+    in-loop cleanup handles the happy/exception paths within a run;
+    this catches cross-run leaks.
+    """
+    if not state_dir.is_dir():
+        return 0
+    n = 0
+    for pattern in (
+        "evolve_round_*.json",
+        "evolve_imp_*.json",
+        "evolve_result_*.json",
+    ):
+        for p in state_dir.glob(pattern):
+            try:
+                p.unlink()
+                n += 1
+            except OSError as exc:
+                _log.warning(
+                    "evolve: failed to unlink stale per-worker file "
+                    "%s: %s",
+                    p,
+                    exc,
+                )
+    return n
+
+
+def _build_worker_argv(
+    *,
+    parent: str,
+    imp_json_path: Path,
+    worker_id: int,
+    result_path: Path,
+    run_id: str,
+    games_per_eval: int,
+    map_name: str,
+    game_time_limit: int,
+    hard_timeout: float,
+    state_dir: Path,
+) -> list[str]:
+    """Construct the argv list for one ``evolve_worker.py`` subprocess."""
+    return [
+        sys.executable,
+        str(_REPO_ROOT / "scripts" / "evolve_worker.py"),
+        "--parent",
+        parent,
+        "--imp-json",
+        str(imp_json_path),
+        "--worker-id",
+        str(worker_id),
+        "--result-path",
+        str(result_path),
+        "--run-id",
+        run_id,
+        "--games-per-eval",
+        str(games_per_eval),
+        "--map",
+        map_name,
+        "--game-time-limit",
+        str(game_time_limit),
+        "--hard-timeout",
+        str(hard_timeout),
+        "--state-dir",
+        str(state_dir),
+    ]
+
+
+def _run_fitness_phase_parallel(
+    *,
+    active_idxs: list[int],
+    pool: list[Improvement],
+    per_item_state: dict[int, PerItemState],
+    fitness_results: dict[int, FitnessResult],
+    fitness_counts: dict[str, int],
+    parent_current: str,
+    parent_start: str,
+    pool_generated_at: str,
+    generation_index: int,
+    generations_completed: int,
+    generations_promoted: int,
+    args: argparse.Namespace,
+    run_id: str,
+    write_state_fn: Callable[..., None],
+    time_fn: Callable[[], float],
+    start_monotonic: float,
+    state_dir: Path,
+    popen_factory: Callable[..., Any] = subprocess.Popen,
+    poll_interval_s: float = _PARALLEL_POLL_INTERVAL_S,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Decision D-3: process-level fan-out for the fitness phase.
+
+    Mirrors the serial loop's per-imp success and crash branches exactly
+    (see ``scripts/evolve.py:1842-1950``). Returns
+    ``(last_result_snap, stop_reason)`` — ``stop_reason`` is ``"wall-clock"``
+    iff the budget tripped mid-flight (Decision D-5: stop dispatching, drain
+    in-flight; the parent loop honors the returned reason).
+
+    Failure taxonomy (Decision D-7):
+    - ``dispatch-fail`` — ``subprocess.Popen()`` raised
+    - ``crash`` — worker exited non-zero
+    - ``malformed`` — worker exited 0 but result JSON missing/invalid
+    - ``hang`` — worker exceeded ``hard_timeout × games_per_eval × 1.5`` s
+
+    Each is treated as imp-evicted-with-retry-incremented, mirroring the
+    serial path's crash branch.
+    """
+    # Runtime import: ``FitnessResult`` is only declared at TYPE_CHECKING
+    # time at module top so ``orchestrator.evolve`` doesn't have to load
+    # eagerly. Pull it in here for the result-file deserializer.
+    from orchestrator.evolve import FitnessResult as _FitnessResult
+
+    last_result_snap: dict[str, Any] | None = None
+    stop_reason: str | None = None
+    pending: list[int] = sorted(active_idxs)
+    in_flight: dict[Any, _DispatchedImp] = {}
+    next_worker_id = 0
+    stop_dispatching = False
+
+    # Per-worker hard wall-clock cap (Blocker #3 / Decision D-7 hang bucket).
+    worker_timeout_s = args.hard_timeout * args.games_per_eval * 1.5
+
+    # Decision D-7: ensure all four failure-mode buckets exist on the
+    # caller's counter dict so the dashboard / run-summary readers can
+    # diff against them without KeyError.
+    for _b in (
+        _DISPATCH_FAIL_BUCKET,
+        _CRASH_BUCKET,
+        _MALFORMED_BUCKET,
+        _HANG_BUCKET,
+    ):
+        fitness_counts.setdefault(_b, 0)
+
+    interrupt_count = {"n": 0}
+
+    # nonlocal-like shared state for the signal handler. Using a dict so
+    # the closure can mutate without `nonlocal` (the dispatcher's inner
+    # variables are not in scope on the function itself).
+    halt_state = {"stop_dispatching": False}
+
+    def _signal_handler(signum: int, _frame: Any) -> None:
+        # Reentrant handler. First signal forwards to in-flight workers;
+        # second signal escalates to SIGKILL on the same set AND tells
+        # the dispatcher to drain instead of dispatching anything new.
+        interrupt_count["n"] += 1
+        if interrupt_count["n"] == 1:
+            _log.warning(
+                "evolve: received signal %d; forwarding to %d in-flight "
+                "worker(s)",
+                signum,
+                len(in_flight),
+            )
+            for proc in list(in_flight.keys()):
+                try:
+                    proc.send_signal(signum)
+                except Exception as exc:  # noqa: BLE001
+                    _log.warning(
+                        "evolve: send_signal(%d) failed for in-flight "
+                        "worker (already dead?): %s",
+                        signum,
+                        exc,
+                    )
+        else:
+            _log.warning(
+                "evolve: second signal %d; escalating SIGKILL on %d "
+                "in-flight worker(s) and halting new dispatch (%d "
+                "pending dropped)",
+                signum,
+                len(in_flight),
+                len(pending),
+            )
+            # Finding #1: an operator pressing Ctrl+C twice expects the
+            # run to stop. Set the dispatcher's stop flag and drain the
+            # pending queue so the main loop's `while pending or in_flight`
+            # terminates as soon as in-flight is empty without dispatching
+            # any of the still-queued imps. Reuses the D-5 budget-breach
+            # gating path, so no new branch is needed in the main loop.
+            halt_state["stop_dispatching"] = True
+            pending.clear()
+            for proc in list(in_flight.keys()):
+                try:
+                    proc.kill()
+                except Exception as exc:  # noqa: BLE001
+                    _log.warning(
+                        "evolve: kill() failed for in-flight worker: %s",
+                        exc,
+                    )
+
+    # Install signal handlers for SIGINT + SIGTERM. SIGTERM may not be
+    # supported on every Windows Python build; signal.signal() raises
+    # ValueError off the main thread, ignore in that case (the test fixture
+    # also dodges this by calling _run_fitness_phase_parallel from the
+    # main thread).
+    #
+    # Finding #2: split into independent try/except blocks so that a
+    # SIGTERM-install failure (Windows) cannot leave the SIGINT handler
+    # half-installed without the finally restoring it. Each signal has
+    # its own _installed flag and gets its own restore in the finally.
+    prior_sigint: Any = None
+    prior_sigterm: Any = None
+    sigint_installed = False
+    sigterm_installed = False
+    try:
+        try:
+            prior_sigint = signal.signal(signal.SIGINT, _signal_handler)
+            sigint_installed = True
+        except (ValueError, OSError) as exc:
+            _log.warning(
+                "evolve: could not install parallel SIGINT handler (%s); "
+                "Ctrl+C may orphan worker subprocesses",
+                exc,
+            )
+        try:
+            prior_sigterm = signal.signal(signal.SIGTERM, _signal_handler)
+            sigterm_installed = True
+        except (ValueError, OSError) as exc:
+            _log.warning(
+                "evolve: could not install parallel SIGTERM handler (%s); "
+                "termination may orphan worker subprocesses",
+                exc,
+            )
+
+        # Main dispatch loop. The outer try/finally below kills any
+        # still in-flight Popen and unlinks its temp files on exit
+        # (Finding #3) — an exception from append_phase_result /
+        # write_pool_state / OSError on a result-file read no longer
+        # leaves N SC2 grandchildren running.
+        while pending or in_flight:
+            # Sync the signal-handler-set stop flag into the local one
+            # before each iteration so the SIGINT handler can halt mid-loop
+            # without dispatching any of the still-pending imps. The
+            # handler also clears `pending` directly, so this is belt +
+            # suspenders.
+            if halt_state["stop_dispatching"]:
+                stop_dispatching = True
+            # Budget breach check. Decision D-5: flip stop-dispatching;
+            # in-flight workers continue to natural completion.
+            if not stop_dispatching and _budget_exceeded(
+                start_monotonic, args.hours, now_fn=time_fn
+            ):
+                stop_reason = "wall-clock"
+                stop_dispatching = True
+                _log.info(
+                    "evolve: wall-clock budget exceeded mid-fitness; "
+                    "draining %d in-flight worker(s); no new dispatch",
+                    len(in_flight),
+                )
+
+            # Dispatch: fill open slots up to args.concurrency.
+            while (
+                not stop_dispatching
+                and pending
+                and len(in_flight) < args.concurrency
+            ):
+                idx = pending.pop(0)
+                imp = pool[idx]
+                worker_id = next_worker_id
+                next_worker_id += 1
+                imp_json_path = state_dir / f"evolve_imp_{worker_id}.json"
+                result_path = state_dir / f"evolve_result_{worker_id}.json"
+                try:
+                    state_dir.mkdir(parents=True, exist_ok=True)
+                    imp_json_path.write_text(imp.to_json(), encoding="utf-8")
+                except OSError as exc:
+                    # Treat as dispatch-fail — same as Popen-raise.
+                    _log.error(
+                        "evolve: failed to stage imp_json %s for worker "
+                        "%d: %s",
+                        imp_json_path,
+                        worker_id,
+                        exc,
+                    )
+                    _record_parallel_failure(
+                        bucket=_DISPATCH_FAIL_BUCKET,
+                        idx=idx,
+                        imp=imp,
+                        exc=_make_dispatch_fail_exc(exc),
+                        parent_current=parent_current,
+                        generation_index=generation_index,
+                        per_item_state=per_item_state,
+                        fitness_counts=fitness_counts,
+                        args=args,
+                    )
+                    last_result_snap = _last_result_snapshot_crash(
+                        generation_index, "fitness", imp, exc
+                    )
+                    # Finding #4: symmetry with the Popen-raise branch
+                    # below — unlink any partial imp_json that may have
+                    # been written before the OSError (e.g., truncate
+                    # succeeded, write failed).
+                    _unlink_quiet(imp_json_path)
+                    continue
+
+                argv = _build_worker_argv(
+                    parent=parent_current,
+                    imp_json_path=imp_json_path,
+                    worker_id=worker_id,
+                    result_path=result_path,
+                    run_id=run_id,
+                    games_per_eval=args.games_per_eval,
+                    map_name=args.map,
+                    game_time_limit=args.game_time_limit,
+                    hard_timeout=args.hard_timeout,
+                    state_dir=state_dir,
+                )
+                try:
+                    proc = popen_factory(argv)
+                except (OSError, FileNotFoundError) as exc:
+                    # Decision D-7 dispatch-fail bucket.
+                    _log.error(
+                        "evolve: subprocess.Popen failed for worker %d "
+                        "(idx=%d): %s",
+                        worker_id,
+                        idx,
+                        exc,
+                    )
+                    _record_parallel_failure(
+                        bucket=_DISPATCH_FAIL_BUCKET,
+                        idx=idx,
+                        imp=imp,
+                        exc=_make_dispatch_fail_exc(exc),
+                        parent_current=parent_current,
+                        generation_index=generation_index,
+                        per_item_state=per_item_state,
+                        fitness_counts=fitness_counts,
+                        args=args,
+                    )
+                    last_result_snap = _last_result_snapshot_crash(
+                        generation_index, "fitness", imp, exc
+                    )
+                    _unlink_quiet(imp_json_path)
+                    continue
+
+                in_flight[proc] = _DispatchedImp(
+                    idx=idx,
+                    imp=imp,
+                    started_at=time_fn(),
+                    imp_json_path=imp_json_path,
+                    result_path=result_path,
+                )
+                _log.info(
+                    "evolve: dispatched worker %d for idx=%d imp=%r "
+                    "(in_flight=%d, pending=%d)",
+                    worker_id,
+                    idx,
+                    imp.title,
+                    len(in_flight),
+                    len(pending),
+                )
+
+            # If nothing is in flight and dispatching is disabled, exit.
+            if not in_flight:
+                break
+
+            # Poll in-flight set.
+            completed: list[Any] = []
+            for proc, dispatched in list(in_flight.items()):
+                rc = proc.poll()
+                if rc is None:
+                    elapsed = time_fn() - dispatched.started_at
+                    if elapsed > worker_timeout_s:
+                        _log.error(
+                            "evolve: worker for idx=%d imp=%r exceeded "
+                            "%.1fs timeout; SIGKILLing (hang bucket)",
+                            dispatched.idx,
+                            dispatched.imp.title,
+                            worker_timeout_s,
+                        )
+                        try:
+                            proc.kill()
+                        except Exception as exc:  # noqa: BLE001
+                            _log.warning(
+                                "evolve: kill() raised on hung worker: %s",
+                                exc,
+                            )
+                        # Drain so .poll() returns; tests may stub wait().
+                        try:
+                            proc.wait(timeout=5.0)
+                        except Exception as exc:  # noqa: BLE001
+                            _log.debug(
+                                "evolve: wait() after kill raised "
+                                "(hung worker): %s",
+                                exc,
+                            )
+                        hang_exc = _make_hang_exc(worker_timeout_s)
+                        _record_parallel_failure(
+                            bucket=_HANG_BUCKET,
+                            idx=dispatched.idx,
+                            imp=dispatched.imp,
+                            exc=hang_exc,
+                            parent_current=parent_current,
+                            generation_index=generation_index,
+                            per_item_state=per_item_state,
+                            fitness_counts=fitness_counts,
+                            args=args,
+                        )
+                        last_result_snap = _last_result_snapshot_crash(
+                            generation_index,
+                            "fitness",
+                            dispatched.imp,
+                            hang_exc,
+                        )
+                        completed.append(proc)
+                    continue
+
+                # Process exited; classify the outcome.
+                if rc != 0:
+                    crash_exc = _make_crash_exc(rc)
+                    _log.error(
+                        "evolve: worker for idx=%d imp=%r exited %d "
+                        "(crash bucket)",
+                        dispatched.idx,
+                        dispatched.imp.title,
+                        rc,
+                    )
+                    _record_parallel_failure(
+                        bucket=_CRASH_BUCKET,
+                        idx=dispatched.idx,
+                        imp=dispatched.imp,
+                        exc=crash_exc,
+                        parent_current=parent_current,
+                        generation_index=generation_index,
+                        per_item_state=per_item_state,
+                        fitness_counts=fitness_counts,
+                        args=args,
+                    )
+                    last_result_snap = _last_result_snapshot_crash(
+                        generation_index,
+                        "fitness",
+                        dispatched.imp,
+                        crash_exc,
+                    )
+                    completed.append(proc)
+                    continue
+
+                # rc == 0: parse the result file.
+                try:
+                    payload_text = dispatched.result_path.read_text(
+                        encoding="utf-8"
+                    )
+                except OSError as exc:
+                    malformed_exc = _make_malformed_exc(
+                        f"result file unreadable: {exc}"
+                    )
+                    _log.error(
+                        "evolve: worker for idx=%d imp=%r exited 0 but "
+                        "result file %s unreadable (malformed bucket): %s",
+                        dispatched.idx,
+                        dispatched.imp.title,
+                        dispatched.result_path,
+                        exc,
+                    )
+                    _record_parallel_failure(
+                        bucket=_MALFORMED_BUCKET,
+                        idx=dispatched.idx,
+                        imp=dispatched.imp,
+                        exc=malformed_exc,
+                        parent_current=parent_current,
+                        generation_index=generation_index,
+                        per_item_state=per_item_state,
+                        fitness_counts=fitness_counts,
+                        args=args,
+                    )
+                    last_result_snap = _last_result_snapshot_crash(
+                        generation_index,
+                        "fitness",
+                        dispatched.imp,
+                        malformed_exc,
+                    )
+                    completed.append(proc)
+                    continue
+
+                # Try to parse as a FitnessResult; a worker-crash payload
+                # ({"crash": true, ...}) parses as JSON but fails
+                # FitnessResult.from_json — that's the malformed bucket.
+                try:
+                    result = _FitnessResult.from_json(payload_text)
+                except (
+                    json.JSONDecodeError,
+                    KeyError,
+                    TypeError,
+                    ValueError,
+                ) as exc:
+                    malformed_exc = _make_malformed_exc(
+                        f"FitnessResult.from_json: {exc}"
+                    )
+                    _log.error(
+                        "evolve: worker for idx=%d imp=%r exited 0 but "
+                        "result JSON invalid (malformed bucket): %s",
+                        dispatched.idx,
+                        dispatched.imp.title,
+                        exc,
+                    )
+                    _record_parallel_failure(
+                        bucket=_MALFORMED_BUCKET,
+                        idx=dispatched.idx,
+                        imp=dispatched.imp,
+                        exc=malformed_exc,
+                        parent_current=parent_current,
+                        generation_index=generation_index,
+                        per_item_state=per_item_state,
+                        fitness_counts=fitness_counts,
+                        args=args,
+                    )
+                    last_result_snap = _last_result_snapshot_crash(
+                        generation_index,
+                        "fitness",
+                        dispatched.imp,
+                        malformed_exc,
+                    )
+                    completed.append(proc)
+                    continue
+
+                # Success branch — mirror the serial loop's success body.
+                fitness_results[dispatched.idx] = result
+                _apply_fitness_outcome(
+                    per_item_state, dispatched.idx, result
+                )
+                fitness_counts[result.bucket] = (
+                    fitness_counts.get(result.bucket, 0) + 1
+                )
+                append_phase_result(
+                    args.results_path,
+                    _fitness_row(generation_index, parent_current, result),
+                )
+                last_result_snap = _last_result_snapshot_fitness(
+                    generation_index, result
+                )
+                write_pool_state(
+                    args.pool_path,
+                    pool,
+                    parent=parent_start,
+                    per_item_state=per_item_state,
+                    generated_at=pool_generated_at,
+                    generation=generation_index,
+                )
+                write_state_fn(
+                    status="running",
+                    pool=pool,
+                    per_item_state=per_item_state,
+                    generation_index=generation_index,
+                    generations_completed=generations_completed,
+                    generations_promoted=generations_promoted,
+                    last_result=last_result_snap,
+                )
+                completed.append(proc)
+
+            # Reap completed Popens and clean up their temp files.
+            for proc in completed:
+                dispatched = in_flight.pop(proc)
+                _unlink_quiet(dispatched.imp_json_path)
+                _unlink_quiet(dispatched.result_path)
+
+            if in_flight:
+                # Sleep between polls so we don't pin a CPU.
+                time.sleep(poll_interval_s)
+    finally:
+        # Finding #3: kill every still in-flight worker on any exit
+        # path (normal completion, SIGINT-induced halt, or an exception
+        # from an orchestration call inside the loop body). A normal
+        # exit drains in_flight to {} via the reap step, so this is a
+        # no-op on the happy path; on exception it prevents N orphaned
+        # SC2 grandchildren.
+        if in_flight:
+            _log.warning(
+                "evolve: dispatcher exiting with %d in-flight worker(s); "
+                "killing and cleaning up temp files",
+                len(in_flight),
+            )
+            for proc, dispatched in list(in_flight.items()):
+                try:
+                    proc.kill()
+                except Exception as exc:  # noqa: BLE001
+                    _log.debug(
+                        "evolve: kill() on cleanup raised "
+                        "(worker likely already exited): %s",
+                        exc,
+                    )
+                _unlink_quiet(dispatched.imp_json_path)
+                _unlink_quiet(dispatched.result_path)
+            in_flight.clear()
+
+        # Finding #2: restore each signal handler independently. A
+        # SIGTERM-install failure (Windows) must not skip the SIGINT
+        # restore.
+        if sigint_installed:
+            try:
+                signal.signal(signal.SIGINT, prior_sigint)
+            except (ValueError, OSError) as exc:
+                _log.debug(
+                    "evolve: failed to restore SIGINT handler: %s", exc
+                )
+        if sigterm_installed:
+            try:
+                signal.signal(signal.SIGTERM, prior_sigterm)
+            except (ValueError, OSError) as exc:
+                _log.debug(
+                    "evolve: failed to restore SIGTERM handler: %s", exc
+                )
+
+    return last_result_snap, stop_reason
+
+
+def _record_parallel_failure(
+    *,
+    bucket: str,
+    idx: int,
+    imp: Improvement,
+    exc: BaseException,
+    parent_current: str,
+    generation_index: int,
+    per_item_state: dict[int, PerItemState],
+    fitness_counts: dict[str, int],
+    args: argparse.Namespace,
+) -> None:
+    """Mirror the serial loop's crash branch for one parallel-worker failure.
+
+    The serial path (``scripts/evolve.py:1892-1923``) does NOT call
+    ``write_pool_state`` or ``write_state_fn`` on crash — only
+    ``per_item_state`` mutation, results-row append, and crash-log append.
+    Mirror that contract exactly so concurrency=1 → concurrency=N retains
+    the same on-disk state-file cadence on the failure path.
+
+    The four parallel-only buckets (``dispatch-fail``, ``crash``,
+    ``malformed``, ``hang``) all share this single recorder so the
+    accounting stays uniform across Decision-D-7 modes.
+    """
+    tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    fitness_counts[bucket] = fitness_counts.get(bucket, 0) + 1
+    per_item_state[idx].status = _EVICTED
+    per_item_state[idx].retry_count += 1
+    per_item_state[idx].last_evaluated_against = parent_current
+    append_phase_result(
+        args.results_path,
+        _crash_row(generation_index, "fitness", parent_current, imp, exc, tb),
+    )
+    append_crash_log(
+        args.crash_log_path,
+        generation=generation_index,
+        phase="fitness",
+        parent=parent_current,
+        imp=imp,
+        exc=exc,
+        traceback_str=tb,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Orchestration loop
 # ---------------------------------------------------------------------------
 
@@ -1594,11 +2332,33 @@ def run_loop(
     parent_current = parent_start
     started_at_iso = _now_iso()
     start_monotonic = time_fn()
+
+    # Decision D-6: per-run uuid epoch + stale-file cleanup. Generated
+    # unconditionally so the dashboard's stale-file filter has a value to
+    # compare against even at concurrency=1 (workers are not spawned at
+    # concurrency=1, so the run_id is unused there — but keeping the
+    # generation step in one place avoids a forked code-path subtlety).
+    run_id = uuid.uuid4().hex[:8]
+    state_dir = args.results_path.parent
+    if int(getattr(args, "concurrency", 1) or 1) > 1:
+        n_unlinked = _cleanup_stale_round_files(state_dir)
+        if n_unlinked:
+            _log.info(
+                "evolve: cleaned %d stale per-worker round-state file(s) "
+                "from %s before starting run_id=%s",
+                n_unlinked,
+                state_dir,
+                run_id,
+            )
+
     _log.info(
-        "evolve: starting run (parent=%s, pool_size=%d, budget=%sh)",
+        "evolve: starting run (parent=%s, pool_size=%d, budget=%sh, "
+        "concurrency=%d, run_id=%s)",
         parent_start,
         args.pool_size,
         args.hours,
+        int(getattr(args, "concurrency", 1) or 1),
+        run_id,
     )
 
     def _write_state(
@@ -1825,115 +2585,161 @@ def run_loop(
         # ---------- FITNESS PHASE ----------
         fitness_results: dict[int, FitnessResult] = {}
         fitness_counts = {"pass": 0, "close": 0, "fail": 0, "crash": 0}
-        for idx in sorted(active_idxs):
-            if _budget_exceeded(start_monotonic, args.hours, now_fn=time_fn):
-                stop_reason = "wall-clock"
-                _log.info(
-                    "evolve: wall-clock budget exceeded mid-fitness; "
-                    "breaking out of fitness phase"
-                )
-                break
 
-            imp = pool[idx]
-            gen_payload.phase = "fitness"
-            gen_payload.imp_title = imp.title
-            gen_payload.imp_rank = imp.rank
-            gen_payload.imp_index = idx
-            gen_payload.candidate = None
-            gen_payload.stacked_titles = []
-            gen_payload.new_parent = None
-            gen_payload.prior_parent = None
-            gen_payload.reset_progress(args.games_per_eval)
-            _current_round_writer(gen_payload)
+        # Decision D-1: at --concurrency 1 take the byte-identical serial
+        # code path. The pre-existing soak-history baselines compared
+        # against this exact implementation; diverging here would
+        # invalidate them as comparison baselines.
+        concurrency = int(getattr(args, "concurrency", 1) or 1)
+        if concurrency <= 1:
+            for idx in sorted(active_idxs):
+                if _budget_exceeded(start_monotonic, args.hours, now_fn=time_fn):
+                    stop_reason = "wall-clock"
+                    _log.info(
+                        "evolve: wall-clock budget exceeded mid-fitness; "
+                        "breaking out of fitness phase"
+                    )
+                    break
 
-            def _on_fitness_event(
-                event: dict[str, Any],
-                _p: CurrentRoundPayload = gen_payload,
-            ) -> None:
-                etype = event.get("type")
-                if etype == "fitness_start":
-                    _p.candidate = event.get("candidate")
-                    _p.games_total = event.get("total", _p.games_total)
-                    _p.games_played = 0
-                    _p.score_cand = 0
-                    _p.score_parent = 0
-                elif etype == "fitness_game_end":
-                    _p.games_played += 1
-                    _p.score_cand = event.get("wins_cand", _p.score_cand)
-                    _p.score_parent = event.get("wins_parent", _p.score_parent)
-                _current_round_writer(_p)
+                imp = pool[idx]
+                gen_payload.phase = "fitness"
+                gen_payload.imp_title = imp.title
+                gen_payload.imp_rank = imp.rank
+                gen_payload.imp_index = idx
+                gen_payload.candidate = None
+                gen_payload.stacked_titles = []
+                gen_payload.new_parent = None
+                gen_payload.prior_parent = None
+                gen_payload.reset_progress(args.games_per_eval)
+                _current_round_writer(gen_payload)
 
-            try:
-                result = run_fitness_fn(
-                    parent_current,
-                    imp,
-                    games=args.games_per_eval,
-                    map_name=args.map,
-                    game_time_limit=args.game_time_limit,
-                    hard_timeout=args.hard_timeout,
-                    run_batch_fn=run_batch_fn,
-                    dev_apply_fn=dev_apply_fn,
-                    on_event=_on_fitness_event,
-                )
-            except Exception as exc:
-                tb = traceback.format_exc()
-                _log.error(
-                    "evolve: fitness crash on generation %d imp %r: %s",
-                    generation_index,
-                    imp.title,
-                    exc,
-                    exc_info=True,
-                )
-                fitness_counts["crash"] += 1
-                per_item_state[idx].status = _EVICTED
-                per_item_state[idx].retry_count += 1
-                per_item_state[idx].last_evaluated_against = parent_current
+                def _on_fitness_event(
+                    event: dict[str, Any],
+                    _p: CurrentRoundPayload = gen_payload,
+                ) -> None:
+                    etype = event.get("type")
+                    if etype == "fitness_start":
+                        _p.candidate = event.get("candidate")
+                        _p.games_total = event.get("total", _p.games_total)
+                        _p.games_played = 0
+                        _p.score_cand = 0
+                        _p.score_parent = 0
+                    elif etype == "fitness_game_end":
+                        _p.games_played += 1
+                        _p.score_cand = event.get("wins_cand", _p.score_cand)
+                        _p.score_parent = event.get(
+                            "wins_parent", _p.score_parent
+                        )
+                    _current_round_writer(_p)
+
+                try:
+                    result = run_fitness_fn(
+                        parent_current,
+                        imp,
+                        games=args.games_per_eval,
+                        map_name=args.map,
+                        game_time_limit=args.game_time_limit,
+                        hard_timeout=args.hard_timeout,
+                        run_batch_fn=run_batch_fn,
+                        dev_apply_fn=dev_apply_fn,
+                        on_event=_on_fitness_event,
+                    )
+                except Exception as exc:
+                    tb = traceback.format_exc()
+                    _log.error(
+                        "evolve: fitness crash on generation %d imp %r: %s",
+                        generation_index,
+                        imp.title,
+                        exc,
+                        exc_info=True,
+                    )
+                    fitness_counts["crash"] += 1
+                    per_item_state[idx].status = _EVICTED
+                    per_item_state[idx].retry_count += 1
+                    per_item_state[idx].last_evaluated_against = parent_current
+                    append_phase_result(
+                        args.results_path,
+                        _crash_row(
+                            generation_index,
+                            "fitness",
+                            parent_current,
+                            imp,
+                            exc,
+                            tb,
+                        ),
+                    )
+                    append_crash_log(
+                        args.crash_log_path,
+                        generation=generation_index,
+                        phase="fitness",
+                        parent=parent_current,
+                        imp=imp,
+                        exc=exc,
+                        traceback_str=tb,
+                    )
+                    last_result_snap = _last_result_snapshot_crash(
+                        generation_index, "fitness", imp, exc
+                    )
+                    continue
+
+                fitness_results[idx] = result
+                _apply_fitness_outcome(per_item_state, idx, result)
+                fitness_counts[result.bucket] += 1
                 append_phase_result(
                     args.results_path,
-                    _crash_row(
-                        generation_index, "fitness", parent_current, imp, exc, tb
-                    ),
+                    _fitness_row(generation_index, parent_current, result),
                 )
-                append_crash_log(
-                    args.crash_log_path,
+                last_result_snap = _last_result_snapshot_fitness(
+                    generation_index, result
+                )
+                write_pool_state(
+                    args.pool_path,
+                    pool,
+                    parent=parent_start,
+                    per_item_state=per_item_state,
+                    generated_at=pool_generated_at,
                     generation=generation_index,
-                    phase="fitness",
-                    parent=parent_current,
-                    imp=imp,
-                    exc=exc,
-                    traceback_str=tb,
                 )
-                last_result_snap = _last_result_snapshot_crash(
-                    generation_index, "fitness", imp, exc
+                _write_state(
+                    status="running",
+                    pool=pool,
+                    per_item_state=per_item_state,
+                    generation_index=generation_index,
+                    generations_completed=generations_completed,
+                    generations_promoted=generations_promoted,
+                    last_result=last_result_snap,
                 )
-                continue
-
-            fitness_results[idx] = result
-            _apply_fitness_outcome(per_item_state, idx, result)
-            fitness_counts[result.bucket] += 1
-            append_phase_result(
-                args.results_path, _fitness_row(generation_index, parent_current, result)
-            )
-            last_result_snap = _last_result_snapshot_fitness(
-                generation_index, result
-            )
-            write_pool_state(
-                args.pool_path,
-                pool,
-                parent=parent_start,
-                per_item_state=per_item_state,
-                generated_at=pool_generated_at,
-                generation=generation_index,
-            )
-            _write_state(
-                status="running",
+        else:
+            # Decision D-3: process-level fan-out via subprocess.Popen.
+            # Decision D-5: budget breach → drain in-flight, no new dispatch.
+            # Decision D-6: per-run uuid epoch (run_id) + stale-file cleanup
+            # already happened at run_loop startup; we just thread run_id
+            # through to each worker.
+            # Decision D-7: 4-mode failure taxonomy (dispatch-fail / crash /
+            # malformed / hang) all evict-with-retry.
+            parallel_snap, parallel_stop = _run_fitness_phase_parallel(
+                active_idxs=list(active_idxs),
                 pool=pool,
                 per_item_state=per_item_state,
+                fitness_results=fitness_results,
+                fitness_counts=fitness_counts,
+                parent_current=parent_current,
+                parent_start=parent_start,
+                pool_generated_at=pool_generated_at,
                 generation_index=generation_index,
                 generations_completed=generations_completed,
                 generations_promoted=generations_promoted,
-                last_result=last_result_snap,
+                args=args,
+                run_id=run_id,
+                write_state_fn=_write_state,
+                time_fn=time_fn,
+                start_monotonic=start_monotonic,
+                state_dir=args.results_path.parent,
             )
+            if parallel_snap is not None:
+                last_result_snap = parallel_snap
+            if parallel_stop is not None:
+                stop_reason = parallel_stop
 
         winner_idxs = sorted(
             (idx for idx, r in fitness_results.items() if r.bucket == "pass"),

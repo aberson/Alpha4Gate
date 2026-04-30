@@ -192,6 +192,7 @@ def _build_args(
         priors_path=None,
         post_training_cycles=0,
         backend_url="http://localhost:8765",
+        concurrency=1,
     )
 
 
