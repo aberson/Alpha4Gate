@@ -582,3 +582,69 @@
   line-height: 1;
   margin-left: 6px;
 }
+
+/* Help tab — operator-commands.md rendered via react-markdown */
+.help-tab {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 16px 24px;
+  line-height: 1.6;
+  color: #1f2937;
+}
+.help-tab h1, .help-tab h2, .help-tab h3 {
+  margin-top: 1.6em;
+  margin-bottom: 0.6em;
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 4px;
+}
+.help-tab h1 { font-size: 1.6em; }
+.help-tab h2 { font-size: 1.3em; }
+.help-tab h3 { font-size: 1.1em; }
+.help-tab code {
+  background: #f3f4f6;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.92em;
+}
+.help-tab pre {
+  background: #1f2937;
+  color: #f9fafb;
+  padding: 12px 16px;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 0.92em;
+}
+.help-tab pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+.help-tab table {
+  border-collapse: collapse;
+  margin: 12px 0;
+}
+.help-tab th, .help-tab td {
+  border: 1px solid #d1d5db;
+  padding: 6px 12px;
+  text-align: left;
+}
+.help-tab th {
+  background: #f3f4f6;
+  font-weight: 600;
+}
+.help-tab a {
+  color: #2563eb;
+  text-decoration: none;
+}
+.help-tab a:hover {
+  text-decoration: underline;
+}
+.help-tab hr {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin: 24px 0;
+}
+.help-tab ul, .help-tab ol {
+  padding-left: 24px;
+}

@@ -19,6 +19,7 @@ import { WslProcessesPanel } from "./components/WslProcessesPanel";
 import { AlertsPanel } from "./components/AlertsPanel";
 import { LadderTab } from "./components/LadderTab";
 import { EvolutionTab } from "./components/EvolutionTab";
+import { HelpTab } from "./components/HelpTab";
 import { AlertToast } from "./components/AlertToast";
 import { ConnectionStatus } from "./components/ConnectionStatus";
 import { useAdvisedRun } from "./hooks/useAdvisedRun";
@@ -36,7 +37,8 @@ type Tab =
   | "improvements"
   | "alerts"
   | "ladder"
-  | "evolution";
+  | "evolution"
+  | "help";
 
 function App() {
   const [tab, setTab] = useState<Tab>("live");
@@ -139,6 +141,12 @@ function App() {
           >
             Evolution
           </button>
+          <button
+            onClick={() => setTab("help")}
+            className={tab === "help" ? "active" : ""}
+          >
+            Help
+          </button>
         </nav>
         <ConnectionStatus />
         </div>
@@ -179,6 +187,7 @@ function App() {
         )}
         {tab === "ladder" && <LadderTab />}
         {tab === "evolution" && <EvolutionTab />}
+        {tab === "help" && <HelpTab />}
         {tab === "alerts" && (
           <AlertsPanel
             alerts={alerts}

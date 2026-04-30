@@ -264,6 +264,24 @@ async def get_status() -> dict[str, Any]:
     }
 
 
+@app.get("/api/operator-commands")
+async def get_operator_commands() -> dict[str, str]:
+    """Return the contents of `documentation/wiki/operator-commands.md`.
+
+    The Help dashboard tab renders this directly via react-markdown so the
+    on-disk doc is the single source of truth — edits to the markdown file
+    surface immediately in the UI without a frontend rebuild.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    doc_path = repo_root / "documentation" / "wiki" / "operator-commands.md"
+    if not doc_path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail=f"operator-commands.md not found at {doc_path}",
+        )
+    return {"markdown": doc_path.read_text(encoding="utf-8")}
+
+
 @app.get("/api/stats")
 async def get_stats() -> dict[str, Any]:
     """Get game statistics from training.db.

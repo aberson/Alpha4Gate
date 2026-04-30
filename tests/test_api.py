@@ -50,6 +50,23 @@ class TestStatusEndpoint:
         assert data["game_step"] is None
 
 
+class TestOperatorCommandsEndpoint:
+    """`/api/operator-commands` reads the wiki doc from disk so the Help
+    dashboard tab stays in sync with the on-disk markdown without a
+    rebuild. Test confirms the file is found and the response shape is
+    `{"markdown": "<contents>"}`."""
+
+    def test_returns_markdown(self, client: TestClient) -> None:
+        resp = client.get("/api/operator-commands")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "markdown" in data
+        # Sanity: real content, not an empty string. Look for a known
+        # heading from the doc; if the doc is renamed the test breaks
+        # which is the right signal.
+        assert "# Operator commands" in data["markdown"]
+
+
 class TestStatsEndpoint:
     def test_empty_stats(self, client: TestClient) -> None:
         resp = client.get("/api/stats")

@@ -49,6 +49,11 @@ replays/
 !/bots/*/data/hyperparams.json
 !/bots/*/data/reward_rules.json
 
+# Evolve scratch dirs — `bots/cand_<hash>/` are temporary candidate
+# snapshots created during fitness eval. They get rmtree'd at the end
+# of each round but a killed run can leave them behind. Never commit.
+/bots/cand_*/
+
 # Node / Frontend
 frontend/node_modules/
 frontend/dist/

@@ -73,6 +73,14 @@ addopts = "-m 'not sc2'"
 [tool.ruff]
 line-length = 100
 src = ["src", "bots", "tests"]
+# Exclude evolve scratch dirs — `bots/cand_<hash>/` are temporary
+# candidate snapshots created during fitness eval and cleaned up at
+# the end of each round. They contain auto-rewritten copies of the
+# parent's source that may temporarily violate ruff style rules
+# (e.g. an evolve run might leave an in-progress edit when killed).
+# These dirs are never committed (covered by .gitignore) and have no
+# value to lint against.
+extend-exclude = ["bots/cand_*"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
