@@ -274,7 +274,7 @@ Spike 3 (`scripts/spike3_launch.sh`) already validated this exact topology: 4 se
 ### Step 1: Refactor pointer flip out of `run_fitness_eval`
 
 - **Problem:** Drop the `bots/current/current.txt` pointer flip from `src/orchestrator/evolve.py::run_fitness_eval`. The candidate version is identified by its `bots.cand_<uuid>` import path; SC2 child processes get the version explicitly via `run_batch(p1=cand_name, ...)`. Update tests that assert pointer state during fitness. This step lands BEFORE any parallel dispatch — at concurrency=1 the result must still pass all existing evolve tests byte-identically. See Decision D-2 in the plan for rationale.
-- **Issue:** (leave blank — created later by /repo-sync)
+- **Issue:** #241
 - **Flags:** `--reviewers code --isolation worktree`
 - **Produces:** Pointer-flip-free `run_fitness_eval`; updated tests in `tests/test_evolve.py`; no behavior change at concurrency=1.
 - **Done when:**
@@ -286,7 +286,7 @@ Spike 3 (`scripts/spike3_launch.sh`) already validated this exact topology: 4 se
 ### Step 2: Per-worker live-state file shape + `evolve_worker.py` CLI
 
 - **Problem:** Add `scripts/evolve_worker.py` — a one-shot CLI taking `--parent --imp-json --worker-id --result-path` and pass-throughs for game-eval args. It calls `orchestrator.evolve.run_fitness_eval` for one imp, writes live-progress to `data/evolve_round_<worker_id>.json` via temp+rename atomically, writes the final result JSON to `--result-path`. Exits 0 on success, non-zero on crash. New module `scripts/evolve_round_state.py` (or extension to existing) for the file-write helpers used by both this worker and the dispatcher in step 3.
-- **Issue:** (leave blank)
+- **Issue:** #242
 - **Flags:** `--reviewers code --isolation worktree`
 - **Produces:** `scripts/evolve_worker.py`; round-state helpers; unit tests in `tests/test_evolve_worker.py` covering arg parsing, state-file atomicity, and crash exit codes.
 - **Done when:** `python scripts/evolve_worker.py --parent v3 --imp-json <fixture> --worker-id 0 --result-path /tmp/r0.json --games-per-eval 1` runs end-to-end on a real SC2 substrate; `data/evolve_round_0.json` updates during fitness games; result JSON is valid.
@@ -302,7 +302,7 @@ Spike 3 (`scripts/spike3_launch.sh`) already validated this exact topology: 4 se
   - **Failure taxonomy (Decision D-7):** Catch `OSError`/`FileNotFoundError` around `subprocess.Popen()` for `dispatch-fail`. After a worker exits, distinguish: (a) exit non-zero → `crash`; (b) exit zero, result file missing or `FitnessResult.from_json` raises → `malformed`; (c) timeout → `hang`. Each gets its own counter bucket and log line; treat all four as imp-evicted-with-retry-incremented.
   - **Budget-breach (Decision D-5):** On wall-clock breach, set a "stop dispatching" flag; let in-flight workers finish naturally (up to their per-worker timeout). Don't SIGTERM in-flight workers on budget breach — only on operator interrupt.
   - **Justification comments:** Add inline `# Decision D-1` / `# Decision D-2` / `# Decision D-3` / `# Decision D-5` / `# Decision D-6` / `# Decision D-7` markers at each implementation site, referencing §6 of this plan.
-- **Issue:** (leave blank)
+- **Issue:** #243
 - **Flags:** `--reviewers code --isolation worktree`
 - **Produces:** `--concurrency` flag; dispatcher loop; signal handlers; integration tests in `tests/test_evolve_parallel.py` using a mocked-subprocess fixture (real subprocesses are too slow for unit tests). The fixture must cover: out-of-order completion (worker 3 finishes before worker 1), each of the four failure modes from D-7, signal-during-dispatch (SIGINT mid-flight), budget-breach mid-flight, and the run_id stale-file-cleanup path.
 - **Done when:**
@@ -320,7 +320,7 @@ Spike 3 (`scripts/spike3_launch.sh`) already validated this exact topology: 4 se
   **(a) Add `GET /api/evolve/running-rounds` to `bots/v3/api.py`:** Reads `data/evolve_round_*.json`, **filters by current `run_id`** (read from a sentinel file `data/evolve_run_state.json::run_id` written by the parent dispatcher in Step 3), pads to `concurrency` length with idle skeletons (per §5's idle-slot semantics), returns the full shape documented in §5. Add backwards-compat shim on `/api/evolve/current-round`: returns first non-idle running round, or idle skeleton if none. **Cross-version data-dir gotcha:** the round-state files live at `data/evolve_round_*.json` (repo-root cross-version), NOT under `bots/<vN>/data/`. The endpoint must use `_evolve_dir` (cross-version), not `_data_dir` (per-version) — confusing the two has caused silent endpoint-returns-idle-skeleton bugs before. The pattern: backends with both per-version state (`training.db`) and cross-version state (`evolve/`, `ladder/`) need separate dir resolvers; sharing one resolver silently breaks either.
 
   **(b) Update `bots/v3/process_registry.py:13`:** Change `_OUR_CMDLINE_TAGS = ("bots.v3", "bots.current")` to also recognize `bots.cand_*` workers. Easiest implementation: keep the tuple but extend `_is_ours()` (line 18) and the label resolver (line 165) with an explicit `cmdline.contains("bots.cand_")` check. Worker SC2 children carry `--bot bots.cand_<uuid>` in their argv, so the substring match suffices. Without this, the dashboard's WSL processes panel shows worker SC2 PIDs as "Other" instead of "bots.cand_*".
-- **Issue:** (leave blank)
+- **Issue:** #244
 - **Flags:** `--reviewers code`
 - **Produces:** New endpoint; backwards-compat shim; updated process detection; contract tests asserting endpoint shape with 0, 1, 4 round files present AND with stale (wrong-`run_id`) files present (must NOT appear in the response).
 - **Done when:**
@@ -333,7 +333,7 @@ Spike 3 (`scripts/spike3_launch.sh`) already validated this exact topology: 4 se
 ### Step 5: Frontend hook `useEvolveRun.ts` extension
 
 - **Problem:** Add `runningRounds: UseApiResult<{active, concurrency, run_id, rounds}>` to `useEvolveRun()` in `frontend/src/hooks/useEvolveRun.ts`. Polls `/api/evolve/running-rounds` at 2s. **Bump `CACHE_KEY_SUFFIX` from `evolve-v4` → `evolve-v5`.** *Why bump:* `useApi` persists the last-seen response in `localStorage` keyed by `CACHE_KEY_SUFFIX`. After the schema change, a returning user's browser still has the old-shape v4 response cached; the hook destructures it before the first network round-trip and crashes React with `Cannot read properties of undefined (reading 'rounds')`. Bumping the suffix invalidates the stale cache so the new render path always sees the new shape. (This is the project's standard cache-break pattern; see also evolve gate-reduction's v2→v3 bump.) Existing `currentRound` field stays for the single-card render fallback.
-- **Issue:** (leave blank)
+- **Issue:** #245
 - **Flags:** `--reviewers code`
 - **Produces:** Extended hook; vitest coverage in `frontend/src/hooks/__tests__/useEvolveRun.test.ts`.
 - **Done when:** `cd frontend && npm test` green; manual probe with the dashboard running at `http://localhost:3000` shows the new field populated when N>1 workers active.
@@ -342,7 +342,7 @@ Spike 3 (`scripts/spike3_launch.sh`) already validated this exact topology: 4 se
 ### Step 6: Frontend `EvolutionTab.tsx` grid render
 
 - **Problem:** Refactor `frontend/src/components/EvolutionTab.tsx` so the existing single-card render becomes a per-card subcomponent rendered inside a CSS grid. Grid auto-sizes: 1 column at width<800px, 2 columns at 800-1200px, 4 columns at >1200px. At N=1 the layout must be visually identical to today (single centered card) — this is the byte-identical UX promise that pairs with Decision D-1 on the engine side. Add per-card "worker N" label badge and "phase: fitness/idle" status indicator. Keep all existing Pool / Results sections of the tab unchanged.
-- **Issue:** (leave blank)
+- **Issue:** #246
 - **Flags:** `--reviewers code --ui`
 - **Produces:** Grid-rendering tab; updated vitest snapshots; Playwright evidence for N=1 (single card matches today), N=2 (two cards), N=4 (four cards) rendered states.
 - **Done when:** vitest green; Playwright evidence shows the three render states; N=1 visual diff vs current `master` is empty.
@@ -378,7 +378,7 @@ Spike 3 (`scripts/spike3_launch.sh`) already validated this exact topology: 4 se
 
   Open `http://localhost:3000/evolution` to watch the 4 cards populate.
 
-- **Issue:** (leave blank)
+- **Issue:** #247
 - **Type:** code
 - **Flags:** `--reviewers code`
 - **Produces:** `operator-commands.md` `--concurrency` section + quickstart; `improve-bot-evolve` skill `--concurrency` arg; one-line master-plan diff.
@@ -409,7 +409,7 @@ Spike 3 (`scripts/spike3_launch.sh`) already validated this exact topology: 4 se
   3. The Evolution tab shows two progress cards side-by-side.
   4. Run completes (script exits) within ~60s.
   5. Post-run: `ls bots/cand_* 2>/dev/null | wc -l` returns 0 (per Decision D-6 cleanup).
-- **Issue:** (leave blank)
+- **Issue:** #248
 - **Type:** operator
 - **Flags:** (none)
 - **Produces:** Operator screenshot of dashboard showing 2 cards; brief notes file `documentation/soak-test-runs/parallel-smoke-<date>.md`.
@@ -451,7 +451,7 @@ Spike 3 (`scripts/spike3_launch.sh`) already validated this exact topology: 4 se
     sleep 1
   done &
   ```
-- **Issue:** (leave blank)
+- **Issue:** #249
 - **Type:** wait
 - **Flags:** (none)
 - **Produces:** Soak-run notes file `documentation/soak-test-runs/evolve-parallel-<timestamp>.md` summarizing wall-clock, generations completed, promotions, peak SC2 process count (from the RSS sampler), any anomalies.
