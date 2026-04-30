@@ -221,6 +221,7 @@ Vitest covering:
 - **Produces:** `documentation/plans/dashboard-refactor-endpoint-audit.md` (temporary working doc, deleted after Step 7) listing every `/api/...` endpoint with its caller status (KEPT — used by surviving tab; DROP — only deleted-tab callers).
 - **Done when:** every endpoint in `bots/v0/api.py` is classified KEPT or DROP, with grep evidence cited per endpoint.
 - **Risk:** miscount a caller; miss a websocket subscription. Mitigation: full grep across `frontend/src/` for each endpoint path; cross-check with WS subscription list.
+- **Status:** DONE (2026-04-29)
 
 ### Step 2: Build unified endpoint
 
