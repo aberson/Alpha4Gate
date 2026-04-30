@@ -102,3 +102,5 @@ here because they operate on different things.
 3. **Implementation Notes** — internal details (marked "verify against code" — these can drift)
 
 **For the active plan:** See [alpha4gate-master-plan.md](../plans/alpha4gate-master-plan.md) for the current roadmap. Phases A, 0–5 complete. Phase 9 (improve-bot-evolve) operational; v0→v4 via successive promotions. Phase 8 (headless Linux training infrastructure) Steps 1-10 shipped, Step 11 24h soak pending. Phase N (win-prob heuristic + give-up) shipped. Next: Phase 8 Step 11 (Linux soak), Phase 7 (advised staleness), capability phases (B, D, E, F).
+
+**For day-to-day operator commands:** See [operator-commands.md](operator-commands.md) — the cheat sheet for running the bot, launching evolve (Windows + WSL), watching tasks, debugging, and frequent recipes.
