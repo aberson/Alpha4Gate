@@ -452,9 +452,10 @@ class TestRunFitnessEval:
         assert "pass" in result.reason
         # Scratch dir MUST be cleaned up even on pass.
         assert not (tmp_path / "bots" / "cand_pass").exists()
-        # Pointer restored to parent.
-        pointer = tmp_path / "bots" / "current" / "current.txt"
-        assert pointer.read_text(encoding="utf-8") == "v0"
+        # Pointer-state assertions live in
+        # ``test_run_fitness_eval_does_not_touch_pointer`` — Decision D-2
+        # means run_fitness_eval no longer touches the pointer at all, so
+        # checking its content here would only verify ``_seed_pointer`` ran.
 
     def test_close_bucket_one_win_short(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -557,8 +558,8 @@ class TestRunFitnessEval:
                 candidate_namer=_single_namer("cand_err"),
             )
         assert not (tmp_path / "bots" / "cand_err").exists()
-        pointer = tmp_path / "bots" / "current" / "current.txt"
-        assert pointer.read_text(encoding="utf-8") == "v0"
+        # Pointer-state coverage lives in
+        # ``test_run_fitness_eval_does_not_touch_pointer`` — see Decision D-2.
         assert batch.call_count == 0
 
     def test_run_batch_failure_cleans_scratch(
@@ -582,8 +583,85 @@ class TestRunFitnessEval:
                 candidate_namer=_single_namer("cand_boom"),
             )
         assert not (tmp_path / "bots" / "cand_boom").exists()
+        # Pointer-state coverage lives in
+        # ``test_run_fitness_eval_does_not_touch_pointer`` — see Decision D-2.
+
+    def test_run_fitness_eval_does_not_touch_pointer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Decision D-2: ``run_fitness_eval`` MUST NOT touch ``current.txt``.
+
+        Pre-parallelization, the primitive flipped the pointer to the
+        scratch candidate and restored it in ``finally``. With N parallel
+        workers each doing that, the workers trample each other and any
+        SC2 child process that imports ``bots.current`` between the flip
+        and the restore gets the wrong code. Step 1 of the evolve
+        parallelization plan drops the flip entirely; this test pins the
+        new contract.
+
+        Asserts both content AND mtime_ns of
+        ``bots/current/current.txt`` are unchanged across the three
+        outcome paths (pass, apply-error, batch-failure). The mtime
+        check catches accidental no-op rewrites: writing the same string
+        still bumps mtime.
+        """
+        _redirect_repo_root(tmp_path, monkeypatch)
+        _seed_version(tmp_path, "v0")
+        _seed_pointer(tmp_path, "v0")
         pointer = tmp_path / "bots" / "current" / "current.txt"
-        assert pointer.read_text(encoding="utf-8") == "v0"
+        before_content = pointer.read_text(encoding="utf-8")
+        before_mtime_ns = pointer.stat().st_mtime_ns
+
+        # --- happy path: pass bucket ---
+        result = run_fitness_eval(
+            parent="v0",
+            imp=_simple_training_imp("expansion_bonus", 2.0),
+            games=5,
+            run_batch_fn=_BatchRecorder([(3, 2, 0)]),
+            candidate_namer=_single_namer("cand_no_flip_pass"),
+        )
+        assert result.bucket == "pass"
+        assert pointer.read_text(encoding="utf-8") == before_content
+        assert pointer.stat().st_mtime_ns == before_mtime_ns, (
+            "current.txt mtime changed across the pass-bucket eval; "
+            "Decision D-2 says run_fitness_eval must not write the pointer."
+        )
+
+        # --- apply_improvement raises mid-eval ---
+        bad_imp = _make_imp(type_="training", concrete_change="not-json")
+        with pytest.raises(ValueError, match="not valid JSON"):
+            run_fitness_eval(
+                parent="v0",
+                imp=bad_imp,
+                games=5,
+                run_batch_fn=_BatchRecorder([]),
+                candidate_namer=_single_namer("cand_no_flip_err"),
+            )
+        assert pointer.read_text(encoding="utf-8") == before_content
+        assert pointer.stat().st_mtime_ns == before_mtime_ns, (
+            "current.txt mtime changed across the apply-error eval; "
+            "Decision D-2 says run_fitness_eval must not write the pointer."
+        )
+
+        # --- run_batch_fn raises mid-eval ---
+        def exploding_batch(
+            p1: str, p2: str, games: int, map_name: str, **kwargs: Any
+        ) -> list[SelfPlayRecord]:
+            raise RuntimeError("selfplay blew up")
+
+        with pytest.raises(RuntimeError, match="selfplay blew up"):
+            run_fitness_eval(
+                parent="v0",
+                imp=_simple_training_imp(),
+                games=5,
+                run_batch_fn=exploding_batch,
+                candidate_namer=_single_namer("cand_no_flip_boom"),
+            )
+        assert pointer.read_text(encoding="utf-8") == before_content
+        assert pointer.stat().st_mtime_ns == before_mtime_ns, (
+            "current.txt mtime changed across the batch-failure eval; "
+            "Decision D-2 says run_fitness_eval must not write the pointer."
+        )
 
     def test_on_event_fires_fitness_lifecycle(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -33,8 +33,14 @@ Design notes
 ------------
 
 * ``snapshot_current`` updates ``bots/current/current.txt`` as a side
-  effect. Each primitive restores the pointer on every outcome path so the
-  caller never sees a dangling scratch pointer.
+  effect by default. :func:`run_fitness_eval` calls it with
+  ``update_pointer=False`` so the scratch ``cand_*`` snapshot does NOT
+  flip the process-global pointer — the candidate is identified by its
+  explicit ``bots.cand_<uuid>`` import path passed to ``run_batch``.
+  See ``documentation/plans/evolve-parallelization-plan.md`` decision
+  D-2; this is the prerequisite for safe parallel fitness eval.
+  :func:`run_regression_eval` already does not touch the pointer (the
+  caller's ``git revert`` carries the pointer back via its reverse diff).
 * Scratch ``cand_*`` directories from :func:`run_fitness_eval` are always
   discarded — the caller re-snapshots from parent when assembling the
   promotion candidate.
@@ -463,13 +469,20 @@ def run_fitness_eval(
 ) -> FitnessResult:
     """Run one imp-vs-parent fitness evaluation.
 
-    1. Snapshot the parent to a scratch ``cand_*`` dir.
+    1. Snapshot the parent to a scratch ``cand_*`` dir (with
+       ``update_pointer=False`` — see Decision D-2).
     2. Apply *imp* to the scratch dir.
-    3. Play ``games`` candidate-vs-parent games.
+    3. Play ``games`` candidate-vs-parent games. ``run_batch`` receives
+       the candidate version explicitly; SC2 child processes resolve the
+       bot via the ``bots.cand_<uuid>`` argv path, not the
+       ``bots/current/current.txt`` pointer.
     4. Classify the win count into pass / close / fail.
     5. Rmtree the scratch dir (always — the caller re-snapshots from
        parent when assembling the promotion candidate).
-    6. Restore ``bots/current/current.txt`` to *parent*.
+
+    The pointer at ``bots/current/current.txt`` is intentionally NOT
+    touched — neither flipped to the candidate nor re-written back to the
+    parent. This is the parallel-evolve prerequisite (Decision D-2).
 
     Progress events emitted on *on_event* (if provided):
       - ``{"type": "fitness_start", "candidate", "imp_title", "total"}``
@@ -483,6 +496,11 @@ def run_fitness_eval(
     if candidate_namer is None:
         candidate_namer = _default_candidate_namer
 
+    # Sanity check: caller's ``parent`` must match the live pointer.
+    # Assumes single-flight evolve at concurrency=1 — no other process is
+    # flipping the pointer concurrently. The parallel dispatcher (Step 3+
+    # of the evolve-parallelization plan) hoists this check up to the
+    # caller so workers don't all redundantly read the pointer file.
     live_parent = current_version()
     if live_parent != parent:
         raise ValueError(
@@ -497,8 +515,11 @@ def run_fitness_eval(
 
     cand_dir: Path | None = None
     try:
-        cand_dir = _snapshot_mod.snapshot_current(cand_name)
-        _restore_pointer(parent)
+        # ``update_pointer=False``: the scratch snapshot is ephemeral and
+        # must NOT become the active version. Decision D-2.
+        cand_dir = _snapshot_mod.snapshot_current(
+            cand_name, update_pointer=False
+        )
         apply_improvement(cand_dir, imp, dev_apply_fn=dev_apply_fn)
 
         _log.info(
@@ -570,9 +591,11 @@ def run_fitness_eval(
         )
     finally:
         # Scratch is always discarded. Composition re-snapshots from parent.
+        # The pointer is intentionally NOT touched here (Decision D-2): we
+        # never flipped it during fitness eval, so there is nothing to
+        # restore.
         if cand_dir is not None and cand_dir.exists():
             _safe_rmtree(cand_dir)
-        _restore_pointer(parent)
 
 
 # ---------------------------------------------------------------------------

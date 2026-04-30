@@ -274,6 +274,7 @@ Spike 3 (`scripts/spike3_launch.sh`) already validated this exact topology: 4 se
 ### Step 1: Refactor pointer flip out of `run_fitness_eval`
 
 - **Problem:** Drop the `bots/current/current.txt` pointer flip from `src/orchestrator/evolve.py::run_fitness_eval`. The candidate version is identified by its `bots.cand_<uuid>` import path; SC2 child processes get the version explicitly via `run_batch(p1=cand_name, ...)`. Update tests that assert pointer state during fitness. This step lands BEFORE any parallel dispatch — at concurrency=1 the result must still pass all existing evolve tests byte-identically. See Decision D-2 in the plan for rationale.
+- **Status:** DONE (2026-04-30) — code-review gauntlet 4/4 NO ISSUES; pytest 1339+20 (+2 vs baseline); mypy strict + ruff clean. Byte-identical JSONL diff gate deferred to operator post-merge.
 - **Issue:** #241
 - **Flags:** `--reviewers code --isolation worktree`
 - **Produces:** Pointer-flip-free `run_fitness_eval`; updated tests in `tests/test_evolve.py`; no behavior change at concurrency=1.

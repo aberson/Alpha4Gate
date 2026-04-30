@@ -181,7 +181,10 @@ def _rewrite_imports(target_dir: Path, old_pkg: str, new_pkg: str) -> int:
 
 
 def snapshot_current(
-    name: str | None = None, source: str | None = None
+    name: str | None = None,
+    source: str | None = None,
+    *,
+    update_pointer: bool = True,
 ) -> Path:
     """Snapshot a bot version to a new ``bots/<name>/`` directory.
 
@@ -193,6 +196,14 @@ def snapshot_current(
             (e.g. ``"v0"``) to fold a non-current branch into a new version
             without first flipping the current pointer. The new manifest's
             ``parent`` field records this value verbatim.
+        update_pointer: If True (default) write the new snapshot name to
+            ``bots/current/current.txt`` so the new version becomes the
+            active one. If False, do NOT touch the pointer. Used by
+            :func:`orchestrator.evolve.run_fitness_eval` (and other
+            parallel-evolve primitives) where the snapshot is ephemeral
+            scratch and the caller does not want it to become the active
+            version. See ``documentation/plans/evolve-parallelization-plan.md``
+            decision D-2.
 
     Returns:
         Path to the newly created version directory.
@@ -248,8 +259,14 @@ def snapshot_current(
         new_manifest.to_json(), encoding="utf-8"
     )
 
-    # Update current.txt to point at the new version
-    pointer = _repo_root() / "bots" / "current" / "current.txt"
-    pointer.write_text(new_name, encoding="utf-8")
+    # Update current.txt to point at the new version. Skipped when
+    # ``update_pointer=False`` so callers (e.g. evolve fitness eval) can
+    # produce ephemeral scratch snapshots without flipping the
+    # process-global pointer that every other process in the repo shares.
+    # See ``documentation/plans/evolve-parallelization-plan.md`` decision
+    # D-2 for the rationale.
+    if update_pointer:
+        pointer = _repo_root() / "bots" / "current" / "current.txt"
+        pointer.write_text(new_name, encoding="utf-8")
 
     return target_dir

@@ -103,6 +103,42 @@ class TestSnapshotCurrent:
         pointer = tmp_path / "bots" / "current" / "current.txt"
         assert pointer.read_text(encoding="utf-8") == "v1"
 
+    def test_update_pointer_false_leaves_pointer_unchanged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``update_pointer=False`` MUST NOT write ``current.txt``.
+
+        Used by :func:`orchestrator.evolve.run_fitness_eval` (and other
+        parallel-evolve primitives) to produce ephemeral scratch
+        snapshots that must never become the active version. See
+        ``documentation/plans/evolve-parallelization-plan.md`` decision
+        D-2.
+
+        Asserts both content AND mtime_ns are unchanged across the call.
+        The mtime check catches accidental no-op rewrites — writing the
+        same string still bumps mtime.
+        """
+        monkeypatch.setattr(registry, "_repo_root", lambda: tmp_path)
+        monkeypatch.setattr(snapshot, "_repo_root", lambda: tmp_path)
+        _seed_version(tmp_path, "v0")
+        _seed_current(tmp_path, "v0")
+
+        pointer = tmp_path / "bots" / "current" / "current.txt"
+        before_content = pointer.read_text(encoding="utf-8")
+        before_mtime_ns = pointer.stat().st_mtime_ns
+
+        result = snapshot.snapshot_current("cand_scratch", update_pointer=False)
+
+        # The snapshot dir was created on disk.
+        assert result.is_dir()
+        assert result.name == "cand_scratch"
+        # The pointer is byte-identical AND mtime-identical.
+        assert pointer.read_text(encoding="utf-8") == before_content
+        assert pointer.stat().st_mtime_ns == before_mtime_ns, (
+            "snapshot_current(update_pointer=False) wrote current.txt; "
+            "Decision D-2 says it must leave the pointer untouched."
+        )
+
     def test_auto_increment_naming(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
