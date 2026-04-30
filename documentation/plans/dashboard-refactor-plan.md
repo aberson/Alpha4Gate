@@ -235,6 +235,7 @@ Vitest covering:
 - **Problem:** Implement `ImprovementsTab.tsx` per §5 spec. Source filter pills, table rendering, expandable rows, stale-data banner.
 - **Produces:** `ImprovementsTab.tsx`, `ImprovementsTab.test.tsx`. Update `App.css` with new tab classes.
 - **Done when:** Vitest passes for the new tab; manual render against a populated `improvement_log.json` shows correct table; manual filter pill toggles correct entries.
+- **Status:** DONE (2026-04-29)
 
 ### Step 4: Wire into App.tsx
 

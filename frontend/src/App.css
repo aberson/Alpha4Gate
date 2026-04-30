@@ -648,3 +648,176 @@
 .help-tab ul, .help-tab ol {
   padding-left: 24px;
 }
+
+/* --- Improvements tab (unified advised + evolve timeline) --- */
+
+.improvements-tab {
+  text-align: left;
+}
+
+.improvements-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.improvements-filter-row {
+  display: flex;
+  gap: 6px;
+}
+
+.improvements-filter-pill {
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 0.85em;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.improvements-filter-pill:hover {
+  border-color: var(--accent-border);
+}
+
+.improvements-filter-pill-active {
+  background: var(--accent-bg);
+  color: var(--accent);
+  border-color: var(--accent-border);
+  font-weight: 600;
+}
+
+.improvements-count {
+  color: var(--text);
+  font-size: 0.85em;
+}
+
+.improvements-refresh {
+  margin-left: auto;
+  padding: 4px 12px;
+  font-size: 0.85em;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.improvements-refresh:hover {
+  background: var(--accent-bg);
+  color: var(--accent);
+  border-color: var(--accent-border);
+}
+
+.improvements-empty {
+  padding: 24px;
+  text-align: center;
+}
+
+.improvements-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+}
+
+.improvements-table th,
+.improvements-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.improvements-table th {
+  color: var(--text-h);
+  font-weight: 600;
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.improvements-row {
+  cursor: pointer;
+  transition: background-color 0.12s;
+}
+
+.improvements-row:hover {
+  background: var(--accent-bg);
+}
+
+.improvements-row-active {
+  background: var(--accent-bg);
+}
+
+.improvements-row-expanded {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.improvements-row-expanded > td {
+  padding: 12px 16px;
+}
+
+.improvements-expanded-section {
+  margin-bottom: 12px;
+}
+
+.improvements-expanded-section:last-child {
+  margin-bottom: 0;
+}
+
+.improvements-expanded-section ul {
+  margin: 4px 0 0;
+  padding-left: 20px;
+}
+
+.improvements-source-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.75em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.improvements-source-badge.advised {
+  background: rgba(37, 99, 235, 0.15);
+  color: #2563eb;
+}
+
+.improvements-source-badge.evolve {
+  background: rgba(170, 59, 255, 0.18);
+  color: var(--accent);
+}
+
+.improvements-outcome-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.75em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.improvements-outcome-badge.success {
+  background: rgba(34, 197, 94, 0.15);
+  color: #16a34a;
+}
+
+.improvements-outcome-badge.failure {
+  background: rgba(220, 38, 38, 0.15);
+  color: #dc2626;
+}
+
+.improvements-outcome-badge.warning {
+  background: rgba(234, 179, 8, 0.18);
+  color: #ca8a04;
+}
+
+.improvements-outcome-badge.neutral {
+  background: rgba(156, 163, 175, 0.18);
+  color: #6b7280;
+}
