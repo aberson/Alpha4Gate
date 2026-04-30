@@ -267,6 +267,7 @@ Vitest covering:
 ### Step 9: Manual smoke test
 
 - **Problem:** Start backend + frontend dev server. Click every tab. Confirm Advisor / Evolution flows still work end-to-end (start an advised run, check it appears in Improvements; same for an evolve quick run).
+- **Type:** operator
 - **Produces:** Pass/fail observation in the PR description; a small markdown record at `documentation/soak-test-runs/dashboard-refactor-smoke-<TS>.md`.
 - **Done when:** Operator confirms the new dashboard renders, surviving features behave normally, and Improvements timeline shows real data from both sources.
 
