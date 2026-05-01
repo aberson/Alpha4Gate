@@ -97,6 +97,18 @@ export interface EvolveRunState {
   // join per-worker files by ``run_id`` and pad to ``concurrency``.
   run_id?: string | null;
   concurrency?: number | null;
+  // Snapshot of ``sys.argv[1:]`` from the dispatcher — surfaced on the
+  // dashboard so the operator can see what flags this run was launched
+  // with. ``null`` for runs that started before this field existed.
+  cli_argv?: string[] | null;
+  // One float (seconds) appended each time a generation completes. The
+  // dashboard reads this to render a time-remaining range from the
+  // observed per-generation min/max. ``null`` for legacy runs.
+  gen_durations_seconds?: number[] | null;
+  // ``args.generations`` from the dispatcher (0 = unbounded). Lets the
+  // dashboard compute remaining = target - completed. ``null`` for
+  // legacy runs that didn't persist this field.
+  generations_target?: number | null;
 }
 
 // --- Round-history row (one phase row per line of evolve_results.jsonl) ---
@@ -258,20 +270,19 @@ export interface UseEvolveRunResult {
   sendControl: (patch: Partial<EvolveRunControl>) => Promise<void>;
 }
 
-// Cache-key suffix bumped to v5 for Step 5 of the
-// evolve-parallelization plan (Decision D-6): the new
-// ``/api/evolve/running-rounds`` endpoint introduces a per-worker
-// rounds array, and ``/api/evolve/state`` gains optional ``run_id`` +
-// ``concurrency`` fields on its idle skeleton (Step 4). Per
-// feedback_useapi_cache_schema_break.md, without bumping the cache key
-// a returning user's browser has the old-shape v4 response cached;
-// the hook destructures it before the first network round-trip and
-// crashes React with ``Cannot read properties of undefined``.
+// Cache-key suffix bumped to v6: ``/api/evolve/state`` now carries
+// ``cli_argv``, ``gen_durations_seconds``, and ``generations_target``
+// so the dashboard can show run flags + a remaining-time range.
+// Without bumping the cache key, returning users have the v5 payload
+// cached; the new render paths read these fields before the first
+// network round-trip (feedback_useapi_cache_schema_break.md).
 //
 // Prior bumps:
+//   v4->v5: Step 5 added per-worker running rounds + ``run_id`` /
+//   ``concurrency`` on the run-state idle skeleton.
 //   v3->v4: 2-gate schema removed the pre-regression stacked-games
 //   phase and the fallback-variant fields (gate-reduction plan).
-const CACHE_KEY_SUFFIX = "evolve-v5";
+const CACHE_KEY_SUFFIX = "evolve-v6";
 
 /**
  * Hook for monitoring and controlling an improve-bot-evolve run

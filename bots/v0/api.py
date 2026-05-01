@@ -655,6 +655,9 @@ _EVOLVE_IDLE_STATE: dict[str, Any] = {
     "last_result": None,
     "run_id": None,
     "concurrency": None,
+    "cli_argv": None,
+    "gen_durations_seconds": None,
+    "generations_target": None,
 }
 
 _EVOLVE_DEFAULT_CONTROL: dict[str, Any] = {

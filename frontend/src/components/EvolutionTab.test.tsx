@@ -204,6 +204,87 @@ describe("EvolutionTab", () => {
     ).toBeTruthy();
   });
 
+  it("renders cli flags strip when run.cli_argv is present", async () => {
+    installFetch({
+      state: {
+        ...runningState,
+        cli_argv: ["--hours", "8", "--pool-size", "10", "--concurrency", "3"],
+      },
+    });
+    render(<EvolutionTab />);
+    const strip = await screen.findByTestId("evolve-cli-flags");
+    expect(strip.textContent).toContain(
+      "--hours 8 --pool-size 10 --concurrency 3",
+    );
+  });
+
+  it("does not render cli flags strip when run.cli_argv is null (legacy run)", async () => {
+    installFetch({ state: runningState });
+    render(<EvolutionTab />);
+    await waitFor(() => {
+      expect(screen.getByText(/Run Stats/i)).toBeTruthy();
+    });
+    expect(screen.queryByTestId("evolve-cli-flags")).toBeNull();
+  });
+
+  it("renders Time Remaining as a single value when only --hours is set (deterministic)", async () => {
+    // started 1h ago, 4h budget, no gen cap → exactly 3h remaining,
+    // rendered as a single value (no en-dash range).
+    const oneHourAgo = new Date(Date.now() - 3600 * 1000).toISOString();
+    installFetch({
+      state: {
+        ...runningState,
+        started_at: oneHourAgo,
+        wall_budget_hours: 4.0,
+        cli_argv: ["--hours", "4"],
+        generations_target: 0,
+        gen_durations_seconds: [],
+      },
+    });
+    render(<EvolutionTab />);
+    const value = await screen.findByTestId("time-remaining-value");
+    // Expect "3h" (or "2h 59m" depending on rounding) — assert the
+    // hour magnitude and the absence of an en-dash range marker.
+    expect(value.textContent ?? "").toMatch(/^\s*[23]h/);
+    expect(value.textContent ?? "").not.toContain("–");
+  });
+
+  it("renders Time Remaining as a range when gen-cap variance is present", async () => {
+    // 10 generations target, 2 completed in 60s and 120s respectively →
+    // 8 generations remaining at min=60s … max=120s = 8m … 16m range.
+    installFetch({
+      state: {
+        ...runningState,
+        started_at: new Date(Date.now() - 180 * 1000).toISOString(),
+        wall_budget_hours: 0, // no wall cap
+        cli_argv: ["--generations", "10"],
+        generations_target: 10,
+        generations_completed: 2,
+        gen_durations_seconds: [60, 120],
+      },
+    });
+    render(<EvolutionTab />);
+    const value = await screen.findByTestId("time-remaining-value");
+    // 8m – 16m, formatted via formatDuration's "Nm" form.
+    expect(value.textContent ?? "").toContain("–");
+    expect(value.textContent ?? "").toContain("8m");
+    expect(value.textContent ?? "").toContain("16m");
+  });
+
+  it("renders Time Remaining as 'indefinite' when neither --hours nor --generations is set", async () => {
+    installFetch({
+      state: {
+        ...runningState,
+        wall_budget_hours: 0,
+        generations_target: 0,
+        gen_durations_seconds: [],
+      },
+    });
+    render(<EvolutionTab />);
+    const value = await screen.findByTestId("time-remaining-value");
+    expect(value.textContent).toBe("indefinite");
+  });
+
   it("renders completed state with run-ended reason and disabled stop button", async () => {
     installFetch({ state: completedState });
     render(<EvolutionTab />);

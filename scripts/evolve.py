@@ -800,6 +800,9 @@ def write_run_state(
     generation_index: int = 0,
     run_id: str | None = None,
     concurrency: int | None = None,
+    cli_argv: list[str] | None = None,
+    gen_durations_seconds: list[float] | None = None,
+    generations_target: int | None = None,
 ) -> None:
     """Write ``evolve_run_state.json`` — dashboard run state.
 
@@ -807,9 +810,15 @@ def write_run_state(
     dispatcher (Step 4 of the evolve-parallelization plan) so the
     ``/api/evolve/running-rounds`` endpoint can filter per-worker round
     files by the active run's id and pad to the active concurrency.
-    Both default to ``None`` so single-flight + legacy callers keep
-    byte-identical output (the keys are still emitted with ``None``
-    values for shape stability).
+    ``cli_argv`` is the ``sys.argv[1:]`` snapshot from the dispatcher so
+    the dashboard can show what flags this run was launched with.
+    ``gen_durations_seconds`` accumulates one entry per completed
+    generation so the dashboard can compute a time-remaining range from
+    observed per-generation variance. ``generations_target`` is
+    ``args.generations`` (0 = unbounded) so the dashboard knows the
+    generation cap. All default to ``None`` so legacy callers keep
+    byte-identical output (the keys are still emitted with ``None`` /
+    ``[]`` values for shape stability).
     """
     payload: dict[str, Any] = {
         "status": status,
@@ -826,6 +835,13 @@ def write_run_state(
         "last_result": last_result,
         "run_id": run_id,
         "concurrency": concurrency,
+        "cli_argv": list(cli_argv) if cli_argv is not None else None,
+        "gen_durations_seconds": (
+            list(gen_durations_seconds)
+            if gen_durations_seconds is not None
+            else None
+        ),
+        "generations_target": generations_target,
     }
     _atomic_write_json(state_path, payload)
 
@@ -3004,6 +3020,18 @@ def run_loop(
     )
 
     concurrency_int = int(getattr(args, "concurrency", 1) or 1)
+    generations_target_int = int(getattr(args, "generations", 0) or 0)
+
+    # sys.argv[1:] snapshot — what flags this run was launched with.
+    # Surfaced on the dashboard so the operator can see at a glance
+    # which evolve invocation produced the visible state.
+    cli_argv_snapshot: list[str] = list(sys.argv[1:])
+
+    # Per-generation duration history — one float (seconds) appended each
+    # time ``generations_completed`` is incremented at the bottom of the
+    # generation loop. The dashboard uses observed min/max to render a
+    # range estimate of remaining wall-clock for the run.
+    gen_durations_seconds: list[float] = []
 
     def _write_state(
         *,
@@ -3033,6 +3061,9 @@ def run_loop(
             last_result=last_result,
             run_id=run_id,
             concurrency=concurrency_int,
+            cli_argv=cli_argv_snapshot,
+            gen_durations_seconds=gen_durations_seconds,
+            generations_target=generations_target_int,
         )
 
     # Write an initial "running" state so a watchdog can see us mid-startup.
@@ -3233,6 +3264,7 @@ def run_loop(
             break
 
         generation_index += 1
+        gen_start_monotonic = time_fn()
         _log.info(
             "evolve: generation %d — %d active imps, parent=%s",
             generation_index,
@@ -3733,6 +3765,9 @@ def run_loop(
                 pool.append(imp)
                 per_item_state[start_idx + offset] = PerItemState()
 
+        gen_durations_seconds.append(
+            max(0.0, time_fn() - gen_start_monotonic)
+        )
         generations_completed += 1
 
         # Summarise the generation for the run-log markdown.

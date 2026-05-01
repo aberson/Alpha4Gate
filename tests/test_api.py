@@ -251,6 +251,9 @@ class TestEvolveEndpoints:
             "last_result",
             "run_id",
             "concurrency",
+            "cli_argv",
+            "gen_durations_seconds",
+            "generations_target",
         ):
             assert key in data
             assert data[key] is None

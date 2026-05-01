@@ -972,6 +972,150 @@ function RoundHistoryTable({ rounds }: { rounds: EvolveRoundResult[] }) {
   );
 }
 
+// --- Helpers for run flags + remaining-time range ---
+
+function formatDuration(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) sec = 0;
+  if (sec < 60) return `${Math.round(sec)}s`;
+  if (sec < 3600) return `${Math.round(sec / 60)}m`;
+  const h = Math.floor(sec / 3600);
+  const m = Math.round((sec % 3600) / 60);
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+interface TimeRange {
+  lo: number;
+  hi: number;
+  // True when both bounds collapse to the wall-clock budget (no
+  // gen-cap uncertainty). Lets the renderer show a single value
+  // instead of an "A–A" range.
+  deterministic: boolean;
+}
+
+// Compute the wall-clock seconds remaining as a [lo, hi] range,
+// folding both the --hours wall budget (deterministic) and the
+// --generations cap (variance-driven) into the same bound. The run
+// stops at whichever cap fires first, so the actual remaining is the
+// per-bound minimum.
+//
+// Returns null when neither cap is set (run is indefinite) or when the
+// state lacks the data needed to estimate (no started_at).
+function computeTimeRange(
+  run: EvolveRunState,
+  nowMs: number,
+): TimeRange | null {
+  if (!run.started_at) return null;
+  const startedMs = Date.parse(run.started_at);
+  if (Number.isNaN(startedMs)) return null;
+  const elapsedSec = Math.max(0, (nowMs - startedMs) / 1000);
+
+  const wallBudget = run.wall_budget_hours ?? 0;
+  const wallRemaining =
+    wallBudget > 0 ? Math.max(0, wallBudget * 3600 - elapsedSec) : null;
+
+  const target = run.generations_target ?? 0;
+  const completed = run.generations_completed ?? 0;
+  const gensRemaining = target > 0 ? Math.max(0, target - completed) : null;
+  const durs = run.gen_durations_seconds ?? [];
+
+  let genLo: number | null = null;
+  let genHi: number | null = null;
+  if (gensRemaining !== null && gensRemaining > 0) {
+    if (durs.length >= 2) {
+      const min = Math.min(...durs);
+      const max = Math.max(...durs);
+      genLo = gensRemaining * min;
+      genHi = gensRemaining * max;
+    } else if (durs.length === 1) {
+      // Single sample — widen ±30% to convey uncertainty.
+      genLo = gensRemaining * durs[0] * 0.7;
+      genHi = gensRemaining * durs[0] * 1.3;
+    } else if (elapsedSec > 0) {
+      // No completed gens yet — use elapsed-so-far as a rough envelope.
+      genLo = gensRemaining * elapsedSec * 0.7;
+      genHi = gensRemaining * elapsedSec * 1.5;
+    }
+  }
+
+  if (wallRemaining === null && (genLo === null || genHi === null)) {
+    return null;
+  }
+  if (wallRemaining === null) {
+    return {
+      lo: genLo as number,
+      hi: genHi as number,
+      deterministic: false,
+    };
+  }
+  if (genLo === null || genHi === null) {
+    return { lo: wallRemaining, hi: wallRemaining, deterministic: true };
+  }
+  // Both caps active: stop = min(wall, gen). Apply min on both ends so
+  // the lo/hi range still reflects gen-variance up to the wall ceiling.
+  const lo = Math.min(wallRemaining, genLo);
+  const hi = Math.min(wallRemaining, genHi);
+  return { lo, hi, deterministic: lo === hi };
+}
+
+function TimeRemainingValue({
+  run,
+  nowMs,
+}: {
+  run: EvolveRunState;
+  nowMs: number;
+}) {
+  const range = computeTimeRange(run, nowMs);
+  if (range === null) {
+    return (
+      <span data-testid="time-remaining-value" style={{ color: "#888" }}>
+        indefinite
+      </span>
+    );
+  }
+  if (range.deterministic) {
+    return (
+      <span data-testid="time-remaining-value">{formatDuration(range.lo)}</span>
+    );
+  }
+  return (
+    <span data-testid="time-remaining-value">
+      {formatDuration(range.lo)}
+      <span style={{ color: "#666", margin: "0 4px" }}>–</span>
+      {formatDuration(range.hi)}
+    </span>
+  );
+}
+
+// Renders the run's CLI flags as a small monospace strip so the
+// operator can see at a glance which evolve invocation produced the
+// state on screen. Empty argv (legacy run) renders as "(no flags)".
+function CliFlagsStrip({ argv }: { argv: string[] | null | undefined }) {
+  if (argv === null || argv === undefined) {
+    return null;
+  }
+  const display = argv.length === 0 ? "(no flags)" : argv.join(" ");
+  return (
+    <div
+      data-testid="evolve-cli-flags"
+      style={{
+        marginBottom: "12px",
+        padding: "6px 10px",
+        borderRadius: "4px",
+        backgroundColor: "rgba(255,255,255,0.03)",
+        border: "1px solid rgba(255,255,255,0.06)",
+        fontFamily: "monospace",
+        fontSize: "0.8em",
+        color: "#bbb",
+        overflowX: "auto",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span style={{ color: "#777", marginRight: "8px" }}>flags</span>
+      <code style={{ color: "#ddd" }}>{display}</code>
+    </div>
+  );
+}
+
 // --- Main component ---
 
 export function EvolutionTab() {
@@ -1002,6 +1146,13 @@ export function EvolutionTab() {
   const isRunning = run.status === "running";
   const isCompleted =
     run.status === "completed" || run.status === "failed";
+
+  // "Now" anchor for the Time Remaining range. We use the timestamp
+  // of the last successful state poll (which advances every 3s when
+  // the API is healthy) instead of Date.now(): the latter is an
+  // impure call inside render and doesn't tie the displayed value to
+  // the displayed state, while ``state.lastSuccess`` does both.
+  const nowMs = state.lastSuccess?.getTime() ?? 0;
 
   const [stopOpen, setStopOpen] = useState(false);
   const [message, setMessage] = useState<string>("");
@@ -1103,6 +1254,8 @@ export function EvolutionTab() {
             </div>
           ) : null}
 
+          <CliFlagsStrip argv={run.cli_argv ?? null} />
+
           {run.last_result ? (
             <section style={{ marginTop: "16px" }}>
               <LastResultCard last={run.last_result} />
@@ -1192,6 +1345,10 @@ export function EvolutionTab() {
                 {run.wall_budget_hours !== null
                   ? `${run.wall_budget_hours}h`
                   : "---"}
+              </li>
+              <li>
+                <strong>Time Remaining:</strong>{" "}
+                <TimeRemainingValue run={run} nowMs={nowMs} />
               </li>
             </ul>
           </section>

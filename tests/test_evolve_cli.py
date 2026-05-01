@@ -1767,12 +1767,17 @@ def test_write_run_state_defaults_persist_run_id_concurrency_as_none(
 ) -> None:
     """Without ``run_id``/``concurrency`` (single-flight + legacy callers),
     both fields are persisted as JSON ``null`` so the dashboard's
-    ``EvolveRunState`` interface always has the keys present."""
+    ``EvolveRunState`` interface always has the keys present. The
+    later additions (``cli_argv`` / ``gen_durations_seconds`` /
+    ``generations_target``) follow the same null-default contract."""
     state_path = tmp_path / "evolve_run_state.json"
     cli.write_run_state(state_path, **_state_kwargs())
     payload = json.loads(state_path.read_text(encoding="utf-8"))
     assert payload["run_id"] is None
     assert payload["concurrency"] is None
+    assert payload["cli_argv"] is None
+    assert payload["gen_durations_seconds"] is None
+    assert payload["generations_target"] is None
     # All other expected fields still present.
     for key in (
         "status",
@@ -1789,6 +1794,33 @@ def test_write_run_state_defaults_persist_run_id_concurrency_as_none(
         "last_result",
     ):
         assert key in payload
+
+
+def test_write_run_state_persists_cli_argv_and_gen_durations(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """The dispatcher captures ``sys.argv[1:]`` + per-generation
+    durations + ``args.generations`` and persists each verbatim so the
+    dashboard can render run flags and a remaining-time range."""
+    state_path = tmp_path / "evolve_run_state.json"
+    cli.write_run_state(
+        state_path,
+        cli_argv=["--hours", "8", "--pool-size", "10", "--concurrency", "3"],
+        gen_durations_seconds=[1234.5, 1500.25, 1100.0],
+        generations_target=20,
+        **_state_kwargs(),
+    )
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    assert payload["cli_argv"] == [
+        "--hours",
+        "8",
+        "--pool-size",
+        "10",
+        "--concurrency",
+        "3",
+    ]
+    assert payload["gen_durations_seconds"] == [1234.5, 1500.25, 1100.0]
+    assert payload["generations_target"] == 20
 
 
 def test_write_run_state_persists_run_id_and_concurrency_when_provided(
@@ -1843,3 +1875,15 @@ def test_run_loop_persists_run_id_and_concurrency_into_state_file(
     assert len(payload["run_id"]) == 8
     # concurrency comes through verbatim from args.concurrency.
     assert payload["concurrency"] == 3
+    # The new dashboard fields are also populated end-to-end. cli_argv
+    # mirrors sys.argv[1:] -- under pytest that's the test runner's argv,
+    # so we only assert the field shape (list[str]). One generation
+    # completes before the pool exhausts (the single imp's fitness was
+    # scripted to "fail"), so gen_durations_seconds has one nonneg
+    # float. generations_target reflects args.generations verbatim.
+    assert isinstance(payload["cli_argv"], list)
+    assert all(isinstance(s, str) for s in payload["cli_argv"])
+    assert isinstance(payload["gen_durations_seconds"], list)
+    assert len(payload["gen_durations_seconds"]) == 1
+    assert payload["gen_durations_seconds"][0] >= 0.0
+    assert payload["generations_target"] == args.generations
