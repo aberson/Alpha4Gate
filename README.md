@@ -166,8 +166,8 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 - **The arena -** Bot versions fight each other in sandboxed self-play. Elo ladder + promotion gate decides who ships.
 - **Overnight run, zero promotions -** Three compound 60% filters made the math impossible, dropped the redundant composition check.
 - **The arena produces winners -** 7 hours, v0 → v1 → v2 — the self-play loop ships its first two auto-promotions.
-- **Headless training substrate -** Moved the heavy training off Windows onto a headless Linux runtime (WSL Ubuntu 22.04 + Linux SC2 + ext4 venv). Same code, less memory per game, cloud-deployable. The advisor loop still works; the evolve loop now too.
-- **Three promotions in one night, on Linux -** v4 → v5 → v6 → v7 in one 8-hour unattended soak — Splash readiness, reactive defensive structures, then stutter-step kiting (an idea Claude proposed cold, not from the priors list, won regression 7-2). First end-to-end successful headless evolve.
+- **Headless training substrate -** Moved the heavy training off Windows onto a headless Linux runtime (massive speed increase)
+- **Three promotions in one night, on Linux -** First end-to-end successful headless evolve. v4 → v5 → v6 → v7 in one 8-hour unattended soak 
 - **Now -** Self-play evolution is producing auto-promotions unattended on a substrate that scales beyond a single Windows desktop. Claude proposes orthogonal improvements, the arena filters, master advances. The platform from the earlier phases now has a working growth engine on top of it — and it runs anywhere Linux + SC2 will run.
 - **Next -** Multi-race support: Zerg first, then Terran. Each race gets its own bot lineage competing on the Elo ladder.
 
