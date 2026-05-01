@@ -29,8 +29,8 @@ See [index.md](index.md) for the system diagram, [improve-bot-advised-architectu
 
 **To check live status:** if the bot is running, open `http://localhost:3000`. The nav bar shows a green dot when an advised run is active.
 
-- **Live tab** — current game
-- **Advisor tab** — current loop phase, iteration, win-rate delta vs baseline
+- **Advisor tab** — current advised-loop phase, iteration, win-rate delta vs baseline
+- **Evolution tab** — live evolve generation: fitness pool, stack-apply, regression
 - **Processes tab** — is everything actually alive
 
 ## What are the recent accomplishments?
@@ -40,15 +40,19 @@ See [index.md](index.md) for the system diagram, [improve-bot-advised-architectu
 | Phase 1 | Rule-based bot (10 build steps) — full games, macro + micro |
 | Phase 2 | Deep learning pipeline (PPO + imitation) — hybrid mode |
 | Phase 3 | Always-up autonomous training loop — daemon, promotion gate, rollback |
-| Phase 4 | Transparency dashboard — 10 tabs (incl. Ladder), alerts |
+| Phase 4 | Transparency dashboard (originally 10 tabs incl. Ladder; refactored 2026-04-29 to 6 tabs) |
 | Phase A | Imitation-init + LSTM + KL-to-rules — 19/20 wins at difficulty 3 |
 | Phases 0–4 | Full-stack versioning: registry, snapshots, self-play runner, Elo ladder, promotion gate |
 | Phase 5 | Sandbox enforcement — pre-commit hook locks autonomous commits to `bots/current/` |
 | 2026-04 | `/improve-bot-advised` skill — hours-long autonomous sessions that write code. First diff-5 win. |
+| Phase 9 | `/improve-bot-evolve` operational — sibling-tournament loop produces auto-promotions. v0→v2 in the validating 7h soak. |
+| Phase 8 | Headless Linux training substrate — SC2PATH resolver, Linux CI, multi-stage Dockerfile. v4→v7 in the 8h Linux soak (2026-04-30). |
+| Phase N | Win-prob heuristic + give-up trigger — 30-step `winprob<0.05` after 8 min triggers `RequestLeaveGame`. |
+| 2026-04-30 | Evolve parallelization shipped — 4-way concurrency window + worker-slot recycling. Lineage extended to v10. |
 
 ## What's being worked on now?
 
-The active plan is [alpha4gate-master-plan.md](../plans/alpha4gate-master-plan.md). Phases A, 0–5 all complete. The versioning substrate is fully built: bot code in `bots/v0/`, registry, snapshots, self-play batch runner, Elo ladder + promotion gate, and sandbox enforcement. Next up: Phase B (observation expansion), then capability phases (D, E, F), Phase 6 (autonomous self-play loop), and Phase G (multi-race: Zerg then Terran).
+The active plan is [alpha4gate-master-plan.md](../plans/alpha4gate-master-plan.md). Phases A, 0–5, 8, 9, N all complete; the versioning + headless + evolve substrate is fully built and producing auto-promotions on a parallel runtime (v0→v10 today). Next up: Phase O scripted Hydra v1 (themed expert sub-policies + rule-based switcher), Phase 7 (advised-loop staleness detection), and the Tracks 7-10 capability research phases (mini-games, replay-stream-as-live viewer, knowledge distillation, harvest-engineer skill, Wilson/SPRT statistical robustness). Phase G (multi-race: Zerg then Terran) sits past Phase 6.
 
 ## How does the bot decide what to do?
 
@@ -78,26 +82,22 @@ deterministic inference-only eval, and promoted only if strictly better.
 Four mechanisms at different timescales ([evaluation-pipeline.md](evaluation-pipeline.md)):
 
 - **Per-step:** 63 shaped reward rules (JSON-driven) give dense feedback
-- **Per-game:** Win/loss stored in SQLite (`bots/v0/data/training.db`)
+- **Per-game:** Win/loss stored in SQLite (`bots/<active>/data/training.db` — `bots/v10/data/` today)
 - **Cross-game:** Sliding-window win rates (last 10/50/100 games)
 - **Per-checkpoint:** `ModelEvaluator` runs N inference-only eval games; `PromotionManager` compares new vs best
 
 ## What can I see in the dashboard?
 
-Ten tabs ([frontend.md](frontend.md)):
+Six tabs after the 2026-04-29 refactor ([frontend.md](frontend.md)):
 
 | Tab | What it shows |
 |---|---|
-| Live | Real-time game state, resources, units, Claude advice |
-| Stats | Win rates by difficulty, browsable game history, per-game reward timeline |
-| Decisions | Strategic state transition log |
-| Training | Checkpoint list, win rates, reward rule editor |
-| Loop | Daemon state + trigger evaluation |
-| Advisor | `/improve-bot-advised` phase, iteration, operator control panel |
-| Improvements | Promotions / rollbacks, per-rule reward trends, iteration log |
-| Processes | Live process inventory, port bindings, state-file contents |
-| Alerts | Severity-filtered alerts (7 client-side rules) |
-| Ladder | Elo standings + head-to-head grid across bot versions |
+| Advisor | `/improve-bot-advised` phase, iteration, loop controls, strategic-hint injection |
+| Evolution | `/improve-bot-evolve` live generation: fitness pool, stack-apply, regression, generation outcomes |
+| Improvements | Unified timeline of advised + evolve improvements with source filter |
+| Processes | Live process inventory, port bindings, state-file contents, WSL processes |
+| Alerts | Severity-filtered alerts (client-side rules over the polled snapshot) |
+| Help | Renders `documentation/wiki/operator-commands.md` from disk |
 
 ## How does Claude fit in?
 
@@ -124,11 +124,11 @@ The `/improve-bot-advised` loop treats SC2 as an opaque task: code + config go i
 | Frontend | React + TypeScript + Vite |
 | Deep learning | PyTorch, Stable Baselines 3 (PPO), recurrent PPO + custom KL variants |
 | Training data | SQLite |
-| Testing | pytest (1020 unit tests), ruff, mypy strict |
+| Testing | pytest (1448 unit tests), ruff, mypy strict |
 
 ## How many tests are there?
 
-1020 unit tests across 51 test files. Zero type errors, zero lint violations. SC2 integration tests are separate (`pytest -m sc2`) and require a running SC2 client. See [testing.md](testing.md).
+1448 unit tests across 88 test files plus 119 frontend vitest tests. Zero type errors, zero lint violations. SC2 integration tests are separate (`pytest -m sc2`) and require a running SC2 client. See [testing.md](testing.md).
 
 ## Where do I start if I want to work on this?
 

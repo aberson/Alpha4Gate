@@ -13,4 +13,13 @@
 - **The big merge.** Three plans became one: every future bot is a snapshot that must beat its ancestors.
 - **Phase A.** Added memory (LSTM) and a gentler training recipe — 19/20 wins at difficulty 3.
 - **The arena works.** Two bot versions fighting each other in separate sandboxes, validated.
-- **Now.** Packaging the current bot as "v0" — the first official entry in the lineage.
+- **v0 is born.** Packaged the working bot as `bots/v0/` — the first official entry in the lineage.
+- **Sandbox locked.** Pre-commit hook restricts autonomous commits to `bots/current/` (Phase 5 — `[advised-auto]` and later `[evo-auto]` markers).
+- **Sibling tournament ships.** `/improve-bot-evolve` operational (Phase 9): Claude generates an improvement pool, sibling snapshots fight head-to-head, regression gate blocks bad-interaction stacks, and the winner auto-commits as the next vN.
+- **First evolve promotions.** v0 → v1 → v2 in one 7h soak (2026-04-23) — the arena ships its first auto-promotions.
+- **The give-up trigger.** Phase N adds a per-step win-probability heuristic. The bot now resigns when `winprob<0.05` for 30 consecutive steps after 8 minutes — saves wall-clock on lost games.
+- **Headless Linux substrate.** Phase 8 ports training off Windows to Blizzard's headless Linux SC2 package (~3× lower per-process RAM). Docker, WSL, Linux CI all green.
+- **Three promotions in one Linux night.** v4 → v5 → v6 → v7 in one 8h unattended soak on the new substrate (2026-04-30) — Splash readiness, defensive structures, stutter-step kiting.
+- **Parallel evolve.** Steps 1-7 + iter-3 hardening shipped 2026-04-30: 4-way concurrency window, worker-slot recycling, parallel-aware EvolutionTab grid. Subsequent generations took the lineage to **v10**.
+- **Now.** Self-play evolution is producing auto-promotions unattended on a parallel substrate that scales beyond a single Windows desktop.
+- **Next.** Phase O scripted Hydra v1 (themed expert sub-policies + rule-based switcher), then Phase G multi-race (Zerg first, then Terran).

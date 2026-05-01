@@ -8,7 +8,7 @@ unified improvements timeline, system health, and alert triage.
 > polling (3–10s, with exceptions below); the in-app alert engine runs
 > client-side over the polled snapshots. All frontend code is domain-agnostic
 > — it renders whatever JSON the backend sends. Unit tests run under
-> vitest + jsdom (112 passing).
+> vitest + jsdom (119 passing across 13 files).
 
 ## Purpose & Design
 

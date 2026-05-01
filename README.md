@@ -1,6 +1,6 @@
 # Alpha4Gate
 
-![Python](https://img.shields.io/badge/python-3.12-blue) [![linux-tests](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml/badge.svg?branch=master)](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml) ![pytest](https://img.shields.io/badge/pytest-1337%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-112%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
+![Python](https://img.shields.io/badge/python-3.12-blue) [![linux-tests](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml/badge.svg?branch=master)](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml) ![pytest](https://img.shields.io/badge/pytest-1448%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-119%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
 
 An AI agent that teaches itself to get better at a task with — zero human input.
 
@@ -36,7 +36,7 @@ Advised drives progress against a known benchmark; evolve keeps the bot improvin
 
 > **50% → 83%** win rate at SC2 difficulty 4 — reached via 6 code changes the advised loop wrote and validated itself.
 >
-> **v4 → v7** in one unattended 8-hour soak on headless Linux — three auto-promoted bot versions in one night (Splash readiness, defensive structures, stutter-step kiting), each validated head-to-head against its ancestor.
+> **v4 → v7** in one unattended 8-hour soak on headless Linux — three auto-promoted bot versions in one night (Splash readiness, defensive structures, stutter-step kiting), each validated head-to-head against its ancestor. Lineage has since extended to **v10** under a parallelized 4-way evolve substrate.
 
 ## What makes this different
 
@@ -168,8 +168,9 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 - **The arena produces winners -** 7 hours, v0 → v1 → v2 — the self-play loop ships its first two auto-promotions.
 - **Headless training substrate -** Moved the heavy training off Windows onto a headless Linux runtime (massive speed increase)
 - **Three promotions in one night, on Linux -** First end-to-end successful headless evolve. v4 → v5 → v6 → v7 in one 8-hour unattended soak 
-- **Now -** Self-play evolution is producing auto-promotions unattended on a substrate that scales beyond a single Windows desktop. Claude proposes orthogonal improvements, the arena filters, master advances. The platform from the earlier phases now has a working growth engine on top of it — and it runs anywhere Linux + SC2 will run.
-- **Next -** Multi-race support: Zerg first, then Terran. Each race gets its own bot lineage competing on the Elo ladder.
+- **Parallelizing the arena -** Evolve now runs four candidates in parallel per generation (concurrency window + worker-slot recycling). Steps 1-7 plus iter-3 hardening shipped 2026-04-30; subsequent generations took the lineage to **v10**.
+- **Now -** Self-play evolution is producing auto-promotions unattended on a parallel substrate that scales beyond a single Windows desktop. Claude proposes orthogonal improvements, the arena filters, master advances. The platform from the earlier phases now has a working growth engine on top of it — and it runs anywhere Linux + SC2 will run.
+- **Next -** Phase O scripted Hydra v1 (themed expert sub-policies with a rule-based switcher), then multi-race support: Zerg first, then Terran. Each race gets its own bot lineage competing on the Elo ladder.
 
 ---
 
@@ -188,8 +189,8 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 | Frontend | React + TypeScript + Vite | Live dashboard with game state streaming |
 | Deep learning | PyTorch + Stable Baselines 3 | PPO policy network for strategic decisions |
 | Training data | SQLite | Structured (s,a,r,s') transition storage |
-| Testing (Python) | pytest | 1337 unit tests, SC2 integration markers |
-| Testing (Frontend) | vitest + jsdom + @testing-library/react | 112 component / hook / lib tests |
+| Testing (Python) | pytest | 1448 unit tests, SC2 integration markers |
+| Testing (Frontend) | vitest + jsdom + @testing-library/react | 119 component / hook / lib tests |
 | Linting | ruff + mypy | Strict type checking, consistent style |
 
 </details>
@@ -200,8 +201,8 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 
 ### Prerequisites
 
-- Windows 11
-- StarCraft II installed at `C:\Program Files (x86)\StarCraft II\`
+- Windows 11 (primary dev). Linux / WSL2 also supported for the headless training substrate — see [documentation/wiki/cloud-deployment.md](documentation/wiki/cloud-deployment.md) and [documentation/wiki/linux-dev-environment.md](documentation/wiki/linux-dev-environment.md).
+- StarCraft II installed at `C:\Program Files (x86)\StarCraft II\` (Windows) or `~/StarCraftII/` (Linux/WSL).
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) package manager
 - Node.js 18+ (for React frontend)
@@ -315,7 +316,7 @@ bash scripts/start-dev.sh
 ### Testing
 
 ```bash
-uv run pytest              # 1337 unit tests (no SC2 needed)
+uv run pytest              # 1448 unit tests (no SC2 needed)
 uv run pytest -m sc2       # SC2 integration tests (SC2 must be running)
 uv run ruff check .        # Lint
 uv run mypy src bots --strict  # Type check
@@ -326,25 +327,27 @@ cd frontend && npx tsc --noEmit  # TypeScript check
 
 ```
 Alpha4Gate/
-├── bots/v0/                 # 46 Python modules (production bot code)
+├── bots/v0/                 # 55 Python modules (the lineage seed)
 │   ├── commands/            # Strategic command system (parser, interpreter, executor, queue)
-│   ├── learning/            # PPO training, features, rewards, imitation
+│   ├── learning/            # PPO training, neural_engine inference, features, rewards, imitation, winprob_heuristic
 │   ├── bot.py               # Main BotAI subclass, game loop orchestration
 │   ├── decision_engine.py   # Strategic state machine (6 states)
-│   ├── neural_engine.py     # PPO policy integration with SB3
+│   ├── give_up.py           # Win-prob-based resign trigger (Phase N)
 │   ├── army_coherence.py    # Staging, grouping, engagement/retreat
 │   ├── claude_advisor.py    # Async Claude CLI subprocess
 │   ├── api.py               # FastAPI server (REST + WebSocket)
 │   └── ...                  # scouting, config, macro, micro, etc.
-├── bots/current/            # Thin pointer package (MetaPathFinder → v0)
-├── src/orchestrator/        # Version registry, snapshots, self-play, Elo ladder
-├── tests/                   # 1337 unit tests (+ SC2 integration markers)
+├── bots/v1..v10/            # Promoted snapshots — each a self-contained stack with its own data/
+├── bots/current/            # Thin pointer package (MetaPathFinder → active version, v10 today)
+├── src/orchestrator/        # Version registry, snapshots, self-play, Elo ladder, evolve
+├── tests/                   # 1448 unit tests across 88 files (+ SC2 integration markers)
 ├── frontend/                # React + TypeScript dashboard (Vite, 6 tabs)
-├── scripts/                 # Live test, training analysis, sandbox hook
+├── scripts/                 # Live test, training analysis, evolve runner, sandbox hook
 ├── documentation/wiki/      # Project wiki (start with index.md)
 ├── documentation/plans/     # Active plans (alpha4gate-master-plan.md)
 ├── documentation/archived/  # Completed plans
-├── data/                    # Cross-game stats, training DB, checkpoints (gitignored)
+├── bots/<v>/data/           # Per-version state: training.db, checkpoints/, reward_rules.json
+├── data/                    # Cross-version state: ladder, evolve runs, advised state (gitignored)
 ├── logs/                    # JSONL game logs (gitignored)
 └── replays/                 # SC2 replays (gitignored)
 ```

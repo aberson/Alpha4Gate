@@ -2,7 +2,7 @@
 
 What's tested, how to run it, and what's not covered.
 
-> **At a glance:** 1020 unit tests across 51 files, collected in ~9s. Heavy mocking of SC2 BotAI via MagicMock/AsyncMock — no SC2 client needed for unit tests. Integration tests require a running SC2 client and are marked `@pytest.mark.sc2`. No `conftest.py` — fixtures are inline. The test suite now covers the full autonomous loop (daemon, promotion, rollback, evaluator, advised-run bridge).
+> **At a glance:** 1448 unit tests across 88 files, collected in ~12s. Heavy mocking of SC2 BotAI via MagicMock/AsyncMock — no SC2 client needed for unit tests. Integration tests require a running SC2 client and are marked `@pytest.mark.sc2`. No `conftest.py` — fixtures are inline. The suite covers the full autonomous loop (daemon, promotion, rollback, evaluator, advised-run bridge) plus the evolve substrate (orchestrator, pool, fitness/regression gates, evolve worker, sandbox hook) and the Phase 8 Linux substrate (SC2PATH resolver). Frontend has its own 119-test vitest suite — see [frontend.md](frontend.md).
 
 ## Purpose & Design
 

@@ -17,8 +17,9 @@ the autonomous daemon that drives them:
 | **RL training** | PPO gradient updates on actual game outcomes | Repeatedly, to improve beyond rule-based play |
 | **Autonomous daemon** | Trigger RL cycles in the background based on transitions + time | Always-on; enables the outer loop's TRAIN phase |
 
-All stages produce SB3 checkpoint files (`.zip`) stored in `bots/v0/data/checkpoints/` with
-a `manifest.json` tracking versions and the current "best" model.
+All stages produce SB3 checkpoint files (`.zip`) stored in `bots/<active>/data/checkpoints/`
+(per-version state under `bots/current/` — `bots/v10/` today) with a `manifest.json`
+tracking versions and the current "best" model.
 
 ### Training flow overview
 

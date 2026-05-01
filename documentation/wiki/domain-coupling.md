@@ -2,7 +2,7 @@
 
 What's SC2-specific vs what could work with any domain.
 
-> **At a glance:** 51 Python modules in `bots/v0/`. The entire `learning/` pipeline (17 modules — trainer, daemon, evaluator, promotion, rollback, rewards, features, checkpoints, imitation, advisor_bridge, etc.) has **zero SC2 imports** and is domain-agnostic. SC2 coupling concentrates in 8 modules: `bot`, `connection`, `observer`, `macro_manager`, `micro`, `scouting`, `commands/executor`, plus the hybrid `learning/environment` bridge. The `/improve-bot-advised` loop reinforces this: it treats SC2 as an opaque task — code + config go in, win/loss + stats come out. See [improve-bot-advised-architecture.md](improve-bot-advised-architecture.md).
+> **At a glance:** 55 Python modules in `bots/v0/`. The entire `learning/` pipeline (trainer, daemon, evaluator, promotion, rollback, rewards, features, checkpoints, imitation, advisor_bridge, winprob_heuristic, etc.) has **zero SC2 imports** and is domain-agnostic. SC2 coupling concentrates in ~8 modules: `bot`, `connection`, `observer`, `macro_manager`, `micro`, `scouting`, `commands/executor`, plus the hybrid `learning/environment` bridge. The `/improve-bot-advised` loop reinforces this: it treats SC2 as an opaque task — code + config go in, win/loss + stats come out. See [improve-bot-advised-architecture.md](improve-bot-advised-architecture.md).
 
 ## Purpose & Design
 

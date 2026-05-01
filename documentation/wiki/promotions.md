@@ -2,7 +2,7 @@
 
 How the inner loop decides whether a new neural checkpoint is actually better, and what happens when it isn't.
 
-> **At a glance:** After every training cycle, `PromotionManager.evaluate_and_promote()` runs a deterministic inference-only eval on both the new checkpoint and the current best, compares win rates with a 5% threshold, and refuses to promote on any crashed eval game. `RollbackMonitor` watches the promoted checkpoint and reverts to the previous best if win rate drops 15% below its promotion-time rate. All decisions append to `bots/v0/data/promotion_history.json` with a stable `reason_code`, surfaced in the Improvements tab.
+> **At a glance:** After every training cycle, `PromotionManager.evaluate_and_promote()` runs a deterministic inference-only eval on both the new checkpoint and the current best, compares win rates with a 5% threshold, and refuses to promote on any crashed eval game. `RollbackMonitor` watches the promoted checkpoint and reverts to the previous best if win rate drops 15% below its promotion-time rate. All decisions append to `bots/<active>/data/promotion_history.json` (per-version state under `bots/current/`, currently `bots/v10/`) with a stable `reason_code`, surfaced in the Improvements tab.
 
 See [training-pipeline.md](training-pipeline.md) for where this sits in the inner loop; [improve-bot-advised-architecture.md](improve-bot-advised-architecture.md) for how the outer loop's TRAIN phase invokes it.
 
@@ -35,7 +35,8 @@ See [training-pipeline.md](training-pipeline.md) for where this sits in the inne
             └── REJECT  ──> new checkpoint stays on disk but isn't "best"
                             (pruned eventually by checkpoint pruner)
 
- Every decision appends one entry to bots/v0/data/promotion_history.json
+ Every decision appends one entry to bots/<active>/data/promotion_history.json
+ (resolved via bots/current/current.txt; bots/v10/ today)
 ```
 
 And separately, on every daemon cycle:

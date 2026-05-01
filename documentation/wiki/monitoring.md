@@ -70,15 +70,24 @@ Each loop phase has a primary dashboard tab, a persistent evidence file, and cha
 
 ### Phase overview
 
+> Note: the dashboard was refactored on 2026-04-29 from 12 tabs down to 6
+> (Advisor, Evolution, Improvements, Processes, Alerts, Help). The
+> per-phase mapping below uses those 6 tabs plus the persistent on-disk
+> evidence files — game state and decision logs are now tracked via the
+> JSONL files + Processes tab rather than dedicated Live/Stats/Decisions/
+> Training/Loop tabs. Paths shown as `bots/v0/data/...` resolve to the
+> active version under `bots/current/` (`bots/v10/data/` today).
+
 | Phase | Primary tab | Persistent evidence | Run-log marker |
 |---|---|---|---|
-| **THE TASK** (SC2) | Live | `logs/game_*.jsonl`, `replays/*.SC2Replay` | `Game X: Result.Victory (Xs)` |
-| **PLAY** | Stats, Decisions | `bots/v0/data/training.db`, `data/stats.json`, `data/decision_audit.json` | `=== ITERATION N BATCH START/COMPLETE ===` |
+| **THE TASK** (SC2) | Processes (liveness) | `logs/game_*.jsonl`, `replays/*.SC2Replay` | `Game X: Result.Victory (Xs)` |
+| **PLAY** | Advisor (state) | `bots/<active>/data/training.db`, `data/stats.json`, `data/decision_audit.json` | `=== ITERATION N BATCH START/COMPLETE ===` |
 | **THINK** | Advisor (`current_improvement`) | `data/decision_audit.json`, skill-scoped prompt in log | "## Iteration N Summary — selected improvement" |
 | **FIX** | Advisor | `data/reward_rules.pre-advised-<RUN_TS>.json` backup, feature branch | "applying change: <title>" |
-| **TEST** | Stats (validation rows) | validation games in `training.db` | `=== ITER N VALIDATION START/COMPLETE ===` |
+| **TEST** | Advisor (validation row) | validation games in `training.db` | `=== ITER N VALIDATION START/COMPLETE ===` |
 | **COMMIT** | Improvements | `data/improvement_log.json`, git master, GitHub issue | `improve-bot-advised: <title> (iteration N)` commit |
-| **TRAIN** | Training, Loop, Improvements | `bots/v0/data/promotion_history.json`, `bots/v0/data/checkpoints/manifest.json` | "daemon cycle N complete" |
+| **TRAIN** | Improvements | `bots/<active>/data/promotion_history.json`, `bots/<active>/data/checkpoints/manifest.json` | "daemon cycle N complete" |
+| **EVOLVE** (parallel substrate) | Evolution | `data/evolve_run_state.json`, `data/evolve_pool.json`, `data/evolve_results.jsonl` | `[evo-auto] generation N promoted stack (K imps)` |
 
 ### THE TASK — "is the game actually running?"
 
@@ -91,8 +100,8 @@ SC2 engine
   └──> game end ──> training.db row + replays/<ID>.SC2Replay
 ```
 
-- **Live tab** (`LiveView.tsx`) — minerals, supply, army composition, strategic state, Claude advice. Driven by `/ws/game` over the broadcast loop (500ms drain cadence).
 - **Processes tab** — confirms `SC2_x64` is alive. If it's not and the loop says `status=running`, something has crashed.
+- **Per-game JSONL** — one file per game at `logs/game_<timestamp>.jsonl` carries the per-step minerals/supply/army/strategic-state/advice timeline that the old Live tab streamed. Tail it with `tail -f` while the game is in progress.
 - **Per-game files** — one JSONL per game (`logs/game_<timestamp>.jsonl`), one SC2 replay (`replays/<ID>.SC2Replay`), one DB row.
 
 ### PLAY — "what happened in the batch?"
@@ -104,8 +113,8 @@ N games ──> training.db (games + transitions)
          └─> decision_audit.json (live mode only)
 ```
 
-- **Stats tab** (`Stats.tsx`) — per-difficulty W/L, recent games table, click a row for the per-game reward timeline (`/api/games/{id}`).
-- **Decisions tab** (`DecisionQueue.tsx`) — state transitions and advisor suggestions captured during live-mode PLAY.
+- **`bots/<active>/data/training.db`** — per-difficulty W/L and per-game reward timeline (`/api/games/{id}`); the dashboard surfaces this only in aggregate via the Improvements tab post-refactor.
+- **`data/decision_audit.json`** — state transitions and advisor suggestions captured during live-mode PLAY.
 - **Run log** — every batch writes `=== ITERATION N BATCH START/COMPLETE ===` bookends with per-game results between them.
 
 ### THINK — "what did Claude conclude?"
@@ -155,11 +164,9 @@ new games ──> PPO gradient update ──> new checkpoint
                               promotion_history.json append
 ```
 
-- **Training tab** (`TrainingDashboard.tsx`, 5s poll) — current checkpoint, total games, total transitions, DB size, rolling win rates (last-10/50/100/overall).
-- **Loop tab** (`LoopStatus.tsx`) — daemon state (`idle | checking | training | evaluating`), `runs_completed`, `last_run`, `next_check`, `last_error`, `last_result`.
-- **Improvements → Recent Improvements** (`RecentImprovements.tsx`) — reads `bots/v0/data/promotion_history.json` and classifies each entry as `promotion | rollback | rejected`. Fields per entry: `new_checkpoint, old_best, new_win_rate, old_win_rate, delta, reason, reason_code, difficulty`.
-- **Improvements → Reward Trends** (`RewardTrends.tsx`) — per-rule contribution over the last N games, sourced from `bots/v0/data/reward_logs/game_*.jsonl` via `/api/training/reward-trends`.
-- **Checkpoint list** (`CheckpointList.tsx`) — table of all saved checkpoints from `bots/v0/data/checkpoints/manifest.json`, with `best` indicator.
+- **Improvements tab** (`ImprovementsTab.tsx`) — unified timeline of advised + evolve improvements via `/api/improvements/unified`, sourced from `bots/<active>/data/promotion_history.json` plus `data/evolve_results.jsonl`. Each row classifies as `promotion | rollback | rejected` (advised) or `promoted | regression-rollback` (evolve), with `new_checkpoint, old_best, new_win_rate, old_win_rate, delta, reason, reason_code, difficulty` for advised entries and equivalent fields for evolve. Refresh-on-demand (no auto-poll).
+- **Daemon status** — pulled by `useDaemonStatus()` (5s poll) for the alert engine but no longer surfaces a Loop tab post-refactor; inspect via `/api/training/daemon` directly or `data/advised_run_state.json` if you need the raw shape.
+- **Manifests + reward logs** — `bots/<active>/data/checkpoints/manifest.json` lists checkpoints with the `best` indicator; `bots/<active>/data/reward_logs/game_*.jsonl` carries per-rule contribution over recent games (RewardTrends and the Training tab were both deleted in the refactor; the JSONLs are still written and queryable via `/api/training/reward-trends`).
 
 ---
 

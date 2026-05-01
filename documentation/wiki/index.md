@@ -35,10 +35,11 @@ here because they operate on different things.
                    ┌───────────────────────────────┐
                    │   Transparency Dashboard      │
                    │                               │
-                   │  10 tabs: Live, Stats,        │
-                   │  Decisions, Training, Loop,   │
-                   │  Advisor, Improvements,       │
-                   │  Processes, Alerts, Ladder    │
+                   │  6 tabs: Advisor, Evolution,  │
+                   │  Improvements, Processes,     │
+                   │  Alerts, Help                 │
+                   │  (refactored 2026-04-29 from  │
+                   │   the original 12-tab layout) │
                    └───────────────────────────────┘
 ```
 
@@ -101,6 +102,6 @@ here because they operate on different things.
 2. **Key Interfaces** — public API, data flow
 3. **Implementation Notes** — internal details (marked "verify against code" — these can drift)
 
-**For the active plan:** See [alpha4gate-master-plan.md](../plans/alpha4gate-master-plan.md) for the current roadmap. Phases A, 0–5 complete. Phase 9 (improve-bot-evolve) operational; v0→v4 via successive promotions. Phase 8 (headless Linux training infrastructure) Steps 1-10 shipped, Step 11 24h soak pending. Phase N (win-prob heuristic + give-up) shipped. Next: Phase 8 Step 11 (Linux soak), Phase 7 (advised staleness), capability phases (B, D, E, F).
+**For the active plan:** See [alpha4gate-master-plan.md](../plans/alpha4gate-master-plan.md) for the current roadmap. Phases A, 0–5 complete. Phase 9 (improve-bot-evolve) operational and parallelized — v0→v10 via successive auto-promotions. Phase 8 (headless Linux training infrastructure) shipped end-to-end including the 8h soak (v4→v7, 2026-04-30). Phase N (win-prob heuristic + give-up) shipped. Evolve parallelization (4-way concurrency window + worker-slot recycling) shipped 2026-04-30. Next: Phase O scripted Hydra v1, Phase 7 (advised staleness), Tracks 7-10 capability research.
 
 **For day-to-day operator commands:** See [operator-commands.md](operator-commands.md) — the cheat sheet for running the bot, launching evolve (Windows + WSL), watching tasks, debugging, and frequent recipes.
