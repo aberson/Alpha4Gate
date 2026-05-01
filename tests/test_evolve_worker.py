@@ -258,6 +258,15 @@ class TestRunSuccess:
         assert captured["imp"].title == imp.title
         assert captured["kwargs"]["games"] == 1
         assert captured["kwargs"]["map_name"] == "Simple64"
+        # Worker MUST pass dev_apply_fn so dev-type imps reach the real
+        # sub-agent. Without it, ``apply_improvement`` raises
+        # ``NotImplementedError`` for any dev imp and the worker exits 1.
+        # Caught only after the first parallel smoke gate ran with two
+        # dev-type imps, both crashing — fixed by importing
+        # ``spawn_dev_subagent`` and threading it through.
+        from orchestrator.evolve_dev_apply import spawn_dev_subagent
+
+        assert captured["kwargs"]["dev_apply_fn"] is spawn_dev_subagent
 
         # Result file is a round-trippable FitnessResult.
         result_text = result_path.read_text(encoding="utf-8")

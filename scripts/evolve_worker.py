@@ -66,6 +66,7 @@ from orchestrator.evolve import (  # noqa: E402
     Improvement,
     run_fitness_eval,
 )
+from orchestrator.evolve_dev_apply import spawn_dev_subagent  # noqa: E402
 
 _log = logging.getLogger("evolve_worker")
 
@@ -247,6 +248,11 @@ def main(argv: list[str] | None = None) -> int:
     # slot as alive forever.
     try:
         try:
+            # ``dev_apply_fn=spawn_dev_subagent`` mirrors the serial path's
+            # default at scripts/evolve.py::run_loop. Without it, dev-type
+            # imps (Claude code-change proposals) hit
+            # ``apply_improvement``'s ``NotImplementedError`` and the worker
+            # exits 1 — Decision-D-7's `crash` bucket masks the real cause.
             result: FitnessResult = run_fitness_eval(
                 args.parent,
                 imp,
@@ -255,6 +261,7 @@ def main(argv: list[str] | None = None) -> int:
                 game_time_limit=args.game_time_limit,
                 hard_timeout=args.hard_timeout,
                 on_event=on_event,
+                dev_apply_fn=spawn_dev_subagent,
             )
         except KeyboardInterrupt:
             # Let Ctrl+C / SIGINT propagate so the dispatcher's signal
