@@ -27,11 +27,14 @@ cost without adding unique detection capability.
 
 Usage::
 
-    # Overnight run with defaults (pool=10, 5 games per eval, 4h budget):
+    # Default: one generation as a quick test (pool=10, 5 games per eval).
     python scripts/evolve.py
 
     # Short dev run (no commits, tiny pool):
-    python scripts/evolve.py --hours 0 --pool-size 2 --no-commit
+    python scripts/evolve.py --pool-size 2 --no-commit
+
+    # Overnight soak (run until pool exhausted or 8h, whichever first):
+    python scripts/evolve.py --generations 0 --hours 8
 """
 
 from __future__ import annotations
@@ -47,6 +50,7 @@ import sys
 import time
 import traceback
 import uuid
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -143,10 +147,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--hours",
         type=float,
-        default=4.0,
+        default=0.0,
         help=(
-            "Wall-clock budget in hours (default: 4.0). "
-            "0 disables the wall-clock check (useful for test runs)."
+            "Wall-clock budget in hours (default: 0 = unlimited). "
+            "Use --generations to bound test runs; set --hours for soaks."
+        ),
+    )
+    parser.add_argument(
+        "--generations",
+        type=int,
+        default=1,
+        help=(
+            "Stop after N completed generations (default: 1). "
+            "0 disables the generation cap (use --hours for soaks). "
+            "The loop also stops when the active pool empties or "
+            "--hours is exceeded, whichever fires first."
         ),
     )
     parser.add_argument(
@@ -1580,6 +1595,7 @@ class _DispatchedImp:
     started_at: float
     imp_json_path: Path
     result_path: Path
+    worker_id: int
 
 
 def _make_hang_exc(timeout_s: float) -> TimeoutError:
@@ -1854,7 +1870,14 @@ def _run_fitness_phase_parallel(
     stop_reason: str | None = None
     pending: list[int] = sorted(active_idxs)
     in_flight: dict[Any, _DispatchedImp] = {}
-    next_worker_id = 0
+    # Recyclable slot pool. worker_id is a stable slot index in
+    # [0, concurrency); a completed worker pushes its slot back into
+    # free_slots so the next dispatch reuses the same id (and overwrites
+    # evolve_round_<id>.json in place). This keeps the dashboard's
+    # /api/evolve/running-rounds slot iteration in sync with the actual
+    # set of in-flight workers — without recycling, monotonic ids past
+    # `concurrency` get silently dropped at the API layer.
+    free_slots: deque[int] = deque(range(int(args.concurrency)))
     stop_dispatching = False
 
     # Per-worker hard wall-clock cap (Blocker #3 / Decision D-7 hang bucket).
@@ -2023,8 +2046,7 @@ def _run_fitness_phase_parallel(
             ):
                 idx = pending.pop(0)
                 imp = pool[idx]
-                worker_id = next_worker_id
-                next_worker_id += 1
+                worker_id = free_slots.popleft()
                 imp_json_path = state_dir / f"evolve_imp_{worker_id}.json"
                 result_path = state_dir / f"evolve_result_{worker_id}.json"
                 try:
@@ -2058,6 +2080,10 @@ def _run_fitness_phase_parallel(
                     # been written before the OSError (e.g., truncate
                     # succeeded, write failed).
                     _unlink_quiet(imp_json_path)
+                    # Release the slot since this dispatch never reached
+                    # in_flight. appendleft so the next dispatch reuses
+                    # the lowest-id slot first (stable display order).
+                    free_slots.appendleft(worker_id)
                     continue
 
                 argv = _build_worker_argv(
@@ -2101,6 +2127,7 @@ def _run_fitness_phase_parallel(
                         generation_index, "fitness", imp, exc
                     )
                     _unlink_quiet(imp_json_path)
+                    free_slots.appendleft(worker_id)
                     continue
 
                 in_flight[proc] = _DispatchedImp(
@@ -2109,6 +2136,7 @@ def _run_fitness_phase_parallel(
                     started_at=time_fn(),
                     imp_json_path=imp_json_path,
                     result_path=result_path,
+                    worker_id=worker_id,
                 )
                 _log.info(
                     "evolve: dispatched worker %d for idx=%d imp=%r "
@@ -2374,6 +2402,10 @@ def _run_fitness_phase_parallel(
                 dispatched = in_flight.pop(proc)
                 _unlink_quiet(dispatched.imp_json_path)
                 _unlink_quiet(dispatched.result_path)
+                # Release the slot back to the pool so the next dispatch
+                # reuses this worker_id (and overwrites its evolve_round
+                # file in place — keeps the dashboard slot count stable).
+                free_slots.append(dispatched.worker_id)
 
             if in_flight:
                 # Sleep between polls so we don't pin a CPU.
@@ -3173,10 +3205,21 @@ def run_loop(
     stop_reason = "pool-exhausted"
     last_result_snap: dict[str, Any] | None = None
 
+    max_generations = int(getattr(args, "generations", 0) or 0)
+
     while True:
         if _budget_exceeded(start_monotonic, args.hours, now_fn=time_fn):
             stop_reason = "wall-clock"
             _log.info("evolve: wall-clock budget exceeded; stopping")
+            break
+
+        if max_generations > 0 and generations_completed >= max_generations:
+            stop_reason = "generations-reached"
+            _log.info(
+                "evolve: generation cap reached (%d/%d); stopping",
+                generations_completed,
+                max_generations,
+            )
             break
 
         active_idxs = [

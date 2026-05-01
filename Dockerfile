@@ -155,7 +155,7 @@ RUN uv sync --frozen --no-dev
 #   docker run image                                  # default smoke gate
 #   docker run image -m bots.current --difficulty 3
 #   docker run image scripts/selfplay.py --p1 v0 --p2 v0 --games 2 --map Simple64
-#   docker run image scripts/evolve.py --hours 4
+#   docker run image scripts/evolve.py --generations 0 --hours 4
 #
 # `--no-sync` skips uv's pre-run consistency check; without it every
 # `docker run` does a redundant ~1s "Uninstalled 1 package + Installed

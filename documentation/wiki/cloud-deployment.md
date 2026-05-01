@@ -102,7 +102,7 @@ docker run --rm `
     -v ${PWD}/logs:/app/logs `
     -e EVO_AUTO=1 `
     alpha4gate-worker `
-    scripts/evolve.py --hours 4 --games-per-eval 5 --pool-size 4
+    scripts/evolve.py --generations 0 --hours 4 --games-per-eval 5 --pool-size 4
 ```
 
 Volume mounts:

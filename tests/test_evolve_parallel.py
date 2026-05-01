@@ -557,6 +557,58 @@ def test_out_of_order_completion(
 
 
 # ---------------------------------------------------------------------------
+# 2b. Slot recycling: worker_id stays within [0, concurrency)
+# ---------------------------------------------------------------------------
+
+
+def _extract_worker_id(argv: list[str]) -> int:
+    """Pull --worker-id N out of a captured Popen argv list."""
+    for i, tok in enumerate(argv):
+        if tok == "--worker-id":
+            return int(argv[i + 1])
+    raise AssertionError(f"--worker-id not in argv: {argv}")
+
+
+def test_worker_id_recycles_within_concurrency(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """With concurrency=2 and pool=4, worker_id MUST stay in {0, 1}.
+
+    Earlier the dispatcher used a monotonic counter, so dispatches 3 and 4
+    got worker_id 2 and 3. The dashboard's /api/evolve/running-rounds
+    iterates `range(concurrency)` and silently dropped any round file
+    with worker_id >= concurrency, leaving the per-worker cards frozen on
+    stale state once the first slot recycled. This test pins the slot-pool
+    behavior so a regression to the monotonic counter trips immediately.
+    """
+    args = _build_args(tmp_path, concurrency=2)
+    pool = [_make_imp(f"imp-{i}", rank=i + 1) for i in range(4)]
+
+    # All 4 workers complete after a single poll, so the dispatcher can
+    # turn every slot over within one outer-loop iteration. The exact
+    # interleaving doesn't matter — only that no fifth dispatch ever
+    # happens (pool exhausted) and that the only worker_ids ever seen
+    # are 0 and 1.
+    plans = [_FakeWorkerPlan(bucket="pass", polls_before_complete=1)] * 4
+    factory = _FakePopenFactory(cli, plans)
+
+    fitness_results, fitness_counts, _, _, _ = _invoke_dispatcher(
+        cli, pool=pool, args=args, factory=factory
+    )
+
+    assert factory.call_count == 4
+    assert set(fitness_results.keys()) == {0, 1, 2, 3}
+    assert fitness_counts["pass"] == 4
+
+    worker_ids = [_extract_worker_id(log.argv) for log in factory.logs]
+    assert set(worker_ids) <= {0, 1}, (
+        f"worker_id must recycle within [0, concurrency); got {worker_ids}"
+    )
+    # Each slot dispatched exactly twice (4 imps, 2 slots).
+    assert sorted(worker_ids) == [0, 0, 1, 1]
+
+
+# ---------------------------------------------------------------------------
 # 3. dispatch-fail bucket (Popen() raises)
 # ---------------------------------------------------------------------------
 

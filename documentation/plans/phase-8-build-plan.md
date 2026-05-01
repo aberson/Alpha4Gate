@@ -337,7 +337,7 @@ The check-in is informal — no separate done-when item, just the operator's sta
 
 **Output path convention:** match the existing Phase 9 evolve convention (`scripts/evolve.py` writes per-version snapshots under `data-snapshots/` per memory `project_evolve_redesigned.md`). Verify by reading `scripts/evolve.py --help` and the actual argparse before running — do NOT guess the flag name. The soak-record markdown lives at `documentation/soak-test-runs/evolve-linux-8h-<TS>.md` regardless.
 
-**Flag semantics:** `--hours 8` (wall-clock budget; evolve.py's `DaemonConfig.max_runs` and pool-exhaustion guard handle early termination), `--games-per-eval 9` (matches the validated baseline soak `20260423-2052`), `--pool-size 4` (4 generated improvements per round). See `documentation/plans/phase-9-build-plan.md` Step 4 + `scripts/evolve.py --help` for full semantics.
+**Flag semantics:** `--generations 0` (disables the new single-generation default cap; soaks should run until time/pool exhaustion), `--hours 8` (wall-clock budget; evolve.py's `DaemonConfig.max_runs` and pool-exhaustion guard handle early termination), `--games-per-eval 9` (matches the validated baseline soak `20260423-2052`), `--pool-size 4` (4 generated improvements per round). See `documentation/plans/phase-9-build-plan.md` Step 4 + `scripts/evolve.py --help` for full semantics.
 
 **Hang behavior:** the existing watchdog in `bots/v0/learning/environment.py` (`SC2Env.step` 30m soft / 45m hard per memory `feedback_orchestrator_hang_blocks_everything.md`) bounds individual game wall-clock. If `evolve.py` itself hangs at the orchestrator level, kill the Python process (`pkill -f scripts/evolve.py`); `pgrep SC2_x64` should return empty within 30 seconds as child processes drain. Document any hang in the morning report.
 
@@ -350,7 +350,7 @@ SC2_WSL_DETECT=0 \
 UV_PROJECT_ENVIRONMENT=$HOME/venv-alpha4gate-linux \
 EVO_AUTO=1 \
 nohup uv run python scripts/evolve.py \
-    --hours 8 --games-per-eval 9 --pool-size 4 \
+    --generations 0 --hours 8 --games-per-eval 9 --pool-size 4 \
     > logs/evolve-linux-8h-$(date +%Y%m%d-%H%M).log 2>&1 &
 echo "PID: $!"
 # Output dir comes from scripts/evolve.py defaults — do not pass a custom --results-out

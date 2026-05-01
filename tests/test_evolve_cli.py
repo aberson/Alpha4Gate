@@ -165,6 +165,7 @@ def _build_args(
     tmp_path: Path,
     *,
     hours: float = 0.0,
+    generations: int = 0,
     pool_size: int = 4,
     games_per_eval: int = 5,
     no_commit: bool = True,
@@ -173,11 +174,16 @@ def _build_args(
     game_time_limit: int = 1800,
     hard_timeout: float = 2700.0,
 ) -> argparse.Namespace:
-    """Construct an argparse.Namespace pointing at tmp_path for all state."""
+    """Construct an argparse.Namespace pointing at tmp_path for all state.
+
+    Defaults to generations=0 (unlimited) so existing tests that drive
+    multi-generation runs are not capped by the new --generations default.
+    """
     return argparse.Namespace(
         pool_size=pool_size,
         games_per_eval=games_per_eval,
         hours=hours,
+        generations=generations,
         map=map_name,
         game_time_limit=game_time_limit,
         hard_timeout=hard_timeout,
@@ -437,7 +443,8 @@ def test_default_flags(cli: ModuleType) -> None:
     args = cli.build_parser().parse_args([])
     assert args.pool_size == 10
     assert args.games_per_eval == 5
-    assert args.hours == 4.0
+    assert args.hours == 0.0
+    assert args.generations == 1
     assert args.map == "Simple64"
     assert args.no_commit is False
     assert args.resume is False
@@ -574,6 +581,44 @@ def test_wall_clock_stops_before_second_generation(
     state = json.loads(args.state_path.read_text(encoding="utf-8"))
     assert state["status"] == "completed"
     assert state["generations_completed"] == 1
+
+
+def test_generations_cap_stops_after_n_generations(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--generations N stops the loop after N completed generations.
+
+    Pool stays full (close-losses flip back to active + refresh tops up),
+    so the only thing that can stop the loop here is the gen cap.
+    """
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    args = _build_args(tmp_path, pool_size=2, hours=0.0, generations=2)
+    pool = _make_pool(2)
+
+    def refresh_same(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    # 4 buckets = 2 imps × 2 generations; nothing left for a 3rd gen.
+    scripted_fitness = _ScriptedFitness(["close", "close", "close", "close"])
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh_same,
+        run_fitness_fn=scripted_fitness,
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        current_version_fn=lambda: "v0",
+        time_fn=lambda: 0.0,
+    )
+    assert rc == 0
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["status"] == "completed"
+    # If the cap hadn't fired, the loop would request a 5th fitness bucket
+    # and _ScriptedFitness would raise — so reaching gen=2 cleanly is itself
+    # the proof that "generations-reached" exited the loop.
+    assert state["generations_completed"] == 2
 
 
 # ---------------------------------------------------------------------------
