@@ -92,6 +92,11 @@ export interface EvolveRunState {
   // Optional extras the skill may append post-run:
   stop_reason?: string | null;
   run_log_path?: string | null;
+  // Step 4 of the evolve-parallelization plan: the run-state idle skeleton
+  // and live state both carry these so the running-rounds endpoint can
+  // join per-worker files by ``run_id`` and pad to ``concurrency``.
+  run_id?: string | null;
+  concurrency?: number | null;
 }
 
 // --- Round-history row (one phase row per line of evolve_results.jsonl) ---
@@ -206,6 +211,41 @@ export interface EvolveCurrentRound {
   updated_at: string | null;
 }
 
+// --- Per-worker running rounds (from /api/evolve/running-rounds) ---
+//
+// Step 5 of the evolve-parallelization plan. The backend returns a
+// fixed-length array padded to ``concurrency``: each slot is either an
+// active per-worker entry (when its ``evolve_round_<wid>.json`` exists
+// with the current ``run_id``) or an all-null idle skeleton. The grid
+// renderer in Step 6 falls through to ``currentRound`` for the legacy
+// single-card N=1 case and other consumers that don't yet know about
+// per-worker fan-out.
+//
+// Strict subset of ``EvolveCurrentRound`` — no ``imp_rank``/``imp_index``/
+// ``stacked_titles``/``new_parent``/``prior_parent`` (those are
+// dispatcher-level state, not per-worker).
+
+export interface RunningRound {
+  worker_id: number;
+  active: boolean;
+  phase: EvolvePhase | string | null;
+  imp_title: string | null;
+  candidate: string | null;
+  parent: string | null;
+  games_played: number | null;
+  games_total: number | null;
+  score_cand: number | null;
+  score_parent: number | null;
+  updated_at: string | null;
+}
+
+export interface RunningRoundsResponse {
+  active: boolean;
+  concurrency: number | null;
+  run_id: string | null;
+  rounds: RunningRound[];
+}
+
 // --- Hook return type ---
 
 export interface UseEvolveRunResult {
@@ -214,16 +254,24 @@ export interface UseEvolveRunResult {
   pool: UseApiResult<EvolvePoolData>;
   results: UseApiResult<EvolveResultsData>;
   currentRound: UseApiResult<EvolveCurrentRound>;
+  runningRounds: UseApiResult<RunningRoundsResponse>;
   sendControl: (patch: Partial<EvolveRunControl>) => Promise<void>;
 }
 
-// Cache-key suffix bumped to v3 because the 2-gate schema removes the
-// pre-regression stacked-games phase and the fallback-variant fields.
-// See documentation/plans/evolve-gate-reduction-plan.md and
-// feedback_useapi_cache_schema_break.md — without bumping the cache
-// key, browsers with cached v2 responses would feed stale shapes into
-// the new component renderers and crash.
-const CACHE_KEY_SUFFIX = "evolve-v4";
+// Cache-key suffix bumped to v5 for Step 5 of the
+// evolve-parallelization plan (Decision D-6): the new
+// ``/api/evolve/running-rounds`` endpoint introduces a per-worker
+// rounds array, and ``/api/evolve/state`` gains optional ``run_id`` +
+// ``concurrency`` fields on its idle skeleton (Step 4). Per
+// feedback_useapi_cache_schema_break.md, without bumping the cache key
+// a returning user's browser has the old-shape v4 response cached;
+// the hook destructures it before the first network round-trip and
+// crashes React with ``Cannot read properties of undefined``.
+//
+// Prior bumps:
+//   v3->v4: 2-gate schema removed the pre-regression stacked-games
+//   phase and the fallback-variant fields (gate-reduction plan).
+const CACHE_KEY_SUFFIX = "evolve-v5";
 
 /**
  * Hook for monitoring and controlling an improve-bot-evolve run
@@ -253,6 +301,13 @@ export function useEvolveRun(): UseEvolveRunResult {
       cacheKey: `/api/evolve/current-round::${CACHE_KEY_SUFFIX}`,
     },
   );
+  const runningRounds = useApi<RunningRoundsResponse>(
+    "/api/evolve/running-rounds",
+    {
+      pollMs: 2000,
+      cacheKey: `/api/evolve/running-rounds::${CACHE_KEY_SUFFIX}`,
+    },
+  );
 
   const sendControl = useCallback(
     async (patch: Partial<EvolveRunControl>) => {
@@ -266,5 +321,13 @@ export function useEvolveRun(): UseEvolveRunResult {
     [control],
   );
 
-  return { state, control, pool, results, currentRound, sendControl };
+  return {
+    state,
+    control,
+    pool,
+    results,
+    currentRound,
+    runningRounds,
+    sendControl,
+  };
 }

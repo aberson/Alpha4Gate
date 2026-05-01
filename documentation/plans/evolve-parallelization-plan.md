@@ -338,6 +338,7 @@ Spike 3 (`scripts/spike3_launch.sh`) already validated this exact topology: 4 se
 
 - **Problem:** Add `runningRounds: UseApiResult<{active, concurrency, run_id, rounds}>` to `useEvolveRun()` in `frontend/src/hooks/useEvolveRun.ts`. Polls `/api/evolve/running-rounds` at 2s. **Bump `CACHE_KEY_SUFFIX` from `evolve-v4` → `evolve-v5`.** *Why bump:* `useApi` persists the last-seen response in `localStorage` keyed by `CACHE_KEY_SUFFIX`. After the schema change, a returning user's browser still has the old-shape v4 response cached; the hook destructures it before the first network round-trip and crashes React with `Cannot read properties of undefined (reading 'rounds')`. Bumping the suffix invalidates the stale cache so the new render path always sees the new shape. (This is the project's standard cache-break pattern; see also evolve gate-reduction's v2→v3 bump.) Existing `currentRound` field stays for the single-card render fallback.
 - **Issue:** #245
+- **Status:** DONE (2026-04-30) — code review verdict NO ISSUES (only 4 low-priority cosmetic notes); vitest 116/116 (+4 new), pytest 1410+20 (regression-clean), TS + lint clean.
 - **Flags:** `--reviewers code`
 - **Produces:** Extended hook; vitest coverage in `frontend/src/hooks/__tests__/useEvolveRun.test.ts`.
 - **Done when:** `cd frontend && npm test` green; manual probe with the dashboard running at `http://localhost:3000` shows the new field populated when N>1 workers active.
