@@ -546,6 +546,24 @@ async def start_batch(request: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+@app.get("/api/operator-commands")
+async def get_operator_commands() -> dict[str, str]:
+    """Return the contents of `documentation/wiki/operator-commands.md`.
+
+    The Help dashboard tab renders this directly via react-markdown so the
+    on-disk doc is the single source of truth — edits to the markdown file
+    surface immediately in the UI without a frontend rebuild.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    doc_path = repo_root / "documentation" / "wiki" / "operator-commands.md"
+    if not doc_path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail=f"operator-commands.md not found at {doc_path}",
+        )
+    return {"markdown": doc_path.read_text(encoding="utf-8")}
+
+
 # --- Training Endpoints ---
 
 
@@ -1189,6 +1207,20 @@ _EVOLVE_CURRENT_ROUND_IDLE: dict[str, Any] = {
     "updated_at": None,
 }
 
+_EVOLVE_RUNNING_ROUND_IDLE: dict[str, Any] = {
+    "worker_id": None,
+    "active": False,
+    "phase": None,
+    "imp_title": None,
+    "candidate": None,
+    "parent": None,
+    "games_played": None,
+    "games_total": None,
+    "score_cand": None,
+    "score_parent": None,
+    "updated_at": None,
+}
+
 _EVOLVE_IDLE_STATE: dict[str, Any] = {
     "status": "idle",
     "parent_start": None,
@@ -1304,6 +1336,76 @@ async def get_evolve_current_round() -> dict[str, Any]:
     merged = dict(_EVOLVE_CURRENT_ROUND_IDLE)
     merged.update(data)
     return merged
+
+
+@app.get("/api/evolve/running-rounds")
+async def get_evolve_running_rounds() -> dict[str, Any]:
+    """Read all per-worker round-state files for the active parallel run."""
+    run_state = _read_json_file(_evolve_dir / _EVOLVE_STATE_FILE)
+    if run_state is None:
+        return {
+            "active": False,
+            "concurrency": None,
+            "run_id": None,
+            "rounds": [],
+        }
+
+    concurrency = run_state.get("concurrency")
+    run_id = run_state.get("run_id")
+    if concurrency is None or run_id is None:
+        return {
+            "active": False,
+            "concurrency": None,
+            "run_id": None,
+            "rounds": [],
+        }
+
+    parent_current = run_state.get("parent_current")
+
+    by_worker: dict[int, dict[str, Any]] = {}
+    for path in _evolve_dir.glob("evolve_round_*.json"):
+        entry = _read_json_file(path)
+        if entry is None:
+            continue
+        if entry.get("run_id") != run_id:
+            continue
+        wid = entry.get("worker_id")
+        if not isinstance(wid, int):
+            continue
+        by_worker[wid] = entry
+
+    rounds: list[dict[str, Any]] = []
+    for wid in range(int(concurrency)):
+        entry = by_worker.get(wid)
+        if entry is None:
+            slot = dict(_EVOLVE_RUNNING_ROUND_IDLE)
+            slot["worker_id"] = wid
+            rounds.append(slot)
+            continue
+        slot = dict(_EVOLVE_RUNNING_ROUND_IDLE)
+        slot["worker_id"] = wid
+        slot["active"] = bool(entry.get("active", False))
+        slot["parent"] = parent_current
+        for key in (
+            "phase",
+            "imp_title",
+            "candidate",
+            "games_played",
+            "games_total",
+            "score_cand",
+            "score_parent",
+            "updated_at",
+        ):
+            if key in entry:
+                slot[key] = entry[key]
+        rounds.append(slot)
+
+    return {
+        "active": True,
+        "concurrency": int(concurrency),
+        "run_id": run_id,
+        "rounds": rounds,
+    }
 
 
 @app.get("/api/evolve/pool")

@@ -73,7 +73,32 @@ function WorkerBadge({ workerId }: { workerId: number }) {
 // rendered inside the grid (gap: 16px owns row spacing), so we drop
 // the per-card vertical margins -- otherwise gap+margins double-space
 // row-to-row in multi-row layouts (Step 6 review finding #2).
-function IdleWorkerCard({ workerId }: { workerId: number }) {
+function idleCopyForPhase(phase: string | null | undefined): string {
+  switch (phase) {
+    case "mirror_games":
+      return "Mirror games done — waiting for advisor";
+    case "claude_prompt":
+      return "Waiting for advisor to propose imps…";
+    case "pool_refresh":
+      return "Waiting for advisor to refill pool…";
+    case "stack_apply":
+      return "Waiting — dispatcher applying stack";
+    case "regression":
+      return "Waiting — dispatcher running regression check";
+    case "fitness":
+      return "Waiting for next imp…";
+    default:
+      return "Idle";
+  }
+}
+
+function IdleWorkerCard({
+  workerId,
+  dispatcherPhase,
+}: {
+  workerId: number;
+  dispatcherPhase?: string | null;
+}) {
   return (
     <section
       className="stat-card"
@@ -109,7 +134,7 @@ function IdleWorkerCard({ workerId }: { workerId: number }) {
         </span>
       </div>
       <div style={{ color: "#666", fontSize: "0.9em" }}>
-        Waiting for next imp…
+        {idleCopyForPhase(dispatcherPhase)}
       </div>
     </section>
   );
@@ -412,19 +437,21 @@ function MatchupGrid({
         gridTemplateColumns: "1fr auto 1fr",
         alignItems: "center",
         gap: "16px",
-        marginTop: "10px",
-        fontSize: "1.1em",
+        marginTop: "8px",
+        fontSize: "0.9em",
       }}
     >
       <div style={{ textAlign: "right" }}>
-        <div style={{ fontWeight: 700, fontSize: "1.15em" }}>{leftTitle}</div>
-        <div style={{ color: "#888", fontSize: "0.85em", marginTop: "2px" }}>
+        <div style={{ fontWeight: 600, fontSize: "1em", lineHeight: 1.25 }}>
+          {leftTitle}
+        </div>
+        <div style={{ color: "#888", fontSize: "0.8em", marginTop: "2px" }}>
           <code>{leftId}</code>
         </div>
       </div>
       <div
         style={{
-          fontSize: "2em",
+          fontSize: "1.6em",
           fontWeight: 700,
           color: accentColor,
           whiteSpace: "nowrap",
@@ -436,8 +463,10 @@ function MatchupGrid({
         {scoreRight}
       </div>
       <div style={{ textAlign: "left" }}>
-        <div style={{ fontWeight: 700, fontSize: "1.15em" }}>{rightTitle}</div>
-        <div style={{ color: "#888", fontSize: "0.85em", marginTop: "2px" }}>
+        <div style={{ fontWeight: 600, fontSize: "1em", lineHeight: 1.25 }}>
+          {rightTitle}
+        </div>
+        <div style={{ color: "#888", fontSize: "0.8em", marginTop: "2px" }}>
           <code>{rightId}</code>
         </div>
       </div>
@@ -719,34 +748,66 @@ function CurrentPhaseCard({
 const WORKER_ROUNDS_GRID_STYLE = `
 .evolve-running-rounds-grid {
   display: grid;
-  gap: 16px;
+  gap: 12px;
   align-items: start;
   margin-top: 20px;
   margin-bottom: 24px;
   grid-template-columns: 1fr;
-}
-@media (min-width: 800px) {
-  .evolve-running-rounds-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-@media (min-width: 1200px) {
-  .evolve-running-rounds-grid {
-    grid-template-columns: 1fr 1fr 1fr 1fr;
-  }
 }
 `;
 
 function WorkerRoundsGrid({
   rounds,
   runParent,
+  dispatcherPhase,
 }: {
   rounds: RunningRound[];
   runParent: string | null;
+  dispatcherPhase?: string | null;
 }) {
+  const activeCount = rounds.filter((r) => r.active).length;
+  const totalCount = rounds.length;
   return (
     <>
       <style>{WORKER_ROUNDS_GRID_STYLE}</style>
+      <div
+        data-testid="worker-grid-header"
+        style={{
+          marginTop: "16px",
+          marginBottom: "8px",
+          padding: "8px 12px",
+          borderRadius: "4px",
+          backgroundColor: "rgba(52, 152, 219, 0.08)",
+          border: "1px solid rgba(52, 152, 219, 0.25)",
+          color: "#bbb",
+          fontSize: "0.9em",
+          display: "flex",
+          alignItems: "center",
+          gap: "10px",
+        }}
+      >
+        <span
+          style={{
+            color: "#3498db",
+            fontWeight: 700,
+            fontSize: "1.1em",
+            fontFamily: "monospace",
+          }}
+        >
+          ×{totalCount}
+        </span>
+        <span>
+          <strong style={{ color: "#eee" }}>
+            {totalCount} workers running in parallel
+          </strong>
+          {" — "}
+          <span data-testid="worker-grid-active-count">
+            {activeCount} playing
+          </span>
+          {" · "}
+          {totalCount - activeCount} idle
+        </span>
+      </div>
       <div
         className="evolve-running-rounds-grid"
         data-testid="worker-rounds-grid"
@@ -754,7 +815,11 @@ function WorkerRoundsGrid({
         {rounds.map((rr) => {
           if (!rr.active) {
             return (
-              <IdleWorkerCard key={rr.worker_id} workerId={rr.worker_id} />
+              <IdleWorkerCard
+                key={rr.worker_id}
+                workerId={rr.worker_id}
+                dispatcherPhase={dispatcherPhase}
+              />
             );
           }
           const projected = projectRunningRoundToCurrent(rr);
@@ -998,7 +1063,7 @@ export function EvolutionTab() {
           </p>
           <p style={{ color: "#666", fontSize: "0.9em", marginTop: "8px" }}>
             Launch with{" "}
-            <code>uv run python scripts/evolve.py --hours 4 --pool-size 10</code>
+            <code>uv run python scripts/evolve.py --generations 0 --hours 4 --pool-size 10</code>
           </p>
           <p style={{ color: "#666", fontSize: "0.85em", marginTop: "8px" }}>
             See the <code>/improve-bot-evolve</code> skill for the full
@@ -1059,10 +1124,20 @@ export function EvolutionTab() {
           */}
           {runningRounds.data?.active &&
           (runningRounds.data.concurrency ?? 1) >= 2 ? (
-            <WorkerRoundsGrid
-              rounds={runningRounds.data.rounds}
-              runParent={run.parent_current ?? run.parent_start}
-            />
+            <>
+              {currentRound.data?.active &&
+              currentRound.data.phase !== "fitness" ? (
+                <CurrentPhaseCard
+                  round={currentRound.data}
+                  runParent={run.parent_current ?? run.parent_start}
+                />
+              ) : null}
+              <WorkerRoundsGrid
+                rounds={runningRounds.data.rounds}
+                runParent={run.parent_current ?? run.parent_start}
+                dispatcherPhase={currentRound.data?.phase ?? null}
+              />
+            </>
           ) : currentRound.data?.active ? (
             <CurrentPhaseCard
               round={currentRound.data}
