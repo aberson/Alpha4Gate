@@ -73,6 +73,7 @@ from orchestrator.evolve import (  # noqa: E402
     _restore_pointer as _primitive_restore_pointer,
 )
 from orchestrator.paths import resolve_sc2_path  # noqa: E402
+from orchestrator.snapshot import _drvfs_safe_rmtree  # noqa: E402
 
 # Round-state helpers extracted to ``scripts/evolve_round_state.py`` so the
 # parallel-evolve worker (Step 2 of the evolve-parallelization plan) can
@@ -654,8 +655,17 @@ def append_crash_log(
     imp: Improvement | None,
     exc: BaseException,
     traceback_str: str,
+    worker_traceback: str | None = None,
 ) -> None:
-    """Append a full-traceback JSON line to ``data/evolve_crashes.jsonl``."""
+    """Append a full-traceback JSON line to ``data/evolve_crashes.jsonl``.
+
+    Iter-3 Fix 3.3: when the dispatcher classifies a worker subprocess
+    crash, the dispatcher's own traceback is just a one-line synthetic
+    ``RuntimeError`` — useless for diagnosis. ``worker_traceback`` carries
+    the worker's actual ``traceback.format_exc()`` output (read from
+    ``--result-path`` before unlink) so post-mortem readers see what
+    really blew up inside the worker.
+    """
     entry: dict[str, Any] = {
         "timestamp": _now_iso(),
         "generation": generation,
@@ -667,6 +677,8 @@ def append_crash_log(
         "error_message": str(exc),
         "traceback": traceback_str,
     }
+    if worker_traceback is not None:
+        entry["worker_traceback"] = worker_traceback
     crash_log_path.parent.mkdir(parents=True, exist_ok=True)
     with crash_log_path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry) + "\n")
@@ -1577,13 +1589,105 @@ def _make_hang_exc(timeout_s: float) -> TimeoutError:
     )
 
 
+def _popen_group_kwargs() -> dict[str, Any]:
+    """Iter-3 Fix 3.2: kwargs that isolate a worker in its own process group.
+
+    Decision D-3 (process-level fan-out) only delivers operationally if
+    signals reach the worker's grandchildren — the spawned ``claude -p``
+    CLI subprocess and the ``SC2_x64`` burnysc2 grandchild. ``proc.kill()``
+    on the immediate Python child does NOT cascade; grandchildren reparent
+    to ``init`` (POSIX) or stay live as detached processes (Windows).
+
+    On POSIX, ``start_new_session=True`` calls ``setsid()`` in the child
+    so the worker becomes session leader. ``os.killpg(getpgid(pid), SIG)``
+    then targets the whole group.
+
+    On Windows, ``CREATE_NEW_PROCESS_GROUP`` makes ``CTRL_BREAK_EVENT``
+    deliverable to the group; ``taskkill /T /F /PID`` follows the
+    parent-PID tree as a hard SIGKILL equivalent.
+    """
+    if sys.platform == "win32":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+def _sigkill_tree(proc: Any) -> None:
+    """Iter-3 Fix 3.2: SIGKILL a worker AND every grandchild it spawned.
+
+    Replacement for ``proc.kill()`` at every escalation site (hang-cap,
+    second-SIGINT, dispatcher cleanup). Companion to
+    :func:`_popen_group_kwargs` — workers must have been spawned with
+    those kwargs for this to actually cascade.
+
+    Best-effort: swallows ProcessLookupError (target already dead) and
+    OSError (race on group lookup). Never raises.
+    """
+    if sys.platform == "win32":
+        # CTRL_BREAK_EVENT is the only signal the new process group can
+        # receive on Windows; send it first to give Python's signal
+        # handlers in the worker a chance to KeyboardInterrupt out.
+        try:
+            proc.send_signal(getattr(signal, "CTRL_BREAK_EVENT", signal.SIGTERM))
+        except (OSError, ValueError, AttributeError) as exc:
+            _log.debug(
+                "evolve: CTRL_BREAK_EVENT failed for pid=%s: %s",
+                getattr(proc, "pid", "?"),
+                exc,
+            )
+        # Then hard-kill the whole tree via taskkill. /T = tree, /F = force.
+        try:
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                capture_output=True,
+                check=False,
+            )
+        except OSError as exc:
+            _log.debug(
+                "evolve: taskkill failed for pid=%s: %s",
+                getattr(proc, "pid", "?"),
+                exc,
+            )
+    else:
+        try:
+            pgid = os.getpgid(proc.pid)
+        except (ProcessLookupError, OSError) as exc:
+            _log.debug(
+                "evolve: getpgid failed for pid=%s: %s",
+                getattr(proc, "pid", "?"),
+                exc,
+            )
+            return
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, OSError) as exc:
+            _log.debug(
+                "evolve: killpg(%s, SIGKILL) failed: %s", pgid, exc
+            )
+
+
 def _make_malformed_exc(reason: str) -> RuntimeError:
     """Build a fake exception for a malformed result file."""
     return RuntimeError(f"worker result-file invalid: {reason}")
 
 
-def _make_crash_exc(returncode: int) -> RuntimeError:
-    """Build a fake exception for a non-zero worker exit."""
+def _make_crash_exc(
+    returncode: int, worker_crash: dict[str, Any] | None = None
+) -> RuntimeError:
+    """Build a fake exception for a non-zero worker exit.
+
+    Iter-3 Fix 3.3: when the worker wrote its own crash payload to the
+    result file (via ``evolve_worker._write_crash``), fold its
+    ``error_type`` + ``error_message`` into the dispatcher's exception
+    message so single-line log readers see the real failure cause, not
+    the generic ``returncode=N`` line.
+    """
+    if worker_crash:
+        worker_type = worker_crash.get("error_type") or "UnknownError"
+        worker_msg = worker_crash.get("error_message") or ""
+        return RuntimeError(
+            f"worker exited non-zero (returncode={returncode}): "
+            f"{worker_type}: {worker_msg}"
+        )
     return RuntimeError(f"worker exited non-zero: returncode={returncode}")
 
 
@@ -1602,37 +1706,61 @@ def _unlink_quiet(path: Path) -> None:
         _log.debug("evolve: cleanup unlink failed for %s: %s", path, exc)
 
 
-def _cleanup_stale_round_files(state_dir: Path) -> int:
+def _cleanup_stale_round_files(
+    state_dir: Path, bots_dir: Path | None = None
+) -> int:
     """Decision D-6: unlink any pre-existing per-worker round-state files.
 
-    Returns the number of files unlinked. Called at parent-dispatcher
-    startup so an aborted prior run's slot files cannot pollute today's
-    dashboard. The ``run_id`` filter on the API endpoint is the safety
-    net for the race between this cleanup and a still-dying prior worker.
+    Returns the number of files (and ``cand_*`` directories) cleaned up.
+    Called at parent-dispatcher startup so an aborted prior run's slot
+    files cannot pollute today's dashboard. The ``run_id`` filter on the
+    API endpoint is the safety net for the race between this cleanup and
+    a still-dying prior worker.
 
     Finding #4: also mop up stale ``evolve_imp_*.json`` and
     ``evolve_result_*.json`` files left behind by a prior run that
     exited mid-dispatch (process kill, reboot, etc.). The dispatcher's
     in-loop cleanup handles the happy/exception paths within a run;
     this catches cross-run leaks.
+
+    Iter-3 Fix 3.1: also rmtree orphaned ``bots/cand_<hex>/`` snapshot
+    directories left behind by interrupted fitness evaluations. Without
+    this, a partial run that's killed mid-fitness (Ctrl+C, OOM, reboot)
+    accumulates scratch dirs forever — operator hit 33 in a single
+    aborted session.
     """
-    if not state_dir.is_dir():
-        return 0
+    if bots_dir is None:
+        bots_dir = _REPO_ROOT / "bots"
     n = 0
-    for pattern in (
-        "evolve_round_*.json",
-        "evolve_imp_*.json",
-        "evolve_result_*.json",
-    ):
-        for p in state_dir.glob(pattern):
+    if state_dir.is_dir():
+        for pattern in (
+            "evolve_round_*.json",
+            "evolve_imp_*.json",
+            "evolve_result_*.json",
+        ):
+            for p in state_dir.glob(pattern):
+                try:
+                    p.unlink()
+                    n += 1
+                except OSError as exc:
+                    _log.warning(
+                        "evolve: failed to unlink stale per-worker file "
+                        "%s: %s",
+                        p,
+                        exc,
+                    )
+    if bots_dir.is_dir():
+        for cand in bots_dir.glob("cand_*"):
+            if not cand.is_dir():
+                continue
             try:
-                p.unlink()
+                _drvfs_safe_rmtree(cand)
                 n += 1
             except OSError as exc:
                 _log.warning(
-                    "evolve: failed to unlink stale per-worker file "
+                    "evolve: failed to rmtree stale candidate dir "
                     "%s: %s",
-                    p,
+                    cand,
                     exc,
                 )
     return n
@@ -1755,6 +1883,21 @@ def _run_fitness_phase_parallel(
         # second signal escalates to SIGKILL on the same set AND tells
         # the dispatcher to drain instead of dispatching anything new.
         interrupt_count["n"] += 1
+        # Iter-3 Fix 3.4 (diagnostic): unconditional top-of-handler log
+        # so post-mortems can confirm the handler actually fired. Step 8
+        # operator smoke gate showed double-Ctrl+C did NOT halt dispatch;
+        # this log line should make the failure mode obvious next run
+        # (handler-not-firing vs. handler-fired-but-state-not-honored).
+        _log.warning(
+            "evolve: SIGNAL HANDLER FIRED — signum=%d count=%d "
+            "pending=%d in_flight=%d stop_dispatching=%s pid=%d",
+            signum,
+            interrupt_count["n"],
+            len(pending),
+            len(in_flight),
+            halt_state["stop_dispatching"],
+            os.getpid(),
+        )
         if interrupt_count["n"] == 1:
             _log.warning(
                 "evolve: received signal %d; forwarding to %d in-flight "
@@ -1789,12 +1932,26 @@ def _run_fitness_phase_parallel(
             # gating path, so no new branch is needed in the main loop.
             halt_state["stop_dispatching"] = True
             pending.clear()
+            # Iter-3 Fix 3.4 (diagnostic): confirm pending was cleared
+            # in-place. If a future regression rebinds `pending` somewhere
+            # this log will show non-zero and immediately localize the bug.
+            _log.warning(
+                "evolve: post-escalation state — pending_now=%d "
+                "in_flight_now=%d stop_dispatching=%s",
+                len(pending),
+                len(in_flight),
+                halt_state["stop_dispatching"],
+            )
             for proc in list(in_flight.keys()):
+                # Iter-3 Fix 3.2: SIGKILL the whole worker process group
+                # so claude CLI + SC2_x64 grandchildren die with the
+                # worker (proc.kill() alone leaves orphans).
                 try:
-                    proc.kill()
+                    _sigkill_tree(proc)
                 except Exception as exc:  # noqa: BLE001
                     _log.warning(
-                        "evolve: kill() failed for in-flight worker: %s",
+                        "evolve: _sigkill_tree() failed for in-flight "
+                        "worker: %s",
                         exc,
                     )
 
@@ -1916,7 +2073,10 @@ def _run_fitness_phase_parallel(
                     state_dir=state_dir,
                 )
                 try:
-                    proc = popen_factory(argv)
+                    # Iter-3 Fix 3.2: spawn each worker in its own process
+                    # group so SIGKILL escalations cascade to claude CLI +
+                    # SC2_x64 grandchildren (see _sigkill_tree).
+                    proc = popen_factory(argv, **_popen_group_kwargs())
                 except (OSError, FileNotFoundError) as exc:
                     # Decision D-7 dispatch-fail bucket.
                     _log.error(
@@ -1978,11 +2138,15 @@ def _run_fitness_phase_parallel(
                             dispatched.imp.title,
                             worker_timeout_s,
                         )
+                        # Iter-3 Fix 3.2: SIGKILL the whole worker process
+                        # group so the SC2_x64 grandchild does not become
+                        # an orphan that pins port + GPU.
                         try:
-                            proc.kill()
+                            _sigkill_tree(proc)
                         except Exception as exc:  # noqa: BLE001
                             _log.warning(
-                                "evolve: kill() raised on hung worker: %s",
+                                "evolve: _sigkill_tree() raised on hung "
+                                "worker: %s",
                                 exc,
                             )
                         # Drain so .poll() returns; tests may stub wait().
@@ -2017,14 +2181,57 @@ def _run_fitness_phase_parallel(
 
                 # Process exited; classify the outcome.
                 if rc != 0:
-                    crash_exc = _make_crash_exc(rc)
-                    _log.error(
-                        "evolve: worker for idx=%d imp=%r exited %d "
-                        "(crash bucket)",
-                        dispatched.idx,
-                        dispatched.imp.title,
-                        rc,
+                    # Iter-3 Fix 3.3: try to read the worker's own crash
+                    # payload BEFORE unlinking the result file. The worker
+                    # writes ``{"crash": True, "error_type", "error_message",
+                    # "traceback"}`` via ``evolve_worker._write_crash``
+                    # whenever a Python-level exception escapes the eval
+                    # loop. Without this, the dispatcher records only its
+                    # own synthetic ``RuntimeError("returncode=N")`` and
+                    # the real failure cause vanishes when the file is
+                    # unlinked in the reaper.
+                    worker_crash_payload: dict[str, Any] | None = None
+                    try:
+                        crash_text = dispatched.result_path.read_text(
+                            encoding="utf-8"
+                        )
+                        parsed_crash = json.loads(crash_text)
+                        if (
+                            isinstance(parsed_crash, dict)
+                            and parsed_crash.get("crash") is True
+                        ):
+                            worker_crash_payload = parsed_crash
+                    except (OSError, json.JSONDecodeError):
+                        pass
+
+                    crash_exc = _make_crash_exc(
+                        rc, worker_crash=worker_crash_payload
                     )
+                    if worker_crash_payload is not None:
+                        _log.error(
+                            "evolve: worker for idx=%d imp=%r exited %d "
+                            "(crash bucket): %s: %s",
+                            dispatched.idx,
+                            dispatched.imp.title,
+                            rc,
+                            worker_crash_payload.get("error_type"),
+                            worker_crash_payload.get("error_message"),
+                        )
+                        worker_tb = worker_crash_payload.get("traceback")
+                        if worker_tb:
+                            _log.error(
+                                "evolve: worker traceback for idx=%d:\n%s",
+                                dispatched.idx,
+                                worker_tb,
+                            )
+                    else:
+                        _log.error(
+                            "evolve: worker for idx=%d imp=%r exited %d "
+                            "(crash bucket; no worker crash payload)",
+                            dispatched.idx,
+                            dispatched.imp.title,
+                            rc,
+                        )
                     _record_parallel_failure(
                         bucket=_CRASH_BUCKET,
                         idx=dispatched.idx,
@@ -2035,6 +2242,11 @@ def _run_fitness_phase_parallel(
                         per_item_state=per_item_state,
                         fitness_counts=fitness_counts,
                         args=args,
+                        worker_traceback=(
+                            worker_crash_payload.get("traceback")
+                            if worker_crash_payload is not None
+                            else None
+                        ),
                     )
                     last_result_snap = _last_result_snapshot_crash(
                         generation_index,
@@ -2180,11 +2392,14 @@ def _run_fitness_phase_parallel(
                 len(in_flight),
             )
             for proc, dispatched in list(in_flight.items()):
+                # Iter-3 Fix 3.2: SIGKILL the whole tree so unexpected
+                # exit (exception in append_phase_result, KeyboardInterrupt,
+                # etc.) does not leave SC2_x64 grandchildren running.
                 try:
-                    proc.kill()
+                    _sigkill_tree(proc)
                 except Exception as exc:  # noqa: BLE001
                     _log.debug(
-                        "evolve: kill() on cleanup raised "
+                        "evolve: _sigkill_tree() on cleanup raised "
                         "(worker likely already exited): %s",
                         exc,
                     )
@@ -2224,6 +2439,7 @@ def _record_parallel_failure(
     per_item_state: dict[int, PerItemState],
     fitness_counts: dict[str, int],
     args: argparse.Namespace,
+    worker_traceback: str | None = None,
 ) -> None:
     """Mirror the serial loop's crash branch for one parallel-worker failure.
 
@@ -2236,6 +2452,11 @@ def _record_parallel_failure(
     The four parallel-only buckets (``dispatch-fail``, ``crash``,
     ``malformed``, ``hang``) all share this single recorder so the
     accounting stays uniform across Decision-D-7 modes.
+
+    Iter-3 Fix 3.3: ``worker_traceback`` is the worker's own
+    ``traceback.format_exc()`` output (read from ``--result-path`` for
+    the ``crash`` bucket); when supplied, it is folded into the crash-log
+    entry so post-mortem readers see the real failure cause.
     """
     tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
     fitness_counts[bucket] = fitness_counts.get(bucket, 0) + 1
@@ -2254,6 +2475,7 @@ def _record_parallel_failure(
         imp=imp,
         exc=exc,
         traceback_str=tb,
+        worker_traceback=worker_traceback,
     )
 
 

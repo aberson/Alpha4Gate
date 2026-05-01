@@ -49,7 +49,9 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import signal
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -199,6 +201,11 @@ class _FakeWorkerPlan:
     write_result: bool = True
     write_invalid: bool = False
     never_complete: bool = False
+    # Iter-3 Fix 3.3: when set, the fake writes this dict to ``result_path``
+    # on the completing poll regardless of ``returncode`` — used to model a
+    # worker that exited nonzero AFTER writing a real ``_write_crash``
+    # payload to the result file.
+    crash_payload: dict[str, Any] | None = None
 
 
 @dataclass
@@ -206,6 +213,7 @@ class _FakePopenLog:
     """Captured argv + lifecycle events for one fake worker."""
 
     argv: list[str]
+    popen_kwargs: dict[str, Any] = field(default_factory=dict)
     poll_count: int = 0
     sent_signals: list[int] = field(default_factory=list)
     killed: bool = False
@@ -231,6 +239,10 @@ class _FakePopen:
         self._log = log
         self._cli = cli_module
         self._argv = list(argv)
+        # Iter-3 Fix 3.2: synthetic but unique pid so dispatcher code that
+        # passes the fake to _sigkill_tree doesn't AttributeError. The real
+        # killpg/taskkill syscalls swallow ProcessLookupError on this pid.
+        self.pid = id(self) % 100000
 
     @property
     def argv(self) -> list[str]:
@@ -282,7 +294,19 @@ class _FakePopen:
         if self._log.poll_count == self._plan.polls_before_complete:
             if self._plan.returncode == 0:
                 self._maybe_write_result()
+            elif self._plan.crash_payload is not None:
+                self._write_crash_payload(self._plan.crash_payload)
         return self._plan.returncode
+
+    def _write_crash_payload(self, payload: dict[str, Any]) -> None:
+        """Iter-3 Fix 3.3: emulate ``evolve_worker._write_crash``."""
+        result_path: Path | None = None
+        for i, tok in enumerate(self._argv):
+            if tok == "--result-path":
+                result_path = Path(self._argv[i + 1])
+                break
+        assert result_path is not None
+        result_path.write_text(json.dumps(payload), encoding="utf-8")
 
     def send_signal(self, signum: int) -> None:
         self._log.sent_signals.append(signum)
@@ -340,7 +364,7 @@ class _FakePopenFactory:
                 f"#{self.call_count}"
             )
         plan = self._plans.pop(0)
-        log = _FakePopenLog(argv=list(argv))
+        log = _FakePopenLog(argv=list(argv), popen_kwargs=dict(kwargs))
         self.logs.append(log)
         popen = _FakePopen(
             argv, plan=plan, log=log, cli_module=self._cli
@@ -713,7 +737,7 @@ def test_worker_malformed_missing_result_file(
 
 
 def test_worker_hang_increments_bucket(
-    cli: ModuleType, tmp_path: Path
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A never-completing worker is SIGKILLed and counted as hang."""
     args = _build_args(
@@ -734,6 +758,15 @@ def test_worker_hang_increments_bucket(
         clock["t"] += 5.0
         return clock["t"]
 
+    # Iter-3 Fix 3.2: dispatcher now uses _sigkill_tree (killpg/taskkill on
+    # the worker's process group). For the fake worker we don't have a real
+    # process group, so substitute a wrapper that invokes the fake's
+    # kill() — preserves the legacy assertion that escalation reaches the
+    # in-flight worker.
+    monkeypatch.setattr(
+        cli, "_sigkill_tree", lambda proc: proc.kill()
+    )
+
     _, fitness_counts, per_item_state, _, _ = _invoke_dispatcher(
         cli,
         pool=pool,
@@ -744,7 +777,7 @@ def test_worker_hang_increments_bucket(
     assert fitness_counts["hang"] == 1
     assert per_item_state[0].status == cli._EVICTED
     assert per_item_state[0].retry_count == 1
-    # The fake worker's kill() was called.
+    # The fake worker's kill() was called via _sigkill_tree.
     assert factory.logs[0].killed is True
 
 
@@ -754,9 +787,16 @@ def test_worker_hang_increments_bucket(
 
 
 def test_sigint_propagates_then_escalates(
-    cli: ModuleType, tmp_path: Path
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """First SIGINT forwards via send_signal; second invocation calls kill()."""
+    # Iter-3 Fix 3.2: second-SIGINT escalation now invokes _sigkill_tree
+    # (killpg/taskkill on the worker's process group). Substitute a fake-
+    # friendly wrapper that calls the fake's kill() instead, preserving
+    # the existing log.killed assertion.
+    monkeypatch.setattr(
+        cli, "_sigkill_tree", lambda proc: proc.kill()
+    )
     args = _build_args(tmp_path, concurrency=2)
     pool = [_make_imp("imp-0", rank=1), _make_imp("imp-1", rank=2)]
     # Plans that take many polls so the workers are in-flight when we fire
@@ -988,22 +1028,37 @@ def test_budget_breach_drains_inflight_no_new_dispatch(
 def test_cleanup_stale_round_files_unlinks_pre_existing(
     cli: ModuleType, tmp_path: Path
 ) -> None:
-    """Pre-existing ``evolve_round_<n>.json`` files are unlinked at startup."""
-    # Pre-touch some stale slot files.
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    stale_0 = tmp_path / "evolve_round_0.json"
-    stale_99 = tmp_path / "evolve_round_99.json"
+    """Pre-existing per-worker files and ``cand_*`` dirs are cleaned at startup."""
+    # Pre-touch some stale slot files in the state dir.
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    stale_0 = state_dir / "evolve_round_0.json"
+    stale_99 = state_dir / "evolve_round_99.json"
     stale_0.write_text('{"stale": "yes"}', encoding="utf-8")
     stale_99.write_text('{"stale": "old run"}', encoding="utf-8")
     # Unrelated file should NOT be unlinked.
-    keep = tmp_path / "evolve_run_state.json"
+    keep = state_dir / "evolve_run_state.json"
     keep.write_text("{}", encoding="utf-8")
 
-    n = cli._cleanup_stale_round_files(tmp_path)
-    assert n == 2
+    # Iter-3 Fix 3.1: pre-create orphaned cand_* scratch dirs in a separate
+    # bots dir. Each contains a file so we can verify rmtree (not just
+    # rmdir) succeeds.
+    bots_dir = tmp_path / "bots"
+    bots_dir.mkdir(parents=True, exist_ok=True)
+    cand_a = bots_dir / "cand_a1b2"
+    cand_b = bots_dir / "cand_dead1"
+    cand_a.mkdir()
+    cand_b.mkdir()
+    (cand_a / "bot.py").write_text("# leftover", encoding="utf-8")
+    (cand_b / "bot.py").write_text("# leftover", encoding="utf-8")
+
+    n = cli._cleanup_stale_round_files(state_dir, bots_dir=bots_dir)
+    assert n == 4  # 2 round files + 2 cand dirs
     assert not stale_0.exists()
     assert not stale_99.exists()
     assert keep.exists()
+    assert not cand_a.exists()
+    assert not cand_b.exists()
 
 
 def test_cleanup_stale_round_files_handles_missing_dir(
@@ -1011,7 +1066,34 @@ def test_cleanup_stale_round_files_handles_missing_dir(
 ) -> None:
     """Missing state_dir returns 0 with no error."""
     nonexistent = tmp_path / "does_not_exist"
-    assert cli._cleanup_stale_round_files(nonexistent) == 0
+    assert cli._cleanup_stale_round_files(
+        nonexistent, bots_dir=tmp_path / "no_bots"
+    ) == 0
+
+
+def test_cleanup_preserves_versioned_dirs(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """``bots/v<N>/`` dirs must NEVER be rmtree'd — only ``cand_*`` matches."""
+    bots_dir = tmp_path / "bots"
+    bots_dir.mkdir()
+    # Pre-create three versioned dirs with content.
+    for name in ("v0", "v7", "v99"):
+        d = bots_dir / name
+        d.mkdir()
+        (d / "bot.py").write_text(f"# {name}", encoding="utf-8")
+    # And one cand_ dir that SHOULD be cleaned.
+    cand = bots_dir / "cand_aaaa1111"
+    cand.mkdir()
+    (cand / "bot.py").write_text("# scratch", encoding="utf-8")
+
+    n = cli._cleanup_stale_round_files(tmp_path / "missing_state", bots_dir=bots_dir)
+    assert n == 1
+    for name in ("v0", "v7", "v99"):
+        d = bots_dir / name
+        assert d.is_dir(), f"versioned dir {name} was wrongly removed"
+        assert (d / "bot.py").is_file()
+    assert not cand.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -1226,3 +1308,216 @@ def test_parallel_crash_appends_crash_row(
     ]
     assert len(crashes) == 1
     assert crashes[0]["phase"] == "fitness"
+
+
+# ---------------------------------------------------------------------------
+# Iter-3 Fix 3.2: worker subprocess group isolation
+# ---------------------------------------------------------------------------
+
+
+def test_popen_kwargs_isolate_process_group(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """Every dispatched worker is spawned with platform-appropriate group kwargs.
+
+    POSIX: ``start_new_session=True`` (setsid in child).
+    Windows: ``creationflags=CREATE_NEW_PROCESS_GROUP``.
+
+    These are the operational pre-condition for ``_sigkill_tree`` —
+    without them, ``os.killpg`` / ``taskkill /T`` cannot reach the
+    claude CLI + SC2_x64 grandchildren.
+    """
+    args = _build_args(tmp_path, concurrency=2)
+    pool = [_make_imp("imp-0", rank=1), _make_imp("imp-1", rank=2)]
+    plans = [_FakeWorkerPlan(bucket="pass") for _ in range(2)]
+    factory = _FakePopenFactory(cli, plans)
+
+    _invoke_dispatcher(cli, pool=pool, args=args, factory=factory)
+
+    assert len(factory.logs) == 2
+    for log in factory.logs:
+        if sys.platform == "win32":
+            assert (
+                log.popen_kwargs.get("creationflags")
+                == subprocess.CREATE_NEW_PROCESS_GROUP
+            ), f"missing CREATE_NEW_PROCESS_GROUP: {log.popen_kwargs}"
+        else:
+            assert log.popen_kwargs.get("start_new_session") is True, (
+                f"missing start_new_session=True: {log.popen_kwargs}"
+            )
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX-only killpg behavior"
+)
+def test_sigkill_tree_calls_killpg_on_posix(
+    cli: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``_sigkill_tree`` resolves the worker's pgid then SIGKILLs the group."""
+    calls: list[tuple[int, int]] = []
+    pgid_lookups: list[int] = []
+
+    def fake_killpg(pgid: int, sig: int) -> None:
+        calls.append((pgid, sig))
+
+    def fake_getpgid(pid: int) -> int:
+        pgid_lookups.append(pid)
+        return 12345
+
+    monkeypatch.setattr(os, "killpg", fake_killpg)
+    monkeypatch.setattr(os, "getpgid", fake_getpgid)
+
+    class FakeProc:
+        pid = 99
+
+    cli._sigkill_tree(FakeProc())
+    assert pgid_lookups == [99]
+    assert calls == [(12345, signal.SIGKILL)]
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX-only killpg behavior"
+)
+def test_sigkill_tree_swallows_process_lookup_error_on_posix(
+    cli: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Already-dead worker (ProcessLookupError on getpgid) does not raise."""
+
+    def fake_getpgid(pid: int) -> int:
+        raise ProcessLookupError(f"no such process {pid}")
+
+    killpg_called = []
+
+    def fake_killpg(pgid: int, sig: int) -> None:  # pragma: no cover
+        killpg_called.append((pgid, sig))
+
+    monkeypatch.setattr(os, "getpgid", fake_getpgid)
+    monkeypatch.setattr(os, "killpg", fake_killpg)
+
+    class FakeProc:
+        pid = 99
+
+    cli._sigkill_tree(FakeProc())  # must not raise
+    assert killpg_called == []  # never reached
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="Windows-only taskkill behavior"
+)
+def test_sigkill_tree_calls_taskkill_on_windows(
+    cli: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``_sigkill_tree`` runs ``taskkill /T /F /PID <pid>`` on Windows."""
+    runs: list[list[str]] = []
+
+    def fake_run(
+        argv: list[str], **_kwargs: Any
+    ) -> subprocess.CompletedProcess[bytes]:
+        runs.append(argv)
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    class FakeProc:
+        pid = 99
+        sent: list[int] = []
+
+        def send_signal(self, sig: int) -> None:
+            self.sent.append(sig)
+
+    proc = FakeProc()
+    cli._sigkill_tree(proc)
+    assert any(
+        argv[:2] == ["taskkill", "/T"] and "/F" in argv and "99" in argv
+        for argv in runs
+    ), f"taskkill argv not found in: {runs}"
+
+
+# ---------------------------------------------------------------------------
+# Iter-3 Fix 3.3: worker crash payload surfaces in dispatcher's crash log
+# ---------------------------------------------------------------------------
+
+
+def test_worker_crash_payload_surfaces_in_log(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """When a worker writes ``_write_crash`` then exits nonzero, the
+    dispatcher's ``data/evolve_crashes.jsonl`` row carries the worker's
+    real ``traceback`` + ``error_type`` (not the synthetic ``RuntimeError``
+    produced from just the exit code).
+
+    Without this, the result file is unlinked in the reaper before any
+    diagnosis is possible — the operator sees only ``returncode=N``.
+    """
+    args = _build_args(tmp_path, concurrency=2)
+    pool = [_make_imp("imp-crash", rank=1)]
+    fake_worker_tb = (
+        "Traceback (most recent call last):\n"
+        '  File "scripts/evolve_worker.py", line 99, in <module>\n'
+        "    raise NotImplementedError(\"unrolled by worker\")\n"
+        "NotImplementedError: unrolled by worker\n"
+    )
+    plans = [
+        _FakeWorkerPlan(
+            bucket="fail",
+            returncode=1,
+            write_result=False,
+            crash_payload={
+                "crash": True,
+                "error_type": "NotImplementedError",
+                "error_message": "unrolled by worker",
+                "traceback": fake_worker_tb,
+            },
+        )
+    ]
+    factory = _FakePopenFactory(cli, plans)
+
+    _invoke_dispatcher(cli, pool=pool, args=args, factory=factory)
+
+    crashes = [
+        json.loads(line)
+        for line in args.crash_log_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(crashes) == 1
+    row = crashes[0]
+    assert row["phase"] == "fitness"
+    # The dispatcher's synthetic exc message now includes the worker's
+    # real type + message, not just the returncode.
+    assert "NotImplementedError" in row["error_message"]
+    assert "unrolled by worker" in row["error_message"]
+    # And the worker's real traceback is preserved verbatim.
+    assert row["worker_traceback"] == fake_worker_tb
+    # Sanity: dispatcher's own error_type stays RuntimeError (the synthetic
+    # exception class), but error_message now carries the worker's type
+    # via _make_crash_exc folding it in.
+    assert row["error_type"] == "RuntimeError"
+
+
+def test_worker_crash_no_payload_falls_back_to_synthetic(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """When a worker exits nonzero WITHOUT writing a crash payload (e.g. SIGKILL
+    by the OS, segfault), the dispatcher records the legacy synthetic exception
+    and ``worker_traceback`` is absent from the JSONL row."""
+    args = _build_args(tmp_path, concurrency=2)
+    pool = [_make_imp("imp-segfault", rank=1)]
+    plans = [
+        _FakeWorkerPlan(
+            bucket="fail", returncode=139, write_result=False
+        )
+    ]
+    factory = _FakePopenFactory(cli, plans)
+
+    _invoke_dispatcher(cli, pool=pool, args=args, factory=factory)
+
+    crashes = [
+        json.loads(line)
+        for line in args.crash_log_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(crashes) == 1
+    row = crashes[0]
+    assert row["error_type"] == "RuntimeError"
+    assert "returncode=139" in row["error_message"]
+    assert "worker_traceback" not in row
