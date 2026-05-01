@@ -348,6 +348,7 @@ Spike 3 (`scripts/spike3_launch.sh`) already validated this exact topology: 4 se
 
 - **Problem:** Refactor `frontend/src/components/EvolutionTab.tsx` so the existing single-card render becomes a per-card subcomponent rendered inside a CSS grid. Grid auto-sizes: 1 column at width<800px, 2 columns at 800-1200px, 4 columns at >1200px. At N=1 the layout must be visually identical to today (single centered card) — this is the byte-identical UX promise that pairs with Decision D-1 on the engine side. Add per-card "worker N" label badge and "phase: fitness/idle" status indicator. Keep all existing Pool / Results sections of the tab unchanged.
 - **Issue:** #246
+- **Status:** DONE (2026-04-30) — code review iter 1 flagged grid breakpoint deviation + 3 lows; iter 2 fixed CSS-class-driven media queries (1/<800px, 2/800-1199, 4/>=1200px) + grid-margin double-spacing + test-id collision risk. vitest 119/119, tsc + vite build clean. Visual N=1-vs-master + N=2/N=4 Playwright evidence accumulated for Step 8 operator gate.
 - **Flags:** `--reviewers code --ui`
 - **Produces:** Grid-rendering tab; updated vitest snapshots; Playwright evidence for N=1 (single card matches today), N=2 (two cards), N=4 (four cards) rendered states.
 - **Done when:** vitest green; Playwright evidence shows the three render states; N=1 visual diff vs current `master` is empty.

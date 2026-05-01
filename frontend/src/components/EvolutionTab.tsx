@@ -7,9 +7,113 @@ import type {
   EvolveRoundResult,
   EvolveRunState,
   EvolveLastResult,
+  RunningRound,
 } from "../hooks/useEvolveRun";
 import { StaleDataBanner } from "./StaleDataBanner";
 import { ConfirmDialog } from "./ConfirmDialog";
+
+// Project a per-worker RunningRound (Step 5 of the evolve-parallelization
+// plan; 11 fields) into the legacy EvolveCurrentRound shape (14 fields)
+// so the existing CurrentPhaseCard renderer can be reused per-worker
+// inside the Step 6 grid without branching on field presence. Fields
+// that are dispatcher-level (imp_rank/imp_index, stacked_titles for
+// stack-apply, new_parent/prior_parent for regression) are filled in as
+// nulls/[] -- they are never populated in per-worker round files because
+// stack-apply and regression run on the dispatcher, not on workers.
+function projectRunningRoundToCurrent(
+  rr: RunningRound,
+): EvolveCurrentRound & { worker_id: number } {
+  return {
+    active: rr.active,
+    generation: null,
+    phase: rr.phase,
+    imp_title: rr.imp_title,
+    imp_rank: null,
+    imp_index: null,
+    candidate: rr.candidate,
+    stacked_titles: [],
+    new_parent: null,
+    prior_parent: null,
+    games_played: rr.games_played,
+    games_total: rr.games_total,
+    score_cand: rr.score_cand,
+    score_parent: rr.score_parent,
+    updated_at: rr.updated_at,
+    worker_id: rr.worker_id,
+  };
+}
+
+// Small "[W<id>]" worker badge shown in the top-left corner of every
+// per-worker card in the grid. Differentiates which fan-out slot a
+// given card is rendering when concurrency >= 2.
+function WorkerBadge({ workerId }: { workerId: number }) {
+  return (
+    <span
+      data-testid={`worker-badge-${workerId}`}
+      style={{
+        display: "inline-block",
+        padding: "2px 8px",
+        borderRadius: "3px",
+        backgroundColor: "rgba(255,255,255,0.08)",
+        color: "#aaa",
+        fontFamily: "monospace",
+        fontSize: "0.8em",
+        fontWeight: 600,
+      }}
+    >
+      W{workerId}
+    </span>
+  );
+}
+
+// Dim placeholder card used in the grid when a worker slot has no
+// active round yet (idle skeleton from /api/evolve/running-rounds).
+// Renders with the same outer dimensions as a populated card so the
+// grid doesn't reflow when a worker picks up its first round. Always
+// rendered inside the grid (gap: 16px owns row spacing), so we drop
+// the per-card vertical margins -- otherwise gap+margins double-space
+// row-to-row in multi-row layouts (Step 6 review finding #2).
+function IdleWorkerCard({ workerId }: { workerId: number }) {
+  return (
+    <section
+      className="stat-card"
+      aria-label={`worker ${workerId} idle`}
+      data-testid={`worker-card-idle-${workerId}`}
+      style={{
+        padding: "20px 24px",
+        borderLeft: "4px solid #555",
+        backgroundColor: "rgba(255,255,255,0.01)",
+        borderRadius: "6px",
+        opacity: 0.55,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "12px",
+          marginBottom: "12px",
+        }}
+      >
+        <WorkerBadge workerId={workerId} />
+        <span
+          style={{
+            color: "#888",
+            fontSize: "0.95em",
+            fontWeight: 600,
+            textTransform: "uppercase",
+            letterSpacing: "1px",
+          }}
+        >
+          idle
+        </span>
+      </div>
+      <div style={{ color: "#666", fontSize: "0.9em" }}>
+        Waiting for next imp…
+      </div>
+    </section>
+  );
+}
 
 // --- Helper components ---
 
@@ -344,10 +448,20 @@ function MatchupGrid({
 function CurrentPhaseCard({
   round,
   runParent,
+  workerId,
 }: {
   round: EvolveCurrentRound;
   runParent: string | null;
+  // When set (Step 6 grid layout, concurrency>=2), a "[W<id>]" badge
+  // is rendered in the card header, the data-testid is keyed by
+  // worker_id (so multiple cards in the same DOM don't collide on
+  // getByTestId), and the per-card vertical margins are dropped so
+  // the grid `gap` is the sole source of row spacing. When undefined
+  // (legacy single-card N=1 path), the card is byte-identical to
+  // pre-parallel master.
+  workerId?: number;
 }) {
+  const inGrid = workerId !== undefined;
   const phase = round.phase ?? "starting";
   const total = round.games_total ?? 0;
   const played = round.games_played ?? 0;
@@ -552,10 +666,15 @@ function CurrentPhaseCard({
     <section
       className="stat-card"
       aria-label="current phase"
-      data-testid="current-round-card"
+      data-testid={
+        inGrid ? `worker-card-active-${workerId}` : "current-round-card"
+      }
       style={{
-        marginTop: "20px",
-        marginBottom: "24px",
+        // Drop top/bottom margins inside the grid -- the grid `gap`
+        // (16px) is the sole source of row spacing. Outside the grid
+        // (legacy single-card N=1 path) keep the original margins.
+        marginTop: inGrid ? 0 : "20px",
+        marginBottom: inGrid ? 0 : "24px",
         padding: "20px 24px",
         borderLeft: `4px solid ${accentColor}`,
         backgroundColor: "rgba(255,255,255,0.02)",
@@ -570,6 +689,7 @@ function CurrentPhaseCard({
           marginBottom: "12px",
         }}
       >
+        {inGrid ? <WorkerBadge workerId={workerId} /> : null}
         <PhaseBadge phase={phase} />
         <h3 style={{ margin: 0, fontSize: "1.15em", fontWeight: 600 }}>
           {headline}
@@ -578,6 +698,77 @@ function CurrentPhaseCard({
       {subline}
       {progressNode}
     </section>
+  );
+}
+
+// Step 6 of the evolve-parallelization plan: per-worker fan-out grid.
+// Plan §347 specifies discrete breakpoints driven by viewport width:
+//   <800px       -> 1 column
+//   800-1199px   -> 2 columns
+//   >=1200px     -> 4 columns
+// We use explicit @media queries (not auto-fill) so the column count
+// matches the spec exactly at every viewport width -- auto-fill +
+// minmax(320px, 1fr) yields 3 columns at ~1199px, which violates
+// §347. The CSS lives in a sibling <style> tag scoped via the
+// `evolve-running-rounds-grid` class. `align-items: start` keeps
+// heterogeneous card heights (active vs idle, fitness vs stack_apply)
+// from stretching to the tallest sibling.
+//
+// Inactive worker slots render as a dim IdleWorkerCard so the grid
+// doesn't reflow as workers pick up imps asynchronously.
+const WORKER_ROUNDS_GRID_STYLE = `
+.evolve-running-rounds-grid {
+  display: grid;
+  gap: 16px;
+  align-items: start;
+  margin-top: 20px;
+  margin-bottom: 24px;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 800px) {
+  .evolve-running-rounds-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+@media (min-width: 1200px) {
+  .evolve-running-rounds-grid {
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+  }
+}
+`;
+
+function WorkerRoundsGrid({
+  rounds,
+  runParent,
+}: {
+  rounds: RunningRound[];
+  runParent: string | null;
+}) {
+  return (
+    <>
+      <style>{WORKER_ROUNDS_GRID_STYLE}</style>
+      <div
+        className="evolve-running-rounds-grid"
+        data-testid="worker-rounds-grid"
+      >
+        {rounds.map((rr) => {
+          if (!rr.active) {
+            return (
+              <IdleWorkerCard key={rr.worker_id} workerId={rr.worker_id} />
+            );
+          }
+          const projected = projectRunningRoundToCurrent(rr);
+          return (
+            <CurrentPhaseCard
+              key={rr.worker_id}
+              round={projected}
+              runParent={rr.parent ?? runParent}
+              workerId={rr.worker_id}
+            />
+          );
+        })}
+      </div>
+    </>
   );
 }
 
@@ -719,8 +910,15 @@ function RoundHistoryTable({ rounds }: { rounds: EvolveRoundResult[] }) {
 // --- Main component ---
 
 export function EvolutionTab() {
-  const { state, control, pool, results, currentRound, sendControl } =
-    useEvolveRun();
+  const {
+    state,
+    control,
+    pool,
+    results,
+    currentRound,
+    runningRounds,
+    sendControl,
+  } = useEvolveRun();
   const run: EvolveRunState = state.data ?? {
     status: "idle",
     parent_start: null,
@@ -846,7 +1044,26 @@ export function EvolutionTab() {
             </section>
           ) : null}
 
-          {currentRound.data?.active ? (
+          {/*
+            Step 6 of the evolve-parallelization plan: per-worker grid
+            when a parallel run is active (concurrency>=2). At
+            concurrency<=1 we keep the legacy single-card path verbatim
+            so the N=1 layout is byte-identical to pre-parallel
+            master -- this is the visual-parity promise that pairs
+            with Decision D-1 on the engine side. When the
+            running-rounds endpoint is inactive (no parallel run, or
+            the per-worker files haven't been written yet), we also
+            fall back to the legacy current-round path. Decision: see
+            documentation/plans/evolve-parallelization-plan.md §7
+            Step 6.
+          */}
+          {runningRounds.data?.active &&
+          (runningRounds.data.concurrency ?? 1) >= 2 ? (
+            <WorkerRoundsGrid
+              rounds={runningRounds.data.rounds}
+              runParent={run.parent_current ?? run.parent_start}
+            />
+          ) : currentRound.data?.active ? (
             <CurrentPhaseCard
               round={currentRound.data}
               runParent={run.parent_current ?? run.parent_start}

@@ -24,6 +24,7 @@ interface MockFixture {
   pool?: Record<string, unknown>;
   results?: Record<string, unknown>;
   currentRound?: Record<string, unknown>;
+  runningRounds?: Record<string, unknown>;
 }
 
 interface PutCapture {
@@ -47,6 +48,12 @@ function mockFetch(
     pool: [],
   };
   const results = fixture.results ?? { rounds: [] };
+  const runningRounds = fixture.runningRounds ?? {
+    active: false,
+    concurrency: null,
+    run_id: null,
+    rounds: [],
+  };
   const currentRound = fixture.currentRound ?? {
     active: false,
     generation: null,
@@ -70,6 +77,9 @@ function mockFetch(
     init?: RequestInit,
   ): Promise<Response> => {
     const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("/api/evolve/running-rounds")) {
+      return jsonResponse(runningRounds);
+    }
     if (url.includes("/api/evolve/current-round")) {
       return jsonResponse(currentRound);
     }
@@ -595,5 +605,206 @@ describe("EvolutionTab", () => {
     expect(statsText).toContain("Resurrections Left:");
     expect(statsText).toContain("Pool Active:");
     expect(statsText).toContain("Wall Budget:");
+  });
+
+  // --- Per-worker fan-out grid (Step 6 of evolve-parallelization) ---
+  //
+  // Visual-parity contract: at concurrency<=1 (or when running-rounds is
+  // inactive) the legacy single-card path renders; at concurrency>=2
+  // the new grid path renders one card per worker (active or idle).
+
+  it("renders single-card layout at concurrency=1 (running-rounds inactive)", async () => {
+    // running-rounds endpoint inactive -> falls through to the legacy
+    // currentRound single-card path. This is the byte-identical N=1
+    // visual-parity case that pairs with engine Decision D-1.
+    installFetch({
+      state: runningState,
+      currentRound: {
+        active: true,
+        generation: 3,
+        phase: "fitness",
+        imp_title: "Solo Imp",
+        imp_rank: 1,
+        imp_index: 0,
+        candidate: "cand_solo",
+        stacked_titles: [],
+        new_parent: null,
+        prior_parent: null,
+        games_played: 1,
+        games_total: 5,
+        score_cand: 1,
+        score_parent: 0,
+        updated_at: "2026-04-30T12:00:00+00:00",
+      },
+      runningRounds: {
+        active: false,
+        concurrency: 1,
+        run_id: null,
+        rounds: [],
+      },
+    });
+    render(<EvolutionTab />);
+    await waitFor(() => {
+      expect(screen.getByTestId("current-round-card")).toBeTruthy();
+    });
+    // Single card -- no grid container, no worker badge.
+    expect(screen.queryByTestId("worker-rounds-grid")).toBeNull();
+    expect(screen.queryByTestId("worker-badge-0")).toBeNull();
+    // Card content matches the legacy single-card path verbatim.
+    expect(screen.getByTestId("round-phase-fitness")).toBeTruthy();
+    expect(screen.getByTestId("current-round-progress").textContent).toContain(
+      "1/5",
+    );
+  });
+
+  it("renders 2-card grid at concurrency=2", async () => {
+    installFetch({
+      state: runningState,
+      runningRounds: {
+        active: true,
+        concurrency: 2,
+        run_id: "20260430-1200",
+        rounds: [
+          {
+            worker_id: 0,
+            active: true,
+            phase: "fitness",
+            imp_title: "Chrono Boost",
+            candidate: "cand_aaa",
+            parent: "v1",
+            games_played: 2,
+            games_total: 5,
+            score_cand: 1,
+            score_parent: 1,
+            updated_at: "2026-04-30T12:01:00+00:00",
+          },
+          {
+            worker_id: 1,
+            active: true,
+            phase: "fitness",
+            imp_title: "Forward Pylon",
+            candidate: "cand_bbb",
+            parent: "v1",
+            games_played: 0,
+            games_total: 5,
+            score_cand: 0,
+            score_parent: 0,
+            updated_at: "2026-04-30T12:01:00+00:00",
+          },
+        ],
+      },
+    });
+    render(<EvolutionTab />);
+    await waitFor(() => {
+      expect(screen.getByTestId("worker-rounds-grid")).toBeTruthy();
+    });
+    // Two cards rendered; both have worker badges.
+    expect(screen.getByTestId("worker-badge-0")).toBeTruthy();
+    expect(screen.getByTestId("worker-badge-1")).toBeTruthy();
+    // Worker cards in the grid use worker-keyed test-ids (not the
+    // legacy `current-round-card`), so getByTestId on the legacy id
+    // doesn't collide on multi-card layouts.
+    expect(screen.getByTestId("worker-card-active-0")).toBeTruthy();
+    expect(screen.getByTestId("worker-card-active-1")).toBeTruthy();
+    expect(screen.queryByTestId("current-round-card")).toBeNull();
+    // No idle slots in this fixture.
+    expect(screen.queryByTestId("worker-card-idle-0")).toBeNull();
+    expect(screen.queryByTestId("worker-card-idle-1")).toBeNull();
+    // Both per-worker imp titles surface in the grid.
+    const grid = screen.getByTestId("worker-rounds-grid");
+    expect(grid.textContent).toContain("Chrono Boost");
+    expect(grid.textContent).toContain("Forward Pylon");
+    // Grid container carries the breakpoint-driven class (the
+    // grid-template-columns rules live in the sibling <style>
+    // block, not in inline style -- see plan §347 / Step 6
+    // review finding #1).
+    expect(grid.className).toContain("evolve-running-rounds-grid");
+  });
+
+  it("renders 4-card grid at concurrency=4 with mixed active and idle slots", async () => {
+    installFetch({
+      state: runningState,
+      runningRounds: {
+        active: true,
+        concurrency: 4,
+        run_id: "20260430-1300",
+        rounds: [
+          {
+            worker_id: 0,
+            active: true,
+            phase: "fitness",
+            imp_title: "Imp Alpha",
+            candidate: "cand_a",
+            parent: "v1",
+            games_played: 3,
+            games_total: 5,
+            score_cand: 2,
+            score_parent: 1,
+            updated_at: "2026-04-30T13:00:00+00:00",
+          },
+          {
+            worker_id: 1,
+            active: true,
+            phase: "fitness",
+            imp_title: "Imp Beta",
+            candidate: "cand_b",
+            parent: "v1",
+            games_played: 1,
+            games_total: 5,
+            score_cand: 0,
+            score_parent: 1,
+            updated_at: "2026-04-30T13:00:00+00:00",
+          },
+          {
+            worker_id: 2,
+            active: false,
+            phase: null,
+            imp_title: null,
+            candidate: null,
+            parent: null,
+            games_played: null,
+            games_total: null,
+            score_cand: null,
+            score_parent: null,
+            updated_at: null,
+          },
+          {
+            worker_id: 3,
+            active: false,
+            phase: null,
+            imp_title: null,
+            candidate: null,
+            parent: null,
+            games_played: null,
+            games_total: null,
+            score_cand: null,
+            score_parent: null,
+            updated_at: null,
+          },
+        ],
+      },
+    });
+    render(<EvolutionTab />);
+    await waitFor(() => {
+      expect(screen.getByTestId("worker-rounds-grid")).toBeTruthy();
+    });
+    // Active workers 0 and 1 rendered as populated cards with badges
+    // and worker-keyed test-ids.
+    expect(screen.getByTestId("worker-badge-0")).toBeTruthy();
+    expect(screen.getByTestId("worker-badge-1")).toBeTruthy();
+    expect(screen.getByTestId("worker-card-active-0")).toBeTruthy();
+    expect(screen.getByTestId("worker-card-active-1")).toBeTruthy();
+    // The legacy single-card test-id MUST NOT appear when the grid
+    // is active -- otherwise getByTestId in older tests would throw
+    // "found multiple elements" if they ever activated the grid.
+    expect(screen.queryByTestId("current-round-card")).toBeNull();
+    // Idle workers 2 and 3 rendered as dim placeholder cards (NOT
+    // hidden) -- the grid keeps a stable footprint as workers fan in.
+    expect(screen.getByTestId("worker-card-idle-2")).toBeTruthy();
+    expect(screen.getByTestId("worker-card-idle-3")).toBeTruthy();
+    // Idle cards expose a worker badge too so the slot index is
+    // still visible to the operator.
+    expect(screen.getByTestId("worker-badge-2")).toBeTruthy();
+    expect(screen.getByTestId("worker-badge-3")).toBeTruthy();
   });
 });
