@@ -119,6 +119,100 @@ PS> wsl -d Ubuntu-22.04 bash -lc "ps -ef | grep evolve.py | grep -v grep"
 Should show TWO lines: parent `uv run python scripts/evolve.py` and child
 `python3 scripts/evolve.py`. The python child has high CPU% (the actual loop).
 
+### Evolve — parallel concurrency (`--concurrency N`)
+
+`scripts/evolve.py` accepts `--concurrency N` (default `1`). At `N=1` the
+behaviour is byte-identical to the historical serial path (Decision D-1 in
+`documentation/plans/evolve-parallelization-plan.md`). At `N>1` the parent
+spawns N worker subprocesses that each run a fitness eval against the
+shared parent in parallel. Stack-apply + regression remain serial in the
+parent process; only the fitness fan-out parallelises.
+
+**Smoke-gate invocation** (60-second cycle, used by Step 8 of the
+parallelization plan to verify a parallel run completes a generation):
+
+```powershell
+PS> uv run python scripts/evolve.py --concurrency 2 --pool-size 2 --hours 0
+```
+
+`--hours 0` disables the wall-clock budget so the loop exits as soon as
+the pool is exhausted. Useful for CI / smoke checks; never use for
+production runs.
+
+**Parallel-run idempotence (Decision D-6).** Each worker writes
+`data/evolve_round_<wid>.json` for its own per-game progress; the parent
+writes `data/evolve_round.json` (the singular file the dashboard reads).
+On every parent startup, the parent sweeps stale `evolve_round_*.json`
+files left behind by a crashed prior run before launching new workers —
+no manual cleanup required between runs.
+
+**Failure-mode buckets (Decision D-7).** When a worker fails to deliver
+a fitness verdict, the parent classifies it into one of four buckets.
+`evolve_results.jsonl` carries the bucket label so the dashboard and the
+morning report can distinguish them. All four share the same on-disk
+accounting path (`_record_parallel_failure`):
+
+| Bucket | Meaning | Worker outcome |
+|---|---|---|
+| `dispatch-fail` | Worker subprocess never started (fork/exec error, missing arg, etc.) | imp evicted; `retry_count++` (subject to retry-cap) |
+| `crash` | Worker started, ran a game, then crashed (Python traceback in `evolve_crashes.jsonl`) | imp evicted; `retry_count++` (subject to retry-cap) |
+| `malformed` | Worker exited 0 but the verdict JSON is missing/unparseable | imp evicted; `retry_count++` (subject to retry-cap) |
+| `hang` | Worker exceeded `--hard-timeout`; parent SIGKILLs it | imp evicted; `retry_count++` (subject to retry-cap) |
+
+The bucket label is preserved in `evolve_results.jsonl` for diagnostics,
+but the policy is uniform: every parallel failure increments the imp's
+retry counter, and the imp is dropped permanently once `retry_count`
+reaches `_RETRY_CAP` (default 3) — the same retry-cap path the serial
+crash branch uses.
+
+**Parallel-run launch (Linux, 4-way).**
+
+```powershell
+PS> wsl -d Ubuntu-22.04                         # drops you into bash
+```
+
+```bash
+$ cd /mnt/c/Users/abero/dev/Alpha4Gate
+$ SC2PATH=$HOME/StarCraftII \
+  SC2_WSL_DETECT=0 \
+  UV_PROJECT_ENVIRONMENT=$HOME/venv-alpha4gate-linux \
+  EVO_AUTO=1 \
+  nohup uv run python scripts/evolve.py \
+      --concurrency 4 --hours 4 --pool-size 12 \
+      > logs/evolve-parallel-$(date +%Y%m%d-%H%M).log 2>&1 &
+$ echo "PID: $!"
+$ exit
+```
+
+Open `http://localhost:3000/evolution` to watch the 4 cards populate
+(one card per worker; parent process owns the run-state header).
+
+### Operator quickstart — first 4-way parallel run
+
+The minimal recipe a fresh-context operator runs to launch their first
+parallel evolve run end-to-end. Copy-paste each block in order.
+
+```
+# 1. Backend already running on port 8765? If not, start in a separate Windows shell:
+uv run python -m bots.v3.runner --serve
+
+# 2. Frontend already running on port 3000? If not, start in another Windows shell:
+cd frontend && npm run dev
+
+# 3. Launch parallel evolve from inside Ubuntu-22.04 WSL (interactive, NOT one-shot):
+wsl -d Ubuntu-22.04
+cd /mnt/c/Users/abero/dev/Alpha4Gate
+SC2_WSL_DETECT=0 nohup uv run --project . python scripts/evolve.py \
+  --concurrency 4 --hours 4 --no-commit \
+  > logs/evolve-parallel-$(date +%Y%m%d-%H%M).log 2>&1 &
+exit  # detach the WSL shell; the nohup'd job survives
+```
+
+Then open `http://localhost:3000/evolution` to watch the 4 cards populate.
+
+`--no-commit` is for the first shakeout — drop it once you're confident
+the pipeline is healthy and you want EVO_AUTO commits to land for real.
+
 ### Evolve inject-one — debug stack-apply by injecting a known-good imp
 
 Bypasses fitness, drives one named favorite straight through stack-apply +

@@ -385,6 +385,7 @@ Spike 3 (`scripts/spike3_launch.sh`) already validated this exact topology: 4 se
   Open `http://localhost:3000/evolution` to watch the 4 cards populate.
 
 - **Issue:** #247
+- **Status:** DONE (2026-04-30) — operator-commands.md + improve-bot-evolve SKILL.md + master-plan §Phase O updated; iter 2 corrected failure-mode table to match shipped uniform retry-eviction policy. All done-when grep gates pass.
 - **Type:** code
 - **Flags:** `--reviewers code`
 - **Produces:** `operator-commands.md` `--concurrency` section + quickstart; `improve-bot-evolve` skill `--concurrency` arg; one-line master-plan diff.
