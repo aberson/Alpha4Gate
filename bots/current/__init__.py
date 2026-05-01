@@ -53,7 +53,7 @@ import importlib.util
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from types import ModuleType
+from types import CodeType, ModuleType
 
 
 def _read_version() -> str:
@@ -140,6 +140,21 @@ class _AliasLoader(importlib.abc.Loader):
     def exec_module(self, module: ModuleType) -> None:
         # Already fully initialized by the real import; nothing to do.
         return None
+
+    def get_code(self, fullname: str) -> CodeType | None:
+        # ``runpy._get_module_details`` calls ``loader.get_code(modname)`` to
+        # fetch the code object for ``python -m`` execution. Without this,
+        # ``python -m bots.current.runner`` (and any other submodule) raises
+        # ``AttributeError: '_AliasLoader' object has no attribute 'get_code'``.
+        # Delegate to the real target module's loader so the alias is
+        # transparent to ``-m`` invocations.
+        target_spec = getattr(self._target, "__spec__", None)
+        if target_spec is None or target_spec.loader is None:
+            return None
+        loader = target_spec.loader
+        if not hasattr(loader, "get_code"):
+            return None
+        return loader.get_code(self._target.__name__)  # type: ignore[no-any-return]
 
 
 _version = _read_version()

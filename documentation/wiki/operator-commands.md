@@ -37,7 +37,7 @@ PS> uv run python -m bots.v0 --role solo --map Simple64 --difficulty 1 --decisio
 ### Backend API + WebSockets (for the dashboard)
 
 ```powershell
-PS> uv run python -m bots.v0.runner --serve         # backend only on :8765
+PS> uv run python -m bots.current.runner --serve    # backend only on :8765 (auto-tracks current.txt)
 PS> bash scripts/start-dev.sh                       # backend + frontend together (used by build-step --ui)
 ```
 
@@ -194,7 +194,7 @@ parallel evolve run end-to-end. Copy-paste each block in order.
 
 ```
 # 1. Backend already running on port 8765? If not, start in a separate Windows shell:
-uv run python -m bots.v3.runner --serve
+uv run python -m bots.current.runner --serve
 
 # 2. Frontend already running on port 3000? If not, start in another Windows shell:
 cd frontend && npm run dev

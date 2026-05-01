@@ -71,6 +71,32 @@ def test_submodule_resolves_to_same_class_via_current() -> None:
     assert lines[1] == f"bots.{current}.learning.database"
 
 
+def test_dash_m_submodule_runs_via_alias() -> None:
+    """``python -m bots.current.<submodule>`` works (not just ``bots.current``).
+
+    Without ``_AliasLoader.get_code``, ``runpy._get_module_details`` raises
+    ``AttributeError: '_AliasLoader' object has no attribute 'get_code'``
+    and operators are forced to spell out the version explicitly
+    (``bots.v7.runner``), defeating the whole point of the alias.
+
+    Picks ``runner --help`` because every bot version has a runner entry
+    point with argparse, so the round-trip surfaces ``--help`` text and
+    exits 0 without spawning anything heavy. Asserting on a substring that
+    appears in every version's runner argparse keeps this test stable
+    across evolve promotions.
+    """
+    result = subprocess.run(
+        [sys.executable, "-m", "bots.current.runner", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    # The runner exposes ``--serve`` and ``--batch`` flags via argparse;
+    # at least one of them appears in --help output regardless of version.
+    assert "--serve" in result.stdout or "--batch" in result.stdout
+
+
 def test_help_delegates_to_bots_v0() -> None:
     """``python -m bots.current --help`` exits 0 and prints the v0 argparse."""
     result = subprocess.run(
