@@ -18,7 +18,6 @@ type Tab =
   | "evolution"
   | "improvements"
   | "processes"
-  | "alerts"
   | "help";
 
 function App() {
@@ -28,7 +27,6 @@ function App() {
   const {
     alerts,
     ackedIds,
-    unreadCount,
     newAlertsThisPoll,
     ackAlert,
     dismissAlert,
@@ -38,7 +36,7 @@ function App() {
 
   return (
     <div className="app">
-      <AlertToast newAlerts={newAlertsThisPoll} onView={() => setTab("alerts")} />
+      <AlertToast newAlerts={newAlertsThisPoll} onView={() => setTab("processes")} />
       <header>
         <h1>Alpha4Gate Dashboard</h1>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", flexWrap: "wrap" }}>
@@ -82,17 +80,6 @@ function App() {
             Processes
           </button>
           <button
-            onClick={() => setTab("alerts")}
-            className={tab === "alerts" ? "active" : ""}
-          >
-            Alerts
-            {unreadCount > 0 ? (
-              <span className="unread-badge" aria-label={`${unreadCount} unread alerts`}>
-                {unreadCount}
-              </span>
-            ) : null}
-          </button>
-          <button
             onClick={() => setTab("help")}
             className={tab === "help" ? "active" : ""}
           >
@@ -111,17 +98,15 @@ function App() {
             <ProcessMonitor />
             <ResourceGauge />
             <WslProcessesPanel />
+            <AlertsPanel
+              alerts={alerts}
+              ackedIds={ackedIds}
+              onAck={ackAlert}
+              onDismiss={dismissAlert}
+              onMarkAllRead={markAllRead}
+              onClearHistory={clearHistory}
+            />
           </>
-        )}
-        {tab === "alerts" && (
-          <AlertsPanel
-            alerts={alerts}
-            ackedIds={ackedIds}
-            onAck={ackAlert}
-            onDismiss={dismissAlert}
-            onMarkAllRead={markAllRead}
-            onClearHistory={clearHistory}
-          />
         )}
         {tab === "help" && <HelpTab />}
       </main>

@@ -1710,6 +1710,16 @@ Investigations that informed the current direction:
 
 Append-only — do not edit prior entries.
 
+- *2026-05-01* — **Dashboard: Alerts tab folded into Processes (6 → 5
+  tabs).** Operator reported not using the Alerts tab. `AlertsPanel`
+  now renders at the bottom of the Processes tab below `ProcessMonitor`
+  / `ResourceGauge` / `WslProcessesPanel`; the dedicated Alerts nav
+  button + unread-count badge are removed. The `AlertToast` "View"
+  button now switches to the Processes tab. Alert engine, storage, and
+  toast behavior unchanged. Five-tab nav: Advisor, Evolution,
+  Improvements, Processes, Help. `frontend/src/App.tsx` only; 124/124
+  vitest pass.
+
 - *2026-04-29* — **Phase 8 Step 11 wall-clock revised: 24 h → 8 h.**
   Step 11's original 24-hour figure was pattern-matched from
   "production soak duration" conventions rather than derived from
