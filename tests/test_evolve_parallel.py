@@ -1521,3 +1521,363 @@ def test_worker_crash_no_payload_falls_back_to_synthetic(
     assert row["error_type"] == "RuntimeError"
     assert "returncode=139" in row["error_message"]
     assert "worker_traceback" not in row
+
+
+# ---------------------------------------------------------------------------
+# Issue #250: parallel mirror-game dispatcher
+# ---------------------------------------------------------------------------
+
+
+def _make_mirror_record(
+    p1: str, p2: str, winner: str | None
+) -> dict[str, Any]:
+    """Build a SelfPlayRecord-shaped dict for the mirror result file."""
+    return {
+        "match_id": "m",
+        "p1_version": p1,
+        "p2_version": p2,
+        "winner": winner,
+        "map_name": "Simple64",
+        "duration_s": 1.0,
+        "seat_swap": False,
+        "timestamp": "2026-04-30T00:00:00+00:00",
+        "error": None,
+    }
+
+
+@dataclass
+class _MirrorPlan:
+    """How a fake mirror worker should behave under poll()."""
+
+    chunk: int
+    polls_before_complete: int = 1
+    returncode: int = 0
+    write_result: bool = True
+    records: list[dict[str, Any]] | None = None
+    crash_payload: dict[str, Any] | None = None
+    never_complete: bool = False
+
+
+class _FakeMirrorPopen:
+    """Stand-in for subprocess.Popen used by the mirror dispatcher tests."""
+
+    def __init__(
+        self,
+        argv: list[str],
+        *,
+        plan: _MirrorPlan,
+        log: _FakePopenLog,
+    ) -> None:
+        self._plan = plan
+        self._log = log
+        self._argv = list(argv)
+        self.pid = id(self) % 100000
+
+    def _maybe_write_result(self) -> None:
+        result_path: Path | None = None
+        p1: str | None = None
+        p2: str | None = None
+        for i, tok in enumerate(self._argv):
+            if tok == "--result-path":
+                result_path = Path(self._argv[i + 1])
+            elif tok == "--p1":
+                p1 = self._argv[i + 1]
+            elif tok == "--p2":
+                p2 = self._argv[i + 1]
+        assert result_path is not None
+        if self._plan.crash_payload is not None:
+            result_path.write_text(
+                json.dumps(self._plan.crash_payload), encoding="utf-8"
+            )
+            return
+        if not self._plan.write_result:
+            return
+        records = self._plan.records
+        if records is None:
+            assert p1 is not None and p2 is not None
+            records = [
+                _make_mirror_record(p1, p2, p1)
+                for _ in range(self._plan.chunk)
+            ]
+        result_path.write_text(
+            json.dumps(
+                {
+                    "mode": "mirror",
+                    "p1": p1,
+                    "p2": p2,
+                    "games_requested": self._plan.chunk,
+                    "records": records,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def poll(self) -> int | None:
+        self._log.poll_count += 1
+        if self._plan.never_complete:
+            return None
+        if self._log.poll_count < self._plan.polls_before_complete:
+            return None
+        if self._log.poll_count == self._plan.polls_before_complete:
+            self._maybe_write_result()
+        return self._plan.returncode
+
+    def send_signal(self, signum: int) -> None:
+        self._log.sent_signals.append(signum)
+
+    def kill(self) -> None:
+        self._log.killed = True
+        self._plan.never_complete = False
+        self._plan.polls_before_complete = max(
+            self._log.poll_count + 1, self._plan.polls_before_complete
+        )
+        if self._plan.returncode == 0 and not self._plan.write_result:
+            self._plan.returncode = -9
+
+    def wait(self, timeout: float | None = None) -> int:
+        return (
+            self._plan.returncode
+            if self._plan.returncode != 0
+            else -9
+        )
+
+
+class _FakeMirrorPopenFactory:
+    """Builds _FakeMirrorPopen instances and tracks every call."""
+
+    def __init__(self, plans: list[_MirrorPlan]) -> None:
+        self._plans = list(plans)
+        self.call_count = 0
+        self.logs: list[_FakePopenLog] = []
+        self.popens: list[_FakeMirrorPopen] = []
+
+    def __call__(
+        self, argv: list[str], *args: Any, **kwargs: Any
+    ) -> _FakeMirrorPopen:
+        self.call_count += 1
+        if not self._plans:
+            raise AssertionError(
+                f"FakeMirrorPopenFactory: no plan for call #{self.call_count}"
+            )
+        plan = self._plans.pop(0)
+        log = _FakePopenLog(argv=list(argv), popen_kwargs=dict(kwargs))
+        self.logs.append(log)
+        popen = _FakeMirrorPopen(argv, plan=plan, log=log)
+        self.popens.append(popen)
+        return popen
+
+
+def test_split_games_even(cli: ModuleType) -> None:
+    """``_split_games`` distributes games as evenly as possible."""
+    assert cli._split_games(6, 2) == [3, 3]
+    assert cli._split_games(3, 2) == [2, 1]
+    assert cli._split_games(3, 4) == [1, 1, 1]  # capped at 3 chunks
+    assert cli._split_games(0, 2) == []
+    assert cli._split_games(5, 1) == [5]
+    assert cli._split_games(4, 0) == []
+
+
+def test_mirror_dispatcher_fans_out_and_concats(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """3 mirror games / concurrency=2 → 2 workers ([2, 1]); records concat in id order."""
+    plans = [_MirrorPlan(chunk=2), _MirrorPlan(chunk=1)]
+    factory = _FakeMirrorPopenFactory(plans)
+
+    records = cli._run_mirror_games_parallel(
+        p1="v7",
+        p2="v7",
+        total_games=3,
+        concurrency=2,
+        map_name="Simple64",
+        game_time_limit=600,
+        hard_timeout=900.0,
+        state_dir=tmp_path,
+        popen_factory=factory,
+        poll_interval_s=0.0,
+    )
+
+    assert factory.call_count == 2
+    # Records: worker 0 played 2, worker 1 played 1 → concat in id order.
+    assert len(records) == 3
+
+    # Each Popen received the platform-appropriate group-isolation kwargs
+    # (iter-3 Fix 3.2 reuse).
+    for log in factory.logs:
+        if sys.platform == "win32":
+            assert (
+                log.popen_kwargs.get("creationflags")
+                == subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+        else:
+            assert log.popen_kwargs.get("start_new_session") is True
+
+    # Worker 0 argv: --games 2; worker 1 argv: --games 1.
+    chunks_seen = []
+    for log in factory.logs:
+        idx = log.argv.index("--games")
+        chunks_seen.append(int(log.argv[idx + 1]))
+    assert chunks_seen == [2, 1]
+
+
+def test_mirror_dispatcher_zero_games_returns_empty(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """0 mirror games → empty list, no Popen calls."""
+    factory = _FakeMirrorPopenFactory([])
+    records = cli._run_mirror_games_parallel(
+        p1="v7",
+        p2="v7",
+        total_games=0,
+        concurrency=2,
+        map_name="Simple64",
+        game_time_limit=600,
+        hard_timeout=900.0,
+        state_dir=tmp_path,
+        popen_factory=factory,
+        poll_interval_s=0.0,
+    )
+    assert records == []
+    assert factory.call_count == 0
+
+
+def test_mirror_dispatcher_crash_raises_runtime_error(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """A worker that exits nonzero with a crash payload surfaces as RuntimeError."""
+    plans = [
+        _MirrorPlan(
+            chunk=2,
+            returncode=1,
+            write_result=False,
+            crash_payload={
+                "crash": True,
+                "error_type": "BurnyError",
+                "error_message": "SC2 client died",
+                "traceback": "Traceback...\n",
+            },
+        ),
+        _MirrorPlan(chunk=1),  # sibling completes fine
+    ]
+    factory = _FakeMirrorPopenFactory(plans)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        cli._run_mirror_games_parallel(
+            p1="v7",
+            p2="v7",
+            total_games=3,
+            concurrency=2,
+            map_name="Simple64",
+            game_time_limit=600,
+            hard_timeout=900.0,
+            state_dir=tmp_path,
+            popen_factory=factory,
+            poll_interval_s=0.0,
+        )
+    assert "BurnyError" in str(excinfo.value)
+    assert "SC2 client died" in str(excinfo.value)
+
+
+def test_mirror_dispatcher_emits_on_game_end(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """``on_game_end`` callback fires once per record collected.
+
+    With ``total_games=2 / concurrency=2`` _split_games produces [1, 1]:
+    two workers of one game each → on_game_end fires twice total.
+    """
+    plans = [_MirrorPlan(chunk=1), _MirrorPlan(chunk=1)]
+    factory = _FakeMirrorPopenFactory(plans)
+
+    seen: list[Any] = []
+
+    def on_end(rec: Any) -> None:
+        seen.append(rec)
+
+    cli._run_mirror_games_parallel(
+        p1="v7",
+        p2="v7",
+        total_games=2,
+        concurrency=2,
+        map_name="Simple64",
+        game_time_limit=600,
+        hard_timeout=900.0,
+        state_dir=tmp_path,
+        on_game_end=on_end,
+        popen_factory=factory,
+        poll_interval_s=0.0,
+    )
+    assert len(seen) == 2
+
+
+def test_make_parallel_run_batch_fn_diverts_mirror_passes_through_fitness(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The wrapper diverts p1==p2 calls to mirror dispatcher, passes others through."""
+    diverted: list[tuple[str, str, int]] = []
+    passed_through: list[tuple[str, str, int]] = []
+
+    def fake_mirror(
+        *,
+        p1: str,
+        p2: str,
+        total_games: int,
+        **_kw: Any,
+    ) -> list[Any]:
+        diverted.append((p1, p2, total_games))
+        return []
+
+    # Stub _run_mirror_games_parallel — we're testing the routing decision,
+    # not the dispatcher itself.
+    monkeypatch.setattr(cli, "_run_mirror_games_parallel", fake_mirror)
+
+    # Stub the passthrough selfplay.run_batch.
+    from orchestrator import selfplay
+
+    def fake_run_batch(
+        p1: str, p2: str, games: int, *_a: Any, **_kw: Any
+    ) -> list[Any]:
+        passed_through.append((p1, p2, games))
+        return []
+
+    monkeypatch.setattr(selfplay, "run_batch", fake_run_batch)
+
+    wrapper = cli._make_parallel_run_batch_fn(
+        concurrency=2, state_dir=tmp_path
+    )
+    # Mirror call: routed.
+    wrapper("v7", "v7", 3, "Simple64", game_time_limit=600, hard_timeout=900.0)
+    # Fitness-style call: passthrough (different p1/p2).
+    wrapper("cand_x", "v7", 5, "Simple64")
+
+    assert diverted == [("v7", "v7", 3)]
+    assert passed_through == [("cand_x", "v7", 5)]
+
+
+def test_make_parallel_run_batch_fn_passthrough_when_concurrency_1(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At concurrency=1 even mirror calls passthrough — Decision-D-1 promise."""
+    diverted: list[Any] = []
+    passed_through: list[Any] = []
+
+    def fake_mirror(**_kw: Any) -> list[Any]:
+        diverted.append(_kw)
+        return []
+
+    monkeypatch.setattr(cli, "_run_mirror_games_parallel", fake_mirror)
+
+    from orchestrator import selfplay
+
+    def fake_run_batch(*args: Any, **_kw: Any) -> list[Any]:
+        passed_through.append(args)
+        return []
+
+    monkeypatch.setattr(selfplay, "run_batch", fake_run_batch)
+
+    wrapper = cli._make_parallel_run_batch_fn(
+        concurrency=1, state_dir=tmp_path
+    )
+    wrapper("v7", "v7", 3, "Simple64")
+    assert diverted == []
+    assert len(passed_through) == 1

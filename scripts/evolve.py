@@ -2428,6 +2428,381 @@ def _run_fitness_phase_parallel(
     return last_result_snap, stop_reason
 
 
+# ---------------------------------------------------------------------------
+# Issue #250: parallel mirror-game dispatcher
+# ---------------------------------------------------------------------------
+
+
+def _split_games(total: int, k: int) -> list[int]:
+    """Split ``total`` games as evenly as possible across ``k`` workers.
+
+    Examples: ``(3, 2) → [2, 1]``, ``(3, 4) → [1, 1, 1]``,
+    ``(6, 2) → [3, 3]``, ``(0, 2) → []``.
+
+    Returns at most ``min(total, k)`` chunks (we never spawn an idle
+    worker), each at least 1 game. Larger chunks come first so the
+    longest-running worker is always slot 0 — keeps the dashboard's
+    progress display intuitive.
+    """
+    if total <= 0 or k <= 0:
+        return []
+    k = min(k, total)
+    base, extra = divmod(total, k)
+    return [base + 1 if i < extra else base for i in range(k)]
+
+
+def _build_mirror_worker_argv(
+    *,
+    p1: str,
+    p2: str,
+    games: int,
+    worker_id: int,
+    result_path: Path,
+    run_id: str,
+    map_name: str,
+    game_time_limit: int,
+    hard_timeout: float,
+    state_dir: Path,
+) -> list[str]:
+    """Construct argv for one mirror-mode ``evolve_worker.py`` subprocess."""
+    return [
+        sys.executable,
+        str(_REPO_ROOT / "scripts" / "evolve_worker.py"),
+        "--mode",
+        "mirror",
+        "--p1",
+        p1,
+        "--p2",
+        p2,
+        "--games",
+        str(games),
+        "--worker-id",
+        str(worker_id),
+        "--result-path",
+        str(result_path),
+        "--run-id",
+        run_id,
+        "--map",
+        map_name,
+        "--game-time-limit",
+        str(game_time_limit),
+        "--hard-timeout",
+        str(hard_timeout),
+        "--state-dir",
+        str(state_dir),
+    ]
+
+
+def _run_mirror_games_parallel(
+    *,
+    p1: str,
+    p2: str,
+    total_games: int,
+    concurrency: int,
+    map_name: str,
+    game_time_limit: int,
+    hard_timeout: float,
+    state_dir: Path,
+    on_game_end: Callable[[Any], None] | None = None,
+    popen_factory: Callable[..., Any] = subprocess.Popen,
+    poll_interval_s: float = _PARALLEL_POLL_INTERVAL_S,
+) -> list[SelfPlayRecord]:
+    """Issue #250: fan ``total_games`` mirror matches across ``concurrency``
+    workers, each running a chunk via ``selfplay.run_batch`` in mode=mirror.
+
+    Returns the concatenated list of records in worker-id order. Mirror
+    games are critical for priors calibration, so any worker crash or hang
+    is surfaced as a ``RuntimeError`` after all siblings have been killed
+    (via :func:`_sigkill_tree`).
+
+    Reuses iter-3's :func:`_popen_group_kwargs` + :func:`_sigkill_tree`
+    so SIGKILL cascades to claude-CLI / SC2_x64 grandchildren.
+    """
+    # Runtime import: keep ``orchestrator.contracts`` off the module-import
+    # critical path — same pattern the fitness dispatcher uses for
+    # FitnessResult.
+    from orchestrator.contracts import SelfPlayRecord as _SelfPlayRecord
+
+    chunks = _split_games(total_games, concurrency)
+    if not chunks:
+        return []
+
+    state_dir.mkdir(parents=True, exist_ok=True)
+    run_id = uuid.uuid4().hex[:8]
+
+    @dataclass
+    class _MirrorWorker:
+        worker_id: int
+        chunk: int
+        result_path: Path
+        started_at: float
+        argv: list[str]
+
+    in_flight: dict[Any, _MirrorWorker] = {}
+    # Per-worker hang cap (mirrors fitness's ``hard_timeout × games × 1.5``).
+    # Computed per-worker because chunk sizes can differ.
+
+    def _hang_cap(chunk: int) -> float:
+        return hard_timeout * chunk * 1.5
+
+    # Spawn every chunk up front (concurrency was already capped to chunks
+    # by _split_games). All-at-once dispatch is simpler than the fitness
+    # phase's queue-and-fill because mirror dispatch is a one-shot phase
+    # at run start.
+    try:
+        for worker_id, chunk in enumerate(chunks):
+            result_path = state_dir / f"evolve_mirror_result_{worker_id}.json"
+            # Best-effort cleanup: stale file from a prior aborted run
+            # would otherwise satisfy the "rc==0 and result file exists"
+            # success branch below.
+            _unlink_quiet(result_path)
+            argv = _build_mirror_worker_argv(
+                p1=p1,
+                p2=p2,
+                games=chunk,
+                worker_id=worker_id,
+                result_path=result_path,
+                run_id=run_id,
+                map_name=map_name,
+                game_time_limit=game_time_limit,
+                hard_timeout=hard_timeout,
+                state_dir=state_dir,
+            )
+            try:
+                proc = popen_factory(argv, **_popen_group_kwargs())
+            except (OSError, FileNotFoundError) as exc:
+                # Failed to even spawn — kill anything we already started
+                # before raising.
+                for _proc in list(in_flight.keys()):
+                    try:
+                        _sigkill_tree(_proc)
+                    except Exception:  # noqa: BLE001
+                        pass
+                raise RuntimeError(
+                    f"mirror dispatch: subprocess.Popen failed for "
+                    f"worker {worker_id}: {exc}"
+                ) from exc
+            in_flight[proc] = _MirrorWorker(
+                worker_id=worker_id,
+                chunk=chunk,
+                result_path=result_path,
+                started_at=time.monotonic(),
+                argv=argv,
+            )
+            _log.info(
+                "evolve[mirror]: dispatched worker %d (chunk=%d) "
+                "p1=%s p2=%s",
+                worker_id,
+                chunk,
+                p1,
+                p2,
+            )
+
+        # Poll until all complete.
+        results_by_worker: dict[int, list[SelfPlayRecord]] = {}
+        crash_payloads: dict[int, dict[str, Any]] = {}
+        completed: list[Any] = []
+        while in_flight:
+            completed.clear()
+            for proc, worker in list(in_flight.items()):
+                rc = proc.poll()
+                if rc is None:
+                    elapsed = time.monotonic() - worker.started_at
+                    if elapsed > _hang_cap(worker.chunk):
+                        _log.error(
+                            "evolve[mirror]: worker %d exceeded %.1fs hang "
+                            "cap; SIGKILLing tree",
+                            worker.worker_id,
+                            _hang_cap(worker.chunk),
+                        )
+                        try:
+                            _sigkill_tree(proc)
+                        except Exception:  # noqa: BLE001
+                            pass
+                        try:
+                            proc.wait(timeout=5.0)
+                        except Exception:  # noqa: BLE001
+                            pass
+                        crash_payloads[worker.worker_id] = {
+                            "crash": True,
+                            "error_type": "TimeoutError",
+                            "error_message": (
+                                f"mirror worker {worker.worker_id} hang "
+                                f"cap {_hang_cap(worker.chunk):.1f}s"
+                            ),
+                            "traceback": "",
+                        }
+                        completed.append(proc)
+                    continue
+
+                # Process exited.
+                if rc != 0:
+                    # Try to read the worker's crash payload (Iter-3
+                    # Fix 3.3 contract).
+                    try:
+                        text = worker.result_path.read_text(encoding="utf-8")
+                        parsed = json.loads(text)
+                        if (
+                            isinstance(parsed, dict)
+                            and parsed.get("crash") is True
+                        ):
+                            crash_payloads[worker.worker_id] = parsed
+                            _log.error(
+                                "evolve[mirror]: worker %d crashed: "
+                                "%s: %s",
+                                worker.worker_id,
+                                parsed.get("error_type"),
+                                parsed.get("error_message"),
+                            )
+                        else:
+                            crash_payloads[worker.worker_id] = {
+                                "crash": True,
+                                "error_type": "RuntimeError",
+                                "error_message": (
+                                    f"worker {worker.worker_id} exited "
+                                    f"non-zero ({rc}); no crash payload"
+                                ),
+                                "traceback": "",
+                            }
+                    except (OSError, json.JSONDecodeError):
+                        crash_payloads[worker.worker_id] = {
+                            "crash": True,
+                            "error_type": "RuntimeError",
+                            "error_message": (
+                                f"worker {worker.worker_id} exited "
+                                f"non-zero ({rc}); result file "
+                                "missing/unreadable"
+                            ),
+                            "traceback": "",
+                        }
+                    completed.append(proc)
+                    continue
+
+                # rc == 0: parse the records list.
+                try:
+                    text = worker.result_path.read_text(encoding="utf-8")
+                    parsed_dict = json.loads(text)
+                    raw_records = parsed_dict.get("records", [])
+                    parsed_records = [
+                        _SelfPlayRecord.from_json(json.dumps(r))
+                        for r in raw_records
+                    ]
+                except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+                    crash_payloads[worker.worker_id] = {
+                        "crash": True,
+                        "error_type": type(exc).__name__,
+                        "error_message": (
+                            f"worker {worker.worker_id} exited 0 but "
+                            f"result file invalid: {exc}"
+                        ),
+                        "traceback": "",
+                    }
+                    completed.append(proc)
+                    continue
+
+                results_by_worker[worker.worker_id] = parsed_records
+                # Fire on_game_end per record so the dispatcher's
+                # current-round dashboard tracker stays in sync.
+                if on_game_end is not None:
+                    for rec in parsed_records:
+                        try:
+                            on_game_end(rec)
+                        except Exception:  # noqa: BLE001
+                            _log.exception(
+                                "evolve[mirror]: on_game_end raised; "
+                                "continuing"
+                            )
+                completed.append(proc)
+
+            for proc in completed:
+                worker = in_flight.pop(proc)
+                _unlink_quiet(worker.result_path)
+            if in_flight:
+                time.sleep(poll_interval_s)
+    finally:
+        # Catastrophic exit (uncaught exception in the loop above): kill
+        # every still in-flight worker so SC2 grandchildren do not orphan.
+        if in_flight:
+            _log.warning(
+                "evolve[mirror]: dispatcher exiting with %d in-flight "
+                "worker(s); SIGKILLing trees",
+                len(in_flight),
+            )
+            for proc, worker in list(in_flight.items()):
+                try:
+                    _sigkill_tree(proc)
+                except Exception:  # noqa: BLE001
+                    pass
+                _unlink_quiet(worker.result_path)
+            in_flight.clear()
+
+    # If any worker crashed, surface a RuntimeError. Mirror games feed
+    # priors calibration and there is no recovery story (unlike fitness's
+    # per-imp eviction).
+    if crash_payloads:
+        first_id = sorted(crash_payloads.keys())[0]
+        first = crash_payloads[first_id]
+        raise RuntimeError(
+            f"mirror dispatch: worker {first_id} failed "
+            f"({first.get('error_type')}: {first.get('error_message')}); "
+            f"{len(crash_payloads)} of {len(chunks)} workers failed total"
+        )
+
+    # Concatenate in worker-id order for stable output.
+    return [
+        rec
+        for wid in sorted(results_by_worker.keys())
+        for rec in results_by_worker[wid]
+    ]
+
+
+def _make_parallel_run_batch_fn(
+    *,
+    concurrency: int,
+    state_dir: Path,
+) -> Callable[..., list[SelfPlayRecord]]:
+    """Issue #250: build a ``run_batch_fn`` that diverts mirror calls.
+
+    The returned callable matches :func:`orchestrator.selfplay.run_batch`'s
+    signature. It identifies mirror calls (``p1 == p2 and games > 1``)
+    and routes them through :func:`_run_mirror_games_parallel`. All other
+    calls (e.g. fitness's ``candidate vs parent``) pass through to the
+    serial ``selfplay.run_batch`` byte-identically — preserving the
+    Decision-D-1 promise that concurrency > 1 only changes mirror-phase
+    behavior.
+
+    Wrapper is a no-op when ``concurrency <= 1``; the orchestrator should
+    not even build it in that case.
+    """
+
+    def _wrapped(
+        p1: str,
+        p2: str,
+        games: int,
+        map_name: str = "Simple64",
+        **kwargs: Any,
+    ) -> list[SelfPlayRecord]:
+        if p1 == p2 and games > 1 and concurrency > 1:
+            return _run_mirror_games_parallel(
+                p1=p1,
+                p2=p2,
+                total_games=games,
+                concurrency=concurrency,
+                map_name=map_name,
+                game_time_limit=kwargs.get("game_time_limit", 1800),
+                hard_timeout=kwargs.get("hard_timeout", 2700.0),
+                state_dir=state_dir,
+                on_game_end=kwargs.get("on_game_end"),
+            )
+        # Passthrough — defer the import so non-evolve callers of this
+        # module don't pay selfplay's burnysc2 import cost.
+        from orchestrator import selfplay
+
+        return selfplay.run_batch(p1, p2, games, map_name, **kwargs)
+
+    return _wrapped
+
+
 def _record_parallel_failure(
     *,
     bucket: str,
@@ -2757,7 +3132,17 @@ def run_loop(
             if claude_fn is not None:
                 pool_kwargs["claude_fn"] = claude_fn
             if run_batch_fn is not None:
+                # Test/caller injection wins over the parallel wrapper —
+                # tests pass their own run_batch_fn to bypass real SC2.
                 pool_kwargs["run_batch_fn"] = run_batch_fn
+            elif concurrency_int > 1:
+                # Issue #250: at concurrency > 1, divert mirror calls
+                # through the parallel mirror dispatcher; fitness's own
+                # candidate-vs-parent calls (p1 != p2) still passthrough.
+                pool_kwargs["run_batch_fn"] = _make_parallel_run_batch_fn(
+                    concurrency=concurrency_int,
+                    state_dir=state_dir,
+                )
             if priors_path is not None:
                 pool_kwargs["prior_imps_path"] = priors_path
             pool = generate_pool_fn(parent_start, **pool_kwargs)

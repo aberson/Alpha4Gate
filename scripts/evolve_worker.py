@@ -1,20 +1,26 @@
-"""Per-worker fitness-eval CLI for parallel evolve.
+"""Per-worker eval CLI for parallel evolve.
 
-This is the one-shot child invoked by the parallel dispatcher (Step 3+ of
-the evolve-parallelization plan, ``documentation/plans/evolve-parallelization-plan.md``).
-A worker:
+This is the one-shot child invoked by the parallel dispatcher
+(``documentation/plans/evolve-parallelization-plan.md``). The worker
+supports two modes — selected via ``--mode``:
 
-1. Reads an ``Improvement`` payload from ``--imp-json``.
-2. Builds a :class:`CurrentRoundPayload` stamped with the worker's
+* ``fitness`` (default) — original behavior. Reads an ``Improvement``
+  payload from ``--imp-json`` and runs
+  :func:`orchestrator.evolve.run_fitness_eval` against ``--parent``;
+  serializes the resulting :class:`FitnessResult` to ``--result-path``.
+* ``mirror`` — issue #250. Plays ``--games`` self-play matches between
+  ``--p1`` and ``--p2`` via :func:`orchestrator.selfplay.run_batch`;
+  serializes the list of :class:`SelfPlayRecord` to ``--result-path``.
+
+Both modes:
+
+1. Build a :class:`CurrentRoundPayload` stamped with the worker's
    ``--worker-id`` and ``--run-id`` so the dispatcher's stale-file filter
    can distinguish fresh writes from leftover state.
-3. Calls :func:`orchestrator.evolve.run_fitness_eval` against the
-   caller-supplied ``--parent``, with an ``on_event`` callback that
-   atomically writes ``<state-dir>/evolve_round_<worker_id>.json`` between
-   each game.
-4. Serializes the resulting :class:`FitnessResult` to ``--result-path`` on
-   success (exit 0), or writes a JSON crash payload — the dispatcher's
-   Decision-D-7 ``crash`` bucket — and exits 1 on any exception.
+2. Atomically update ``<state-dir>/evolve_round_<worker_id>.json``
+   between each game (live dashboard progress).
+3. Write a JSON crash payload — the dispatcher's Decision-D-7 ``crash``
+   bucket — and exit 1 on any exception.
 
 The worker does NOT spawn its own SC2 subprocesses; it uses
 ``orchestrator.selfplay.run_batch`` (the same ``run_batch_fn`` the
@@ -24,7 +30,7 @@ function via its existing PortConfig + Proxy plumbing.
 Logging goes to stdlib at INFO; a one-line run summary is also printed to
 stdout for the dispatcher to capture.
 
-Usage::
+Usage (fitness)::
 
     python scripts/evolve_worker.py \\
         --parent v3 \\
@@ -32,6 +38,13 @@ Usage::
         --worker-id 0 \\
         --result-path /tmp/result_0.json \\
         --games-per-eval 5
+
+Usage (mirror)::
+
+    python scripts/evolve_worker.py --mode mirror \\
+        --p1 v3 --p2 v3 --games 2 \\
+        --worker-id 0 \\
+        --result-path /tmp/mirror_0.json
 """
 
 from __future__ import annotations
@@ -75,22 +88,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python scripts/evolve_worker.py",
         description=(
-            "One-shot fitness-eval worker for parallel evolve. Loads an "
-            "Improvement, runs run_fitness_eval, writes the FitnessResult "
-            "(or a crash payload) to --result-path."
+            "One-shot eval worker for parallel evolve. Either: (fitness) "
+            "loads an Improvement and runs run_fitness_eval, OR (mirror) "
+            "plays --games parent-vs-parent matches via selfplay.run_batch."
         ),
     )
     parser.add_argument(
-        "--parent",
-        required=True,
-        help="Parent version this candidate evaluates against (e.g. v3)",
+        "--mode",
+        choices=("fitness", "mirror"),
+        default="fitness",
+        help=(
+            "Worker mode (default: fitness). "
+            "fitness: --parent + --imp-json -> FitnessResult. "
+            "mirror: --p1 + --p2 + --games -> list[SelfPlayRecord] (issue #250)."
+        ),
     )
-    parser.add_argument(
-        "--imp-json",
-        required=True,
-        type=Path,
-        help="Path to a file containing Improvement.to_json() output",
-    )
+    # --- shared args ---
     parser.add_argument(
         "--worker-id",
         required=True,
@@ -101,7 +114,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--result-path",
         required=True,
         type=Path,
-        help="Where to atomically write the FitnessResult (or crash) JSON",
+        help=(
+            "Where to atomically write the result JSON (fitness: a "
+            "FitnessResult, mirror: ``{\"records\": [SelfPlayRecord, ...]}``, "
+            "either: a crash payload)."
+        ),
     )
     parser.add_argument(
         "--run-id",
@@ -113,16 +130,10 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--games-per-eval",
-        type=int,
-        default=5,
-        help="Games per fitness eval (default: 5)",
-    )
-    parser.add_argument(
         "--map",
         dest="map_name",
         default="Simple64",
-        help="Map name for fitness games (default: Simple64)",
+        help="Map name (default: Simple64)",
     )
     parser.add_argument(
         "--game-time-limit",
@@ -144,6 +155,41 @@ def build_parser() -> argparse.ArgumentParser:
             "Directory for evolve_round_<worker_id>.json (default: "
             "<repo>/data/)"
         ),
+    )
+    # --- fitness-mode args (issue #250: required only when --mode=fitness) ---
+    parser.add_argument(
+        "--parent",
+        default=None,
+        help="(fitness mode) Parent version this candidate evaluates against",
+    )
+    parser.add_argument(
+        "--imp-json",
+        type=Path,
+        default=None,
+        help="(fitness mode) Path to a file containing Improvement.to_json() output",
+    )
+    parser.add_argument(
+        "--games-per-eval",
+        type=int,
+        default=5,
+        help="(fitness mode) Games per fitness eval (default: 5)",
+    )
+    # --- mirror-mode args (issue #250) ---
+    parser.add_argument(
+        "--p1",
+        default=None,
+        help="(mirror mode) First version (e.g. v7)",
+    )
+    parser.add_argument(
+        "--p2",
+        default=None,
+        help="(mirror mode) Second version (e.g. v7 for a mirror)",
+    )
+    parser.add_argument(
+        "--games",
+        type=int,
+        default=None,
+        help="(mirror mode) Number of games to play",
     )
     return parser
 
@@ -193,20 +239,147 @@ def _make_event_callback(
     return _on_event
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Execute one fitness eval. Returns the desired process exit code."""
-    args = build_parser().parse_args(argv)
+def _make_mirror_event_callback(
+    state_path: Path, payload: CurrentRoundPayload
+) -> Callable[[Any], None]:
+    """Build the on_game_end callback for mirror mode.
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    Issue #250: ``selfplay.run_batch`` only emits ``on_game_end`` (a
+    :class:`SelfPlayRecord` per game), not the structured event-dict
+    shape ``run_fitness_eval`` uses. We map each game-end into the
+    same round-state file the dashboard already reads from fitness
+    workers — phase=``mirror_games`` so the UI can switch the badge
+    label without forking the schema.
+    """
 
-    # Use explicit None-check so an empty-string ``--run-id ""`` is
-    # preserved verbatim (not silently overridden by a falsy fallback).
-    run_id: str = (
-        args.run_id if args.run_id is not None else uuid.uuid4().hex[:8]
+    def _on_game_end(_record: Any) -> None:
+        payload.games_played += 1
+        write_current_round_state(state_path, payload)
+
+    return _on_game_end
+
+
+def _run_mirror_mode(args: argparse.Namespace, run_id: str) -> int:
+    """Mirror-mode worker entry. Issue #250.
+
+    Plays ``--games`` matches between ``--p1`` and ``--p2`` via
+    :func:`selfplay.run_batch`, writes
+    ``{"mode": "mirror", "records": [SelfPlayRecord-as-dict, ...]}`` to
+    ``--result-path``. Crash + state-file invariants mirror the fitness
+    path.
+    """
+    if args.p1 is None or args.p2 is None or args.games is None:
+        msg = (
+            "evolve_worker --mode mirror requires --p1, --p2, and --games"
+        )
+        _log.error(msg)
+        try:
+            _write_crash(args.result_path, ValueError(msg), msg)
+        except Exception:  # noqa: BLE001
+            _log.exception("evolve_worker: also failed to write crash payload")
+        return 1
+
+    state_path: Path = args.state_dir / f"evolve_round_{args.worker_id}.json"
+    result_path: Path = args.result_path
+
+    payload = CurrentRoundPayload(
+        generation=0,
+        phase="mirror_games",
+        worker_id=args.worker_id,
+        run_id=run_id,
     )
+    payload.reset_progress(args.games)
+    payload.candidate = args.p2
+    payload.imp_title = f"mirror {args.p1} vs {args.p2}"
+
+    write_current_round_state(state_path, payload)
+
+    on_game_end = _make_mirror_event_callback(state_path, payload)
+
+    try:
+        try:
+            from orchestrator import selfplay
+
+            records = selfplay.run_batch(
+                args.p1,
+                args.p2,
+                args.games,
+                args.map_name,
+                game_time_limit=args.game_time_limit,
+                hard_timeout=args.hard_timeout,
+                on_game_end=on_game_end,
+            )
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:
+            tb = traceback.format_exc()
+            _log.exception(
+                "evolve_worker: mirror run_batch crashed (worker=%d)",
+                args.worker_id,
+            )
+            try:
+                _write_crash(result_path, exc, tb)
+            except Exception:  # noqa: BLE001
+                _log.exception(
+                    "evolve_worker: also failed to write crash payload"
+                )
+            return 1
+
+        try:
+            result_path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(
+                result_path,
+                {
+                    "mode": "mirror",
+                    "p1": args.p1,
+                    "p2": args.p2,
+                    "games_requested": args.games,
+                    "records": [json.loads(r.to_json()) for r in records],
+                },
+            )
+        except Exception as exc:
+            tb = traceback.format_exc()
+            _log.exception(
+                "evolve_worker: failed to write mirror result to %s",
+                result_path,
+            )
+            try:
+                _write_crash(result_path, exc, tb)
+            except Exception:  # noqa: BLE001
+                _log.exception(
+                    "evolve_worker: also failed to write crash payload"
+                )
+            return 1
+    finally:
+        try:
+            clear_current_round_state(state_path)
+        except Exception:  # noqa: BLE001
+            _log.exception(
+                "evolve_worker: failed to clear round-state on exit"
+            )
+
+    summary = (
+        f"evolve_worker[mirror]: worker={args.worker_id} run_id={run_id} "
+        f"p1={args.p1} p2={args.p2} games={len(records)}/{args.games}"
+    )
+    _log.info(summary)
+    print(summary)
+    return 0
+
+
+def _run_fitness_mode(args: argparse.Namespace, run_id: str) -> int:
+    """Fitness-mode worker entry (original behavior, factored for #250)."""
+    if args.parent is None or args.imp_json is None:
+        msg = (
+            "evolve_worker --mode fitness requires --parent and --imp-json"
+        )
+        _log.error(msg)
+        try:
+            _write_crash(args.result_path, ValueError(msg), msg)
+        except Exception:  # noqa: BLE001
+            _log.exception("evolve_worker: also failed to write crash payload")
+        return 1
+
     state_path: Path = args.state_dir / f"evolve_round_{args.worker_id}.json"
     result_path: Path = args.result_path
 
@@ -319,6 +492,26 @@ def main(argv: list[str] | None = None) -> int:
     _log.info(summary)
     print(summary)
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Execute one eval (fitness or mirror). Returns the process exit code."""
+    args = build_parser().parse_args(argv)
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    # Use explicit None-check so an empty-string ``--run-id ""`` is
+    # preserved verbatim (not silently overridden by a falsy fallback).
+    run_id: str = (
+        args.run_id if args.run_id is not None else uuid.uuid4().hex[:8]
+    )
+
+    if args.mode == "mirror":
+        return _run_mirror_mode(args, run_id)
+    return _run_fitness_mode(args, run_id)
 
 
 if __name__ == "__main__":

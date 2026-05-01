@@ -507,3 +507,132 @@ class TestRunCrash:
         assert state_path.exists()
         cleared = json.loads(state_path.read_text(encoding="utf-8"))
         assert cleared["active"] is False
+
+
+# ---------------------------------------------------------------------------
+# Issue #250: mirror mode
+# ---------------------------------------------------------------------------
+
+
+class TestMirrorMode:
+    def test_mirror_mode_writes_records_and_clears_state(
+        self,
+        worker: ModuleType,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Mirror mode plays --games matches and writes records to result_path."""
+        result_path = tmp_path / "mirror.json"
+        state_dir = tmp_path / "state"
+
+        captured: dict[str, Any] = {}
+
+        def fake_run_batch(
+            p1: str, p2: str, games: int, map_name: str = "Simple64",
+            **kwargs: Any,
+        ) -> list[SelfPlayRecord]:
+            captured["p1"] = p1
+            captured["p2"] = p2
+            captured["games"] = games
+            captured["map_name"] = map_name
+            captured["kwargs"] = kwargs
+            on_game_end = kwargs.get("on_game_end")
+            records = [
+                _record(p1, p2, p1),  # p1 wins game 0
+                _record(p1, p2, p2),  # p2 wins game 1
+            ]
+            if on_game_end is not None:
+                for r in records:
+                    on_game_end(r)
+            return records
+
+        # Patch selfplay.run_batch (the worker imports inside the function).
+        from orchestrator import selfplay
+        monkeypatch.setattr(selfplay, "run_batch", fake_run_batch)
+
+        rc = worker.main(
+            [
+                "--mode", "mirror",
+                "--p1", "v7", "--p2", "v7",
+                "--games", "2",
+                "--worker-id", "0",
+                "--result-path", str(result_path),
+                "--run-id", "abcd1234",
+                "--state-dir", str(state_dir),
+                "--map", "Simple64",
+                "--game-time-limit", "600",
+                "--hard-timeout", "900",
+            ]
+        )
+        assert rc == 0
+
+        # selfplay.run_batch saw the right args.
+        assert captured["p1"] == "v7"
+        assert captured["p2"] == "v7"
+        assert captured["games"] == 2
+        assert captured["kwargs"]["game_time_limit"] == 600
+        assert captured["kwargs"]["hard_timeout"] == pytest.approx(900.0)
+
+        # Result file shape: {"mode": "mirror", "records": [...], ...}.
+        body = json.loads(result_path.read_text(encoding="utf-8"))
+        assert body["mode"] == "mirror"
+        assert body["p1"] == "v7"
+        assert body["p2"] == "v7"
+        assert body["games_requested"] == 2
+        assert len(body["records"]) == 2
+
+        # Round-state cleared on exit.
+        state_path = state_dir / "evolve_round_0.json"
+        cleared = json.loads(state_path.read_text(encoding="utf-8"))
+        assert cleared["active"] is False
+
+    def test_mirror_mode_missing_required_args_writes_crash(
+        self, worker: ModuleType, tmp_path: Path
+    ) -> None:
+        """``--mode mirror`` without --p1/--p2/--games surfaces a crash payload."""
+        result_path = tmp_path / "mirror.json"
+        rc = worker.main(
+            [
+                "--mode", "mirror",
+                "--worker-id", "0",
+                "--result-path", str(result_path),
+                "--state-dir", str(tmp_path / "state"),
+            ]
+        )
+        assert rc == 1
+        body = json.loads(result_path.read_text(encoding="utf-8"))
+        assert body["crash"] is True
+        assert body["error_type"] == "ValueError"
+        assert "requires --p1, --p2, and --games" in body["error_message"]
+
+    def test_mirror_mode_run_batch_crash_writes_payload(
+        self,
+        worker: ModuleType,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """An exception from ``selfplay.run_batch`` is captured as a crash."""
+        result_path = tmp_path / "mirror.json"
+
+        def boom(*_a: Any, **_kw: Any) -> Any:
+            raise RuntimeError("burnysc2 exploded")
+
+        from orchestrator import selfplay
+        monkeypatch.setattr(selfplay, "run_batch", boom)
+
+        rc = worker.main(
+            [
+                "--mode", "mirror",
+                "--p1", "v7", "--p2", "v7",
+                "--games", "1",
+                "--worker-id", "0",
+                "--result-path", str(result_path),
+                "--state-dir", str(tmp_path / "state"),
+            ]
+        )
+        assert rc == 1
+        body = json.loads(result_path.read_text(encoding="utf-8"))
+        assert body["crash"] is True
+        assert body["error_type"] == "RuntimeError"
+        assert "burnysc2 exploded" in body["error_message"]
+        assert "Traceback" in body["traceback"]
