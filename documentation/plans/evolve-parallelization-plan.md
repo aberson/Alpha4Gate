@@ -417,6 +417,7 @@ Spike 3 (`scripts/spike3_launch.sh`) already validated this exact topology: 4 se
   4. Run completes (script exits) within ~60s.
   5. Post-run: `ls bots/cand_* 2>/dev/null | wc -l` returns 0 (per Decision D-6 cleanup).
 - **Issue:** #248
+- **Status:** BLOCKED (2026-04-30) — first run hit two real defects: (1) worker didn't pass `dev_apply_fn` so dev-imps NotImplementedError'd (fixed `5997dee`); (2) Ctrl+C in dispatcher window didn't propagate cleanly to workers + grandchild Claude CLI subprocesses, leaving orphan processes. Plus diagnostic gap: dispatcher's crash bucket logs `RuntimeError: worker exited non-zero: returncode=1` and unlinks the worker's actual crash payload before reading it. Plus `bots/cand_*` scratch dirs accumulate (33 leftover from one run). Step 3 iter-3 hardening pass needed before re-run.
 - **Type:** operator
 - **Flags:** (none)
 - **Produces:** Operator screenshot of dashboard showing 2 cards; brief notes file `documentation/soak-test-runs/parallel-smoke-<date>.md`.
