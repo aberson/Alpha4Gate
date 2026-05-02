@@ -1682,6 +1682,23 @@ steps) are closed as subsumed by full-stack versioning; see this plan's
 Features outside the versioning spine. Each has its own plan doc; they
 can be built in any order and don't block numbered phases.
 
+### Cleanup follow-ups (recorded for visibility, not scheduled)
+
+- **SKILL.md `alpha4gate.runner` references (Phase 1 leftover).** Three
+  operator-facing skill files
+  (`.claude/skills/{a4g-dashboard-check,improve-bot,improve-bot-advised}/SKILL.md`)
+  still tell Claude to run `python -m alpha4gate.runner`, the package
+  Phase 1 deleted on 2026-04-13. Any operator who follows the
+  instructions verbatim hits `ModuleNotFoundError`. Surfaced 2026-05-02
+  by Models tab Step 11's broader ripgrep; that step fixed live code
+  paths (`scripts/start-dev.sh`, `scripts/live-test.sh`,
+  `scripts/dev-serve.ps1`, `frontend/src/components/ProcessMonitor.tsx`)
+  but kept SKILL.md cleanup out of scope to keep the diff tight. Fix is
+  a one-PR mechanical replacement to `bots.current.runner` (the
+  MetaPathFinder alias that auto-tracks future evolve promotions).
+  See [`skill-md-runner-references-investigation.md`](../investigations/skill-md-runner-references-investigation.md)
+  for affected lines, fix recipe, and verification checklist.
+
 ### Self-play viewer — moved to Track 8 (Observable Stack)
 
 The previously-auxiliary self-play viewer is now Phase L on Track 8 as
