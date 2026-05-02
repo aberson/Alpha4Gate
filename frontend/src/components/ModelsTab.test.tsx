@@ -34,6 +34,34 @@ function jsonResponse(body: unknown, ok = true, status = 200): Response {
   } as unknown as Response;
 }
 
+const ELEVEN_LINEAGE_NODES = {
+  nodes: [
+    { id: "v0", version: "v0", race: "protoss", harness_origin: "manual", parent: null },
+    { id: "v1", version: "v1", race: "protoss", harness_origin: "evolve", parent: "v0" },
+    { id: "v2", version: "v2", race: "protoss", harness_origin: "evolve", parent: "v1" },
+    { id: "v3", version: "v3", race: "protoss", harness_origin: "advised", parent: "v2" },
+    { id: "v4", version: "v4", race: "protoss", harness_origin: "evolve", parent: "v3" },
+    { id: "v5", version: "v5", race: "protoss", harness_origin: "evolve", parent: "v4" },
+    { id: "v6", version: "v6", race: "protoss", harness_origin: "evolve", parent: "v5" },
+    { id: "v7", version: "v7", race: "protoss", harness_origin: "evolve", parent: "v6" },
+    { id: "v8", version: "v8", race: "protoss", harness_origin: "manual", parent: "v7" },
+    { id: "v9", version: "v9", race: "protoss", harness_origin: "self-play", parent: "v8" },
+    { id: "v10", version: "v10", race: "protoss", harness_origin: "manual", parent: "v9" },
+  ],
+  edges: [
+    { from: "v0", to: "v1", harness: "evolve", improvement_title: "Splash readiness", ts: "2026-03-15T00:00:00Z", outcome: "promoted" },
+    { from: "v1", to: "v2", harness: "evolve", improvement_title: "Shield battery", ts: "2026-03-22T00:00:00Z", outcome: "promoted" },
+    { from: "v2", to: "v3", harness: "advised", improvement_title: "Anti-float", ts: "2026-04-15T00:00:00Z", outcome: "promoted" },
+    { from: "v3", to: "v4", harness: "evolve", improvement_title: "Defend timeout", ts: "2026-04-29T00:00:00Z", outcome: "promoted" },
+    { from: "v4", to: "v5", harness: "evolve", improvement_title: "Splash 2", ts: "2026-04-30T00:00:00Z", outcome: "promoted" },
+    { from: "v5", to: "v6", harness: "evolve", improvement_title: "Observer", ts: "2026-04-30T01:00:00Z", outcome: "promoted" },
+    { from: "v6", to: "v7", harness: "evolve", improvement_title: "Chrono", ts: "2026-04-30T02:00:00Z", outcome: "promoted" },
+    { from: "v7", to: "v8", harness: "manual", improvement_title: "manual", ts: "2026-04-30T03:00:00Z", outcome: "promoted" },
+    { from: "v8", to: "v9", harness: "self-play", improvement_title: "—", ts: "2026-04-30T04:00:00Z", outcome: "promoted" },
+    { from: "v9", to: "v10", harness: "manual", improvement_title: "manual", ts: "2026-04-30T05:00:00Z", outcome: "promoted" },
+  ],
+};
+
 const ELEVEN_PROTOSS_VERSIONS: Version[] = [
   { name: "v0", race: "protoss", parent: null, harness_origin: "manual", timestamp: "2026-03-01T00:00:00Z", sha: null, fingerprint: null, current: false },
   { name: "v1", race: "protoss", parent: "v0", harness_origin: "evolve", timestamp: "2026-03-15T00:00:00Z", sha: null, fingerprint: null, current: false },
@@ -72,15 +100,39 @@ function mockVersionsFetch(body: Version[]) {
     if (url.includes("/api/versions")) {
       return jsonResponse(body);
     }
+    // Step 4 wired the real LineageView into the Lineage sub-view, so
+    // the shell tests now also see /api/lineage and
+    // /api/improvements/unified fetches when that sub-view is mounted.
+    // Return safe empty bodies for those — the shell tests don't
+    // exercise lineage rendering, just the FRAME and the wiring.
+    if (url.includes("/api/lineage")) {
+      return jsonResponse(ELEVEN_LINEAGE_NODES);
+    }
+    if (url.includes("/api/improvements/unified")) {
+      return jsonResponse({ improvements: [] });
+    }
     throw new Error(`Unexpected fetch: ${url}`);
   });
   return fn;
 }
 
 beforeEach(() => {
-  // Default: empty registry. Individual tests override.
-  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-    jsonResponse([] as Version[]),
+  // Default: empty registry + safe empty bodies for the lineage and
+  // unified-improvements endpoints (Step 4 wired LineageView in, so
+  // the default sub-view (``lineage``) now hits both on every render).
+  // Individual tests override.
+  vi.spyOn(globalThis, "fetch").mockImplementation(
+    async (input: RequestInfo | URL): Promise<Response> => {
+      const url =
+        typeof input === "string" ? input : (input as URL).toString();
+      if (url.includes("/api/lineage")) {
+        return jsonResponse({ nodes: [], edges: [] });
+      }
+      if (url.includes("/api/improvements/unified")) {
+        return jsonResponse({ improvements: [] });
+      }
+      return jsonResponse([] as Version[]);
+    },
   );
 });
 
@@ -229,21 +281,19 @@ describe("ModelsTab — shell", () => {
     expect(screen.getByTestId("models-subview-lineage")).toBeInTheDocument();
   });
 
-  it("onNodeSelect from Lineage placeholder selects version and switches to inspector", async () => {
+  it("onNodeSelect from real LineageView selects version and switches to inspector", async () => {
+    // Step 4: the placeholder simulate-button is gone; clicking a real
+    // tree node fires onNodeSelect with the version string. The
+    // LineageView's d3-hierarchy layout emits one
+    // ``data-testid="lineage-tree-node-vN"`` ``<g>`` per node, so we
+    // just click that surface directly.
     vi.spyOn(globalThis, "fetch").mockImplementation(
       mockVersionsFetch(ELEVEN_PROTOSS_VERSIONS),
     );
     render(<ModelsTab />);
-    // Wait for the simulate-select button to be enabled (versions loaded).
-    const simulateBtn = (await screen.findByTestId(
-      "models-lineage-simulate-select",
-    )) as HTMLButtonElement;
-    await waitFor(() => {
-      expect(simulateBtn).not.toBeDisabled();
-    });
-    expect(simulateBtn.textContent).toContain("v3");
-
-    fireEvent.click(simulateBtn);
+    // Wait for the lineage tree to render (post /api/lineage fetch).
+    const v3Node = await screen.findByTestId("lineage-tree-node-v3");
+    fireEvent.click(v3Node);
 
     // Sub-view switched to inspector AND inspector reports selected v3.
     expect(screen.getByTestId("models-subview-inspector")).toBeInTheDocument();
@@ -266,14 +316,23 @@ describe("ModelsTab — shell", () => {
       expect(screen.getByTestId("models-version-select")).toBeInTheDocument();
     });
 
-    // useApi triggers one fetch on mount; capture that count then click.
-    const callsBefore = fetchMock.mock.calls.length;
+    // Step 4: lineage + improvements fetches now also pass through this
+    // mock; filter to versions-only calls so the assertion still tests
+    // what it claims to test (the manual refresh re-fetched
+    // /api/versions specifically).
+    const versionsCalls = (): number =>
+      fetchMock.mock.calls.filter((args) => {
+        const url =
+          typeof args[0] === "string" ? args[0] : (args[0] as URL).toString();
+        return url.includes("/api/versions");
+      }).length;
+    const callsBefore = versionsCalls();
     expect(callsBefore).toBeGreaterThanOrEqual(1);
 
     fireEvent.click(screen.getByTestId("models-refresh"));
 
     await waitFor(() => {
-      expect(fetchMock.mock.calls.length).toBeGreaterThan(callsBefore);
+      expect(versionsCalls()).toBeGreaterThan(callsBefore);
     });
   });
 });

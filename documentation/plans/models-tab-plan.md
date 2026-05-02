@@ -337,6 +337,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 ### Step 4: Lineage view (tree + timeline modes; subsume Improvements)
 - **Problem:** Build `LineageView.tsx` with tree mode (d3-hierarchy cluster layout, native SVG, harness-coloured nodes, edge labels per §5 rules) + timeline mode (port `ImprovementsTab.tsx` content verbatim, source badges, expandable rows). Mode toggle button. Default Tree. Tree node click invokes `onNodeSelect(version)` prop (wired by Step 3). Add `d3-hierarchy` to `frontend/package.json`. Verify no `useApi` cache-key bump needed for `/api/improvements/unified` (shape unchanged); if any field shape shifts, bump cache key. Delete `ImprovementsTab.tsx` + test only after timeline-mode test parity is verified.
 - **Issue:** #257
+- **Status:** DONE (2026-05-01)
 - **Flags:** `--reviewers code --isolation worktree --ui`
 - **Produces:** `LineageView.tsx`, `useLineage.ts`, vitest tests covering tree render + timeline render + mode toggle + node click + onNodeSelect propagation; `ImprovementsTab.tsx` + test deleted; bundle-size delta recorded in PR description.
 - **Done when:** Tab renders family tree with 11 versions and promotion edges; timeline mode shows existing improvements identical to old Improvements tab; clicking a tree node fires `onNodeSelect` (verified via vitest mock); UI screenshot test green; bundle delta ≤30KB gz.

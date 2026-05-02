@@ -2636,9 +2636,10 @@ async def get_version_actions(v: str) -> list[dict[str, Any]]:
 
 # Helpers ported from ``bots/v0/api.py`` (the Phase 4.5 dashboard
 # refactor's unified endpoint) so the Step 1b filtered version can
-# emit the same per-entry shape. Kept private to this module — Step 1b
-# isn't shipping a new ``/api/improvements/unified`` on v10; the only
-# consumer is the Models tab's per-version filter.
+# emit the same per-entry shape. Step 4 of the Models-tab plan adds
+# the public ``/api/improvements/unified`` endpoint below — both the
+# per-version filter (``GET /api/versions/{v}/improvements``) and the
+# unified Lineage-view timeline mode share the same private helpers.
 
 # ---- Step 1b: per-version improvements timeline ----------------------------
 #
@@ -2859,6 +2860,72 @@ def _load_evolve_improvements(path: Path) -> list[dict[str, Any]]:
         _normalize_evolve_rollup(title, generation, rows)
         for (title, generation), rows in groups.items()
     ]
+
+
+def _unified_improvements_sync(
+    source: str | None, limit: int
+) -> list[dict[str, Any]]:
+    """Synchronous worker for ``/api/improvements/unified``.
+
+    Reads ``improvement_log.json`` and ``evolve_results.jsonl`` from the
+    cross-version data dir, normalises both into the shared shape, sorts
+    by timestamp descending, applies the optional ``source`` filter and
+    ``limit`` cap, then strips the internal ``_commit_sha`` book-keeping
+    field. Missing source files yield an empty list (no error).
+
+    Pulled out so the FastAPI handler can run it via
+    ``asyncio.to_thread`` — keeps the file I/O off the event loop the
+    same way the sibling ``/api/versions/{v}/improvements`` endpoint
+    does (see ``_filtered_version_improvements`` below).
+    """
+    cross = _cross_version_data_dir()
+    advised_path = cross / "improvement_log.json"
+    evolve_path = cross / _EVOLVE_RESULTS_FILE
+
+    entries: list[dict[str, Any]] = []
+    if source != "evolve":
+        entries.extend(_load_advised_improvements(advised_path))
+    if source != "advised":
+        entries.extend(_load_evolve_improvements(evolve_path))
+
+    # Sort by timestamp descending. Entries without a timestamp sort to
+    # the end (treated as the empty string, which compares smallest).
+    entries.sort(key=lambda e: e.get("timestamp") or "", reverse=True)
+    return [
+        {k: v for k, v in entry.items() if k != "_commit_sha"}
+        for entry in entries[:limit]
+    ]
+
+
+@app.get("/api/improvements/unified")
+async def get_improvements_unified(
+    source: str | None = Query(default=None, pattern="^(advised|evolve)$"),
+    limit: int = Query(default=50, ge=1, le=500),
+) -> dict[str, Any]:
+    """Return a unified timeline of advised + evolve improvements.
+
+    Mirrors the public ``/api/improvements/unified`` endpoint that
+    ``bots/v0/api.py`` ships (see lines ~508 there). Step 1b ported the
+    helpers privately to v10 for the per-version filter; Step 4 (Models
+    tab Lineage view → Timeline mode) needs the same public endpoint on
+    the v10 runner so the dashboard can subsume the legacy Improvements
+    tab.
+
+    Heavy work (two filesystem reads + JSON/JSONL parsing + normalize +
+    sort) is delegated to ``_unified_improvements_sync`` via
+    ``asyncio.to_thread`` so it never blocks the event loop — same
+    pattern as the sibling ``/api/versions/{v}/improvements`` endpoint.
+
+    The ``_commit_sha`` book-keeping field carried by the v10 helpers is
+    stripped from each entry before serialization so the response shape
+    matches v0's contract exactly (``id``, ``source``, ``timestamp``,
+    ``title``, ``description``, ``type``, ``outcome``, ``metric``,
+    ``principles``, ``files_changed``).
+    """
+    cleaned = await asyncio.to_thread(
+        _unified_improvements_sync, source, limit
+    )
+    return {"improvements": cleaned}
 
 
 _BOTS_VN_PATH_RE: re.Pattern[str] = re.compile(r"^bots/(v\d+)/")

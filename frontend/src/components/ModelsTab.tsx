@@ -1,29 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useVersions } from "../hooks/useVersions";
 import { StaleDataBanner } from "./StaleDataBanner";
+import { LineageView } from "./LineageView";
 import { HARNESS_ORIGINS } from "../types/version";
-import type { Version } from "../types/version";
 
 /**
- * Models tab SHELL — Step 3 of the Models-tab build plan.
+ * Models tab SHELL — Step 3 / Step 4 of the Models-tab build plan.
  *
- * This file delivers the FRAME only:
+ * This file delivers the FRAME plus the wired Lineage sub-view:
  *   - Header strip: version dropdown, race filter (auto-hidden when single),
  *     harness chips, manual refresh.
- *   - Sub-view router: 5 buttons that switch among placeholder panels.
+ *   - Sub-view router: 5 buttons that switch among real / placeholder
+ *     panels.
  *
- * Subsequent steps replace each placeholder with real content:
- *   Step 4: Lineage tree (subsumes the Improvements tab)
+ * Subsequent steps replace each remaining placeholder with real content:
+ *   Step 4: Lineage tree (DONE — subsumes the Improvements tab)
  *   Step 5: Live Runs grid
  *   Step 6: Inspector
  *   Step 7: Compare
  *   Step 8: Forensics
  *
- * The ``onNodeSelect`` callback is wired here so Step 4's tree can drop
- * in without restructuring the parent's state. For Step 3 a placeholder
- * "Simulate v3 select (test)" button inside the Lineage placeholder
- * exercises the callback end-to-end (selected version + sub-view switch
- * to Inspector) — the same code path the real tree will use.
+ * The ``onNodeSelect`` callback is passed straight through to
+ * ``LineageView``; clicking a tree node both snaps the selected version
+ * and switches the sub-view to the Inspector.
  */
 
 export type SubView = "lineage" | "live" | "inspector" | "compare" | "forensics";
@@ -48,37 +47,18 @@ function coerceRace(raw: string | null | undefined): string {
   return raw;
 }
 
-interface LineagePlaceholderProps {
-  versions: Version[];
+interface LineageContainerProps {
   onNodeSelect: (versionName: string) => void;
 }
 
-function LineagePlaceholder({ versions, onNodeSelect }: LineagePlaceholderProps) {
-  // Pick a stable test target: prefer "v3" if present, else the first
-  // version, else ``null`` (button disabled when there is nothing to
-  // simulate against).
-  const target = useMemo<string | null>(() => {
-    const v3 = versions.find((v) => v.name === "v3");
-    if (v3) return v3.name;
-    if (versions.length > 0) return versions[0].name;
-    return null;
-  }, [versions]);
-
+function LineageContainer({ onNodeSelect }: LineageContainerProps) {
+  // Step 4: real Lineage view. The container exists so the
+  // ``data-testid="models-subview-lineage"`` wrapper that the shell
+  // tests assert on still wraps whatever rendering surface this
+  // sub-view uses (currently ``<LineageView />``).
   return (
     <div data-testid="models-subview-lineage" className="models-subview">
-      <p>Lineage view (Step 4)</p>
-      <button
-        type="button"
-        data-testid="models-lineage-simulate-select"
-        disabled={target === null}
-        onClick={() => {
-          if (target !== null) onNodeSelect(target);
-        }}
-      >
-        {target === null
-          ? "Simulate v3 select (test)"
-          : `Simulate ${target} select (test)`}
-      </button>
+      <LineageView onNodeSelect={onNodeSelect} />
     </div>
   );
 }
@@ -225,8 +205,8 @@ export function ModelsTab() {
             // Reuse the existing ``improvements-filter-pill`` rule
             // (App.css ~line 210) so the chips inherit theme tokens
             // (``--accent-bg`` / ``--accent-border`` etc.) instead of
-            // hard-coded hex. ImprovementsTab still uses this class, so
-            // it survives until at least Step 4 of the Models-tab plan.
+            // hard-coded hex. Style remains in App.css; the timeline
+            // mode of ``LineageView`` keeps the same class names.
             return (
               <button
                 key={origin}
@@ -281,7 +261,7 @@ export function ModelsTab() {
 
       <div className="models-subview-body" style={subViewBodyStyle}>
         {activeSubView === "lineage" ? (
-          <LineagePlaceholder versions={versions} onNodeSelect={onNodeSelect} />
+          <LineageContainer onNodeSelect={onNodeSelect} />
         ) : null}
         {activeSubView === "live" ? <LiveRunsPlaceholder /> : null}
         {activeSubView === "inspector" ? (
