@@ -328,6 +328,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 ### Step 3: Models tab shell + sub-view router
 - **Problem:** Add `Models` tab to `App.tsx`, remove `Improvements` tab (port content into Step 4's `LineageView`). Build `ModelsTab.tsx` shell with version selector strip, race filter (hidden when `len({v.race or "protoss" for v in versions}) <= 1`), harness filter chips (`advised | evolve | manual | self-play`), 5-way sub-view router, and shared selected-version state. Pass `onNodeSelect` callback prop to LineageView (will be filled in Step 4) that sets selected-version state and switches sub-view to `inspector`. Default sub-view: `lineage`.
 - **Issue:** #256
+- **Status:** DONE (2026-05-01)
 - **Flags:** `--reviewers code --isolation worktree --ui`
 - **Produces:** `ModelsTab.tsx`, `useVersions.ts`, vitest tests; `ImprovementsTab.tsx` + test deleted (after Step 4 confirms Lineage timeline mode parity); `App.tsx` updated.
 - **Done when:** Tab renders, version dropdown populated from real registry (11 versions), race filter is hidden, harness filter chips render and filter the version list, sub-view router switches between 5 placeholder panels, `onNodeSelect` callback prop defined and passed down (no-op consumer until Step 4).
