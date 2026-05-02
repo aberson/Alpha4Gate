@@ -291,7 +291,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 
 ### Step 1a: Backend foundation — version registry, lineage endpoint (no lazy-init), config endpoint
 - **Problem:** Add three endpoints to `bots/v10/api.py` (current snapshot, the production import target): `GET /api/versions` (with derived `race` and `harness_origin`, both validated against §6.11 rules), `GET /api/versions/{v}/config`, `GET /api/lineage` **returning `{nodes:[], edges:[]}` for missing-file case** (lazy-init wired in Step 2 once `build_lineage.py` exists). Use separate `_per_version_data_dir(version)` and `_cross_version_data_dir()` resolvers. Add input-validation helpers (regex-checked path params). All endpoints `async def`. Return empty list/object on missing data files; never 500.
-- **Issue:** TBD
+- **Issue:** #252
 - **Flags:** `--reviewers code --isolation worktree`
 - **Produces:** 3 endpoints; dual resolver functions; input-validation helpers; pytest contract tests `tests/test_api_versions.py` and `tests/test_api_lineage.py` (including malformed-input rejection tests). Bundle-size baseline measurement recorded in PR description (`npm run build`; gz size of `dist/assets/index-*.js`).
 - **Done when:** `pytest tests/test_api_versions.py tests/test_api_lineage.py` pass; manual `curl http://localhost:8765/api/versions` returns 11 entries with derived race + harness_origin populated; `curl http://localhost:8765/api/versions/v3@bad/config` returns 400; `curl http://localhost:8765/api/lineage` with missing `data/lineage.json` returns `{nodes:[], edges:[]}` (not an error).
@@ -299,7 +299,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 
 ### Step 1b: Backend training-data endpoints
 - **Problem:** Add three per-version data-read endpoints to `bots/v10/api.py`: `GET /api/versions/{v}/training-history`, `GET /api/versions/{v}/actions`, `GET /api/versions/{v}/improvements` (with files_changed-path target-version derivation, including `bots/current/...` SHA lookup via `git show <sha>:bots/current/current.txt` with SHA regex-validated per §6.11). All `async def` + `await asyncio.to_thread` for the git subprocess.
-- **Issue:** TBD
+- **Issue:** #253
 - **Flags:** `--reviewers code --isolation worktree`
 - **Produces:** 3 endpoints; pytest contract tests `tests/test_api_versions_data.py` (including malformed-SHA-skipped behaviour).
 - **Done when:** All three return correctly-shaped data for v3 (a version known to have games + improvements); bots/current SHA-lookup-derivation correctly resolves a known historical advised commit to its target version; injecting a malformed SHA into a fixture entry causes that entry to be skipped (logged warning), not crash the endpoint.
@@ -307,7 +307,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 
 ### Step 1c: Backend aggregator + forensics + weight-dynamics-read endpoints
 - **Problem:** Add three endpoints: `GET /api/runs/active` (aggregates existing `/api/training/daemon`, `/api/advised/state`, `/api/evolve/running-rounds`, plus `data/evolve_round_<worker_id>.json` glob), `GET /api/versions/{v}/forensics/{game_id}` (returns `expert_dispatch: null` always; both path params validated per §6.11), `GET /api/versions/{v}/weight-dynamics` (reads JSONL; returns `[]` if absent; surfaces failure-rows with non-null `error` field).
-- **Issue:** TBD
+- **Issue:** #254
 - **Flags:** `--reviewers code --isolation worktree`
 - **Produces:** 3 endpoints; pytest contract tests `tests/test_api_runs_active.py` and `tests/test_api_forensics.py` (including malformed-game_id and malformed-version rejection tests).
 - **Done when:** Tests pass; manual: with no harness running, `/api/runs/active` returns `[]`; with an evolve worker running, `/api/runs/active` returns a card-row for it; `/api/versions/v3/forensics/<recent_game_id>` returns trajectory with `win_prob` populated (Phase N is live); malformed-input requests return 400.
@@ -315,7 +315,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 
 ### Step 2: Lineage builder script + centralised hook helper + lazy-init wiring
 - **Problem:** Build `scripts/build_lineage.py` that walks `bots/v*/manifest.json`, `data/improvement_log.json`, `data/evolve_results.jsonl` and writes `data/lineage.json` with the DAG schema in §5. Atomic-replace writes (write to `.tmp`, fsync, `os.replace` with retry-with-backoff helper). Idempotent. Build `bots/v0/learning/post_promotion_hooks.py` exposing `run_post_promotion_hooks(version)` with input validation (§6.11) and centralised subprocess-invocation pattern. Wire from `scripts/evolve.py` (after `git_commit_evo_auto`) and `scripts/snapshot_bot.py` (after snapshot). Add the SKILL.md instruction in `.claude/skills/improve-bot-advised/SKILL.md` (or wherever the skill body lives) telling Claude to invoke the helper after each iteration commit. **Wire `/api/lineage` lazy-init** (replaces Step 1a's empty-fallback): on missing file, acquire process-wide `asyncio.Lock`, invoke `build_lineage.py` via `asyncio.to_thread(subprocess.run, ...)`, return result. Failures in any hook-invoked subprocess log warning, do not break promotion.
-- **Issue:** TBD
+- **Issue:** #255
 - **Flags:** `--reviewers code --isolation worktree`
 - **Produces:** `scripts/build_lineage.py`; `bots/v0/learning/post_promotion_hooks.py` (canonical source); `bots/v10/learning/post_promotion_hooks.py` (current snapshot copy); modified `scripts/evolve.py`, `scripts/snapshot_bot.py`; modified `.claude/skills/improve-bot-advised/SKILL.md`; modified `bots/v10/api.py` `/api/lineage` endpoint with lazy-init; regenerated `data/lineage.json` with 11 versions + valid edges; pytest tests `tests/test_build_lineage.py`, `tests/test_post_promotion_hooks.py` (including invalid-version rejection + concurrent-lazy-init lock test).
 - **Done when:** Running script on existing repo state produces valid DAG with all 11 versions and all promotion edges; injecting a mock evolve promotion regenerates file with new edge; injecting a script crash inside the hook does not break the calling promotion path (verified via test); deleting `data/lineage.json` and hitting `/api/lineage` triggers lazy-init and returns valid DAG; invoking helper with version `"v3; rm -rf"` raises `ValueError` and never invokes subprocess (verified via test).
@@ -323,7 +323,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 
 ### Step 3: Models tab shell + sub-view router
 - **Problem:** Add `Models` tab to `App.tsx`, remove `Improvements` tab (port content into Step 4's `LineageView`). Build `ModelsTab.tsx` shell with version selector strip, race filter (hidden when `len({v.race or "protoss" for v in versions}) <= 1`), harness filter chips (`advised | evolve | manual | self-play`), 5-way sub-view router, and shared selected-version state. Pass `onNodeSelect` callback prop to LineageView (will be filled in Step 4) that sets selected-version state and switches sub-view to `inspector`. Default sub-view: `lineage`.
-- **Issue:** TBD
+- **Issue:** #256
 - **Flags:** `--reviewers code --isolation worktree --ui`
 - **Produces:** `ModelsTab.tsx`, `useVersions.ts`, vitest tests; `ImprovementsTab.tsx` + test deleted (after Step 4 confirms Lineage timeline mode parity); `App.tsx` updated.
 - **Done when:** Tab renders, version dropdown populated from real registry (11 versions), race filter is hidden, harness filter chips render and filter the version list, sub-view router switches between 5 placeholder panels, `onNodeSelect` callback prop defined and passed down (no-op consumer until Step 4).
@@ -331,7 +331,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 
 ### Step 4: Lineage view (tree + timeline modes; subsume Improvements)
 - **Problem:** Build `LineageView.tsx` with tree mode (d3-hierarchy cluster layout, native SVG, harness-coloured nodes, edge labels per §5 rules) + timeline mode (port `ImprovementsTab.tsx` content verbatim, source badges, expandable rows). Mode toggle button. Default Tree. Tree node click invokes `onNodeSelect(version)` prop (wired by Step 3). Add `d3-hierarchy` to `frontend/package.json`. Verify no `useApi` cache-key bump needed for `/api/improvements/unified` (shape unchanged); if any field shape shifts, bump cache key. Delete `ImprovementsTab.tsx` + test only after timeline-mode test parity is verified.
-- **Issue:** TBD
+- **Issue:** #257
 - **Flags:** `--reviewers code --isolation worktree --ui`
 - **Produces:** `LineageView.tsx`, `useLineage.ts`, vitest tests covering tree render + timeline render + mode toggle + node click + onNodeSelect propagation; `ImprovementsTab.tsx` + test deleted; bundle-size delta recorded in PR description.
 - **Done when:** Tab renders family tree with 11 versions and promotion edges; timeline mode shows existing improvements identical to old Improvements tab; clicking a tree node fires `onNodeSelect` (verified via vitest mock); UI screenshot test green; bundle delta ≤30KB gz.
@@ -339,7 +339,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 
 ### Step 5: Live Runs grid
 - **Problem:** Build `LiveRunsGrid.tsx` consuming `/api/runs/active`. One card per active harness using the layout described in §5 (header + metric strip + progress bar + score + expand). Empty state: "No active runs." Polls at 2s like other live surfaces.
-- **Issue:** TBD
+- **Issue:** #258
 - **Flags:** `--reviewers code --isolation worktree --ui`
 - **Produces:** `LiveRunsGrid.tsx`, `useRunsActive.ts`, vitest tests covering empty / single / multi-card / expand states.
 - **Done when:** With evolve worker active, card appears within 2s; with advised iteration also active, both cards visible; empty state visible when nothing running; expand reveals full state JSON.
@@ -347,7 +347,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 
 ### Step 6: Version Inspector
 - **Problem:** Build `VersionInspector.tsx` with five collapsible sub-panels (Config, Training curve, Actions, Improvements applied, Weight Dynamics). Use recharts (already present) for line + bar charts. Drill-in trigger from Step 3's `onNodeSelect` handler now resolves to populated Inspector. Weight Dynamics panel shows "Pending — run scripts/compute_weight_dynamics.py" until Step 9 ships data; failure-rows render as red dots with hover error tooltips. Add "Compare with parent" quick-link button that switches to Compare sub-view with A=current, B=parent prefilled.
-- **Issue:** TBD
+- **Issue:** #259
 - **Flags:** `--reviewers code --isolation worktree --ui`
 - **Produces:** `VersionInspector.tsx`, `useVersionDetail.ts`, vitest tests for each sub-panel including failure-row rendering.
 - **Done when:** Picking v3 in Lineage opens Inspector with all five panels rendering (4 populated from real data, 1 placeholder); "Compare with parent" navigates to Compare sub-view with v3 + v3.parent preselected.
@@ -355,7 +355,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 
 ### Step 7: Compare view
 - **Problem:** Build `CompareView.tsx` with A/B selector (initial state from URL state or "Compare with parent" handoff), hyperparams deep-diff (red/green highlighting), reward-rules diff (rule add/modify/remove), Elo delta from `/api/ladder`. Weight KL placeholder until Step 9.
-- **Issue:** TBD
+- **Issue:** #260
 - **Flags:** `--reviewers code --isolation worktree --ui`
 - **Produces:** `CompareView.tsx`, diff utilities (`utils/deepDiff.ts`), vitest tests.
 - **Done when:** Picking v2 + v4 shows three populated diff panels and Elo delta; "Compare with parent" prefill from Inspector works; sibling-comparison shows "no direct lineage" placeholder.
@@ -363,7 +363,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 
 ### Step 8: Forensics view
 - **Problem:** Build `ForensicsView.tsx` with game-id selector (default: most recent game in current version), winprob trajectory line chart with give-up trigger marked as a vertical reference line (recharts), expert-dispatch placeholder card "Phase O pending." Reads `/api/versions/{v}/forensics/{game_id}`.
-- **Issue:** TBD
+- **Issue:** #261
 - **Flags:** `--reviewers code --isolation worktree --ui`
 - **Produces:** `ForensicsView.tsx`, vitest test with seeded transitions data.
 - **Done when:** Picking a recent game shows winprob curve; if game had give-up trigger, vertical line marks it; placeholder card visible.
@@ -371,7 +371,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 
 ### Step 9: Weight Dynamics — offline script + chart integration
 - **Problem:** Build `scripts/compute_weight_dynamics.py` per §5 spec (loads SB3 .zip, computes layer L2 norms + KL divergence; auto-resolves canary source: diagnostic_states.json if present, else hashed 100-row transition sample; per-checkpoint failure → emit failure-row with `error` field, never crash). Append rows to `data/weight_dynamics.jsonl` under advisory lockfile. Wire post-promotion hook (already centralised in Step 2's helper — just add the script invocation). Backfill 11 existing checkpoints. Wire chart to Inspector (Weight Dynamics panel) + KL metric to Compare view. Open small follow-up issue: investigate whether trainer.py should be writing `diagnostic_states.json`.
-- **Issue:** TBD
+- **Issue:** #262
 - **Flags:** `--reviewers code --isolation worktree`
 - **Produces:** `scripts/compute_weight_dynamics.py`; populated `data/weight_dynamics.jsonl` (≥11 success-rows after backfill, possibly some failure-rows if torch crashes); chart in `VersionInspector` + KL number in `CompareView`; updated `bots/v0/learning/post_promotion_hooks.py` (and v10 copy) to invoke the script; pytest tests `tests/test_compute_weight_dynamics.py` (including diagnostic-states-present + fallback paths AND per-checkpoint failure → error-row behaviour); follow-up issue link in plan §8.
 - **Done when:** Backfill completes ~30s (hard-fail at >60s); Inspector shows L2 line chart for v3; Compare shows KL number for v2 vs v4 (parent → child) and "no direct lineage" for v3 vs v5; running an evolve generation triggers a new JSONL row; injecting a torch crash into one checkpoint produces a failure-row, the rest of the backfill continues, and Inspector renders that checkpoint as a red dot with error tooltip.
@@ -379,7 +379,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 
 ### Step 10: Observable tab shell + wiki page
 - **Problem:** Add `Observable` top-level tab to `App.tsx`. Build `ObservableTab.tsx` with two-version pool selector (queries real `/api/versions`) and Phase L placeholder card. No exhibition controls. Write `documentation/wiki/models-tab.md` content per §5 outline (including recovery procedures). Update `documentation/wiki/index.md` tab inventory.
-- **Issue:** TBD
+- **Issue:** #263
 - **Flags:** `--reviewers code --isolation worktree --ui`
 - **Produces:** `ObservableTab.tsx`, modified `App.tsx`, vitest test, `documentation/wiki/models-tab.md`, modified `documentation/wiki/index.md`.
 - **Done when:** Observable tab renders with two version dropdowns populated from real registry; placeholder card visible with link to wiki page; wiki page renders correctly via the operator-commands rendering path.
@@ -388,7 +388,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 ### Step 11: Smoke gate — pipeline end-to-end
 - **Problem:** 60-second end-to-end run with REAL backend + REAL frontend + REAL data dir (not mocks). Start backend, mount Models tab, navigate each of the 5 sub-views, mount Observable tab, exercise pool selector. Verify: every new endpoint returns non-error responses with real data; every sub-view mounts without exception; lineage tree shows ≥10 nodes; live runs grid shows current state (likely empty or 1 card); inspector populates for current version; compare works for two distinct versions; forensics shows a real recent game; weight dynamics chart has ≥1 point. Verify per-version vs cross-version data-dir resolvers both work (read from `bots/v3/data/training.db` AND `data/improvement_log.json` in same request flow). Verify lazy-init: delete `data/lineage.json`, hit `/api/lineage`, assert it self-rebuilds. Verify input-validation: hit `/api/versions/v3@bad/config`, assert 400. **Verify improve-bot-advised SKILL.md instruction is effective:** run a single advised iteration (mock if needed), confirm `data/lineage.json` mtime updates from the post-iteration hook invocation. No mocks for the dashboard surfaces.
 - **Type:** code (automated where possible; SKILL.md verification may require manual run)
-- **Issue:** TBD
+- **Issue:** #264
 - **Flags:** `--reviewers runtime --isolation worktree --ui`
 - **Produces:** `scripts/smoke_models_tab.sh`, vitest e2e suite invoking real backend, smoke-gate report file.
 - **Done when:** All assertions green within 60s wall clock (excluding the SKILL.md verification, which can run separately); report file lists every endpoint hit + status code + payload-size sanity check; lazy-init self-rebuild verified; per-version + cross-version reads both confirmed; input-validation rejects confirmed; SKILL.md hook confirmed manually.
@@ -397,7 +397,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 ### Step 12: Observation soak — autonomous behavior watch
 - **Problem:** Run an overnight evolve soak (8h+) with the dashboard open and Models tab actively monitored. Watch for: lineage tree updates if a promotion fires; Live Runs grid stays accurate as workers cycle; Weight Dynamics auto-refreshes via post-promotion hook (success-rows or failure-rows as appropriate); no UI crashes; no stale-data banners; per-version vs cross-version resolver does not regress (memory: this has bitten before); concurrent-write safety on lineage.json + weight_dynamics.jsonl holds under real load. Document any issues found in a soak-run markdown file.
 - **Type:** wait
-- **Issue:** TBD
+- **Issue:** #265
 - **Flags:** (no build-step flags; this is wall-clock observation work)
 - **Produces:** `documentation/soak-test-runs/models-tab-observation-<date>.md` with lineage diff (before vs after), live-runs accuracy report, weight-dynamics auto-refresh confirmation, screenshots, and any defects found.
 - **Done when:** Soak completes without dashboard crash; live-runs grid stayed accurate throughout; **if** any promotion fires during the soak, lineage updates within 60s of `evolve_results.jsonl` write AND new weight_dynamics row appears within 90s — **else** dashboard remained responsive throughout and no concurrent-write corruption observed (per memory: 8h soaks sometimes produce 0 promotions; that's not a Step 12 failure).
