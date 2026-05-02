@@ -4,7 +4,7 @@
 # so code edits take effect without a manual restart.
 #
 # DO NOT USE during active soaks: a reload will interrupt any in-flight
-# SC2 game and daemon cycle. Use plain `uv run python -m alpha4gate.runner --serve`
+# SC2 game and daemon cycle. Use plain `uv run python -m bots.current.runner --serve`
 # for soak runs.
 #
 # Usage (from repo root):

@@ -37,7 +37,7 @@ fi
 # --- 3. Launch game (API server starts automatically in-process) ---
 echo "[live-test] Launching game... (API on port $API_PORT)"
 echo "[live-test] Game args: --realtime --difficulty 1 $*"
-uv run python -m alpha4gate.runner --map Simple64 --difficulty 1 --realtime "$@"
+uv run python -m bots.current.runner --map Simple64 --difficulty 1 --realtime "$@"
 
 # --- Cleanup ---
 echo "[live-test] Game ended. Stopping frontend..."
