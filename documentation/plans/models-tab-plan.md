@@ -355,6 +355,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 ### Step 6: Version Inspector
 - **Problem:** Build `VersionInspector.tsx` with five collapsible sub-panels (Config, Training curve, Actions, Improvements applied, Weight Dynamics). Use recharts (already present) for line + bar charts. Drill-in trigger from Step 3's `onNodeSelect` handler now resolves to populated Inspector. Weight Dynamics panel shows "Pending — run scripts/compute_weight_dynamics.py" until Step 9 ships data; failure-rows render as red dots with hover error tooltips. Add "Compare with parent" quick-link button that switches to Compare sub-view with A=current, B=parent prefilled.
 - **Issue:** #259
+- **Status:** DONE (2026-05-01) — bundle bust documented (recharts first import +112KB gz; plan §3 assumption error)
 - **Flags:** `--reviewers code --isolation worktree --ui`
 - **Produces:** `VersionInspector.tsx`, `useVersionDetail.ts`, vitest tests for each sub-panel including failure-row rendering.
 - **Done when:** Picking v3 in Lineage opens Inspector with all five panels rendering (4 populated from real data, 1 placeholder); "Compare with parent" navigates to Compare sub-view with v3 + v3.parent preselected.

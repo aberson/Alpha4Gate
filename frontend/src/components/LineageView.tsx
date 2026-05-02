@@ -1,9 +1,14 @@
-import { Fragment, useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { hierarchy, tree as d3tree } from "d3-hierarchy";
 import type { HierarchyPointNode } from "d3-hierarchy";
 import { useApi } from "../hooks/useApi";
 import { useLineage } from "../hooks/useLineage";
 import { StaleDataBanner } from "./StaleDataBanner";
+import {
+  TimelineList,
+  type TimelineFilter,
+  type UnifiedImprovement,
+} from "./TimelineList";
 import type {
   LineageDAG,
   LineageEdge,
@@ -22,7 +27,10 @@ import type {
  *   - **Timeline**: subsumes the legacy Improvements tab — table of
  *     unified advised + evolve improvements with source badges,
  *     outcome chips, and click-to-expand description / principles /
- *     files-changed sections. Uses ``GET /api/improvements/unified``.
+ *     files-changed sections. Uses ``GET /api/improvements/unified``
+ *     and renders rows via ``TimelineList`` (extracted in Step 6 so
+ *     the Inspector "Improvements applied" sub-panel can reuse the
+ *     same row layout).
  *
  * The mode toggle is local React state (not URL state — that's
  * Step 7's compare-view concern).
@@ -36,125 +44,14 @@ import type {
  * click handler.
  */
 
-// --- Unified-improvements types (verbatim port from the legacy
-// ImprovementsTab so the timeline-mode shape stays stable) ---------------
-
-export type ImprovementSource = "advised" | "evolve";
-
-export interface UnifiedImprovement {
-  id: string;
-  source: ImprovementSource;
-  timestamp: string | null;
-  title: string;
-  description: string;
-  type: "training" | "dev" | string;
-  outcome: string;
-  metric: string | null;
-  principles: string[];
-  files_changed: string[];
-}
+// Re-export the timeline types for backwards compatibility — pre-Step-6
+// imports of ``UnifiedImprovement`` and ``ImprovementsResponse`` from
+// ``./LineageView`` keep working without each call-site needing a
+// rename.
+export type { UnifiedImprovement, ImprovementSource } from "./TimelineList";
 
 export interface ImprovementsResponse {
   improvements: UnifiedImprovement[];
-}
-
-const SUCCESS_OUTCOMES = new Set([
-  "promoted",
-  "regression-pass",
-  "fitness-pass",
-  "stack-apply-pass",
-]);
-const FAILURE_OUTCOMES = new Set([
-  "discarded",
-  "regression-rollback",
-  "fitness-fail",
-  "crash",
-]);
-const WARNING_OUTCOMES = new Set([
-  "stack-apply-commit-fail",
-  "stack-apply-import-fail",
-]);
-
-function classifyOutcome(
-  outcome: string,
-): "success" | "failure" | "warning" | "neutral" {
-  if (SUCCESS_OUTCOMES.has(outcome)) return "success";
-  if (FAILURE_OUTCOMES.has(outcome)) return "failure";
-  if (WARNING_OUTCOMES.has(outcome)) return "warning";
-  return "neutral";
-}
-
-function formatRelativeTime(then: Date, now: Date = new Date()): string {
-  const deltaSec = Math.round((now.getTime() - then.getTime()) / 1000);
-  if (deltaSec < 0) return "just now";
-  if (deltaSec < 60) return `${deltaSec}s ago`;
-  if (deltaSec < 3600) {
-    const m = Math.floor(deltaSec / 60);
-    return `${m} min ago`;
-  }
-  if (deltaSec < 86400) {
-    const h = Math.floor(deltaSec / 3600);
-    return `${h} hr ago`;
-  }
-  const days = Math.floor(deltaSec / 86400);
-  return `${days} day${days === 1 ? "" : "s"} ago`;
-}
-
-function truncateList(
-  items: string[],
-  limit = 2,
-): { shown: string[]; extra: number } {
-  if (items.length <= limit) return { shown: items, extra: 0 };
-  return { shown: items.slice(0, limit), extra: items.length - limit };
-}
-
-function TruncatedList({ items }: { items: string[] }) {
-  if (items.length === 0) {
-    return <span style={{ color: "#888" }}>—</span>;
-  }
-  const { shown, extra } = truncateList(items);
-  return (
-    <span>
-      {shown.join(", ")}
-      {extra > 0 ? (
-        <span style={{ color: "#888" }}>{` +${extra} more`}</span>
-      ) : null}
-    </span>
-  );
-}
-
-function SourceBadge({ source }: { source: ImprovementSource }) {
-  return (
-    <span
-      className={`improvements-source-badge ${source}`}
-      data-testid={`source-badge-${source}`}
-    >
-      {source}
-    </span>
-  );
-}
-
-function OutcomeBadge({ outcome }: { outcome: string }) {
-  const tone = classifyOutcome(outcome);
-  return (
-    <span
-      className={`improvements-outcome-badge ${tone}`}
-      data-testid={`outcome-badge-${outcome}`}
-    >
-      {outcome}
-    </span>
-  );
-}
-
-function TimestampCell({ value }: { value: string | null }) {
-  if (!value) return <span style={{ color: "#888" }}>—</span>;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return <span title={value}>{value}</span>;
-  }
-  return (
-    <span title={parsed.toLocaleString()}>{formatRelativeTime(parsed)}</span>
-  );
 }
 
 // --- Tree-mode rendering ------------------------------------------------
@@ -413,9 +310,7 @@ function TreeMode({ lineage, onNodeSelect, layoutFn }: TreeModeProps) {
   );
 }
 
-// --- Timeline-mode rendering (port of ImprovementsTab) ------------------
-
-export type TimelineFilter = "all" | "advised" | "evolve";
+// --- Timeline-mode rendering (delegates to ``TimelineList``) ------------
 
 interface TimelineModeProps {
   // Filter + expanded-row state are lifted into ``LineageView`` so they
@@ -445,17 +340,6 @@ function TimelineMode({
     () => data?.improvements ?? [],
     [data],
   );
-  const visibleEntries = useMemo<UnifiedImprovement[]>(() => {
-    if (filter === "all") return allEntries;
-    return allEntries.filter((e) => e.source === filter);
-  }, [allEntries, filter]);
-
-  const totalCount = allEntries.length;
-  const visibleCount = visibleEntries.length;
-  const isFiltered = filter !== "all";
-  const countLabel = isFiltered
-    ? `${visibleCount} of ${totalCount} (filtered)`
-    : `${totalCount} improvement${totalCount === 1 ? "" : "s"}`;
 
   if (isLoading && !data) {
     return (
@@ -466,167 +350,29 @@ function TimelineMode({
   }
 
   return (
-    <div className="improvements-tab" data-testid="lineage-timeline">
+    <div data-testid="lineage-timeline">
       {isStale ? (
         <StaleDataBanner lastSuccess={lastSuccess} label="Improvements" />
       ) : null}
-
-      <div className="improvements-header">
-        <h3 style={{ margin: 0 }}>Improvements</h3>
-        <div className="improvements-filter-row">
-          {(["all", "advised", "evolve"] as TimelineFilter[]).map((value) => {
-            const label =
-              value === "all"
-                ? "All"
-                : value === "advised"
-                  ? "Advised"
-                  : "Evolve";
-            const isActive = filter === value;
-            return (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setFilter(value)}
-                className={
-                  "improvements-filter-pill" +
-                  (isActive ? " improvements-filter-pill-active" : "")
-                }
-                aria-pressed={isActive}
-                data-testid={`filter-pill-${value}`}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-        <div className="improvements-count" data-testid="improvements-count">
-          {countLabel}
-        </div>
-        <button
-          type="button"
-          onClick={() => refresh()}
-          className="improvements-refresh"
-          data-testid="improvements-refresh"
-        >
-          Refresh
-        </button>
-      </div>
-
-      <p style={{ color: "#888", fontSize: "0.85em", margin: "8px 0 16px" }}>
-        Unified timeline of <code>/improve-bot-advised</code> and{" "}
-        <code>/improve-bot-evolve</code> outcomes. Click any row for the full
-        description, principle list, and files-changed manifest.
-      </p>
-
-      {totalCount === 0 ? (
-        <p
-          className="improvements-empty"
-          data-testid="improvements-empty"
-          style={{ color: "#888", fontStyle: "italic" }}
-        >
-          No improvements yet — run /improve-bot-advised or /improve-bot-evolve.
-        </p>
-      ) : (
-        <table className="improvements-table">
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Source</th>
-              <th>Title</th>
-              <th>Outcome</th>
-              <th>Metric</th>
-              <th>Principles</th>
-              <th>Files</th>
-            </tr>
-          </thead>
-          <tbody>
-            {visibleEntries.map((entry) => {
-              const isExpanded = expandedId === entry.id;
-              return (
-                <Fragment key={entry.id}>
-                  <tr
-                    className={
-                      "improvements-row" +
-                      (isExpanded ? " improvements-row-active" : "")
-                    }
-                    onClick={() =>
-                      setExpandedId(isExpanded ? null : entry.id)
-                    }
-                    data-testid={`improvements-row-${entry.id}`}
-                  >
-                    <td>
-                      <TimestampCell value={entry.timestamp} />
-                    </td>
-                    <td>
-                      <SourceBadge source={entry.source} />
-                    </td>
-                    <td>{entry.title}</td>
-                    <td>
-                      <OutcomeBadge outcome={entry.outcome} />
-                    </td>
-                    <td>
-                      {entry.metric ?? (
-                        <span style={{ color: "#888" }}>—</span>
-                      )}
-                    </td>
-                    <td>
-                      <TruncatedList items={entry.principles} />
-                    </td>
-                    <td>
-                      <TruncatedList items={entry.files_changed} />
-                    </td>
-                  </tr>
-                  {isExpanded ? (
-                    <tr
-                      className="improvements-row-expanded"
-                      data-testid={`improvements-row-expanded-${entry.id}`}
-                    >
-                      <td colSpan={7}>
-                        <div className="improvements-expanded-section">
-                          <strong>Description</strong>
-                          <p style={{ margin: "4px 0 0", whiteSpace: "pre-wrap" }}>
-                            {entry.description || "(no description)"}
-                          </p>
-                        </div>
-                        <div className="improvements-expanded-section">
-                          <strong>Principles</strong>
-                          {entry.principles.length === 0 ? (
-                            <span style={{ color: "#888", marginLeft: "8px" }}>
-                              (none)
-                            </span>
-                          ) : (
-                            <ul>
-                              {entry.principles.map((p, i) => (
-                                <li key={`${entry.id}-p-${i}`}>{p}</li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                        <div className="improvements-expanded-section">
-                          <strong>Files changed</strong>
-                          {entry.files_changed.length === 0 ? (
-                            <span style={{ color: "#888", marginLeft: "8px" }}>
-                              (none)
-                            </span>
-                          ) : (
-                            <ul>
-                              {entry.files_changed.map((f, i) => (
-                                <li key={`${entry.id}-f-${i}`}>
-                                  <code>{f}</code>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ) : null}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
+      <TimelineList
+        entries={allEntries}
+        filter={filter}
+        setFilter={setFilter}
+        expandedId={expandedId}
+        setExpandedId={setExpandedId}
+        onRefresh={() => refresh()}
+        title="Improvements"
+        caption={
+          <>
+            Unified timeline of <code>/improve-bot-advised</code> and{" "}
+            <code>/improve-bot-evolve</code> outcomes. Click any row for
+            the full description, principle list, and files-changed
+            manifest.
+          </>
+        }
+        showFilter={true}
+        testIdPrefix="improvements-timeline"
+      />
     </div>
   );
 }

@@ -97,6 +97,35 @@ const NULL_RACE_VERSIONS: Version[] = [
 function mockVersionsFetch(body: Version[]) {
   const fn = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
     const url = typeof input === "string" ? input : input.toString();
+    // Step 6 wired the real VersionInspector into the Inspector
+    // sub-view, so any test that toggles to it now sees five extra
+    // per-version fetches. Match the per-version endpoints BEFORE the
+    // generic ``/api/versions`` registry endpoint so the inner pattern
+    // (``/api/versions/v3/config``) doesn't get hijacked by the
+    // registry response above.
+    if (/\/api\/versions\/v\d+\/config$/.test(url)) {
+      return jsonResponse({
+        hyperparams: {},
+        reward_rules: {},
+        daemon_config: {},
+      });
+    }
+    if (/\/api\/versions\/v\d+\/training-history$/.test(url)) {
+      return jsonResponse({
+        rolling_10: [],
+        rolling_50: [],
+        rolling_overall: [],
+      });
+    }
+    if (/\/api\/versions\/v\d+\/actions$/.test(url)) {
+      return jsonResponse([]);
+    }
+    if (/\/api\/versions\/v\d+\/improvements$/.test(url)) {
+      return jsonResponse([]);
+    }
+    if (/\/api\/versions\/v\d+\/weight-dynamics$/.test(url)) {
+      return jsonResponse([]);
+    }
     if (url.includes("/api/versions")) {
       return jsonResponse(body);
     }
@@ -139,6 +168,32 @@ beforeEach(() => {
         return jsonResponse({ improvements: [] });
       }
       if (url.includes("/api/runs/active")) {
+        return jsonResponse([]);
+      }
+      // Step 6 — per-version inspector endpoints. Default to empty
+      // payloads so tests that toggle to the Inspector sub-view don't
+      // need their own per-version mock setup.
+      if (/\/api\/versions\/v\d+\/config$/.test(url)) {
+        return jsonResponse({
+          hyperparams: {},
+          reward_rules: {},
+          daemon_config: {},
+        });
+      }
+      if (/\/api\/versions\/v\d+\/training-history$/.test(url)) {
+        return jsonResponse({
+          rolling_10: [],
+          rolling_50: [],
+          rolling_overall: [],
+        });
+      }
+      if (/\/api\/versions\/v\d+\/actions$/.test(url)) {
+        return jsonResponse([]);
+      }
+      if (/\/api\/versions\/v\d+\/improvements$/.test(url)) {
+        return jsonResponse([]);
+      }
+      if (/\/api\/versions\/v\d+\/weight-dynamics$/.test(url)) {
         return jsonResponse([]);
       }
       return jsonResponse([] as Version[]);

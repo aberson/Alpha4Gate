@@ -3,6 +3,7 @@ import { useVersions } from "../hooks/useVersions";
 import { StaleDataBanner } from "./StaleDataBanner";
 import { LineageView } from "./LineageView";
 import { LiveRunsGrid } from "./LiveRunsGrid";
+import { VersionInspector } from "./VersionInspector";
 import { HARNESS_ORIGINS } from "../types/version";
 
 /**
@@ -76,21 +77,43 @@ function LiveRunsContainer() {
   );
 }
 
-function InspectorPlaceholder({ selectedVersion }: { selectedVersion: string | null }) {
+interface InspectorContainerProps {
+  selectedVersion: string | null;
+  onCompareWithParent: (parent: string) => void;
+}
+
+function InspectorContainer({
+  selectedVersion,
+  onCompareWithParent,
+}: InspectorContainerProps) {
+  // Step 6: real Inspector wired up. The wrapper preserves the
+  // ``data-testid="models-subview-inspector"`` + ``models-inspector-
+  // selected`` selectors so the legacy shell tests keep passing.
   return (
     <div data-testid="models-subview-inspector" className="models-subview">
-      <p>Inspector (Step 6)</p>
       <p data-testid="models-inspector-selected">
         Selected: {selectedVersion ?? "(none)"}
       </p>
+      <VersionInspector
+        version={selectedVersion}
+        onCompareWithParent={onCompareWithParent}
+      />
     </div>
   );
 }
 
-function ComparePlaceholder() {
+interface ComparePlaceholderProps {
+  compareA: string | null;
+  compareB: string | null;
+}
+
+function ComparePlaceholder({ compareA, compareB }: ComparePlaceholderProps) {
   return (
     <div data-testid="models-subview-compare" className="models-subview">
       <p>Compare (Step 7)</p>
+      <p data-testid="models-compare-prefill">
+        A: {compareA ?? "(none)"} / B: {compareB ?? "(none)"}
+      </p>
     </div>
   );
 }
@@ -155,6 +178,25 @@ export function ModelsTab() {
     setSelectedVersion(versionName);
     setActiveSubView("inspector");
   }, []);
+
+  // Compare A/B state — owned at the tab level so the Inspector's
+  // "Compare with parent" button can pre-fill A=current, B=parent and
+  // navigate to the Compare sub-view. Step 7 builds the actual Compare
+  // view; Step 6 just wires the navigation.
+  const [compareA, setCompareA] = useState<string | null>(null);
+  const [compareB, setCompareB] = useState<string | null>(null);
+
+  const onCompareWithParent = useCallback(
+    (parentVersion: string) => {
+      // ``selectedVersion`` is non-null here — the Inspector only
+      // exposes the button when there's a current selection. Defensive
+      // fall-back to the parent name keeps state coherent regardless.
+      setCompareA(selectedVersion);
+      setCompareB(parentVersion);
+      setActiveSubView("compare");
+    },
+    [selectedVersion],
+  );
 
   return (
     <div className="models-tab" data-testid="models-tab">
@@ -270,9 +312,14 @@ export function ModelsTab() {
         ) : null}
         {activeSubView === "live" ? <LiveRunsContainer /> : null}
         {activeSubView === "inspector" ? (
-          <InspectorPlaceholder selectedVersion={selectedVersion} />
+          <InspectorContainer
+            selectedVersion={selectedVersion}
+            onCompareWithParent={onCompareWithParent}
+          />
         ) : null}
-        {activeSubView === "compare" ? <ComparePlaceholder /> : null}
+        {activeSubView === "compare" ? (
+          <ComparePlaceholder compareA={compareA} compareB={compareB} />
+        ) : null}
         {activeSubView === "forensics" ? <ForensicsPlaceholder /> : null}
       </div>
     </div>
