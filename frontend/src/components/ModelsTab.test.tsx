@@ -126,6 +126,12 @@ function mockVersionsFetch(body: Version[]) {
     if (/\/api\/versions\/v\d+\/weight-dynamics$/.test(url)) {
       return jsonResponse([]);
     }
+    // Step 7 wired the real CompareView into the Compare sub-view, so
+    // toggling to it now hits /api/ladder. Return an empty ladder so
+    // shell tests that visit Compare don't blow up.
+    if (url.includes("/api/ladder")) {
+      return jsonResponse({ standings: [], head_to_head: {} });
+    }
     if (url.includes("/api/versions")) {
       return jsonResponse(body);
     }
@@ -195,6 +201,9 @@ beforeEach(() => {
       }
       if (/\/api\/versions\/v\d+\/weight-dynamics$/.test(url)) {
         return jsonResponse([]);
+      }
+      if (url.includes("/api/ladder")) {
+        return jsonResponse({ standings: [], head_to_head: {} });
       }
       return jsonResponse([] as Version[]);
     },
@@ -371,6 +380,56 @@ describe("ModelsTab — shell", () => {
       "models-version-select",
     ) as HTMLSelectElement;
     expect(select.value).toBe("v3");
+  });
+
+  it("Compare sub-view renders the CompareView with A/B prefill", async () => {
+    // Step 7: clicking "Compare with parent" inside the Inspector
+    // pre-fills compareA=current, compareB=parent and switches to
+    // Compare. The wrapper still carries ``models-compare-prefill``
+    // for the legacy assertion; the real CompareView panels render
+    // beneath.
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      mockVersionsFetch(ELEVEN_PROTOSS_VERSIONS),
+    );
+    render(<ModelsTab />);
+    await waitFor(() => {
+      expect(screen.getByTestId("models-version-select")).toBeInTheDocument();
+    });
+    // Toggle to Inspector for v7 (current).
+    fireEvent.click(screen.getByTestId("models-subview-button-inspector"));
+    const compareWithParent = await screen.findByTestId(
+      "inspector-compare-with-parent",
+    );
+    fireEvent.click(compareWithParent);
+    // Compare sub-view active with prefill A=v7 / B=v6.
+    await waitFor(() => {
+      expect(screen.getByTestId("models-subview-compare")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("models-compare-prefill")).toHaveTextContent(
+      "A: v7 / B: v6",
+    );
+    // Real CompareView mounted.
+    expect(screen.getByTestId("compare-view")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId("compare-panel-elo")).toBeInTheDocument();
+    });
+  });
+
+  it("Compare sub-view defaults A=current, B=current.parent on direct nav", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      mockVersionsFetch(ELEVEN_PROTOSS_VERSIONS),
+    );
+    render(<ModelsTab />);
+    await waitFor(() => {
+      expect(screen.getByTestId("models-version-select")).toBeInTheDocument();
+    });
+    // Direct nav to Compare without going through Inspector first.
+    fireEvent.click(screen.getByTestId("models-subview-button-compare"));
+    await waitFor(() => {
+      expect(screen.getByTestId("models-compare-prefill")).toHaveTextContent(
+        "A: v7 / B: v6",
+      );
+    });
   });
 
   it("manual refresh button triggers a refetch of /api/versions", async () => {

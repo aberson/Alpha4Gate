@@ -364,6 +364,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 ### Step 7: Compare view
 - **Problem:** Build `CompareView.tsx` with A/B selector (initial state from URL state or "Compare with parent" handoff), hyperparams deep-diff (red/green highlighting), reward-rules diff (rule add/modify/remove), Elo delta from `/api/ladder`. Weight KL placeholder until Step 9.
 - **Issue:** #260
+- **Status:** DONE (2026-05-01)
 - **Flags:** `--reviewers code --isolation worktree --ui`
 - **Produces:** `CompareView.tsx`, diff utilities (`utils/deepDiff.ts`), vitest tests.
 - **Done when:** Picking v2 + v4 shows three populated diff panels and Elo delta; "Compare with parent" prefill from Inspector works; sibling-comparison shows "no direct lineage" placeholder.

@@ -4,6 +4,7 @@ import { StaleDataBanner } from "./StaleDataBanner";
 import { LineageView } from "./LineageView";
 import { LiveRunsGrid } from "./LiveRunsGrid";
 import { VersionInspector } from "./VersionInspector";
+import { CompareView } from "./CompareView";
 import { HARNESS_ORIGINS } from "../types/version";
 
 /**
@@ -102,18 +103,32 @@ function InspectorContainer({
   );
 }
 
-interface ComparePlaceholderProps {
+interface CompareContainerProps {
   compareA: string | null;
   compareB: string | null;
+  onChange: (a: string | null, b: string | null) => void;
 }
 
-function ComparePlaceholder({ compareA, compareB }: ComparePlaceholderProps) {
+function CompareContainer({
+  compareA,
+  compareB,
+  onChange,
+}: CompareContainerProps) {
+  // Step 7: real CompareView wired up. The wrapper preserves the
+  // ``data-testid="models-subview-compare"`` + ``models-compare-
+  // prefill`` selectors so the legacy shell tests keep passing — the
+  // prefill paragraph is now hidden under a more specific testid that
+  // CompareView's own tests assert on.
   return (
     <div data-testid="models-subview-compare" className="models-subview">
-      <p>Compare (Step 7)</p>
       <p data-testid="models-compare-prefill">
         A: {compareA ?? "(none)"} / B: {compareB ?? "(none)"}
       </p>
+      <CompareView
+        compareA={compareA}
+        compareB={compareB}
+        onChange={onChange}
+      />
     </div>
   );
 }
@@ -197,6 +212,27 @@ export function ModelsTab() {
     },
     [selectedVersion],
   );
+
+  const onCompareChange = useCallback(
+    (a: string | null, b: string | null) => {
+      setCompareA(a);
+      setCompareB(b);
+    },
+    [],
+  );
+
+  // When the Compare sub-view becomes active and A/B are still null,
+  // default A=selectedVersion and B=selectedVersion's parent. Skipped
+  // when either is already populated (e.g. the Inspector pre-filled
+  // them, or the operator picked a side and re-toggled to Compare).
+  useEffect(() => {
+    if (activeSubView !== "compare") return;
+    if (compareA !== null || compareB !== null) return;
+    if (selectedVersion === null || versions.length === 0) return;
+    const row = versions.find((v) => v.name === selectedVersion);
+    setCompareA(selectedVersion);
+    setCompareB(row?.parent ?? null);
+  }, [activeSubView, compareA, compareB, selectedVersion, versions]);
 
   return (
     <div className="models-tab" data-testid="models-tab">
@@ -318,7 +354,11 @@ export function ModelsTab() {
           />
         ) : null}
         {activeSubView === "compare" ? (
-          <ComparePlaceholder compareA={compareA} compareB={compareB} />
+          <CompareContainer
+            compareA={compareA}
+            compareB={compareB}
+            onChange={onCompareChange}
+          />
         ) : null}
         {activeSubView === "forensics" ? <ForensicsPlaceholder /> : null}
       </div>
