@@ -9,6 +9,7 @@ import os
 import re
 import sqlite3
 import subprocess
+import sys
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -1184,6 +1185,31 @@ _SHA_RE: re.Pattern[str] = re.compile(r"^[0-9a-f]{7,40}$")
 # depth — queries are parameterized, but a 400 is still preferable to
 # wasting a roundtrip on garbage input).
 _GAME_ID_RE: re.Pattern[str] = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+# Process-wide lock guarding the lazy-init build of ``data/lineage.json``
+# inside ``GET /api/lineage``. The endpoint double-checks file existence
+# inside the lock so two concurrent first-time requests don't both
+# spawn ``scripts/build_lineage.py``. Lazy-init runs ``subprocess.run``
+# off the event loop via ``asyncio.to_thread``; the lock itself stays
+# in the asyncio domain because it's only ever awaited from coroutines
+# (the endpoint handler).
+_lineage_lazy_init_lock: asyncio.Lock | None = None
+
+
+def _get_lineage_lazy_init_lock() -> asyncio.Lock:
+    """Return the singleton lazy-init lock, creating it on first use.
+
+    Constructed lazily because ``asyncio.Lock()`` binds itself to the
+    running event loop on Python < 3.10 and to a freshly-created loop
+    on the FIRST coroutine that touches it on >= 3.10. Building it at
+    module import time would attach to a transient loop (FastAPI's
+    test loop, or a runner script's preflight loop) and then
+    deadlock under uvicorn's real loop.
+    """
+    global _lineage_lazy_init_lock
+    if _lineage_lazy_init_lock is None:
+        _lineage_lazy_init_lock = asyncio.Lock()
+    return _lineage_lazy_init_lock
 
 
 def _validate_version(v: str) -> str:
@@ -3371,19 +3397,62 @@ async def get_version_weight_dynamics(v: str) -> list[dict[str, Any]]:
     return await asyncio.to_thread(_weight_dynamics_sync, v)
 
 
+def _run_build_lineage_sync() -> None:
+    """Invoke ``scripts/build_lineage.py`` synchronously, swallow failures.
+
+    Lazy-init helper for ``/api/lineage`` — runs off the event loop via
+    ``asyncio.to_thread``. Subprocess uses list-form + ``shell=False``
+    + a 60s wall-clock cap; every failure mode (non-zero exit, timeout,
+    OSError) logs a warning and returns silently so the endpoint can
+    always fall back to its empty skeleton without surfacing a 500 to
+    the dashboard.
+    """
+    script = _REPO_ROOT / "scripts" / "build_lineage.py"
+    if not script.is_file():
+        _log.warning(
+            "lineage lazy-init: build_lineage.py missing at %s — "
+            "falling back to empty skeleton",
+            script,
+        )
+        return
+    try:
+        result = subprocess.run(  # noqa: S603 — list-form, shell=False
+            [sys.executable, str(script)],
+            shell=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        _log.warning("lineage lazy-init: build_lineage.py timed out after 60s")
+        return
+    except OSError as exc:
+        _log.warning("lineage lazy-init: build_lineage.py failed to launch: %s", exc)
+        return
+    if result.returncode != 0:
+        _log.warning(
+            "lineage lazy-init: build_lineage.py exit %d (stderr=%r)",
+            result.returncode,
+            (result.stderr or "")[:500],
+        )
+
+
 @app.get("/api/lineage")
 async def get_lineage() -> dict[str, Any]:
     """Return the persisted lineage DAG.
 
-    Reads ``data/lineage.json`` from the cross-version data dir. When
-    the file is missing — which is the normal case before Step 2 ships
-    ``scripts/build_lineage.py`` — returns the empty skeleton
-    ``{"nodes": [], "edges": []}``.
+    Reads ``data/lineage.json`` from the cross-version data dir. On a
+    cache miss (file missing OR malformed) the endpoint runs
+    ``scripts/build_lineage.py`` once under a process-wide
+    :class:`asyncio.Lock` (double-checked locking — the existence
+    check is repeated inside the lock so two concurrent first-time
+    requests don't both spawn the build). On subprocess failure the
+    endpoint falls back to ``{"nodes": [], "edges": []}`` rather than
+    surfacing a 500 — this matches the policy applied to every other
+    Models-tab endpoint.
 
-    **Lazy-init is NOT wired here** — that is Step 2's job (depends on
-    ``scripts/build_lineage.py`` which doesn't exist yet; wiring it
-    here would create a circular dependency). When the file exists,
-    the parsed JSON is returned verbatim.
+    Subsequent requests hit the parsed file directly (~10ms cost).
 
     Uses :func:`_cross_version_data_dir` — lineage is cross-version
     state. See module-level note at line ~1120.
@@ -3391,7 +3460,18 @@ async def get_lineage() -> dict[str, Any]:
     path = _cross_version_data_dir() / "lineage.json"
     payload = _read_json_file(path)
     if payload is None:
-        return {"nodes": [], "edges": []}
+        # Cache miss — acquire the lazy-init lock and re-check inside
+        # the lock so two concurrent first-time requests don't both
+        # invoke the build script.
+        lock = _get_lineage_lazy_init_lock()
+        async with lock:
+            payload = _read_json_file(path)
+            if payload is None:
+                await asyncio.to_thread(_run_build_lineage_sync)
+                payload = _read_json_file(path)
+        if payload is None:
+            # Build script failed (logged inside _run_build_lineage_sync).
+            return {"nodes": [], "edges": []}
     # Defensive: if the file exists but is missing one of the keys,
     # backfill with empty lists so the frontend can always
     # destructure ``{nodes, edges}``.

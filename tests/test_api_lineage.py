@@ -1,19 +1,25 @@
-"""Contract tests for ``GET /api/lineage`` (Step 1a, no lazy-init yet).
+"""Contract tests for ``GET /api/lineage`` (Step 1a + Step 2 lazy-init).
 
-* Missing ``data/lineage.json`` → ``{nodes: [], edges: []}`` (NEVER 500).
+* Missing ``data/lineage.json`` → run ``build_lineage.py`` lazy-init,
+  then return the freshly built file. Subprocess failure → fall back
+  to ``{nodes: [], edges: []}`` (NEVER 500).
 * Existing file → parsed payload returned verbatim.
 * Existing file missing one of the keys → backfilled with ``[]`` so
   the frontend can always destructure ``{nodes, edges}``.
+* Concurrent first-time requests → subprocess invoked exactly ONCE
+  (process-wide ``asyncio.Lock`` + double-checked locking).
 
-Step 2 wires lazy-init via ``scripts/build_lineage.py`` — explicitly
-NOT in scope for this step (would be a circular dependency).
+Step 2 (this commit) wires lazy-init via ``scripts/build_lineage.py``.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from bots.v10 import api as v10_api
@@ -49,8 +55,14 @@ def client(staged_repo: Path, tmp_path: Path) -> TestClient:
 @pytest.fixture(autouse=True)
 def clean_error_buffer() -> Iterator[None]:
     get_error_log_buffer().reset()
+    # Also reset the lazy-init lock between tests so each test gets a
+    # fresh ``asyncio.Lock`` bound to its own event loop. Otherwise a
+    # lock created against TestClient #1's loop would deadlock when
+    # TestClient #2 awaited it on a different loop.
+    v10_api._lineage_lazy_init_lock = None
     yield
     get_error_log_buffer().reset()
+    v10_api._lineage_lazy_init_lock = None
 
 
 class TestLineageEndpoint:
@@ -164,4 +176,164 @@ class TestLineageEndpoint:
         resp = client.get("/api/lineage")
         assert resp.status_code == 200
         # File at cross-version path is missing → empty skeleton.
+        # (Lazy-init runs build_lineage.py but it's not staged in the
+        # fake repo, so the warn-and-fall-back path triggers.)
         assert resp.json() == {"nodes": [], "edges": []}
+
+
+class TestLazyInit:
+    """Step 2 — lazy-init wires ``scripts/build_lineage.py`` on cache miss."""
+
+    def test_lazy_init_runs_build_script_when_file_missing(
+        self,
+        client: TestClient,
+        staged_repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Cache miss → build_lineage subprocess invoked → fixture returned."""
+        assert not (staged_repo / "data" / "lineage.json").exists()
+
+        fixture_payload = {
+            "nodes": [{"id": "v0", "version": "v0", "race": "protoss",
+                       "harness_origin": "manual", "parent": None}],
+            "edges": [],
+        }
+
+        # The lazy-init helper checks for the existence of
+        # ``scripts/build_lineage.py`` first. Stage it so the helper
+        # actually invokes subprocess.run (instead of warn-and-skip).
+        (staged_repo / "scripts").mkdir(parents=True, exist_ok=True)
+        (staged_repo / "scripts" / "build_lineage.py").write_text(
+            "# stub\n", encoding="utf-8"
+        )
+
+        captured_calls: list[list[str]] = []
+
+        def fake_run(
+            args: list[str], **_kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            captured_calls.append(list(args))
+            # Side-effect: write the fixture lineage.json so the
+            # endpoint's post-build re-read succeeds.
+            (staged_repo / "data" / "lineage.json").write_text(
+                json.dumps(fixture_payload), encoding="utf-8"
+            )
+            return subprocess.CompletedProcess(
+                args=args, returncode=0, stdout="", stderr=""
+            )
+
+        monkeypatch.setattr(v10_api.subprocess, "run", fake_run)
+
+        resp = client.get("/api/lineage")
+        assert resp.status_code == 200
+        assert resp.json() == fixture_payload
+        # Subprocess WAS invoked.
+        assert len(captured_calls) == 1
+        assert any(
+            "build_lineage.py" in arg for arg in captured_calls[0]
+        )
+
+    def test_lazy_init_subprocess_failure_falls_back_to_empty(
+        self,
+        client: TestClient,
+        staged_repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Build subprocess crashes → endpoint returns empty skeleton, not 500."""
+        (staged_repo / "scripts").mkdir(parents=True, exist_ok=True)
+        (staged_repo / "scripts" / "build_lineage.py").write_text(
+            "# stub\n", encoding="utf-8"
+        )
+
+        def fake_run(
+            args: list[str], **_kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=args, returncode=1, stdout="", stderr="boom"
+            )
+
+        monkeypatch.setattr(v10_api.subprocess, "run", fake_run)
+
+        resp = client.get("/api/lineage")
+        assert resp.status_code == 200
+        assert resp.json() == {"nodes": [], "edges": []}
+
+    def test_lazy_init_concurrent_calls_serialize(
+        self,
+        staged_repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Two concurrent first-time requests → subprocess fires exactly ONCE.
+
+        We bypass TestClient and exercise ``get_lineage`` directly with
+        ``asyncio.gather`` so both coroutines hit the lock with the
+        file genuinely missing. The first to acquire the lock writes
+        the fixture; the second double-checks inside the lock and
+        finds the file present, skipping the subprocess call.
+
+        Determinism: we monkeypatch ``_run_build_lineage_sync`` (the
+        ``asyncio.to_thread`` target) with an *async* shim that awaits
+        ``asyncio.sleep(0)`` once before doing its side-effect work.
+        That explicit yield deterministically forces the event loop to
+        schedule the second coroutine, guaranteeing it has time to
+        contend on the lock — without relying on ``to_thread``'s
+        implicit thread-handoff yield, whose timing varies across
+        asyncio implementations.
+        """
+        assert not (staged_repo / "data" / "lineage.json").exists()
+
+        # Wire configure() so the per-version dir helpers don't crash.
+        log_dir = tmp_path / "logs2"
+        replay_dir = tmp_path / "replays2"
+        log_dir.mkdir(exist_ok=True)
+        replay_dir.mkdir(exist_ok=True)
+        per_v = staged_repo / "bots" / "v0" / "data"
+        per_v.mkdir(parents=True, exist_ok=True)
+        configure(per_v, log_dir, replay_dir)
+
+        (staged_repo / "scripts").mkdir(parents=True, exist_ok=True)
+        (staged_repo / "scripts" / "build_lineage.py").write_text(
+            "# stub\n", encoding="utf-8"
+        )
+
+        fixture_payload = {"nodes": [{"id": "v0"}], "edges": []}
+        call_count = {"n": 0}
+
+        # Replace ``asyncio.to_thread`` with an inline awaitable so the
+        # "build" runs *on the event loop* and yields explicitly via
+        # ``asyncio.sleep(0)``. That deterministically forces the
+        # second coroutine to be scheduled while the first is still
+        # inside the lock-protected build region — giving us the
+        # tightest possible test of the double-checked-lock contract.
+        async def fake_to_thread(
+            fn: Any, /, *_args: Any, **_kwargs: Any
+        ) -> Any:
+            # Only the build_lineage call goes through to_thread in
+            # this codepath; assert that to keep the test honest.
+            assert fn is v10_api._run_build_lineage_sync
+            call_count["n"] += 1
+            # Explicit yield — deterministic interleave point.
+            await asyncio.sleep(0)
+            (staged_repo / "data" / "lineage.json").write_text(
+                json.dumps(fixture_payload), encoding="utf-8"
+            )
+            return None
+
+        monkeypatch.setattr(v10_api.asyncio, "to_thread", fake_to_thread)
+
+        async def _two_concurrent() -> tuple[Any, Any]:
+            return await asyncio.gather(
+                v10_api.get_lineage(),
+                v10_api.get_lineage(),
+            )
+
+        r1, r2 = asyncio.run(_two_concurrent())
+
+        assert r1 == fixture_payload
+        assert r2 == fixture_payload
+        # The subprocess MUST only fire once thanks to the
+        # double-checked-lock inside the endpoint.
+        assert call_count["n"] == 1, (
+            f"expected exactly 1 subprocess invocation, got {call_count['n']}"
+        )

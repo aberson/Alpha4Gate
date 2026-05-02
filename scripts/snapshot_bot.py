@@ -43,6 +43,24 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(result)
+
+    # Models tab Step 2: post-promotion hooks. Rebuild data/lineage.json
+    # so the dashboard reflects the new version without a daemon
+    # restart. ``result`` is the new ``bots/<name>/`` Path; its
+    # ``.name`` is the version string the hook wants. Hook failures
+    # are non-fatal — wrap defense-in-depth and continue.
+    try:
+        from bots.v0.learning.post_promotion_hooks import (
+            run_post_promotion_hooks,
+        )
+
+        run_post_promotion_hooks(result.name)
+    except Exception as exc:  # noqa: BLE001 — defense-in-depth
+        print(
+            f"post-promotion hook failed for {result.name}: {exc}",
+            file=sys.stderr,
+        )
+
     return 0
 
 

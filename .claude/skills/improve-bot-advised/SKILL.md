@@ -463,6 +463,21 @@ After committing, unset the env var:
 unset ADVISED_AUTO
 ```
 
+After each iteration commit, refresh the dashboard's lineage cache by
+invoking the post-promotion hook helper. Pass the version the iteration
+produced (read from `bots/current/current.txt` if you don't already
+have it). The hook swallows its own failures, so this command never
+blocks the loop:
+
+```bash
+CURRENT="$(cat bots/current/current.txt 2>/dev/null)"
+if [ -z "$CURRENT" ]; then
+  echo "warn: bots/current/current.txt missing or empty, skipping post-promotion hook"
+else
+  python -c "from bots.v0.learning.post_promotion_hooks import run_post_promotion_hooks; run_post_promotion_hooks('$CURRENT')"
+fi
+```
+
 For significant milestones, run `/repo-update` to update README and docs.
 
 ### 6.3 Training soak (2 games)

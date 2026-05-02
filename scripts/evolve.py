@@ -3555,6 +3555,24 @@ def run_loop(
                     promote_sha = stack_result.promote_sha
                     for idx in promoted_imp_idxs:
                         per_item_state[idx].status = _PROMOTED
+                    # Models tab Step 2: post-promotion hooks. Rebuild
+                    # data/lineage.json (and, once Step 9 lands, refresh
+                    # weight dynamics for the new version). The helper
+                    # itself swallows every failure mode as a warning,
+                    # but we wrap defense-in-depth try/except too — the
+                    # promotion path must NEVER be blocked by hook crash.
+                    try:
+                        from bots.v0.learning.post_promotion_hooks import (
+                            run_post_promotion_hooks,
+                        )
+
+                        run_post_promotion_hooks(stack_result.new_version)
+                    except Exception:  # noqa: BLE001 — defense-in-depth
+                        _log.exception(
+                            "post-promotion hook crashed for %s; "
+                            "promotion already committed, continuing",
+                            stack_result.new_version,
+                        )
                 else:
                     # Import-check or commit failed; snapshot rolled
                     # back inside the helper. No promotion this
