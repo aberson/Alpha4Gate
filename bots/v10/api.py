@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -1108,13 +1109,98 @@ _ADVISED_CONTROL_FILE = "advised_run_control.json"
 
 
 def _read_json_file(path: Path) -> dict[str, Any] | None:
-    """Read a JSON file if it exists, return None otherwise."""
+    """Read a JSON file if it exists, return None otherwise.
+
+    Hardened against non-dict top-level JSON: callers downstream do
+    ``payload.get(...)`` and would crash with ``AttributeError`` (→ HTTP
+    500) if the file contained ``[]`` or ``"foo"`` at the top level.
+    Such cases are treated as missing — return ``None`` so the endpoint
+    can fall back to its empty skeleton.
+    """
     if path.exists():
         try:
-            return json.loads(path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
+            payload = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return None
+        if not isinstance(payload, dict):
+            return None
+        return payload
     return None
+
+
+# ---------------------------------------------------------------------------
+# Models tab — version registry, config, lineage (Step 1a)
+# ---------------------------------------------------------------------------
+#
+# IMPORTANT (per ``feedback_per_version_vs_cross_version_data_dir.md``):
+# Endpoints that read both per-version state (training.db, hyperparams,
+# reward rules, daemon config) AND cross-version state (improvement_log,
+# evolve_results, lineage) MUST use SEPARATE resolvers. Sharing one
+# resolver silently breaks either side — symptom is a 200 response with
+# the idle skeleton even though the file exists at a different absolute
+# path. Always pick the right resolver for the data class:
+#
+#   ``_per_version_data_dir(v)``  → ``<repo>/bots/v{N}/data/``
+#   ``_cross_version_data_dir()`` → ``<repo>/data/``
+
+# Repo root used by the resolver helpers below + the Elo-ladder section
+# further down. ``api.py`` lives at ``bots/v10/api.py`` so three
+# ``parent`` hops land at the repo root.
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+_VERSION_RE: re.Pattern[str] = re.compile(r"^v\d+$")
+
+
+def _validate_version(v: str) -> str:
+    """Validate a version string against ``^v\\d+$``.
+
+    Raises :class:`HTTPException` with status 400 on malformed input so
+    other endpoints can re-use this helper. The string is returned
+    unchanged on success so callers can chain ``v = _validate_version(v)``.
+
+    Per plan §6.11 (input validation) — the regex is strict to forbid
+    shell-metacharacter injection that might leak into a future
+    ``git show <sha>:bots/<v>/...`` subprocess invocation.
+    """
+    if not isinstance(v, str) or not _VERSION_RE.match(v):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid version {v!r}: must match ^v\\d+$",
+        )
+    return v
+
+
+def _per_version_data_dir(version: str) -> Path:
+    """Resolve the per-version data dir at ``<repo>/bots/v{N}/data/``.
+
+    Used for per-version state: ``training.db``, ``hyperparams.json``,
+    ``reward_rules.json``, ``daemon_config.json``, ``checkpoints/``,
+    ``reward_logs/``. **Never** mix this with cross-version state — see
+    the module-level note above and the recorded gotcha in
+    ``feedback_per_version_vs_cross_version_data_dir.md``.
+
+    The version arg must already be validated by :func:`_validate_version`
+    (callers are responsible). The returned path is **not** required to
+    exist; missing directories should be handled gracefully by the
+    caller (return empty dict / list, never 500).
+    """
+    return _REPO_ROOT / "bots" / version / "data"
+
+
+def _cross_version_data_dir() -> Path:
+    """Resolve the cross-version data dir at ``<repo>/data/``.
+
+    Used for cross-version orchestrator state:
+    ``improvement_log.json`` (advised harness), ``evolve_results.jsonl``
+    (evolve harness), ``lineage.json`` (DAG cache), ``bot_ladder.json``
+    (Elo ladder), etc. **Never** mix this with per-version state — see
+    the module-level note above.
+
+    The returned path is **not** required to exist; missing directories
+    should be handled gracefully by the caller (return empty dict /
+    list, never 500).
+    """
+    return _REPO_ROOT / "data"
 
 
 @app.get("/api/advised/state")
@@ -1972,6 +2058,264 @@ async def get_primitives() -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Models tab — endpoints (Step 1a)
+# ---------------------------------------------------------------------------
+#
+# See the helpers near line 1120 for the ``_per_version_data_dir`` /
+# ``_cross_version_data_dir`` / ``_validate_version`` rationale.
+
+
+def _scan_versions_sync() -> list[dict[str, Any]]:
+    """Walk ``bots/v*/manifest.json`` and derive the registry rows.
+
+    Pure function (no FastAPI), runs inside ``asyncio.to_thread`` so the
+    event loop is never blocked on the directory walk + ~11 small JSON
+    reads + the three cross-version log scans (advised, evolve,
+    self-play). Returns an empty list when ``bots/`` is missing or
+    contains no version directories.
+    """
+    bots_dir = _REPO_ROOT / "bots"
+    if not bots_dir.is_dir():
+        return []
+
+    # Identify the "current" version. Missing / unreadable pointer → no
+    # version is flagged ``current: True``; every other field still
+    # populates so the UI can render the registry without it.
+    current_pointer = bots_dir / "current" / "current.txt"
+    current_name: str | None = None
+    if current_pointer.is_file():
+        try:
+            current_name = current_pointer.read_text(encoding="utf-8").strip()
+        except OSError:
+            current_name = None
+
+    # Collect promotion sha/version markers from cross-version logs once
+    # so we can O(1)-test each manifest's ``git_sha`` and ``version``
+    # against the right harness origin.
+    cross = _cross_version_data_dir()
+
+    # ``improvement_log.json``: per-iteration entries written by the
+    # advised harness. Today's schema has no ``git_sha``; we collect both
+    # any sha-shaped value (forward-compat) and any ``bots/vN/`` target
+    # path so we can resolve advised-touched versions either way.
+    advised_shas: set[str] = set()
+    advised_versions: set[str] = set()
+    imp_log = _read_json_file(cross / "improvement_log.json")
+    if imp_log is not None:
+        entries = imp_log.get("improvements", [])
+        if isinstance(entries, list):
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                # Forward-compat: future advised entries may include sha.
+                sha = entry.get("git_sha") or entry.get("sha") or entry.get("commit")
+                if isinstance(sha, str) and sha:
+                    advised_shas.add(sha)
+                files = entry.get("files_changed", [])
+                if isinstance(files, list):
+                    for fp in files:
+                        if not isinstance(fp, str):
+                            continue
+                        m = re.match(r"^bots/(v\d+)/", fp)
+                        if m:
+                            advised_versions.add(m.group(1))
+
+    # ``evolve_results.jsonl``: one row per phase. Promotions are
+    # ``stack-apply-pass`` (or contain a ``new_version`` field). We
+    # collect ``new_version`` strings and any sha-shaped values for
+    # forward-compat.
+    evolve_shas: set[str] = set()
+    evolve_versions: set[str] = set()
+    evolve_path = cross / "evolve_results.jsonl"
+    if evolve_path.is_file():
+        try:
+            text = evolve_path.read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                row = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            new_v = row.get("new_version")
+            if isinstance(new_v, str) and _VERSION_RE.match(new_v):
+                evolve_versions.add(new_v)
+            sha = row.get("git_sha") or row.get("sha") or row.get("commit")
+            if isinstance(sha, str) and sha:
+                evolve_shas.add(sha)
+
+    # ``selfplay_results.jsonl``: one row per self-play match. Today's
+    # schema (``SelfPlayRecord``) carries ``p1_version`` / ``p2_version``
+    # / ``winner`` — the file logs MATCHES, not promotions. Per plan §5
+    # the ``"self-play"`` origin is reserved for versions PROMOTED by a
+    # self-play harness. We therefore scan for forward-compat keys
+    # ``new_version`` / ``version`` matching ``^v\d+$`` (any sha-shaped
+    # value too). Today no row carries these keys, so the set stays
+    # empty in practice — but the code path is wired so a future
+    # promotion-emitting self-play harness lights up without an API
+    # change. This is the conservative wiring documented as option (b)
+    # in the iter-2 review prompt, sufficient to honor the plan §5
+    # contract.
+    selfplay_shas: set[str] = set()
+    selfplay_versions: set[str] = set()
+    selfplay_path = cross / "selfplay_results.jsonl"
+    if selfplay_path.is_file():
+        try:
+            text = selfplay_path.read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                row = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            new_v = row.get("new_version") or row.get("version")
+            if isinstance(new_v, str) and _VERSION_RE.match(new_v):
+                selfplay_versions.add(new_v)
+            sha = row.get("git_sha") or row.get("sha") or row.get("commit")
+            if isinstance(sha, str) and sha:
+                selfplay_shas.add(sha)
+
+    # Walk version directories and emit rows.
+    rows: list[dict[str, Any]] = []
+    for child in sorted(bots_dir.iterdir(), key=lambda p: p.name):
+        if not child.is_dir() or child.name == "current":
+            continue
+        if not _VERSION_RE.match(child.name):
+            continue
+        manifest = _read_json_file(child / "manifest.json")
+        if manifest is None:
+            continue
+
+        version_name = child.name
+        sha = manifest.get("git_sha")
+        # Derive ``harness_origin``. Precedence per plan §5:
+        # advised → evolve → self-play → manual. Evolve takes precedence
+        # over advised because evolve promotions wrap multiple advised
+        # iterations into one snapshot; the harness that produced THIS
+        # version is the outer one. Advised in turn outranks self-play
+        # because advised explicitly mutates ``bots/<v>/`` files;
+        # self-play (today) only logs matches. If no cross-version log
+        # claims this version, fall back to ``"manual"``.
+        if (isinstance(sha, str) and sha in evolve_shas) or version_name in evolve_versions:
+            harness_origin = "evolve"
+        elif (
+            isinstance(sha, str) and sha in advised_shas
+        ) or version_name in advised_versions:
+            harness_origin = "advised"
+        elif (
+            isinstance(sha, str) and sha in selfplay_shas
+        ) or version_name in selfplay_versions:
+            harness_origin = "self-play"
+        else:
+            harness_origin = "manual"
+
+        rows.append({
+            "name": version_name,
+            "race": "protoss",  # single-race today (Phase G adds others)
+            "parent": manifest.get("parent"),
+            "harness_origin": harness_origin,
+            "timestamp": manifest.get("timestamp"),
+            "sha": sha,
+            "fingerprint": manifest.get("fingerprint"),
+            "current": version_name == current_name,
+        })
+    return rows
+
+
+@app.get("/api/versions")
+async def get_versions() -> list[dict[str, Any]]:
+    """Return version registry metadata for every ``bots/v*/`` directory.
+
+    Each row has shape::
+
+        {name, race, parent, harness_origin, timestamp, sha,
+         fingerprint, current: bool}
+
+    ``race`` is the literal ``"protoss"`` until Phase G introduces
+    multi-race versions. ``harness_origin`` ∈ ``{"advised", "evolve",
+    "manual", "self-play"}`` is derived by cross-referencing each
+    manifest's ``git_sha`` against ``data/improvement_log.json``
+    (advised), ``data/evolve_results.jsonl`` (evolve), and
+    ``data/selfplay_results.jsonl`` (self-play) — and, for today's logs
+    that don't carry sha fields, by matching the version name itself.
+    Precedence is evolve → advised → self-play → manual. Falls back to
+    ``"manual"`` when no source claims the version. ``current`` is
+    true for the version named in ``bots/current/current.txt``.
+
+    Returns ``[]`` when no versions exist (fresh checkout); never 500s.
+    """
+    return await asyncio.to_thread(_scan_versions_sync)
+
+
+@app.get("/api/versions/{v}/config")
+async def get_version_config(v: str) -> dict[str, Any]:
+    """Return per-version config files: hyperparams, reward rules, daemon.
+
+    Reads ``bots/v{N}/data/{hyperparams,reward_rules,daemon_config}.json``.
+    Each file is optional — a missing or malformed file returns ``{}``
+    for that key, never 500. ``v`` is validated against ``^v\\d+$``;
+    malformed input returns 400 (per plan §6.11 input validation).
+
+    Uses :func:`_per_version_data_dir` (per-version resolver) — never
+    the cross-version resolver. See module-level note at line ~1120.
+    """
+    v = _validate_version(v)
+    data_dir = _per_version_data_dir(v)
+    files = {
+        "hyperparams": "hyperparams.json",
+        "reward_rules": "reward_rules.json",
+        "daemon_config": "daemon_config.json",
+    }
+    out: dict[str, Any] = {}
+    for key, fname in files.items():
+        payload = _read_json_file(data_dir / fname)
+        out[key] = payload if payload is not None else {}
+    return out
+
+
+@app.get("/api/lineage")
+async def get_lineage() -> dict[str, Any]:
+    """Return the persisted lineage DAG.
+
+    Reads ``data/lineage.json`` from the cross-version data dir. When
+    the file is missing — which is the normal case before Step 2 ships
+    ``scripts/build_lineage.py`` — returns the empty skeleton
+    ``{"nodes": [], "edges": []}``.
+
+    **Lazy-init is NOT wired here** — that is Step 2's job (depends on
+    ``scripts/build_lineage.py`` which doesn't exist yet; wiring it
+    here would create a circular dependency). When the file exists,
+    the parsed JSON is returned verbatim.
+
+    Uses :func:`_cross_version_data_dir` — lineage is cross-version
+    state. See module-level note at line ~1120.
+    """
+    path = _cross_version_data_dir() / "lineage.json"
+    payload = _read_json_file(path)
+    if payload is None:
+        return {"nodes": [], "edges": []}
+    # Defensive: if the file exists but is missing one of the keys,
+    # backfill with empty lists so the frontend can always
+    # destructure ``{nodes, edges}``.
+    if "nodes" not in payload:
+        payload["nodes"] = []
+    if "edges" not in payload:
+        payload["edges"] = []
+    return payload
+
+
 # --- WebSocket Endpoints ---
 
 
@@ -2014,7 +2358,9 @@ async def ws_decisions(websocket: WebSocket) -> None:
 # ---------------------------------------------------------------------------
 
 # Shared data dir at repo root — NOT _data_dir (which is per-version).
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+# ``_REPO_ROOT`` is defined above in the Models tab section so the
+# version-resolver helpers can use it at import time. Same value either
+# way; kept here as a comment for code locality.
 
 
 @app.get("/api/ladder")
