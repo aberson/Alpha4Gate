@@ -2,6 +2,7 @@ import { useState } from "react";
 import { AdvisedControlPanel } from "./components/AdvisedControlPanel";
 import { EvolutionTab } from "./components/EvolutionTab";
 import { ModelsTab } from "./components/ModelsTab";
+import { ObservableTab } from "./components/ObservableTab";
 import { ProcessMonitor } from "./components/ProcessMonitor";
 import { ResourceGauge } from "./components/ResourceGauge";
 import { WslProcessesPanel } from "./components/WslProcessesPanel";
@@ -17,6 +18,7 @@ type Tab =
   | "advisor"
   | "evolution"
   | "models"
+  | "observable"
   | "processes"
   | "help";
 
@@ -74,6 +76,12 @@ function App() {
             Models
           </button>
           <button
+            onClick={() => setTab("observable")}
+            className={tab === "observable" ? "active" : ""}
+          >
+            Observable
+          </button>
+          <button
             onClick={() => setTab("processes")}
             className={tab === "processes" ? "active" : ""}
           >
@@ -93,6 +101,7 @@ function App() {
         {tab === "advisor" && <AdvisedControlPanel />}
         {tab === "evolution" && <EvolutionTab />}
         {tab === "models" && <ModelsTab />}
+        {tab === "observable" && <ObservableTab />}
         {tab === "processes" && (
           <>
             <ProcessMonitor />

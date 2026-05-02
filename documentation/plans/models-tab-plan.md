@@ -390,6 +390,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 ### Step 10: Observable tab shell + wiki page
 - **Problem:** Add `Observable` top-level tab to `App.tsx`. Build `ObservableTab.tsx` with two-version pool selector (queries real `/api/versions`) and Phase L placeholder card. No exhibition controls. Write `documentation/wiki/models-tab.md` content per §5 outline (including recovery procedures). Update `documentation/wiki/index.md` tab inventory.
 - **Issue:** #263
+- **Status:** DONE (2026-05-01)
 - **Flags:** `--reviewers code --isolation worktree --ui`
 - **Produces:** `ObservableTab.tsx`, modified `App.tsx`, vitest test, `documentation/wiki/models-tab.md`, modified `documentation/wiki/index.md`.
 - **Done when:** Observable tab renders with two version dropdowns populated from real registry; placeholder card visible with link to wiki page; wiki page renders correctly via the operator-commands rendering path.
