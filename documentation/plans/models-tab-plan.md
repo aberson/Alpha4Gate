@@ -310,6 +310,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 ### Step 1c: Backend aggregator + forensics + weight-dynamics-read endpoints
 - **Problem:** Add three endpoints: `GET /api/runs/active` (aggregates existing `/api/training/daemon`, `/api/advised/state`, `/api/evolve/running-rounds`, plus `data/evolve_round_<worker_id>.json` glob), `GET /api/versions/{v}/forensics/{game_id}` (returns `expert_dispatch: null` always; both path params validated per §6.11), `GET /api/versions/{v}/weight-dynamics` (reads JSONL; returns `[]` if absent; surfaces failure-rows with non-null `error` field).
 - **Issue:** #254
+- **Status:** DONE (2026-05-01)
 - **Flags:** `--reviewers code --isolation worktree`
 - **Produces:** 3 endpoints; pytest contract tests `tests/test_api_runs_active.py` and `tests/test_api_forensics.py` (including malformed-game_id and malformed-version rejection tests).
 - **Done when:** Tests pass; manual: with no harness running, `/api/runs/active` returns `[]`; with an evolve worker running, `/api/runs/active` returns a card-row for it; `/api/versions/v3/forensics/<recent_game_id>` returns trajectory with `win_prob` populated (Phase N is live); malformed-input requests return 400.

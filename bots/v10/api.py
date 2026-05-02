@@ -1130,6 +1130,28 @@ def _read_json_file(path: Path) -> dict[str, Any] | None:
     return None
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    """Coerce ``value`` to ``int``, returning ``default`` on any failure.
+
+    Defense in depth for the file-backed aggregators: a corrupted state
+    file with ``"games_played": "not-a-number"`` would 500 the endpoint
+    if we used a bare ``int(value)``. Treat anything non-coercible as
+    the default so the live-runs response is best-effort even when the
+    on-disk JSON is malformed at the field level (rather than the
+    line/file level — those are caught by ``_read_json_file``).
+
+    ``None``, ``""``, ``"abc"``, and floats-with-fractional-parts all
+    map to ``default``. Numeric strings (``"42"``) and booleans round-
+    trip via ``int()``.
+    """
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 # ---------------------------------------------------------------------------
 # Models tab — version registry, config, lineage (Step 1a)
 # ---------------------------------------------------------------------------
@@ -1152,6 +1174,16 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 _VERSION_RE: re.Pattern[str] = re.compile(r"^v\d+$")
 _SHA_RE: re.Pattern[str] = re.compile(r"^[0-9a-f]{7,40}$")
+# ``game_id`` follows the format ``<base>_<12 hex>`` written by the
+# learning environment (see ``bots/v10/learning/environment.py`` —
+# ``self._game_id = f"{base}_{uuid.uuid4().hex[:12]}"``). The base is
+# freeform (e.g. ``"unnamed"``, ``"live-test"``, ``"wsl-test"``), but is
+# always alphanumeric / ``_`` / ``-`` in practice. The strict pattern
+# below rejects shell metacharacters and SQL-special characters so a
+# malformed game_id raised before any SQL is dispatched (defense in
+# depth — queries are parameterized, but a 400 is still preferable to
+# wasting a roundtrip on garbage input).
+_GAME_ID_RE: re.Pattern[str] = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
 def _validate_version(v: str) -> str:
@@ -1187,6 +1219,24 @@ def _validate_sha(sha: str) -> str:
         msg = f"Invalid git sha {sha!r}: must match ^[0-9a-f]{{7,40}}$"
         raise ValueError(msg)
     return sha
+
+
+def _validate_game_id(game_id: str) -> str:
+    """Validate a game_id against ``^[A-Za-z0-9_-]{1,128}$``.
+
+    Raises :class:`HTTPException` with status 400 on malformed input so
+    callers can chain ``game_id = _validate_game_id(game_id)``. The
+    pattern matches what :class:`bots.v10.learning.environment.SC2Env`
+    actually generates (``<base>_<12 hex>``) without being so loose that
+    shell metacharacters or SQL-special characters survive — a malformed
+    id is rejected BEFORE we hit the parameterized query.
+    """
+    if not isinstance(game_id, str) or not _GAME_ID_RE.match(game_id):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid game_id {game_id!r}: must match ^[A-Za-z0-9_-]{{1,128}}$",
+        )
+    return game_id
 
 
 def _per_version_data_dir(version: str) -> Path:
@@ -2936,6 +2986,389 @@ async def get_version_improvements(v: str) -> list[dict[str, Any]]:
     """
     v = _validate_version(v)
     return await asyncio.to_thread(_filtered_version_improvements, v)
+
+
+# ---------------------------------------------------------------------------
+# Models tab — live-runs aggregator + per-game forensics + weight-dynamics
+# (Step 1c)
+# ---------------------------------------------------------------------------
+#
+# Three endpoints aggregate cross-harness state for the Models tab's
+# Inspector + Live-Runs panels:
+#
+#   GET /api/runs/active                   → cross-harness live-run list
+#   GET /api/versions/{v}/forensics/{game} → trajectory + give-up + dispatch
+#   GET /api/versions/{v}/weight-dynamics  → l2/kl rows from data/weight_dynamics.jsonl
+#
+# All three are read-only, never 500 on missing data, and validate path
+# params strictly (per plan §6.11).
+
+
+def _runs_active_training_daemon_row() -> dict[str, Any] | None:
+    """Build a row for the in-process training daemon if it is running.
+
+    Calls the same ``_daemon.get_status()`` shape that ``/api/training/
+    daemon`` returns — directly, NOT via an HTTP self-call. The training
+    daemon is per-version-current and at most one is active at a time;
+    this helper produces one row when running, ``None`` otherwise.
+    """
+    if _daemon is None or not _daemon.is_running():
+        return None
+    status = _daemon.get_status()
+    # Best-effort version: the daemon does not carry the version label
+    # directly, but the configured per-version data dir resolves to
+    # ``bots/<v>/data/`` — fish the version out of the path so the row
+    # matches the rest of the aggregator.
+    version = ""
+    try:
+        # ``_data_dir`` points at ``bots/<v>/data`` in production. Walk
+        # the path parts and pick the segment matching ``^v\d+$``.
+        for part in _data_dir.parts:
+            if _VERSION_RE.match(part):
+                version = part
+                break
+    except (TypeError, ValueError):
+        version = ""
+    last_run = status.get("last_run") or ""
+    return {
+        "harness": "training-daemon",
+        "version": version,
+        "phase": str(status.get("state") or ""),
+        "current_imp": "",
+        "games_played": 0,
+        "games_total": 0,
+        "score_cand": 0,
+        "score_parent": 0,
+        "started_at": last_run,
+        "updated_at": last_run,
+    }
+
+
+def _runs_active_advised_row() -> dict[str, Any] | None:
+    """Build a row for the advised harness if its state file says active."""
+    data = _read_json_file(_data_dir / _ADVISED_STATE_FILE)
+    if data is None:
+        return None
+    status = str(data.get("status") or "")
+    # Treat anything other than the explicit idle / completed / stopped
+    # statuses as active. ``running`` is the canonical active value, but
+    # the advised skill writes various intermediate phase strings (e.g.
+    # ``"validating"``) and we want all of them to surface.
+    inactive = {"", "idle", "completed", "stopped", "done"}
+    if status in inactive:
+        return None
+    iteration = data.get("iteration")
+    current_imp = ""
+    imp = data.get("current_improvement")
+    if isinstance(imp, dict):
+        current_imp = str(imp.get("title") or "")
+    elif isinstance(imp, str):
+        current_imp = imp
+    elif iteration is not None:
+        current_imp = f"iter{iteration}"
+    started_at = str(data.get("started_at") or data.get("created_at") or "")
+    updated_at = str(data.get("updated_at") or started_at or "")
+    return {
+        "harness": "advised",
+        "version": str(data.get("version") or ""),
+        "phase": str(data.get("phase_name") or status),
+        "current_imp": current_imp,
+        "games_played": _safe_int(data.get("games_played")),
+        "games_total": _safe_int(data.get("games_total")),
+        "score_cand": _safe_int(data.get("score_cand")),
+        "score_parent": _safe_int(data.get("score_parent")),
+        "started_at": started_at,
+        "updated_at": updated_at,
+    }
+
+
+def _runs_active_evolve_rows_sync() -> list[dict[str, Any]]:
+    """Scan ``evolve_round_<worker>.json`` directly for per-worker rows.
+
+    Per plan §6.3 the aggregator scans the cross-version data dir for
+    worker state files directly so we catch workers whose live-state
+    file exists but isn't surfaced through ``/api/evolve/running-
+    rounds`` yet (parallelization edge case where ``evolve_run_state.
+    json`` lags behind, or run_id mismatch).
+
+    Reads ``parent_current`` from ``evolve_run_state.json`` when
+    available so each row carries the version label expected by the
+    Live-Runs UI; falls back to empty string when the run-state file is
+    missing.
+
+    This is a blocking file-scan; callers MUST invoke it through
+    ``asyncio.to_thread`` so the event loop is never stalled.
+    """
+    rows: list[dict[str, Any]] = []
+    run_state = _read_json_file(_evolve_dir / _EVOLVE_STATE_FILE)
+    parent_current = ""
+    if run_state is not None:
+        parent_current = str(run_state.get("parent_current") or "")
+        started_at = str(run_state.get("started_at") or "")
+    else:
+        started_at = ""
+
+    for path in _evolve_dir.glob("evolve_round_*.json"):
+        entry = _read_json_file(path)
+        if entry is None:
+            continue
+        # Only surface rows that the on-disk file flags as active.
+        # Inactive worker files persist across rounds for debugging but
+        # should never show up in the live-runs list.
+        if not bool(entry.get("active", False)):
+            continue
+        wid = entry.get("worker_id")
+        worker_label = (
+            f"worker-{wid}" if isinstance(wid, int) else "worker-?"
+        )
+        updated_at = str(entry.get("updated_at") or "")
+        rows.append({
+            "harness": "evolve",
+            "version": parent_current,
+            "phase": str(entry.get("phase") or ""),
+            "current_imp": (
+                f"{worker_label}: {entry.get('imp_title') or ''}".strip(": ")
+            ),
+            "games_played": _safe_int(entry.get("games_played")),
+            "games_total": _safe_int(entry.get("games_total")),
+            "score_cand": _safe_int(entry.get("score_cand")),
+            "score_parent": _safe_int(entry.get("score_parent")),
+            "started_at": started_at,
+            "updated_at": updated_at,
+        })
+    return rows
+
+
+@app.get("/api/runs/active")
+async def get_runs_active() -> list[dict[str, Any]]:
+    """Return the cross-harness list of currently-active runs.
+
+    Aggregates from three harnesses without making any HTTP self-calls:
+
+    * ``training-daemon`` — in-memory ``_daemon`` reference; reuses the
+      same ``.get_status()`` output as ``/api/training/daemon``.
+    * ``advised`` — file-backed ``advised_run_state.json``; one row when
+      the file's ``status`` indicates the run is active.
+    * ``evolve`` — direct glob of ``evolve_round_<worker>.json`` files
+      in the cross-version data dir, optionally enriched with
+      ``parent_current`` / ``started_at`` from ``evolve_run_state.json``
+      when the run-state file is present. One row per active worker.
+
+    The shape of every row is::
+
+        {harness, version, phase, current_imp, games_played, games_total,
+         score_cand, score_parent, started_at, updated_at}
+
+    Numeric fields default to ``0`` (not ``null``) when the source file
+    lacks them; ``current_imp`` defaults to the empty string. Returns
+    ``[]`` when nothing is active. Sorted by ``updated_at`` descending
+    (most recently updated first).
+    """
+    rows: list[dict[str, Any]] = []
+
+    daemon_row = _runs_active_training_daemon_row()
+    if daemon_row is not None:
+        rows.append(daemon_row)
+
+    advised_row = _runs_active_advised_row()
+    if advised_row is not None:
+        rows.append(advised_row)
+
+    evolve_rows = await asyncio.to_thread(_runs_active_evolve_rows_sync)
+    rows.extend(evolve_rows)
+
+    rows.sort(key=lambda r: r.get("updated_at") or "", reverse=True)
+    return rows
+
+
+def _forensics_sync(version: str, game_id: str) -> dict[str, Any]:
+    """Read ``transitions`` rows for ``(version, game_id)`` from the per-version DB.
+
+    Returns the forensics shape::
+
+        {trajectory: [{step, win_prob, ts}, ...],
+         give_up_fired: bool,
+         give_up_step: int | null,
+         expert_dispatch: null}
+
+    * ``trajectory`` is ordered by ``step_index`` ascending.
+    * ``win_prob`` reads from the ``transitions.win_prob`` column (Phase
+      N is live; old rows without the column return ``None``).
+    * ``give_up_fired`` is hardcoded ``False`` because the schema in
+      ``bots/v10/learning/database.py`` does NOT carry a ``give_up``
+      column — give-up is observed externally via ``Alpha4GateBot.
+      _maybe_resign`` and isn't persisted per-transition. When the
+      column lands in a future schema migration, this helper is the
+      single edit point.
+    * ``expert_dispatch`` is hardcoded ``None`` per plan §6.8; it
+      becomes meaningful only when Phase O writes ``expert_id`` to
+      transitions.
+
+    Returns the empty-trajectory shape when the DB is missing, the game
+    does not exist, or the join finds zero rows. Never 500s.
+    """
+    empty: dict[str, Any] = {
+        "trajectory": [],
+        "give_up_fired": False,
+        "give_up_step": None,
+        "expert_dispatch": None,
+    }
+
+    db_path = _per_version_data_dir(version) / "training.db"
+    if not db_path.is_file():
+        return empty
+
+    try:
+        conn = sqlite3.connect(
+            f"file:{db_path}?mode=ro",
+            uri=True,
+            timeout=2.0,
+        )
+    except sqlite3.Error:
+        # Widen to ``sqlite3.Error`` (parent of ``OperationalError``,
+        # ``DatabaseError``, etc.) so a corrupted DB file — which raises
+        # ``DatabaseError`` on connect / query — still returns the empty
+        # skeleton instead of bubbling up as a 500. Defense in depth: the
+        # contract is "never 500", and any sqlite3-flavoured failure on
+        # the read path means we have no usable trajectory.
+        return empty
+
+    try:
+        # Filter on BOTH ``model_version`` (via the games table) AND
+        # ``game_id`` so a duplicate game_id across two version DBs
+        # cannot leak across endpoints. ``ORDER BY step_index ASC`` is
+        # the trajectory order the Inspector consumes left-to-right.
+        rows = conn.execute(
+            "SELECT t.step_index, t.win_prob, t.game_time "
+            "FROM transitions t "
+            "JOIN games g ON t.game_id = g.game_id "
+            "WHERE g.model_version = ? AND t.game_id = ? "
+            "ORDER BY t.step_index ASC",
+            (version, game_id),
+        ).fetchall()
+    except sqlite3.Error:
+        rows = []
+    finally:
+        conn.close()
+
+    if not rows:
+        return empty
+
+    trajectory: list[dict[str, Any]] = []
+    for step_index, win_prob, game_time in rows:
+        trajectory.append({
+            "step": int(step_index),
+            "win_prob": (
+                float(win_prob) if win_prob is not None else None
+            ),
+            # The transitions table has no ISO timestamp column —
+            # ``game_time`` (REAL seconds since game start) is the only
+            # per-step time signal. Stringify so the response shape
+            # matches the spec's ``ts: str``.
+            "ts": str(game_time),
+        })
+
+    return {
+        "trajectory": trajectory,
+        # No ``give_up`` column in the schema — see docstring.
+        "give_up_fired": False,
+        "give_up_step": None,
+        # Phase O hasn't shipped — see plan §6.8.
+        "expert_dispatch": None,
+    }
+
+
+@app.get("/api/versions/{v}/forensics/{game_id}")
+async def get_version_forensics(v: str, game_id: str) -> dict[str, Any]:
+    """Return per-game replay-style forensics for ``(v, game_id)``.
+
+    Both path params are validated against the strict regex helpers
+    (``^v\\d+$`` for ``v`` via :func:`_validate_version`; the
+    ``[A-Za-z0-9_-]{1,128}`` pattern for ``game_id`` via
+    :func:`_validate_game_id`). Malformed input returns 400 BEFORE any
+    DB work happens — the parameterized SQL is safe, but cheap rejection
+    is even safer.
+
+    Reads from the per-version ``training.db`` and joins on
+    ``games.model_version`` so a duplicate ``game_id`` across two
+    version DBs never leaks. Returns the empty skeleton (empty
+    trajectory + ``give_up_fired=False`` + null fields) when the game is
+    not found. Never 500.
+    """
+    v = _validate_version(v)
+    game_id = _validate_game_id(game_id)
+    return await asyncio.to_thread(_forensics_sync, v, game_id)
+
+
+_WEIGHT_DYNAMICS_FILE = "weight_dynamics.jsonl"
+
+
+def _weight_dynamics_sync(version: str) -> list[dict[str, Any]]:
+    """Read ``data/weight_dynamics.jsonl`` and filter rows by ``version``.
+
+    Each row is one diagnostic write per checkpoint — see plan §5 for
+    the schema. Both success and failure rows are surfaced; the
+    Inspector renders failure rows (non-null ``error``) as red dots
+    (Step 6's job, not this endpoint's). Lines that fail to parse as
+    JSON are skipped + warned about; the endpoint never 500s.
+
+    Returns ``[]`` when the file is absent or has no rows for ``version``.
+    """
+    path = _cross_version_data_dir() / _WEIGHT_DYNAMICS_FILE
+    if not path.is_file():
+        return []
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+
+    out: list[dict[str, Any]] = []
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            row = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            _log.warning(
+                "Skipping malformed weight_dynamics.jsonl line %d: %s",
+                index,
+                exc,
+            )
+            continue
+        if not isinstance(row, dict):
+            continue
+        if row.get("version") != version:
+            continue
+        out.append({
+            "checkpoint": str(row.get("checkpoint") or ""),
+            "ts": str(row.get("ts") or ""),
+            "l2_per_layer": row.get("l2_per_layer"),
+            "kl_from_parent": row.get("kl_from_parent"),
+            "canary_source": row.get("canary_source"),
+            "error": row.get("error"),
+        })
+    return out
+
+
+@app.get("/api/versions/{v}/weight-dynamics")
+async def get_version_weight_dynamics(v: str) -> list[dict[str, Any]]:
+    """Return per-checkpoint weight-dynamics rows for ``v``.
+
+    Reads ``data/weight_dynamics.jsonl`` from the cross-version data
+    dir, filters rows where ``version == v``, and emits one entry per
+    line in file order (which is checkpoint-write order). The shape::
+
+        {checkpoint, ts, l2_per_layer, kl_from_parent, canary_source, error}
+
+    Both success rows (everything populated, ``error=None``) and failure
+    rows (``l2/kl/canary`` all null, ``error="<class>: <msg>"``) are
+    surfaced — the Inspector decides how to render them. Returns ``[]``
+    when the file is missing or has no rows for ``v``. Never 500.
+    """
+    v = _validate_version(v)
+    return await asyncio.to_thread(_weight_dynamics_sync, v)
 
 
 @app.get("/api/lineage")
