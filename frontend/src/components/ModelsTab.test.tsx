@@ -111,6 +111,13 @@ function mockVersionsFetch(body: Version[]) {
     if (url.includes("/api/improvements/unified")) {
       return jsonResponse({ improvements: [] });
     }
+    // Step 5 wires the real LiveRunsGrid into the Live sub-view, so
+    // the shell tests now also see /api/runs/active when the operator
+    // toggles to that sub-view. Empty list keeps the existing tests
+    // (which only assert on FRAME wiring) on their happy path.
+    if (url.includes("/api/runs/active")) {
+      return jsonResponse([]);
+    }
     throw new Error(`Unexpected fetch: ${url}`);
   });
   return fn;
@@ -130,6 +137,9 @@ beforeEach(() => {
       }
       if (url.includes("/api/improvements/unified")) {
         return jsonResponse({ improvements: [] });
+      }
+      if (url.includes("/api/runs/active")) {
+        return jsonResponse([]);
       }
       return jsonResponse([] as Version[]);
     },

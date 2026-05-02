@@ -346,6 +346,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 ### Step 5: Live Runs grid
 - **Problem:** Build `LiveRunsGrid.tsx` consuming `/api/runs/active`. One card per active harness using the layout described in §5 (header + metric strip + progress bar + score + expand). Empty state: "No active runs." Polls at 2s like other live surfaces.
 - **Issue:** #258
+- **Status:** DONE (2026-05-01)
 - **Flags:** `--reviewers code --isolation worktree --ui`
 - **Produces:** `LiveRunsGrid.tsx`, `useRunsActive.ts`, vitest tests covering empty / single / multi-card / expand states.
 - **Done when:** With evolve worker active, card appears within 2s; with advised iteration also active, both cards visible; empty state visible when nothing running; expand reveals full state JSON.

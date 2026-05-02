@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useVersions } from "../hooks/useVersions";
 import { StaleDataBanner } from "./StaleDataBanner";
 import { LineageView } from "./LineageView";
+import { LiveRunsGrid } from "./LiveRunsGrid";
 import { HARNESS_ORIGINS } from "../types/version";
 
 /**
@@ -63,10 +64,14 @@ function LineageContainer({ onNodeSelect }: LineageContainerProps) {
   );
 }
 
-function LiveRunsPlaceholder() {
+function LiveRunsContainer() {
+  // Step 5: real Live Runs grid. The wrapper preserves the
+  // ``data-testid="models-subview-live"`` selector that the shell tests
+  // assert on; rendering delegates to ``LiveRunsGrid``, which fetches
+  // its own data via ``useRunsActive`` (no props required).
   return (
     <div data-testid="models-subview-live" className="models-subview">
-      <p>Live Runs grid (Step 5)</p>
+      <LiveRunsGrid />
     </div>
   );
 }
@@ -263,7 +268,7 @@ export function ModelsTab() {
         {activeSubView === "lineage" ? (
           <LineageContainer onNodeSelect={onNodeSelect} />
         ) : null}
-        {activeSubView === "live" ? <LiveRunsPlaceholder /> : null}
+        {activeSubView === "live" ? <LiveRunsContainer /> : null}
         {activeSubView === "inspector" ? (
           <InspectorPlaceholder selectedVersion={selectedVersion} />
         ) : null}
