@@ -7,6 +7,8 @@ import json
 import logging
 import os
 import re
+import sqlite3
+import subprocess
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -1149,6 +1151,7 @@ def _read_json_file(path: Path) -> dict[str, Any] | None:
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 _VERSION_RE: re.Pattern[str] = re.compile(r"^v\d+$")
+_SHA_RE: re.Pattern[str] = re.compile(r"^[0-9a-f]{7,40}$")
 
 
 def _validate_version(v: str) -> str:
@@ -1168,6 +1171,22 @@ def _validate_version(v: str) -> str:
             detail=f"Invalid version {v!r}: must match ^v\\d+$",
         )
     return v
+
+
+def _validate_sha(sha: str) -> str:
+    """Validate a git sha against ``^[0-9a-f]{7,40}$``.
+
+    Returns the sha on success. Raises :class:`ValueError` (NOT
+    ``HTTPException``) on malformed input — callers in the
+    ``/api/versions/{v}/improvements`` endpoint catch the error and
+    skip-and-warn at the call site rather than 500-ing the whole
+    response. This is the conservative posture required by plan §6.11
+    when the sha is going to feed a ``git show`` subprocess invocation.
+    """
+    if not isinstance(sha, str) or not _SHA_RE.match(sha):
+        msg = f"Invalid git sha {sha!r}: must match ^[0-9a-f]{{7,40}}$"
+        raise ValueError(msg)
+    return sha
 
 
 def _per_version_data_dir(version: str) -> Path:
@@ -2283,6 +2302,640 @@ async def get_version_config(v: str) -> dict[str, Any]:
         payload = _read_json_file(data_dir / fname)
         out[key] = payload if payload is not None else {}
     return out
+
+
+# ---------------------------------------------------------------------------
+# Models tab — per-version data-read endpoints (Step 1b)
+# ---------------------------------------------------------------------------
+#
+# Three endpoints aggregate per-version data for the Models tab:
+#
+#   GET /api/versions/{v}/training-history → rolling WR series from
+#       ``bots/v{N}/data/training.db`` ``games`` table (filtered by
+#       ``model_version == v``). Three series: rolling_10 / rolling_50 /
+#       rolling_overall.
+#   GET /api/versions/{v}/actions → action-id histogram from the
+#       ``transitions`` table joined with ``games.model_version``.
+#   GET /api/versions/{v}/improvements → unified-improvements timeline
+#       filtered to entries that touched ``v``. Source files are
+#       cross-version; derivation reads ``files_changed`` and resolves
+#       any ``bots/current/...`` path via ``git show <sha>:bots/current/
+#       current.txt`` (cached per sha).
+#
+# All three endpoints validate ``v`` against ``^v\d+$`` (400 on
+# malformed input) and return empty payloads when source files are
+# missing — they never 500 on a missing DB / log.
+
+
+# Action-id → name map. The RL action space is defined as the single
+# source of truth in ``bots/v10/decision_engine.py::ACTION_TO_STATE``;
+# ``learning/features.py`` does NOT carry an id-to-name map (it owns
+# observation-vector encoding, not action decoding). We import the
+# decision-engine list lazily inside the resolver so test environments
+# that monkeypatch ``_REPO_ROOT`` don't pull in the full bot stack at
+# import time.
+def _action_name_for(action_id: int) -> str:
+    """Return a human label for a PPO action index.
+
+    Reads from ``bots.v10.decision_engine.ACTION_TO_STATE``. Falls back
+    to ``f"action_{action_id}"`` when the id is out of range (defensive
+    against historical DB rows whose ``action`` column predates an
+    action-space change).
+    """
+    try:
+        from bots.v10.decision_engine import ACTION_TO_STATE
+    except ImportError:
+        return f"action_{action_id}"
+    if 0 <= action_id < len(ACTION_TO_STATE):
+        # ``StrategicState`` is a ``StrEnum`` — ``str(x)`` gives the
+        # underlying string value (e.g. ``"opening"``).
+        return str(ACTION_TO_STATE[action_id])
+    return f"action_{action_id}"
+
+
+def _training_history_sync(version: str) -> dict[str, list[dict[str, Any]]]:
+    """Aggregate rolling WR series for ``version`` from training.db.
+
+    Returns ``{rolling_10, rolling_50, rolling_overall}``. Each value is
+    a list of ``{game_id, ts, wr}`` dicts ordered chronologically (oldest
+    first, so the frontend can chart left→right without reversing).
+
+    * ``rolling_10`` and ``rolling_50``: rolling win-rate over a sliding
+      window of N most recent games. Emitted only for the most recent
+      N entries.
+    * ``rolling_overall``: running win-rate across all games for this
+      version (cumulative wins / cumulative games).
+
+    Returns the empty skeleton if the DB doesn't exist or has no games
+    for ``version``. Uses ``idx_games_model`` for the WHERE filter.
+    """
+    db_path = _per_version_data_dir(version) / "training.db"
+    empty: dict[str, list[dict[str, Any]]] = {
+        "rolling_10": [],
+        "rolling_50": [],
+        "rolling_overall": [],
+    }
+    if not db_path.is_file():
+        return empty
+
+    try:
+        # ``check_same_thread=True`` (default) is fine — the function is
+        # invoked inside ``asyncio.to_thread`` which guarantees a single
+        # owning thread. Read-only path, but we open in URI mode to make
+        # that explicit and so a stale writer can't silently mutate the
+        # snapshot mid-read.
+        conn = sqlite3.connect(
+            f"file:{db_path}?mode=ro",
+            uri=True,
+            timeout=2.0,
+        )
+    except sqlite3.OperationalError:
+        return empty
+
+    try:
+        # Schema columns are ``game_id`` / ``created_at`` / ``result``
+        # (see ``bots/v10/learning/database.py``); we expose them as
+        # ``game_id`` / ``ts`` / ``wr`` per the Step 1b spec. ORDER BY
+        # ``created_at`` ASC so callers receive rows oldest-first ready
+        # for charting; rolling windows are computed in Python.
+        rows = conn.execute(
+            "SELECT game_id, created_at, result FROM games "
+            "WHERE model_version = ? ORDER BY created_at ASC",
+            (version,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        # DB exists but the ``games`` table or ``model_version`` column
+        # is missing (e.g. a partial / corrupt file). Treat as no data.
+        rows = []
+    finally:
+        conn.close()
+
+    if not rows:
+        return empty
+
+    # Build a wins-flag list once and reuse for all three series.
+    games: list[tuple[str, str, int]] = [
+        (str(game_id), str(ts), 1 if result == "win" else 0)
+        for game_id, ts, result in rows
+    ]
+
+    def _rolling_window(window: int) -> list[dict[str, Any]]:
+        # The most recent ``window`` games' rolling-WR. We emit one
+        # point per game in that tail so the chart shows the WR
+        # *moving* across the window.
+        if len(games) < window:
+            return []
+        tail = games[-window:]
+        out: list[dict[str, Any]] = []
+        wins_sum = 0
+        for i, (gid, ts, won) in enumerate(tail, start=1):
+            wins_sum += won
+            out.append({"game_id": gid, "ts": ts, "wr": wins_sum / i})
+        return out
+
+    overall: list[dict[str, Any]] = []
+    cum_wins = 0
+    for i, (gid, ts, won) in enumerate(games, start=1):
+        cum_wins += won
+        overall.append({"game_id": gid, "ts": ts, "wr": cum_wins / i})
+
+    return {
+        "rolling_10": _rolling_window(10),
+        "rolling_50": _rolling_window(50),
+        "rolling_overall": overall,
+    }
+
+
+@app.get("/api/versions/{v}/training-history")
+async def get_version_training_history(v: str) -> dict[str, list[dict[str, Any]]]:
+    """Return rolling-WR series for ``v`` filtered by ``model_version``.
+
+    Three lists of ``{game_id, ts, wr}`` entries:
+
+    * ``rolling_10``: sliding 10-game window (only the last 10 games'
+      cumulative WR over the window).
+    * ``rolling_50``: sliding 50-game window.
+    * ``rolling_overall``: running WR across every game ever recorded
+      for this model version.
+
+    Returns ``{rolling_10:[],rolling_50:[],rolling_overall:[]}`` when
+    the DB is missing or has no rows for ``v``; never 500.
+
+    Uses :func:`_per_version_data_dir` because ``training.db`` is
+    per-version state. SQLite reads are funneled through
+    ``asyncio.to_thread`` so the event loop is never blocked.
+    """
+    v = _validate_version(v)
+    return await asyncio.to_thread(_training_history_sync, v)
+
+
+def _action_distribution_sync(version: str) -> list[dict[str, Any]]:
+    """Aggregate per-action counts for ``version`` from the DB.
+
+    Joins ``transitions`` against ``games.model_version`` and groups by
+    ``action`` to produce ``[{action_id, name, count, pct}, ...]``
+    sorted by count descending. Returns ``[]`` if the DB doesn't exist
+    or has no rows.
+
+    Action labels come from :func:`_action_name_for`.
+    """
+    db_path = _per_version_data_dir(version) / "training.db"
+    if not db_path.is_file():
+        return []
+
+    try:
+        conn = sqlite3.connect(
+            f"file:{db_path}?mode=ro",
+            uri=True,
+            timeout=2.0,
+        )
+    except sqlite3.OperationalError:
+        return []
+
+    try:
+        rows = conn.execute(
+            "SELECT t.action, COUNT(*) FROM transitions t "
+            "JOIN games g ON t.game_id = g.game_id "
+            "WHERE g.model_version = ? "
+            "GROUP BY t.action",
+            (version,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    finally:
+        conn.close()
+
+    if not rows:
+        return []
+
+    # Historical rows store ``action`` as np.int64.tobytes() blobs (see
+    # ``_coerce_action`` in database.py). Decode any bytes/memoryview
+    # values defensively before bucketing — otherwise GROUP BY treats
+    # the same logical id as multiple keys.
+    bucketed: dict[int, int] = {}
+    for raw_action, raw_count in rows:
+        if isinstance(raw_action, (bytes, memoryview)):
+            try:
+                action_id = int.from_bytes(bytes(raw_action), "little", signed=True)
+            except (ValueError, TypeError):
+                continue
+        else:
+            try:
+                action_id = int(raw_action)
+            except (ValueError, TypeError):
+                continue
+        bucketed[action_id] = bucketed.get(action_id, 0) + int(raw_count)
+
+    total = sum(bucketed.values())
+    if total <= 0:
+        return []
+
+    rows_out: list[dict[str, Any]] = [
+        {
+            "action_id": action_id,
+            "name": _action_name_for(action_id),
+            "count": count,
+            "pct": count / total,
+        }
+        for action_id, count in bucketed.items()
+    ]
+    rows_out.sort(key=lambda r: int(r["count"]), reverse=True)
+    return rows_out
+
+
+@app.get("/api/versions/{v}/actions")
+async def get_version_actions(v: str) -> list[dict[str, Any]]:
+    """Return action-id histogram for ``v`` from the per-version DB.
+
+    Each entry: ``{action_id, name, count, pct}``. Sorted by count
+    descending. ``name`` is resolved via
+    :func:`_action_name_for` (reads ``decision_engine.ACTION_TO_STATE``).
+
+    Returns ``[]`` when no transitions exist for ``v`` or the DB is
+    absent — never 500.
+    """
+    v = _validate_version(v)
+    return await asyncio.to_thread(_action_distribution_sync, v)
+
+
+# Helpers ported from ``bots/v0/api.py`` (the Phase 4.5 dashboard
+# refactor's unified endpoint) so the Step 1b filtered version can
+# emit the same per-entry shape. Kept private to this module — Step 1b
+# isn't shipping a new ``/api/improvements/unified`` on v10; the only
+# consumer is the Models tab's per-version filter.
+
+# ---- Step 1b: per-version improvements timeline ----------------------------
+#
+# These helpers are forked from bots/v0/api.py's unified-improvements helpers.
+# v10 adds ``_commit_sha`` plumbing (collected during normalization, stripped
+# before serialization) for the per-version filter that resolves
+# ``bots/current/...`` paths via ``git show <sha>:bots/current/current.txt``.
+#
+# Drift between bots/v0 and bots/v10 versions is expected and intentional
+# under the snapshot-isolation model — ``snapshot_bot.py`` rewrites imports
+# per version and the master-plan disallows cross-version imports (see
+# memory: feedback_snapshot_import_isolation.md). Future evolve generations
+# will inherit this v10 shape via re-snapshot from current.
+
+_PHASE_ORDINAL: dict[str, int] = {"fitness": 0, "stack_apply": 1, "regression": 2}
+
+_ADVISED_OUTCOME_MAP: dict[str, str] = {
+    "pass": "promoted",
+    "stopped": "discarded",
+    "fail": "discarded",
+}
+
+
+def _slugify(text: str) -> str:
+    """Lowercase + dash-separate a title for a fallback id.
+
+    Used only when the canonical evolve-row candidate identifier is
+    missing — in practice the on-disk file always has ``candidate``,
+    but the spec calls for a deterministic fallback.
+    """
+    cleaned = "".join(ch.lower() if ch.isalnum() else "-" for ch in text)
+    while "--" in cleaned:
+        cleaned = cleaned.replace("--", "-")
+    return cleaned.strip("-")
+
+
+def _normalize_advised_metric(metrics: dict[str, Any] | None) -> str | None:
+    """Build a short metric blurb from an advised-run ``metrics`` dict.
+
+    Preference order matches the spec: validation_wins → observation_wins
+    → first single int/string field → None when empty.
+    """
+    if not metrics:
+        return None
+    if "validation_wins" in metrics and "validation_total" in metrics:
+        return (
+            f"{metrics['validation_wins']}/{metrics['validation_total']} "
+            "wins (validation)"
+        )
+    if "validation_wins" in metrics:
+        # Fall back to a single value if total is absent.
+        return f"{metrics['validation_wins']} wins (validation)"
+    if "observation_wins" in metrics and "observation_total" in metrics:
+        return (
+            f"{metrics['observation_wins']}/{metrics['observation_total']} "
+            "wins (observation)"
+        )
+    if "observation_wins" in metrics:
+        return f"{metrics['observation_wins']} wins (observation)"
+    for key, value in metrics.items():
+        if isinstance(value, int | str):
+            return f"{key}: {value}"
+    return None
+
+
+def _normalize_advised_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """Map one row from ``improvement_log.json`` to the unified shape."""
+    run_id = entry.get("run_id", "unknown")
+    iteration = entry.get("iteration", 0)
+    fallback_id = f"advised-{run_id}-iter{iteration}"
+    return {
+        "id": entry.get("id") or fallback_id,
+        "source": "advised",
+        "timestamp": entry.get("timestamp"),
+        "title": entry.get("title", ""),
+        "description": entry.get("description", ""),
+        "type": entry.get("type", "training"),
+        "outcome": _ADVISED_OUTCOME_MAP.get(
+            entry.get("result", ""), entry.get("result", "")
+        ),
+        "metric": _normalize_advised_metric(entry.get("metrics")),
+        "principles": entry.get("principles", []) or [],
+        "files_changed": entry.get("files_changed", []) or [],
+        # Unified-shape extension for derivation: keep the raw commit
+        # sha around so the per-version filter can resolve
+        # ``bots/current/...`` paths via ``git show``.
+        "_commit_sha": (
+            entry.get("git_sha") or entry.get("sha") or entry.get("commit")
+        ),
+    }
+
+
+def _candidate_identifier(candidate: Any) -> str | None:
+    """Pull a stable identifier from the evolve ``candidate`` field.
+
+    Real on-disk rows store ``candidate`` as a plain string (e.g.
+    ``"cand_8346016e"``); the spec describes it as a dict with
+    ``name``/``id``. Handle both shapes so the rollup works on whatever
+    schema variant the file has.
+    """
+    if isinstance(candidate, str) and candidate:
+        return candidate
+    if isinstance(candidate, dict):
+        for key in ("name", "id"):
+            value = candidate.get(key)
+            if isinstance(value, str) and value:
+                return value
+    return None
+
+
+def _evolve_metric(row: dict[str, Any]) -> str | None:
+    """Build a ``"X-Y vs <parent>"`` blurb from an evolve canonical row."""
+    wins_cand = row.get("wins_cand")
+    wins_parent = row.get("wins_parent")
+    parent = row.get("parent", "?")
+    if isinstance(wins_cand, int) and isinstance(wins_parent, int):
+        return f"{wins_cand}-{wins_parent} vs {parent}"
+    return None
+
+
+def _normalize_evolve_rollup(
+    title: str,
+    generation: int,
+    rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Collapse all phase rows for one (title, generation) imp into one entry.
+
+    Sort by phase ordinal (fitness < stack_apply < regression). When the
+    same phase appears multiple times (multiple stack_apply attempts),
+    the latest by timestamp wins; rows without a timestamp fall back to
+    file order via the ``_file_order`` key injected by the caller.
+    """
+
+    def _row_sort_key(row: dict[str, Any]) -> tuple[int, str, int]:
+        phase = row.get("phase", "")
+        return (
+            _PHASE_ORDINAL.get(phase, 99),
+            row.get("timestamp") or "",
+            row.get("_file_order", 0),
+        )
+
+    sorted_rows = sorted(rows, key=_row_sort_key)
+    canonical = sorted_rows[-1]
+    imp = canonical.get("imp") or {}
+    candidate_id = _candidate_identifier(canonical.get("candidate"))
+    if candidate_id is None:
+        candidate_id = _slugify(title) or f"gen{generation}"
+    entry_id = f"evolve-gen{generation}-{candidate_id}"
+    return {
+        "id": entry_id,
+        "source": "evolve",
+        "timestamp": canonical.get("timestamp"),
+        "title": title,
+        "description": imp.get("description", ""),
+        "type": imp.get("type", "training"),
+        "outcome": canonical.get("outcome", ""),
+        "metric": _evolve_metric(canonical),
+        "principles": imp.get("principle_ids", []) or [],
+        "files_changed": imp.get("files_touched", []) or [],
+        "_commit_sha": (
+            canonical.get("git_sha")
+            or canonical.get("sha")
+            or canonical.get("commit")
+        ),
+    }
+
+
+def _load_advised_improvements(path: Path) -> list[dict[str, Any]]:
+    """Read ``improvement_log.json`` and normalise each entry. Empty on miss."""
+    if not path.exists():
+        return []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    entries = raw.get("improvements") if isinstance(raw, dict) else None
+    if not isinstance(entries, list):
+        return []
+    return [
+        _normalize_advised_entry(entry)
+        for entry in entries
+        if isinstance(entry, dict)
+    ]
+
+
+def _load_evolve_improvements(path: Path) -> list[dict[str, Any]]:
+    """Read ``evolve_results.jsonl`` + collapse phase rows per imp+gen."""
+    if not path.exists():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+
+    groups: dict[tuple[str, int], list[dict[str, Any]]] = {}
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            row = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        imp = row.get("imp")
+        if not isinstance(imp, dict):
+            continue
+        title = imp.get("title")
+        generation = row.get("generation")
+        if not isinstance(title, str) or not isinstance(generation, int):
+            continue
+        # Inject file-order tiebreaker for rollup ordering.
+        row["_file_order"] = index
+        groups.setdefault((title, generation), []).append(row)
+
+    return [
+        _normalize_evolve_rollup(title, generation, rows)
+        for (title, generation), rows in groups.items()
+    ]
+
+
+_BOTS_VN_PATH_RE: re.Pattern[str] = re.compile(r"^bots/(v\d+)/")
+_BOTS_CURRENT_PATH_RE: re.Pattern[str] = re.compile(r"^bots/current/")
+
+
+def _resolve_current_at_sha(
+    sha: str,
+    cache: dict[str, str | None],
+    repo_root: Path,
+) -> str | None:
+    """Resolve ``bots/current/current.txt`` content at a given commit.
+
+    Returns the version string (e.g. ``"v3"``) or ``None`` when the
+    lookup fails or the SHA is malformed. Results are memoised in
+    ``cache`` (keyed by sha) so the same commit is never shelled out
+    twice within a single request.
+
+    Subprocess invocation is list-form, ``shell=False``, ``timeout=5``,
+    cwd pinned to ``repo_root``. SHA is re-validated by
+    :func:`_validate_sha` before the subprocess is spawned (defense in
+    depth — the caller already validates, but the subprocess invocation
+    is a security boundary worth re-checking at).
+    """
+    if sha in cache:
+        return cache[sha]
+
+    try:
+        _validate_sha(sha)
+    except ValueError as exc:
+        _log.warning("Skipping improvement entry: %s", exc)
+        cache[sha] = None
+        return None
+
+    try:
+        proc = subprocess.run(
+            ["git", "show", f"{sha}:bots/current/current.txt"],
+            shell=False,
+            timeout=5,
+            capture_output=True,
+            text=True,
+            cwd=str(repo_root),
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        _log.warning("git show failed for sha %s: %s", sha, exc)
+        cache[sha] = None
+        return None
+
+    if proc.returncode != 0:
+        _log.warning(
+            "git show non-zero exit for sha %s: %s", sha, proc.stderr.strip()
+        )
+        cache[sha] = None
+        return None
+
+    value = proc.stdout.strip()
+    if not _VERSION_RE.match(value):
+        cache[sha] = None
+        return None
+    cache[sha] = value
+    return value
+
+
+def _entry_targets_version(
+    entry: dict[str, Any],
+    target_version: str,
+    sha_cache: dict[str, str | None],
+    repo_root: Path,
+) -> bool:
+    """Return ``True`` iff ``entry`` claims a file inside ``target_version``.
+
+    Derivation (per Step 1b spec):
+
+    1. Any file path matching ``bots/(v\\d+)/`` is attributed directly
+       to that version.
+    2. Any file path matching ``bots/current/...`` resolves to the
+       version pointed at by ``current.txt`` at the entry's commit sha
+       (cached). When no sha is available or git resolution fails, the
+       ``bots/current/...`` path is silently skipped (the entry may
+       still match via a different ``bots/vN/`` path).
+
+    Files that match neither pattern (legacy ``data/...``, ``src/...``)
+    are ignored — they don't belong to any single version. An entry
+    whose ``files_changed`` is empty therefore returns ``False``.
+    """
+    files = entry.get("files_changed") or []
+    if not isinstance(files, list):
+        return False
+
+    sha = entry.get("_commit_sha")
+    for fp in files:
+        if not isinstance(fp, str):
+            continue
+        m = _BOTS_VN_PATH_RE.match(fp)
+        if m:
+            if m.group(1) == target_version:
+                return True
+            continue
+        if _BOTS_CURRENT_PATH_RE.match(fp):
+            if not isinstance(sha, str) or not sha:
+                continue
+            resolved = _resolve_current_at_sha(sha, sha_cache, repo_root)
+            if resolved == target_version:
+                return True
+    return False
+
+
+def _filtered_version_improvements(version: str) -> list[dict[str, Any]]:
+    """Load advised + evolve entries and filter to those touching ``version``.
+
+    Drops the internal ``_commit_sha`` book-keeping field before
+    returning so the response shape exactly matches the unified
+    endpoint's ``improvements[]`` entry contract.
+    """
+    cross = _cross_version_data_dir()
+    advised_path = cross / "improvement_log.json"
+    evolve_path = cross / _EVOLVE_RESULTS_FILE
+
+    entries: list[dict[str, Any]] = []
+    entries.extend(_load_advised_improvements(advised_path))
+    entries.extend(_load_evolve_improvements(evolve_path))
+
+    sha_cache: dict[str, str | None] = {}
+    out: list[dict[str, Any]] = []
+    for entry in entries:
+        if _entry_targets_version(entry, version, sha_cache, _REPO_ROOT):
+            cleaned = {k: v for k, v in entry.items() if k != "_commit_sha"}
+            out.append(cleaned)
+
+    out.sort(key=lambda e: e.get("timestamp") or "", reverse=True)
+    return out
+
+
+@app.get("/api/versions/{v}/improvements")
+async def get_version_improvements(v: str) -> list[dict[str, Any]]:
+    """Return improvement-timeline entries that targeted ``v``.
+
+    Reuses the ``/api/improvements/unified`` per-entry shape (see
+    ``bots/v0/api.py``), filtered by deriving the target version from
+    each entry's ``files_changed[]``:
+
+    * ``bots/(v\\d+)/...`` paths → version ``vN``.
+    * ``bots/current/...`` paths → resolved via ``git show
+      <commit_sha>:bots/current/current.txt`` (cached per sha).
+      Malformed SHAs and failed lookups are skip-and-warn (entry may
+      still match a sibling ``bots/vN/...`` path); never 500.
+
+    Sorted by timestamp descending. Returns ``[]`` when no entries
+    target ``v``.
+    """
+    v = _validate_version(v)
+    return await asyncio.to_thread(_filtered_version_improvements, v)
 
 
 @app.get("/api/lineage")

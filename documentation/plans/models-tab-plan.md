@@ -301,6 +301,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 ### Step 1b: Backend training-data endpoints
 - **Problem:** Add three per-version data-read endpoints to `bots/v10/api.py`: `GET /api/versions/{v}/training-history`, `GET /api/versions/{v}/actions`, `GET /api/versions/{v}/improvements` (with files_changed-path target-version derivation, including `bots/current/...` SHA lookup via `git show <sha>:bots/current/current.txt` with SHA regex-validated per §6.11). All `async def` + `await asyncio.to_thread` for the git subprocess.
 - **Issue:** #253
+- **Status:** DONE (2026-05-01)
 - **Flags:** `--reviewers code --isolation worktree`
 - **Produces:** 3 endpoints; pytest contract tests `tests/test_api_versions_data.py` (including malformed-SHA-skipped behaviour).
 - **Done when:** All three return correctly-shaped data for v3 (a version known to have games + improvements); bots/current SHA-lookup-derivation correctly resolves a known historical advised commit to its target version; injecting a malformed SHA into a fixture entry causes that entry to be skipped (logged warning), not crash the endpoint.
