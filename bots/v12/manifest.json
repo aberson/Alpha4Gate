@@ -1,0 +1,15 @@
+{
+  "best": "v5",
+  "elo": 0.0,
+  "extra": {},
+  "fingerprint": {
+    "action_space_size": 6,
+    "feature_dim": 24,
+    "obs_spec_hash": "1cb9ebc4f19ba09e"
+  },
+  "git_sha": "591e9c3ece29fe1bab7b9087ae4c651bb53fe492",
+  "parent": "v11",
+  "previous_best": null,
+  "timestamp": "2026-05-02T22:34:56.532817+00:00",
+  "version": "v12"
+}
