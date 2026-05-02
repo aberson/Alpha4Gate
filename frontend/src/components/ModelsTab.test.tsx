@@ -132,6 +132,18 @@ function mockVersionsFetch(body: Version[]) {
     if (url.includes("/api/ladder")) {
       return jsonResponse({ standings: [], head_to_head: {} });
     }
+    // Step 8 wired the real ForensicsView into the Forensics sub-view,
+    // so toggling to it now hits /api/versions/{v}/forensics/{game}
+    // when a game id is selected. Return an empty forensics body so
+    // shell tests that visit Forensics don't blow up.
+    if (/\/api\/versions\/v\d+\/forensics\//.test(url)) {
+      return jsonResponse({
+        trajectory: [],
+        give_up_fired: false,
+        give_up_step: null,
+        expert_dispatch: null,
+      });
+    }
     if (url.includes("/api/versions")) {
       return jsonResponse(body);
     }
@@ -204,6 +216,17 @@ beforeEach(() => {
       }
       if (url.includes("/api/ladder")) {
         return jsonResponse({ standings: [], head_to_head: {} });
+      }
+      // Step 8 — per-game forensics endpoint. Default to an empty
+      // payload so tests that toggle to the Forensics sub-view don't
+      // need their own per-game mock setup.
+      if (/\/api\/versions\/v\d+\/forensics\//.test(url)) {
+        return jsonResponse({
+          trajectory: [],
+          give_up_fired: false,
+          give_up_step: null,
+          expert_dispatch: null,
+        });
       }
       return jsonResponse([] as Version[]);
     },
@@ -430,6 +453,34 @@ describe("ModelsTab — shell", () => {
         "A: v7 / B: v6",
       );
     });
+  });
+
+  it("Forensics sub-view mounts the real ForensicsView with selected version", async () => {
+    // Step 8: clicking the Forensics sub-view replaces the placeholder
+    // with the real ForensicsView. The wrapper preserves the legacy
+    // ``models-subview-forensics`` testid; the inner ``forensics-view``
+    // testid proves the real component is wired up. With v7
+    // (``current``) the selector defaults to the most-recent game id.
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      mockVersionsFetch(ELEVEN_PROTOSS_VERSIONS),
+    );
+    render(<ModelsTab />);
+    await waitFor(() => {
+      expect(screen.getByTestId("models-version-select")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId("models-subview-button-forensics"));
+    expect(
+      screen.getByTestId("models-subview-forensics"),
+    ).toBeInTheDocument();
+    // Inner real component mounted with v7 (the current version).
+    await waitFor(() => {
+      expect(screen.getByTestId("forensics-view")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("forensics-title")).toHaveTextContent("v7");
+    // Phase O placeholder always present.
+    expect(
+      screen.getByTestId("forensics-expert-dispatch"),
+    ).toBeInTheDocument();
   });
 
   it("manual refresh button triggers a refetch of /api/versions", async () => {

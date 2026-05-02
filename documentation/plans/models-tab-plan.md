@@ -373,6 +373,7 @@ All FastAPI path params and subprocess inputs are validated against strict regex
 ### Step 8: Forensics view
 - **Problem:** Build `ForensicsView.tsx` with game-id selector (default: most recent game in current version), winprob trajectory line chart with give-up trigger marked as a vertical reference line (recharts), expert-dispatch placeholder card "Phase O pending." Reads `/api/versions/{v}/forensics/{game_id}`.
 - **Issue:** #261
+- **Status:** DONE (2026-05-01)
 - **Flags:** `--reviewers code --isolation worktree --ui`
 - **Produces:** `ForensicsView.tsx`, vitest test with seeded transitions data.
 - **Done when:** Picking a recent game shows winprob curve; if game had give-up trigger, vertical line marks it; placeholder card visible.

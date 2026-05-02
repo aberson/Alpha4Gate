@@ -5,6 +5,7 @@ import { LineageView } from "./LineageView";
 import { LiveRunsGrid } from "./LiveRunsGrid";
 import { VersionInspector } from "./VersionInspector";
 import { CompareView } from "./CompareView";
+import { ForensicsView } from "./ForensicsView";
 import { HARNESS_ORIGINS } from "../types/version";
 
 /**
@@ -133,10 +134,19 @@ function CompareContainer({
   );
 }
 
-function ForensicsPlaceholder() {
+interface ForensicsContainerProps {
+  selectedVersion: string | null;
+}
+
+function ForensicsContainer({ selectedVersion }: ForensicsContainerProps) {
+  // Step 8: real ForensicsView wired up. The wrapper preserves the
+  // ``data-testid="models-subview-forensics"`` selector that the legacy
+  // shell tests assert on; the real per-game replay panel renders
+  // beneath, fetching its own training-history (for the game-id
+  // selector) + per-game forensics inside ``ForensicsView``.
   return (
     <div data-testid="models-subview-forensics" className="models-subview">
-      <p>Forensics (Step 8)</p>
+      <ForensicsView version={selectedVersion} />
     </div>
   );
 }
@@ -360,7 +370,9 @@ export function ModelsTab() {
             onChange={onCompareChange}
           />
         ) : null}
-        {activeSubView === "forensics" ? <ForensicsPlaceholder /> : null}
+        {activeSubView === "forensics" ? (
+          <ForensicsContainer selectedVersion={selectedVersion} />
+        ) : null}
       </div>
     </div>
   );
