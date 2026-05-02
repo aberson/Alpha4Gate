@@ -138,7 +138,7 @@ export PYTHONUNBUFFERED=1
 
 # Check if backend is already running — only start if port is free
 python -c "import socket; s=socket.socket(); r=s.connect_ex(('127.0.0.1',8765)); s.close(); exit(0 if r!=0 else 1)" && {
-  DEBUG_ENDPOINTS=1 PYTHONUNBUFFERED=1 uv run python -m alpha4gate.runner --serve 2>&1 &
+  DEBUG_ENDPOINTS=1 PYTHONUNBUFFERED=1 uv run python -m bots.current.runner --serve 2>&1 &
   BACKEND_PID=$!
   echo "Backend started (PID $BACKEND_PID)"
 } || echo "Backend already running, skipping"
@@ -183,7 +183,7 @@ When `--fresh` is set, clear this context at the start of each iteration. When u
 ```bash
 # Run N games at max speed, no advisor
 for i in $(seq 1 $GAMES_PER_CYCLE); do
-    uv run python -m alpha4gate.runner --map Simple64 --difficulty $DIFFICULTY 2>&1 | tee -a "$LOGFILE"
+    uv run python -m bots.current.runner --map Simple64 --difficulty $DIFFICULTY 2>&1 | tee -a "$LOGFILE"
 done
 ```
 
@@ -191,7 +191,7 @@ done
 ```bash
 # Run N games at realtime, advisor ON
 for i in $(seq 1 $GAMES_PER_CYCLE); do
-    uv run python -m alpha4gate.runner --map Simple64 --difficulty $DIFFICULTY --realtime 2>&1 | tee -a "$LOGFILE"
+    uv run python -m bots.current.runner --map Simple64 --difficulty $DIFFICULTY --realtime 2>&1 | tee -a "$LOGFILE"
 done
 ```
 
@@ -496,7 +496,7 @@ for i in 1 2 3 4 5; do
 done
 
 # 2. Start backend with daemon (daemon auto-runs games + trains)
-DEBUG_ENDPOINTS=1 PYTHONUNBUFFERED=1 uv run python -m alpha4gate.runner --serve --daemon 2>&1 &
+DEBUG_ENDPOINTS=1 PYTHONUNBUFFERED=1 uv run python -m bots.current.runner --serve --daemon 2>&1 &
 DAEMON_PID=$!
 
 # Wait for 2 games to complete — poll training.db game count
@@ -534,7 +534,7 @@ done
 
 ```bash
 # Restart API-only backend (no daemon) for dashboard monitoring
-DEBUG_ENDPOINTS=1 PYTHONUNBUFFERED=1 uv run python -m alpha4gate.runner --serve 2>&1 &
+DEBUG_ENDPOINTS=1 PYTHONUNBUFFERED=1 uv run python -m bots.current.runner --serve 2>&1 &
 BACKEND_PID=$!
 # Verify it's up
 for i in 1 2 3 4 5; do

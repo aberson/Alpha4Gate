@@ -20,7 +20,7 @@ detects the current system state and applies the correct review criteria for tha
 
 ## Prerequisites
 
-- Backend must be running on port 8765 (`uv run python -m alpha4gate.runner --serve`)
+- Backend must be running on port 8765 (`uv run python -m bots.current.runner --serve`)
 - Frontend dev server must be running on port 3000 (`cd frontend && npm run dev`)
 - Playwright + Chromium installed (check: `npx playwright --version`)
 

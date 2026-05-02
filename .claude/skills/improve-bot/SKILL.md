@@ -202,7 +202,7 @@ Write a run-start header to `$LOGFILE`:
 
 ### Flavor: demo
 
-- Launch the backend **without** `--daemon` (e.g. `DEBUG_ENDPOINTS=1 PYTHONUNBUFFERED=1 uv run python -m alpha4gate.runner --serve 2>&1 | tee -a "$LOGFILE"`). Start frontend as normal.
+- Launch the backend **without** `--daemon` (e.g. `DEBUG_ENDPOINTS=1 PYTHONUNBUFFERED=1 uv run python -m bots.current.runner --serve 2>&1 | tee -a "$LOGFILE"`). Start frontend as normal.
 - Run §3.5 synthetic alert pre-flight — this is the primary value of demo mode.
 - Observe the dashboard for the wall-clock window. Log anything notable (alert-pipeline behavior, UI regressions, dashboard drift).
 - At stop: diff `data/` against the `data.demo-snapshot-$TS` taken in Phase 2. Any diff is a demo-contract violation — flag loudly in the writeup.
