@@ -153,6 +153,78 @@ class TestBuildLineageFunction:
         assert edge["harness"] == "evolve"
         assert edge["improvement_title"] == "Splash readiness + Auto Battery"
 
+    def test_manifest_extra_attribution_preferred_over_jsonl(
+        self, staged_repo: Path
+    ) -> None:
+        """#269: when ``manifest.extra.harness_origin`` /
+        ``manifest.extra.improvement_title`` are populated, lineage uses
+        them — even if ``data/evolve_results.jsonl`` is empty (the
+        fresh-run-truncation case).
+
+        This is the primary regression test for the attribution-loss
+        defect: stamping the manifest at promotion time means lineage
+        survives any subsequent JSONL wipe.
+        """
+        _make_manifest(staged_repo, "v0", parent=None)
+        # v1 manifest carries the attribution in extra (what
+        # ``_rewrite_manifest_parent`` writes at promote time).
+        vdir = staged_repo / "bots" / "v1"
+        vdir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "version": "v1",
+            "parent": "v0",
+            "git_sha": "deadbeef",
+            "timestamp": "2026-02-01T00:00:00+00:00",
+            "best": "v1",
+            "elo": 0.0,
+            "previous_best": None,
+            "fingerprint": {},
+            "extra": {
+                "harness_origin": "evolve",
+                "improvement_title": "Manifest-stamped title (post-#269)",
+            },
+        }
+        (vdir / "manifest.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+        # No data/evolve_results.jsonl on disk — simulates the
+        # fresh-run-truncation state where the JSONL has been wiped.
+        result = build_lineage_module.build_lineage(staged_repo)
+        edge = next(e for e in result["edges"] if e["to"] == "v1")
+        assert edge["harness"] == "evolve"
+        assert edge["improvement_title"] == "Manifest-stamped title (post-#269)"
+
+    def test_manifest_extra_falls_through_when_harness_unrecognized(
+        self, staged_repo: Path
+    ) -> None:
+        """Defense in depth: a malformed ``extra.harness_origin`` (not
+        one of the four recognized values) falls through to the
+        existing JSONL-derived attribution path. Keeps legacy manifests
+        with stray extras from corrupting lineage output.
+        """
+        _make_manifest(staged_repo, "v0", parent=None)
+        vdir = staged_repo / "bots" / "v1"
+        vdir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "version": "v1",
+            "parent": "v0",
+            "git_sha": "deadbeef",
+            "timestamp": "2026-02-01T00:00:00+00:00",
+            "best": "v1",
+            "elo": 0.0,
+            "previous_best": None,
+            "fingerprint": {},
+            "extra": {"harness_origin": "garbage-value"},
+        }
+        (vdir / "manifest.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+        result = build_lineage_module.build_lineage(staged_repo)
+        edge = next(e for e in result["edges"] if e["to"] == "v1")
+        # Falls through to the no-log default → manual.
+        assert edge["harness"] == "manual"
+        assert edge["improvement_title"] == "manual"
+
     def test_skip_orphan_when_parent_missing(
         self, staged_repo: Path
     ) -> None:
@@ -178,14 +250,39 @@ class TestBuildLineageFunction:
 class TestBuildLineageRealRepo:
     """End-to-end test against the real ``bots/v*/`` checkpoints."""
 
-    def test_real_repo_eleven_versions(self) -> None:
+    def test_real_repo_lineage_well_formed(self) -> None:
+        """Structural invariants on the real repo's lineage.
+
+        Counts grow over time as evolve promotes new versions, so the
+        assertion is on shape not magnitude: nodes == bots/v* dirs,
+        edges == nodes minus the single root (v0 has parent=null), and
+        every node/edge carries its required fields. Locking to a
+        specific number was previously broken every time a promotion
+        landed.
+        """
         repo_root = Path(__file__).resolve().parent.parent
         result = build_lineage_module.build_lineage(repo_root)
-        assert len(result["nodes"]) == 11, (
-            f"expected 11 versions in bots/, got {len(result['nodes'])}"
+        # Count actual on-disk version dirs to compare apples-to-apples.
+        bots_dir = repo_root / "bots"
+        on_disk_versions = sorted(
+            p.name
+            for p in bots_dir.iterdir()
+            if p.is_dir()
+            and p.name != "current"
+            and build_lineage_module._VERSION_RE.match(p.name)
         )
-        # v0 has parent=null, the other ten produce edges.
-        assert len(result["edges"]) == 10
+        assert len(result["nodes"]) == len(on_disk_versions), (
+            f"expected {len(on_disk_versions)} versions in lineage, "
+            f"got {len(result['nodes'])}; on-disk: {on_disk_versions}"
+        )
+        assert len(result["nodes"]) >= 11, (
+            "smoke floor: should always have at least the original "
+            "11 versions (v0–v10) that shipped with the Models tab plan"
+        )
+        # Tree shape: edges = nodes - root. Even though `_skip_orphan`
+        # tolerates parent=null on non-v0 manifests, the on-disk repo
+        # has exactly one (v0).
+        assert len(result["edges"]) == len(result["nodes"]) - 1
         # Every node has the required fields.
         for node in result["nodes"]:
             assert set(node.keys()) >= {

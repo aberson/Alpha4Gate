@@ -2252,6 +2252,15 @@ class TestStackApplyAndPromote:
         assert manifest["parent"] == "v0"
         assert manifest["version"] == new_version
 
+        # #269: ``_rewrite_manifest_parent`` also stamps the harness
+        # attribution into ``extra`` so lineage survives the fresh-run
+        # truncation of ``data/evolve_results.jsonl``.
+        extra = manifest.get("extra") or {}
+        assert extra.get("harness_origin") == "evolve"
+        # Stacked titles join with " + " to match
+        # ``scripts/build_lineage.py:_collect_evolve_index``.
+        assert extra.get("improvement_title") == "imp-a + imp-b"
+
         # Both patches landed.
         rewards = json.loads(
             (new_dir / "data" / "reward_rules.json").read_text(encoding="utf-8")

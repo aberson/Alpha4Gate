@@ -1528,7 +1528,21 @@ def _stack_apply_and_promote(
     # Rewrite manifest parent to the real parent (snapshot_current
     # records the then-current pointer, which in our case IS the parent,
     # so this is a no-op most of the time but keeps lineage honest).
-    _rewrite_manifest_parent(new_version_dir, parent)
+    # Also stamp ``extra.harness_origin`` + ``extra.improvement_title``
+    # so lineage attribution survives the fresh-run truncation of
+    # ``data/evolve_results.jsonl`` (#269). Multiple stacked imps are
+    # joined with " + " to match the convention in
+    # ``scripts/build_lineage.py:_collect_evolve_index``.
+    stacked_titles = [imp.title for imp in winning_imps if imp.title]
+    improvement_title = (
+        " + ".join(stacked_titles) if stacked_titles else None
+    )
+    _rewrite_manifest_parent(
+        new_version_dir,
+        parent,
+        harness_origin="evolve",
+        improvement_title=improvement_title,
+    )
 
     # H3 fix: commit BEFORE claiming promotion. If the commit fails,
     # rollback the snapshot and report stack-apply-commit-fail so

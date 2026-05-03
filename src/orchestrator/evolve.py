@@ -387,13 +387,27 @@ def _restore_pointer(parent_name: str) -> None:
     os.replace(tmp, pointer)
 
 
-def _rewrite_manifest_parent(version_dir: Path, parent_name: str) -> None:
+def _rewrite_manifest_parent(
+    version_dir: Path,
+    parent_name: str,
+    *,
+    harness_origin: str | None = None,
+    improvement_title: str | None = None,
+) -> None:
     """Rewrite the ``parent`` field in ``version_dir/manifest.json``.
 
     ``snapshot_current`` records the immediate source — in the promote
     flow that is the scratch ``cand_*`` dir, not the real parent. We
     overwrite post-snapshot so lineage is readable after the scratch is
     rmtree'd. Missing/malformed manifests are logged and left alone.
+
+    When ``harness_origin`` and/or ``improvement_title`` are provided
+    (#269), they are stamped into ``payload["extra"]`` so lineage
+    attribution survives independent of ``data/evolve_results.jsonl``,
+    which is truncated at every fresh evolve run start. The ``extra``
+    field is the per-Manifest forward-compat extension point declared
+    in ``orchestrator.contracts.Manifest``. Existing extras are
+    preserved (set semantics on the keys, not full replacement).
     """
     manifest_path = version_dir / "manifest.json"
     try:
@@ -406,6 +420,15 @@ def _rewrite_manifest_parent(version_dir: Path, parent_name: str) -> None:
         )
         return
     payload["parent"] = parent_name
+    if harness_origin is not None or improvement_title is not None:
+        extra = payload.get("extra")
+        if not isinstance(extra, dict):
+            extra = {}
+        if harness_origin is not None:
+            extra["harness_origin"] = harness_origin
+        if improvement_title is not None:
+            extra["improvement_title"] = improvement_title
+        payload["extra"] = extra
     try:
         manifest_path.write_text(
             json.dumps(payload, indent=2, sort_keys=True) + "\n",

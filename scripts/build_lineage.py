@@ -289,16 +289,43 @@ def build_lineage(repo_root: Path) -> dict[str, Any]:
         ts_raw = manifest.get("timestamp")
         ts = ts_raw if isinstance(ts_raw, str) else ""
 
-        harness_origin = _derive_harness_origin(
-            version=version_name,
-            sha=sha,
-            advised_shas=advised_shas,
-            advised_versions=advised_versions,
-            evolve_shas=evolve_shas,
-            evolve_versions=evolve_versions,
-            selfplay_shas=selfplay_shas,
-            selfplay_versions=selfplay_versions,
+        # #269: prefer ``manifest.extra.harness_origin`` /
+        # ``manifest.extra.improvement_title`` when present. Stamped at
+        # promotion time by ``_rewrite_manifest_parent`` (and similar
+        # hooks for advised/self-play in future). The manifest is
+        # git-tracked, so attribution survives fresh-run truncation of
+        # ``data/evolve_results.jsonl``. Falls through to the existing
+        # JSONL-derived attribution when ``extra`` is absent or carries
+        # an unrecognized harness_origin (so legacy manifests behave as
+        # they do today).
+        extra_raw = manifest.get("extra")
+        extra = extra_raw if isinstance(extra_raw, dict) else {}
+        manifest_harness_raw = extra.get("harness_origin")
+        manifest_harness = (
+            manifest_harness_raw
+            if manifest_harness_raw in {"evolve", "advised", "manual", "self-play"}
+            else None
         )
+        manifest_imp_raw = extra.get("improvement_title")
+        manifest_imp = (
+            manifest_imp_raw
+            if isinstance(manifest_imp_raw, str) and manifest_imp_raw
+            else None
+        )
+
+        if manifest_harness is not None:
+            harness_origin = manifest_harness
+        else:
+            harness_origin = _derive_harness_origin(
+                version=version_name,
+                sha=sha,
+                advised_shas=advised_shas,
+                advised_versions=advised_versions,
+                evolve_shas=evolve_shas,
+                evolve_versions=evolve_versions,
+                selfplay_shas=selfplay_shas,
+                selfplay_versions=selfplay_versions,
+            )
 
         nodes.append({
             "id": version_name,
@@ -313,7 +340,9 @@ def build_lineage(repo_root: Path) -> dict[str, Any]:
         if parent is None:
             continue
 
-        if harness_origin == "manual":
+        if manifest_imp is not None:
+            improvement_title = manifest_imp
+        elif harness_origin == "manual":
             improvement_title = "manual"
         elif harness_origin == "evolve":
             improvement_title = evolve_titles.get(version_name, "—")
