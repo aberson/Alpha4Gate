@@ -1,5 +1,7 @@
 # Iter-3 hardening prompt — paste into a clean Claude Code session
 
+> **OBSOLETE 2026-05-03.** Fixes 3.1, 3.2, 3.3 shipped in `d2a1e85`. Fix 3.4 was diagnostic-only by this prompt's own §3.4 deferral (root-cause investigation deferred). Steps 8 + 9 of the parallelization plan are CLOSED empirical-pass via the May 1-2 real soaks (production progressed v7 → v12). See `documentation/plans/evolve-parallelization-plan.md` Steps 8 + 9 status lines and issues #248 / #249 for the closeout. Do not act on the instructions below — they are kept for historical context only.
+
 You are Claude Code on Alpha4Gate (`c:\Users\abero\dev\Alpha4Gate`). Master at HEAD has the
 evolve-parallelization plan Steps 1-7 merged. Step 8 (operator smoke gate) ran on
 2026-04-30 ~22:00 PT, BLOCKED on 4 defects — 1 was fixed mid-session, 3 deferred to this
