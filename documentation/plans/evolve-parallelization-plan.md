@@ -417,7 +417,8 @@ Spike 3 (`scripts/spike3_launch.sh`) already validated this exact topology: 4 se
   4. Run completes (script exits) within ~60s.
   5. Post-run: `ls bots/cand_* 2>/dev/null | wc -l` returns 0 (per Decision D-6 cleanup).
 - **Issue:** #248
-- **Status:** BLOCKED (2026-04-30) — first run hit two real defects: (1) worker didn't pass `dev_apply_fn` so dev-imps NotImplementedError'd (fixed `5997dee`); (2) Ctrl+C in dispatcher window didn't propagate cleanly to workers + grandchild Claude CLI subprocesses, leaving orphan processes. Plus diagnostic gap: dispatcher's crash bucket logs `RuntimeError: worker exited non-zero: returncode=1` and unlinks the worker's actual crash payload before reading it. Plus `bots/cand_*` scratch dirs accumulate (33 leftover from one run). Step 3 iter-3 hardening pass needed before re-run.
+- **Status:** DONE (2026-05-03) — empirical pass after iter-3 hardening (`d2a1e85`) and 5 follow-up real soaks 2026-05-01..02. `bots/cand_*` count = 0 today; `data/evolve_round_1.json` updated 2026-05-01T15:22:40Z proves slot-1 dispatched (concurrency ≥ 2); production progressed v7 → v12 across the run window. See issue comment for full criteria checklist.
+  - **History:** BLOCKED (2026-04-30) on first attempted smoke gate — 1 defect fixed mid-session (`5997dee` dev_apply_fn), 3 deferred to iter-3 (cand cleanup, group isolation, crash payload). Iter-3 fixes shipped `d2a1e85` (4 May 2026-04-30 22:54 PT).
 - **Type:** operator
 - **Flags:** (none)
 - **Produces:** Operator screenshot of dashboard showing 2 cards; brief notes file `documentation/soak-test-runs/parallel-smoke-<date>.md`.
@@ -460,6 +461,7 @@ Spike 3 (`scripts/spike3_launch.sh`) already validated this exact topology: 4 se
   done &
   ```
 - **Issue:** #249
+- **Status:** DONE (2026-05-03) — empirical pass via 9-hour autonomous soak `documentation/soak-test-runs/evolve-2026-05-01T07-18-33+00-00.md`: v7 → v10 (3 promotions: v8, v9, v10) across 6 generations with 2 clean rollbacks; wall-clock stop, no infrastructure crashes. RSS sampler not run; promotion outcome + clean exits are stronger reliability evidence. Subsequent soaks shipped v11 (2026-05-02 15:10) and v12 (2026-05-02 22:06). See issue comment for the line-by-line criteria check.
 - **Type:** wait
 - **Flags:** (none)
 - **Produces:** Soak-run notes file `documentation/soak-test-runs/evolve-parallel-<timestamp>.md` summarizing wall-clock, generations completed, promotions, peak SC2 process count (from the RSS sampler), any anomalies.
