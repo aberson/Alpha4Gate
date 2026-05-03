@@ -173,6 +173,18 @@ def _write_evolve_run_state(repo: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def _write_evolve_current_round(repo: Path, payload: dict[str, Any]) -> None:
+    """Write ``evolve_current_round.json`` into the cross-version data dir.
+
+    Single-concurrency evolve runs write the active worker's live state
+    to this file (no ``worker_id`` field) — the per-worker round-file
+    glob doesn't match for those. Used by the #268 fallback tests.
+    """
+    path = repo / "data" / "evolve_current_round.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
 def _write_weight_dynamics(
     repo: Path, lines: list[str | dict[str, Any]]
 ) -> None:
@@ -550,6 +562,98 @@ class TestRunsActiveEndpoint:
         assert labels == ["worker-0", "worker-1"]
         # And worker-1's updated_at field should be empty string.
         assert body[1]["updated_at"] == ""
+
+    # ------------------------------------------------------------------
+    # Single-concurrency current-round fallback (#268)
+    # ------------------------------------------------------------------
+
+    def test_current_round_active_surfaces_worker_zero(
+        self, client: TestClient, staged_repo: Path
+    ) -> None:
+        """Single-concurrency runs: ``scripts/evolve.py`` writes the
+        active worker's live state to ``evolve_current_round.json`` (no
+        ``worker_id`` field) instead of ``evolve_round_<wid>.json``.
+        The aggregator must synthesize a ``worker-0`` row from it so the
+        Live Runs grid is not blank during default-config soaks.
+        """
+        _write_evolve_run_state(staged_repo, {
+            "run_id": "run-single",
+            "concurrency": 1,
+            "parent_current": "v12",
+            "started_at": "2026-05-02T22:06:27+00:00",
+        })
+        _write_evolve_current_round(staged_repo, {
+            "active": True,
+            "phase": "fitness",
+            "imp_title": "Gas-dump warp priority when gas exceeds 600",
+            "candidate": "cand_a8b4b01b",
+            "games_played": 2,
+            "games_total": 3,
+            "score_cand": 1,
+            "score_parent": 1,
+            "updated_at": "2026-05-02T22:33:00+00:00",
+        })
+        body = client.get("/api/runs/active").json()
+        assert len(body) == 1
+        row = body[0]
+        assert row["harness"] == "evolve"
+        assert row["version"] == "v12"
+        assert row["phase"] == "fitness"
+        # Synthesized as worker-0 since current_round has no worker_id.
+        assert "worker-0" in row["current_imp"]
+        assert "Gas-dump warp priority" in row["current_imp"]
+        assert row["games_played"] == 2
+        assert row["games_total"] == 3
+        assert row["score_cand"] == 1
+        assert row["score_parent"] == 1
+        assert row["started_at"] == "2026-05-02T22:06:27+00:00"
+        assert row["updated_at"] == "2026-05-02T22:33:00+00:00"
+
+    def test_current_round_inactive_does_not_emit_row(
+        self, client: TestClient, staged_repo: Path
+    ) -> None:
+        """Stale ``evolve_current_round.json`` from a prior run (active
+        flipped to ``False`` at run completion) must NOT surface a row.
+        """
+        _write_evolve_current_round(staged_repo, {
+            "active": False,
+            "updated_at": "2026-05-02T22:49:33+00:00",
+        })
+        body = client.get("/api/runs/active").json()
+        assert body == []
+
+    def test_per_worker_round_skips_current_round_fallback(
+        self, client: TestClient, staged_repo: Path
+    ) -> None:
+        """De-dup: when a parallel run writes BOTH an active per-worker
+        round file AND an active current-round file (the latter is
+        touched on every phase boundary regardless of concurrency), the
+        fallback must skip — otherwise the same worker shows up twice.
+        """
+        _write_evolve_run_state(staged_repo, {
+            "run_id": "run-parallel",
+            "concurrency": 2,
+            "parent_current": "v12",
+            "started_at": "2026-05-02T22:06:27+00:00",
+        })
+        _write_evolve_round(staged_repo, 0, {
+            "active": True,
+            "worker_id": 0,
+            "run_id": "run-parallel",
+            "phase": "fitness",
+            "imp_title": "From per-worker file",
+            "updated_at": "2026-05-02T22:30:00+00:00",
+        })
+        _write_evolve_current_round(staged_repo, {
+            "active": True,
+            "phase": "fitness",
+            "imp_title": "From current-round file",
+            "updated_at": "2026-05-02T22:30:00+00:00",
+        })
+        body = client.get("/api/runs/active").json()
+        # One row from the per-worker glob; current-round fallback skipped.
+        assert len(body) == 1
+        assert "From per-worker file" in body[0]["current_imp"]
 
     # ------------------------------------------------------------------
     # Per-version vs cross-version resolver smoke (finding 1)

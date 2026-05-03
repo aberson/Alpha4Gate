@@ -3201,6 +3201,12 @@ def _runs_active_evolve_rows_sync() -> list[dict[str, Any]]:
     else:
         started_at = ""
 
+    # Track worker_ids surfaced through the per-worker glob so the
+    # single-concurrency fallback below doesn't double-count when a
+    # parallel run writes both per-worker round files AND the current-
+    # round file (the latter is touched on every phase boundary).
+    surfaced_worker_ids: set[int] = set()
+
     for path in _evolve_dir.glob("evolve_round_*.json"):
         entry = _read_json_file(path)
         if entry is None:
@@ -3214,6 +3220,8 @@ def _runs_active_evolve_rows_sync() -> list[dict[str, Any]]:
         worker_label = (
             f"worker-{wid}" if isinstance(wid, int) else "worker-?"
         )
+        if isinstance(wid, int):
+            surfaced_worker_ids.add(wid)
         updated_at = str(entry.get("updated_at") or "")
         rows.append({
             "harness": "evolve",
@@ -3229,6 +3237,34 @@ def _runs_active_evolve_rows_sync() -> list[dict[str, Any]]:
             "started_at": started_at,
             "updated_at": updated_at,
         })
+
+    # Single-concurrency fallback (#268): ``scripts/evolve.py`` writes
+    # the live state of the single active worker to
+    # ``evolve_current_round.json`` (no ``worker_id`` field). For
+    # concurrency=1 runs the per-worker glob above never matches, so
+    # synthesize a ``worker-0`` row from the current-round file.
+    # Skipped when any per-worker round file already contributed.
+    if not surfaced_worker_ids:
+        current_round = _read_json_file(
+            _evolve_dir / _EVOLVE_CURRENT_ROUND_FILE
+        )
+        if current_round is not None and bool(
+            current_round.get("active", False)
+        ):
+            imp_title = str(current_round.get("imp_title") or "")
+            rows.append({
+                "harness": "evolve",
+                "version": parent_current,
+                "phase": str(current_round.get("phase") or ""),
+                "current_imp": f"worker-0: {imp_title}".strip(": "),
+                "games_played": _safe_int(current_round.get("games_played")),
+                "games_total": _safe_int(current_round.get("games_total")),
+                "score_cand": _safe_int(current_round.get("score_cand")),
+                "score_parent": _safe_int(current_round.get("score_parent")),
+                "started_at": started_at,
+                "updated_at": str(current_round.get("updated_at") or ""),
+            })
+
     return rows
 
 
