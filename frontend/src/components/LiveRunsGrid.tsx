@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRunsActive } from "../hooks/useRunsActive";
 import { StaleDataBanner } from "./StaleDataBanner";
 import {
@@ -242,7 +242,22 @@ function EmptyCard() {
   );
 }
 
-export function LiveRunsGrid() {
+export interface LiveRunsGridProps {
+  // #267: harness chips on the Models tab filter the runs grid by
+  // ``row.harness``. ``training-daemon`` rows are not chip-able and
+  // always pass through; the chip-able subset is governed by
+  // ``passesHarnessFilter`` in ModelsTab.
+  harnessFilter?: Set<string>;
+}
+
+const CHIPPABLE_RUN_HARNESSES = new Set<string>([
+  "advised",
+  "evolve",
+  "manual",
+  "self-play",
+]);
+
+export function LiveRunsGrid({ harnessFilter }: LiveRunsGridProps = {}) {
   const { runs, isStale, lastSuccess } = useRunsActive();
 
   // Local 2s ticker so each card's "updated Ns ago" wording stays in
@@ -257,6 +272,18 @@ export function LiveRunsGrid() {
     return () => window.clearInterval(id);
   }, []);
 
+  // Apply chip filter when provided. Non-chip-able harnesses (e.g.
+  // ``training-daemon``) always pass through so the daemon row never
+  // disappears just because none of the four version-origin chips
+  // match.
+  const visibleRuns = useMemo(() => {
+    if (harnessFilter === undefined) return runs;
+    return runs.filter((row) => {
+      if (!CHIPPABLE_RUN_HARNESSES.has(row.harness)) return true;
+      return harnessFilter.has(row.harness);
+    });
+  }, [runs, harnessFilter]);
+
   return (
     <div className="live-runs-grid" data-testid="live-runs-grid">
       {isStale ? (
@@ -269,10 +296,10 @@ export function LiveRunsGrid() {
           gap: "12px",
         }}
       >
-        {runs.length === 0 ? (
+        {visibleRuns.length === 0 ? (
           <EmptyCard />
         ) : (
-          runs.map((row, i) => (
+          visibleRuns.map((row, i) => (
             <RunCard
               key={`${row.harness}-${row.version}-${i}`}
               row={row}

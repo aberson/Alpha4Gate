@@ -322,6 +322,11 @@ interface TimelineModeProps {
   setFilter: (next: TimelineFilter) => void;
   expandedId: string | null;
   setExpandedId: (next: string | null) => void;
+  // #267: harness chips filter the unified-improvements list by source
+  // (advised / evolve). Other origins (manual / self-play) don't
+  // appear in the unified timeline today, but the chip still gates
+  // them for forward-compat.
+  harnessFilter?: Set<string>;
 }
 
 function TimelineMode({
@@ -329,6 +334,7 @@ function TimelineMode({
   setFilter,
   expandedId,
   setExpandedId,
+  harnessFilter,
 }: TimelineModeProps) {
   const { data, isStale, isLoading, lastSuccess, refresh } = useApi<
     ImprovementsResponse
@@ -336,10 +342,11 @@ function TimelineMode({
     cacheKey: "/api/improvements/unified::improvements-unified-v1",
   });
 
-  const allEntries = useMemo<UnifiedImprovement[]>(
-    () => data?.improvements ?? [],
-    [data],
-  );
+  const allEntries = useMemo<UnifiedImprovement[]>(() => {
+    const entries = data?.improvements ?? [];
+    if (harnessFilter === undefined) return entries;
+    return entries.filter((e) => harnessFilter.has(e.source));
+  }, [data, harnessFilter]);
 
   if (isLoading && !data) {
     return (
@@ -386,6 +393,10 @@ export interface LineageViewProps {
   // Test seam — see ``TreeMode`` above. Production callers omit; tests
   // can inject a deterministic layout function.
   layoutFn?: (dag: LineageDAG) => LayoutResult;
+  // #267: harness chips on the Models tab filter the rendered tree +
+  // timeline. Optional so tests/renderers that don't drive chips can
+  // omit it — when absent, no filtering applies.
+  harnessFilter?: Set<string>;
 }
 
 // Stable IDs wired through ``aria-controls``/``aria-labelledby`` for
@@ -400,10 +411,34 @@ const MODE_PANEL_ID: Record<LineageMode, string> = {
   timeline: "lineage-mode-panel-timeline",
 };
 
-export function LineageView({ onNodeSelect, layoutFn }: LineageViewProps) {
+export function LineageView({
+  onNodeSelect,
+  layoutFn,
+  harnessFilter,
+}: LineageViewProps) {
   const [mode, setMode] = useState<LineageMode>("tree");
   const { lineage, loading, error, refetch, isStale, lastSuccess } =
     useLineage();
+
+  // #267: filter the lineage DAG by the active harness chips. Nodes
+  // not passing the filter are dropped, and edges incident to a
+  // dropped node are also dropped (orphan edges would render to/from
+  // empty space). When ``harnessFilter`` is absent (legacy callers,
+  // tests), the original DAG is returned untouched.
+  const filteredLineage = useMemo<LineageDAG | null>(() => {
+    if (lineage === null) return null;
+    if (harnessFilter === undefined) return lineage;
+    const keepIds = new Set<string>();
+    const filteredNodes = lineage.nodes.filter((n) => {
+      if (!harnessFilter.has(n.harness_origin)) return false;
+      keepIds.add(n.id);
+      return true;
+    });
+    const filteredEdges = lineage.edges.filter(
+      (e) => keepIds.has(e.from) && keepIds.has(e.to),
+    );
+    return { nodes: filteredNodes, edges: filteredEdges };
+  }, [lineage, harnessFilter]);
 
   // Lifted timeline-mode state — survives a tree → timeline → tree
   // toggle so the operator's filter + expanded row don't reset every
@@ -479,7 +514,7 @@ export function LineageView({ onNodeSelect, layoutFn }: LineageViewProps) {
             </p>
           ) : (
             <TreeMode
-              lineage={lineage ?? { nodes: [], edges: [] }}
+              lineage={filteredLineage ?? { nodes: [], edges: [] }}
               onNodeSelect={onNodeSelect}
               layoutFn={layoutFn}
             />
@@ -490,6 +525,7 @@ export function LineageView({ onNodeSelect, layoutFn }: LineageViewProps) {
             setFilter={setTimelineFilter}
             expandedId={timelineExpandedId}
             setExpandedId={setTimelineExpandedId}
+            harnessFilter={harnessFilter}
           />
         )}
       </div>

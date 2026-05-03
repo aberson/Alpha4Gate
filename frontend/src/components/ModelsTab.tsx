@@ -51,30 +51,59 @@ function coerceRace(raw: string | null | undefined): string {
   return raw;
 }
 
-interface LineageContainerProps {
-  onNodeSelect: (versionName: string) => void;
+/**
+ * #267: a harness origin "passes" the filter when either it's not one
+ * of the four chip-able origins (e.g., ``"training-daemon"`` rows in
+ * Live Runs are governed by their own daemon control, not the chips)
+ * OR it's explicitly enabled in the ``harnessFilter`` set. Default
+ * state has all 4 chip-able origins enabled, so this is a no-op until
+ * the operator toggles a chip off.
+ */
+const CHIPPABLE_HARNESSES = new Set<string>(HARNESS_ORIGINS);
+
+export function passesHarnessFilter(
+  harness: string,
+  filter: Set<string>,
+): boolean {
+  if (!CHIPPABLE_HARNESSES.has(harness)) return true;
+  return filter.has(harness);
 }
 
-function LineageContainer({ onNodeSelect }: LineageContainerProps) {
+interface LineageContainerProps {
+  onNodeSelect: (versionName: string) => void;
+  harnessFilter: Set<string>;
+}
+
+function LineageContainer({
+  onNodeSelect,
+  harnessFilter,
+}: LineageContainerProps) {
   // Step 4: real Lineage view. The container exists so the
   // ``data-testid="models-subview-lineage"`` wrapper that the shell
   // tests assert on still wraps whatever rendering surface this
   // sub-view uses (currently ``<LineageView />``).
   return (
     <div data-testid="models-subview-lineage" className="models-subview">
-      <LineageView onNodeSelect={onNodeSelect} />
+      <LineageView
+        onNodeSelect={onNodeSelect}
+        harnessFilter={harnessFilter}
+      />
     </div>
   );
 }
 
-function LiveRunsContainer() {
+interface LiveRunsContainerProps {
+  harnessFilter: Set<string>;
+}
+
+function LiveRunsContainer({ harnessFilter }: LiveRunsContainerProps) {
   // Step 5: real Live Runs grid. The wrapper preserves the
   // ``data-testid="models-subview-live"`` selector that the shell tests
   // assert on; rendering delegates to ``LiveRunsGrid``, which fetches
-  // its own data via ``useRunsActive`` (no props required).
+  // its own data via ``useRunsActive`` and filters rows by harness.
   return (
     <div data-testid="models-subview-live" className="models-subview">
-      <LiveRunsGrid />
+      <LiveRunsGrid harnessFilter={harnessFilter} />
     </div>
   );
 }
@@ -108,12 +137,14 @@ interface CompareContainerProps {
   compareA: string | null;
   compareB: string | null;
   onChange: (a: string | null, b: string | null) => void;
+  harnessFilter: Set<string>;
 }
 
 function CompareContainer({
   compareA,
   compareB,
   onChange,
+  harnessFilter,
 }: CompareContainerProps) {
   // Step 7: real CompareView wired up. The wrapper preserves the
   // ``data-testid="models-subview-compare"`` + ``models-compare-
@@ -129,6 +160,7 @@ function CompareContainer({
         compareA={compareA}
         compareB={compareB}
         onChange={onChange}
+        harnessFilter={harnessFilter}
       />
     </div>
   );
@@ -244,6 +276,21 @@ export function ModelsTab() {
     setCompareB(row?.parent ?? null);
   }, [activeSubView, compareA, compareB, selectedVersion, versions]);
 
+  // #267: filter the dropdown options by the active harness chips so
+  // toggling off "evolve" hides evolve-origin versions from the version
+  // picker. The currently-selected version stays as the select's value
+  // even if filtered out (browsers display the value verbatim) — the
+  // operator can pick another from the filtered list or re-enable the
+  // chip. Inspector / Forensics intentionally don't filter their
+  // ``useVersions`` calls (those drive parent-name lookups that need to
+  // resolve regardless of filter state).
+  const filteredVersions = useMemo(
+    () => versions.filter(
+      (v) => passesHarnessFilter(v.harness_origin, harnessFilter),
+    ),
+    [versions, harnessFilter],
+  );
+
   return (
     <div className="models-tab" data-testid="models-tab">
       {isStale ? (
@@ -257,10 +304,10 @@ export function ModelsTab() {
             value={selectedVersion ?? ""}
             onChange={(e) => setSelectedVersion(e.target.value || null)}
           >
-            {versions.length === 0 ? (
+            {filteredVersions.length === 0 ? (
               <option value="">(no versions)</option>
             ) : null}
-            {versions.map((v) => (
+            {filteredVersions.map((v) => (
               <option key={v.name} value={v.name}>
                 {v.name}
                 {v.current ? " (current)" : ""}
@@ -354,9 +401,14 @@ export function ModelsTab() {
 
       <div className="models-subview-body" style={subViewBodyStyle}>
         {activeSubView === "lineage" ? (
-          <LineageContainer onNodeSelect={onNodeSelect} />
+          <LineageContainer
+            onNodeSelect={onNodeSelect}
+            harnessFilter={harnessFilter}
+          />
         ) : null}
-        {activeSubView === "live" ? <LiveRunsContainer /> : null}
+        {activeSubView === "live" ? (
+          <LiveRunsContainer harnessFilter={harnessFilter} />
+        ) : null}
         {activeSubView === "inspector" ? (
           <InspectorContainer
             selectedVersion={selectedVersion}
@@ -368,6 +420,7 @@ export function ModelsTab() {
             compareA={compareA}
             compareB={compareB}
             onChange={onCompareChange}
+            harnessFilter={harnessFilter}
           />
         ) : null}
         {activeSubView === "forensics" ? (

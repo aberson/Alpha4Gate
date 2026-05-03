@@ -349,6 +349,60 @@ describe("ModelsTab — shell", () => {
     expect(advised).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("toggling off evolve chip removes evolve nodes from lineage tree (#267)", async () => {
+    // The 11-version fixture has 6 evolve-origin versions (v1, v2, v4,
+    // v5, v6, v7); they should disappear from the rendered tree once
+    // the evolve chip is toggled off.
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      mockVersionsFetch(ELEVEN_PROTOSS_VERSIONS),
+    );
+    render(<ModelsTab />);
+    // Tree renders by default (lineage is the default sub-view).
+    await screen.findByTestId("lineage-tree-node-v1");
+    expect(screen.getByTestId("lineage-tree-node-v4")).toBeInTheDocument();
+    expect(screen.getByTestId("lineage-tree-node-v0")).toBeInTheDocument();
+
+    // Toggle off "evolve".
+    fireEvent.click(screen.getByTestId("models-harness-chip-evolve"));
+
+    // All six evolve-origin nodes are gone.
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("lineage-tree-node-v1"),
+      ).not.toBeInTheDocument();
+    });
+    for (const v of ["v2", "v4", "v5", "v6", "v7"]) {
+      expect(screen.queryByTestId(`lineage-tree-node-${v}`)).not.toBeInTheDocument();
+    }
+    // Non-evolve nodes still rendered.
+    for (const v of ["v0", "v3", "v8", "v9", "v10"]) {
+      expect(screen.getByTestId(`lineage-tree-node-${v}`)).toBeInTheDocument();
+    }
+  });
+
+  it("toggling off evolve chip filters version dropdown (#267)", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      mockVersionsFetch(ELEVEN_PROTOSS_VERSIONS),
+    );
+    render(<ModelsTab />);
+    const select = (await screen.findByTestId(
+      "models-version-select",
+    )) as HTMLSelectElement;
+    // All 11 versions in the dropdown initially.
+    expect(select.querySelectorAll("option").length).toBe(11);
+
+    fireEvent.click(screen.getByTestId("models-harness-chip-evolve"));
+
+    // 6 evolve versions removed → 5 remaining options.
+    await waitFor(() => {
+      expect(select.querySelectorAll("option").length).toBe(5);
+    });
+    const remainingNames = Array.from(select.querySelectorAll("option")).map(
+      (o) => (o as HTMLOptionElement).value,
+    );
+    expect(remainingNames).toEqual(["v0", "v3", "v8", "v9", "v10"]);
+  });
+
   it("sub-view router switches between 5 placeholder panels", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(
       mockVersionsFetch(ELEVEN_PROTOSS_VERSIONS),

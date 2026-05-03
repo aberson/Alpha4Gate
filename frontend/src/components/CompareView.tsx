@@ -55,6 +55,14 @@ export interface CompareViewProps {
   compareB: string | null;
   /** Fires whenever the operator changes either side via the dropdowns. */
   onChange: (a: string | null, b: string | null) => void;
+  /**
+   * #267: harness chips on the Models tab filter the A/B selects.
+   * Versions that don't pass the chip filter are removed from the
+   * dropdown options (the parent-child lineage lookup uses the full
+   * unfiltered registry so KL/Elo panels keep working when the
+   * resolved parent happens to be a filtered-out version).
+   */
+  harnessFilter?: Set<string>;
 }
 
 interface LadderStandingRow {
@@ -198,8 +206,19 @@ export function CompareView({
   compareA,
   compareB,
   onChange,
+  harnessFilter,
 }: CompareViewProps) {
   const { versions } = useVersions();
+
+  // #267: dropdown options filtered by harness chips. The full
+  // ``versions`` registry is still used downstream for parent-child
+  // lookups so the KL panel resolves correctly even when the lineage
+  // crosses a filtered-out origin (e.g. parent is "manual" but only
+  // "evolve" chip is enabled).
+  const dropdownVersions = useMemo(() => {
+    if (harnessFilter === undefined) return versions;
+    return versions.filter((v) => harnessFilter.has(v.harness_origin));
+  }, [versions, harnessFilter]);
 
   // Per-version detail for both sides. Each call short-circuits to a
   // ``NULL_RESULT`` when its arg is null, so passing ``null`` is safe.
@@ -321,7 +340,7 @@ export function CompareView({
             onChange={handleAChange}
           >
             <option value="">(none)</option>
-            {versions.map((v) => (
+            {dropdownVersions.map((v) => (
               <option key={v.name} value={v.name}>
                 {v.name}
                 {v.current ? " (current)" : ""}
@@ -337,7 +356,7 @@ export function CompareView({
             onChange={handleBChange}
           >
             <option value="">(none)</option>
-            {versions.map((v) => (
+            {dropdownVersions.map((v) => (
               <option key={v.name} value={v.name}>
                 {v.name}
                 {v.current ? " (current)" : ""}
