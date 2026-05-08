@@ -1,0 +1,18 @@
+{
+  "best": "v5",
+  "elo": 0.0,
+  "extra": {
+    "harness_origin": "evolve",
+    "improvement_title": "Auto-place Shield Battery at each new expansion + Predictive supply-block prevention at high-risk windows + Faster DEFEND-to-ATTACK recovery when army rebuilt + Reduce warp-in cooldown during DEFEND state + Pylon retry priority boost in build backlog"
+  },
+  "fingerprint": {
+    "action_space_size": 6,
+    "feature_dim": 24,
+    "obs_spec_hash": "1cb9ebc4f19ba09e"
+  },
+  "git_sha": "41ad4cea9a153aa2878b71d21ed4714701f14f2e",
+  "parent": "v12",
+  "previous_best": null,
+  "timestamp": "2026-05-08T02:38:27.392767+00:00",
+  "version": "v13"
+}
