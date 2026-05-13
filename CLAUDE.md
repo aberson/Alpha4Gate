@@ -63,3 +63,10 @@ Wiki: `documentation/wiki/index.md` — system diagram and deep-dive pages.
 - StarCraft II must be installed at `C:\Program Files (x86)\StarCraft II\`
 - Maps from Blizzard CDN (not GitHub — those are Git LFS pointers)
 - SC2 client must be running for integration tests (`pytest -m sc2`)
+
+## Rules
+
+- [`.claude/rules/frontend-ui.md`](.claude/rules/frontend-ui.md) — dashboard UI conventions.
+- [`.claude/rules/bot-runtime.md`](.claude/rules/bot-runtime.md) — backend `--serve` and daemon lifecycle, SC2 client invariants (process management, 2-client cap, perception-affecting debug flags), burnysc2 combineable abilities, per-version vs cross-version data dirs.
+- [`.claude/rules/evolve.md`](.claude/rules/evolve.md) — reading evolve run state, pre-launch hygiene, snapshot import isolation, dev-apply sub-agent sanitization, fitness noise floor, training-imp pool restriction.
+- [`.claude/rules/wsl-evolve.md`](.claude/rules/wsl-evolve.md) — eight setup gotchas for Linux-SC2 evolve substrate. Each one breaks evolve differently; applying only a subset gives partial-success symptoms.
