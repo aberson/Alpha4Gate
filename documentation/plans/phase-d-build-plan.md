@@ -185,6 +185,7 @@ The `category` field is additive. The existing rule loader at [rewards.py:130-14
 **Type:** code
 **Issue:** #166
 **Flags:** --reviewers code --isolation worktree
+**Status:** DONE (2026-05-20)
 
 **What to build.**
 
@@ -287,6 +288,7 @@ Multiple rules referencing the same structure at different timings collapse into
 **Type:** code
 **Issue:** #168
 **Flags:** --reviewers code --isolation worktree
+**Status:** DONE (2026-05-20)
 
 **What to build.**
 - Append 8 entries to `_FEATURE_SPEC` named `("z_slot_<i>", 1.0)` for `i ∈ [0, 7]`.
