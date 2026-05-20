@@ -248,6 +248,7 @@ def step_reward(prev_progress: float, curr_progress: float, alpha: float = 1.0) 
 **Type:** code
 **Issue:** #167
 **Flags:** --reviewers code --isolation worktree
+**Status:** DONE (2026-05-20)
 
 **What to build.** For each rule with `category: "a"`:
 1. Read `condition.value` (the time threshold in seconds) and `requires.field` (the structure-present predicate, e.g., `has_gateway`).

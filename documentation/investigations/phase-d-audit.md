@@ -232,3 +232,66 @@ trajectory files at `bots/current/data/build_orders/<label>.json`. For each
 D.4 should consult this doc's "Borderline note: `no-upgrades-late`" before
 migrating `no-upgrades-late`, since it's the only (a) rule with an `upgrade_count`
 target rather than a building count.
+
+## D.4 migration outcome
+
+**Date:** 2026-05-20. **Backup:** `bots/v13/data/reward_rules.pre-phase-d-20260520-0020.json`
+(byte-for-byte copy of `reward_rules.json` as it existed at the START of D.4 — all
+seven (a)-tagged rules still `active: true`). The backup exists so the §7
+kill-criterion restore is a single `cp` away.
+
+**Weight derivation.** Per plan §D.4 "weight derived from reward magnitude":
+divide each rule's `|reward|` by the median magnitude across the (a) set
+(`0.006`) and clamp to `[0.25, 4.0]`. The resulting weights are:
+
+| rule | reward | weight |
+|---|---|---|
+| `tech-progress` | 0.005 | 0.83 |
+| `tech-progress-tight` | 0.008 | 1.33 |
+| `tech-progress-strong` | 0.012 | 2.0 |
+| `forge-built` | 0.005 | 0.83 |
+| `too-few-gateways` | -0.01 | 1.67 |
+| `defensive-batteries` | 0.006 | 1.0 |
+| `no-upgrades-late` | -0.005 | 0.83 |
+
+### Migrated (5 of 7) — `active: false` in `reward_rules.json`
+
+| rule id | trajectory file | target tuple | notes |
+|---|---|---|---|
+| `tech-progress` | `robo-colossus.json` | `("build", "roboticsfacility", 210, weight=2.0)` (EXISTING target — covered by widened tolerance) | All three `tech-progress*` rules are "robo by T" — they collapse into the two `roboticsfacility` rows in `robo-colossus.json` (one at 210s, one at 420s) under the file's widened `tolerance_seconds: 60`. The 0.83 weight derived above is dominated by the trajectory's pre-existing 2.0 weight on the first robo row; collapsing into the stronger weight is consistent with §D.4 "rules referencing the same structure at different timings collapse into one target". |
+| `tech-progress-tight` | `robo-colossus.json` | `("build", "roboticsfacility", 210, weight=2.0)` (same row as above) | Collapsed into the same `roboticsfacility@210` target. With `tolerance_seconds: 60`, the 300s rule-time deadline maps onto the 210s target via the widened window (`|exec_time - 210| <= 60` admits all robo builds finishing between 150s and 270s; the rule's own deadline at 300s is the "by T" bound the trajectory's edit-distance scoring penalizes when missed). |
+| `tech-progress-strong` | `robo-colossus.json` | `("build", "roboticsfacility", 420, weight=2.0)` (NEW row) | "2× robo by 8:00" → second roboticsfacility row at 420s. Edit-distance scoring naturally requires both robo targets to be matched, modeling the 2-robo requirement. |
+| `forge-built` | `robo-colossus.json` | `("build", "forge", 240, weight=0.83)` (NEW row) | Forge is a defensive/upgrade tech. Adding to `robo-colossus.json` (the macro-game trajectory) rather than `4-gate-aggression.json` (the timing-attack trajectory that does not tech to upgrades). Weight 0.83 from the table above. |
+| `too-few-gateways` | `4-gate-aggression.json` | Migrated by flipping `active: false`. The 4-gate-aggression trajectory already includes 4 gateway rows by t=230 (lines 5, 8, 9, 10). | The 4-gate-aggression trajectory already includes 4 gateways by t=230, so 4-gate bots are still rewarded for hitting that target. Bots running other trajectories (e.g., robo-colossus, which has only 2 gateways at t=300) previously received this penalty regardless of build choice; now they do not. **This is an intentional per-build differentiation** — globalized gateway-count penalties don't fit a build-aware trajectory reward model. Confirmed by inspection: `4-gate-aggression.json` builds gateway #1 @ 30, #2 @ 170, #3 @ 200, #4 @ 230. Any deviation from the chosen trajectory pays the per-gateway weight cost in edit-distance scoring; deviation FROM the rule's hard global threshold no longer pays a penalty when the trajectory itself doesn't require it. No new row in `4-gate-aggression.json`; no row in `robo-colossus.json` either (intentional). |
+
+### NOT migrated (2 of 7) — left `active: true` in `reward_rules.json`
+
+| rule id | rationale |
+|---|---|
+| `no-upgrades-late` | Predicate is `upgrade_count == 0` AND `game_time_seconds >= 360`. The trajectory schema (`_schema.json`) targets `(action, target, time_seconds, weight)` triples where action ∈ {build, train, research} — it does NOT support an "absence of N upgrades" target. Migrating would require either inventing a `research`-target-as-absence-predicate (not the schema shape) or shipping a fixture upgrade name. Per plan §D.4 "Rules that don't fit cleanly (no `requires` block, or non-structure predicate) go into a notes section." D.1's Borderline note already flagged this for D.4. Stays in `rewards.py`. |
+| `defensive-batteries` | Predicate is `battery_count >= 1` AND `game_time_seconds >= 240`. While shieldbattery IS a structure (so the predicate technically fits), neither existing trajectory targets it, and the per-step recommendation in the D.4 spec was option (a) — "skip migration, leave rule active in rewards.py" — because defensive infrastructure is a meta-game decision (cheese-defense reaction) not a build-order milestone. Adding shieldbattery to `robo-colossus.json` would force trajectory-following bots to build a battery when they may not need one. Stays in `rewards.py`. |
+
+### Trajectory file modifications
+
+`bots/v13/data/build_orders/robo-colossus.json`:
+- `tolerance_seconds`: 30 → 60 (per plan §D.4 "tolerance_seconds widened to cover the spread" for the collapsed tech-progress rules; 60s admits the 210s robo target as a match for executed robos finishing between 150-270s, which spans the 5:00 / 6:00 rule thresholds with margin).
+- Added row 9 (after `warp_gate_research@230`): `{"action": "build", "target": "forge", "time_seconds": 240, "weight": 0.83}`.
+- Added row 14 (new last row): `{"action": "build", "target": "roboticsfacility", "time_seconds": 420, "weight": 2.0}`.
+- Row count: 12 → 14.
+
+`bots/v13/data/build_orders/4-gate-aggression.json`: unchanged. The `too-few-gateways` rule is already covered by the four existing gateway rows.
+
+### Pre-audit of `tests/test_rewards.py`
+
+Per plan §D.4 Done-when: scanned `tests/test_rewards.py` for assertions whose
+reward magnitude depends on a now-`active: false` (a) rule.
+
+| test | hit | resolution |
+|---|---|---|
+| `TestMilitaryRewards.test_tech_progress_fires` | YES — sets `robo_count=1, game_time_seconds=300.0` and asserts `reward > base`. With `tech-progress` set `active: false` and `tech-progress-tight`/`-strong` also inactive, the delta vanishes; assertion would fail. | Updated to use a matched-state-delta comparison against the BACKUP rules file (loaded into a second `RewardCalculator` instance). The new shape: assert that under the BACKUP file, `delta > 0` (proves the rule WAS migrated cleanly); under the current file, `delta == 0` (proves it's no longer in the per-step reward path). Per memory `feedback_reward_test_baseline_drift`, this is a real regression catcher rather than a silenced assertion — if a future change re-enables `tech-progress` without intent, the "should not fire" half of the test fails immediately. |
+
+All other tests in `tests/test_rewards.py` either reference (b)/(c)/(d) rules
+(unaffected) or test the `RewardCalculator` mechanism itself (unaffected).
+`_state()` does include `robo_count=0` and `forge_count=0` as defaults but no
+assertion magnitude relies on them.
+

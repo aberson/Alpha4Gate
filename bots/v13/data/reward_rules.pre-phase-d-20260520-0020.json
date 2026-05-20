@@ -226,7 +226,7 @@
         "value": 360
       },
       "reward": 0.005,
-      "active": false
+      "active": true
     },
     {
       "id": "forge-built",
@@ -243,7 +243,7 @@
         "value": 300
       },
       "reward": 0.005,
-      "active": false
+      "active": true
     },
     {
       "id": "upgrade-started",
@@ -367,7 +367,7 @@
         "value": 240
       },
       "reward": -0.01,
-      "active": false
+      "active": true
     },
     {
       "id": "early-scout-tight",
@@ -810,7 +810,7 @@
         "value": 300
       },
       "reward": 0.008,
-      "active": false
+      "active": true
     },
     {
       "id": "tech-progress-strong",
@@ -827,7 +827,7 @@
         "value": 480
       },
       "reward": 0.012,
-      "active": false
+      "active": true
     },
     {
       "id": "upgrade-progression-strong",

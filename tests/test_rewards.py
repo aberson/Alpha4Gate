@@ -204,12 +204,43 @@ class TestMilitaryRewards:
         assert abs(reward - BASE_STEP_REWARD) < 0.001
 
     def test_tech_progress_fires(self, calc: RewardCalculator) -> None:
-        # Compare matching game_time so time-gated penalties cancel; delta isolates tech-progress.
+        """Phase D.4 migration parity check.
+
+        ``tech-progress``/``tech-progress-tight``/``tech-progress-strong`` were
+        migrated into ``robo-colossus.json`` (Phase D Step D.4) and set
+        ``active: false`` in the live rules file. Per-memory
+        ``feedback_reward_test_baseline_drift``, this assertion uses a
+        matched-state-delta comparison to validate BOTH halves:
+
+        - Against the pre-D.4 BACKUP rules, the tech-progress rule still fires
+          (delta > 0). This proves the migration didn't accidentally rewrite
+          the rule itself -- it's still computable, just inactive.
+        - Against the live rules, the rule no longer contributes (delta == 0).
+          This proves the migration moved the signal out of the per-step path
+          where the build-order reward (D.6+) will pick it up.
+
+        If a future change re-enables ``tech-progress`` without intent, the
+        second assertion fails immediately.
+        """
+        backup_rules_path = (
+            RULES_PATH.parent / "reward_rules.pre-phase-d-20260520-0020.json"
+        )
+        backup_calc = RewardCalculator(backup_rules_path)
+
+        # Compare matching game_time so time-gated penalties cancel; delta
+        # isolates the tech-progress contribution.
         base_s = _state(game_time_seconds=300.0)
         tech_s = _state(robo_count=1, game_time_seconds=300.0)
-        base = calc.compute_step_reward(base_s)
-        reward = calc.compute_step_reward(tech_s)
-        assert reward > base  # +0.05 from tech-progress
+
+        # Pre-D.4 path: rule fires.
+        backup_base = backup_calc.compute_step_reward(base_s)
+        backup_reward = backup_calc.compute_step_reward(tech_s)
+        assert backup_reward > backup_base  # tech-progress fired pre-D.4
+
+        # Live path: rule is `active: false`, no contribution.
+        live_base = calc.compute_step_reward(base_s)
+        live_reward = calc.compute_step_reward(tech_s)
+        assert abs(live_reward - live_base) < 0.001  # migrated out
 
     def test_gateway_efficiency_fires(self, calc: RewardCalculator) -> None:
         base = calc.compute_step_reward(_state())

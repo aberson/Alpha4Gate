@@ -53,6 +53,7 @@ replays/
 !/bots/*/data/reward_rules.json
 !/bots/*/data/build_orders/
 !/bots/*/data/build_orders/*.json
+!/bots/*/data/reward_rules.pre-phase-d-*.json
 
 # Evolve scratch dirs — `bots/cand_<hash>/` are temporary candidate
 # snapshots created during fitness eval. They get rmtree'd at the end
