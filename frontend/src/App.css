@@ -129,27 +129,30 @@
   margin: 0 auto;
   padding: 16px 24px;
   line-height: 1.6;
-  color: #1f2937;
+  color: var(--text);
 }
 .help-tab h1, .help-tab h2, .help-tab h3 {
   margin-top: 1.6em;
   margin-bottom: 0.6em;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--border);
   padding-bottom: 4px;
+  color: var(--text-h);
 }
 .help-tab h1 { font-size: 1.6em; }
 .help-tab h2 { font-size: 1.3em; }
 .help-tab h3 { font-size: 1.1em; }
 .help-tab code {
-  background: #f3f4f6;
+  background: var(--code-bg);
+  color: var(--text-h);
   padding: 2px 6px;
   border-radius: 3px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.92em;
 }
 .help-tab pre {
-  background: #1f2937;
-  color: #f9fafb;
+  background: var(--code-bg);
+  color: var(--text-h);
+  border: 1px solid var(--border);
   padding: 12px 16px;
   border-radius: 6px;
   overflow-x: auto;
@@ -165,16 +168,18 @@
   margin: 12px 0;
 }
 .help-tab th, .help-tab td {
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--border);
   padding: 6px 12px;
   text-align: left;
+  color: var(--text);
 }
 .help-tab th {
-  background: #f3f4f6;
+  background: var(--code-bg);
+  color: var(--text-h);
   font-weight: 600;
 }
 .help-tab a {
-  color: #2563eb;
+  color: var(--accent);
   text-decoration: none;
 }
 .help-tab a:hover {
@@ -182,11 +187,18 @@
 }
 .help-tab hr {
   border: none;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--border);
   margin: 24px 0;
 }
 .help-tab ul, .help-tab ol {
   padding-left: 24px;
+}
+.help-tab blockquote {
+  border-left: 3px solid var(--accent-border);
+  background: var(--accent-bg);
+  margin: 12px 0;
+  padding: 8px 16px;
+  color: var(--text);
 }
 
 /* --- Improvements tab (unified advised + evolve timeline) --- */

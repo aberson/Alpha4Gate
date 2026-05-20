@@ -24,6 +24,165 @@ PS> cat bots\current\current.txt               # which bot version is current?
 
 ---
 
+## Common activities (start here)
+
+The three things you actually do day-to-day. Pick the path that matches the
+context you're in (Claude Code session vs. raw shell). Detailed mechanics
+for each are linked into the deeper sections below.
+
+### 1. Improve-bot-evolve — autonomous evolutionary loop
+
+Generates 10 Claude-proposed improvements per generation, fitness-tests each
+vs the current parent, stacks winners into a new `vN+1` snapshot, regression-
+checks, repeats until budget exhausted. Promoted versions land as `[evo-auto]`
+commits on master.
+
+**Path A — slash command in Claude Code (canonical, autonomous):**
+
+Type one of these in Claude Code; the skill handles pre-flight, baseline tag,
+backend boot, and the morning report.
+
+```
+/improve-bot-evolve                                        # 4h, serial, default
+/improve-bot-evolve --hours 8                              # longer soak
+/improve-bot-evolve --concurrency 4 --hours 4              # 4-way parallel
+/improve-bot-evolve --resume                               # pick up an interrupted pool
+```
+
+Skill spec: [.claude/skills/improve-bot-evolve/SKILL.md](../../.claude/skills/improve-bot-evolve/SKILL.md).
+
+**Path B — direct script, Windows shell (no Claude Code):**
+
+You drive pre-flight yourself; useful when running detached overnight without
+an open Claude Code window. See [§Evolve — Windows soak (canonical)](#evolve--windows-soak-canonical) below for the full
+detached-process incantation, but the minimal foreground call is:
+
+```powershell
+PS> uv run python scripts/evolve.py --generations 0 --hours 8
+PS> uv run python scripts/evolve.py --concurrency 4 --generations 0 --hours 4   # parallel
+```
+
+> `--generations 0` disables the per-run generation cap (default `1` is for
+> single-generation test runs). Pair it with `--hours N` for soaks.
+
+**Path C — direct script, WSL/Linux (Phase 8):**
+
+Open `wsl -d Ubuntu-22.04` interactively first (one-shot `wsl bash -lc 'nohup ... &'`
+silently fails — memory `feedback_wsl_bash_lc_background_fails.md`):
+
+```powershell
+PS> wsl -d Ubuntu-22.04
+```
+```bash
+$ cd /mnt/c/Users/abero/dev/Alpha4Gate
+$ EVO_AUTO=1 nohup uv run python scripts/evolve.py \
+      --concurrency 4 --hours 4 --pool-size 12 \
+      > logs/evolve-parallel-$(date +%Y%m%d-%H%M).log 2>&1 &
+$ echo "PID: $!"; exit
+```
+
+(`SC2_WSL_DETECT=0`, `SC2PATH`, `UV_PROJECT_ENVIRONMENT` should already be in
+your `~/.profile`. See [§Evolve — Linux soak](#evolve--linux-soak-phase-8-step-11) and
+[§WSL specifics](#wsl-specifics).)
+
+**Path D — debug a single imp (bypass fitness):**
+
+```powershell
+PS> uv run python scripts/evolve_inject_one.py --title "DEFEND/FORTIFY"
+```
+
+Drives one named favorite straight through stack-apply + regression. ~10 min
+cycle, real `[evo-auto]` commits. Use when stack-apply repeatedly fails and
+you want to isolate from fitness noise.
+
+**Watch it:** open the dashboard at <http://localhost:3000/evolution> (start
+the backend + frontend first per [§Running the bot](#running-the-bot-windows)),
+or tail the log per [§Evolve log tail](#evolve-log-tail-windows-runs).
+**Stop it:** see [§Killing a running task](#killing-a-running-task) — never
+kill `SC2_x64.exe` directly.
+
+### 2. Improve-bot-advised — Claude advisor + linear improvement loop
+
+Runs games, has Claude review the replays against Protoss guiding principles,
+picks one high-impact improvement, applies it, validates win-rate, commits.
+Linear (one imp at a time, no pool, no stacking). Lands `[advised-auto]`
+commits scoped to `bots/current/**`.
+
+**This skill is Claude-Code-only — there is no equivalent shell script.**
+The advisor reasoning happens inside the model, so you must invoke from Claude
+Code:
+
+```
+/improve-bot-advised                                       # 4h, training-only, replay-mode
+/improve-bot-advised --self-improve-code                   # allow source-code edits (auto --mode both)
+/improve-bot-advised --hours 8 --self-improve-code         # longer code-changing soak
+/improve-bot-advised --backlog                             # pick from "Tactical refinements backlog"
+/improve-bot-advised --observe live --games 5              # live mode (slower, richer signal)
+```
+
+Mode summary:
+- `--mode training` (default, safe): only edits reward-rules JSON / hyperparams.
+- `--mode dev` / `--mode both`: edits source. **Requires `--self-improve-code`** —
+  without that flag the skill auto-downgrades to training-only.
+- `--observe replay` (default): max-speed games, post-hoc Claude review. ~10 min/iter.
+- `--observe live`: realtime games with advisor firing every 30 game-seconds. ~3-8 min/game.
+
+Skill spec: [.claude/skills/improve-bot-advised/SKILL.md](../../.claude/skills/improve-bot-advised/SKILL.md).
+**Mutually exclusive with `/improve-bot-evolve`** — pre-flight refuses to
+start if the other is running.
+
+### 3. Demo viewer — watch a self-play game in the themed pygame container
+
+Two-pane themed window with stats overlay; reparents the SC2 client windows
+into the panes. **Windows-only** (the viewer no-ops on Linux per
+`scripts/selfplay.py:_viewer_enabled`).
+
+**Pre-req: a Py3.12 venv with the `viewer` extras** (the main `.venv` is
+Py3.14 and has no pygame wheels — memory `feedback_py312_venv_recipe_for_soaks.md`):
+
+```powershell
+PS> $env:VIRTUAL_ENV=""; $env:UV_PROJECT_ENVIRONMENT=".venv-py312"
+PS> uv sync --python 3.12 --extra viewer
+```
+
+Once that's set up, all the commands below pick it up via the env vars (set
+them in each shell, or persist in your PowerShell profile).
+
+**Path A — empty container only (no SC2, fastest smoke test):**
+
+```powershell
+PS> uv run python -m selfplay_viewer.demo
+PS> uv run python -m selfplay_viewer.demo --background brazil --bar side --size small
+PS> uv run python -m selfplay_viewer.demo --attach-pids 1234,5678   # reparent two real Win32 windows
+```
+
+Two grey placeholder rectangles + the themed background. Useful for tweaking
+layout / backgrounds without burning a 3-min SC2 game.
+
+**Path B — real self-play with the viewer attached (the actual demo):**
+
+```powershell
+PS> uv run python scripts/selfplay.py --p1 v0 --p2 v0 --games 2 --map Simple64
+PS> uv run python scripts/selfplay.py --p1 v0 --p2 v7 --games 5 --layout vertical --background random
+PS> uv run python scripts/selfplay.py --sample pfsp --pool v0,v3,v4,v7 --games 10
+```
+
+The viewer is on by default; pass `--no-viewer` for batch/CI runs that don't
+need the window. Layout options: `--layout horizontal` (default) or `vertical`,
+`--bar top`/`side`, `--size large`/`small`, `--background <key>` (run
+`python -m selfplay_viewer.demo --help` to see your installed background keys).
+
+**Path C — current pointer plays itself for a quick sanity demo:**
+
+```powershell
+PS> uv run python scripts/selfplay.py --p1 (Get-Content bots\current\current.txt) `
+       --p2 (Get-Content bots\current\current.txt) --games 1 --map Simple64
+```
+
+Useful when you just want to see what `bots/current` looks like in motion.
+
+---
+
 ## Running the bot (Windows)
 
 ### Solo game vs SC2 built-in AI
@@ -76,7 +235,7 @@ PS> Set-Location C:\Users\abero\dev\Alpha4Gate
 PS> $ts = Get-Date -Format 'yyyyMMdd-HHmm'
 PS> $logfile = "logs\evolve-$ts.log"
 PS> $proc = Start-Process -FilePath "C:\Users\abero\.local\bin\uv.exe" `
-       -ArgumentList "run","python","scripts/evolve.py","--hours","8" `
+       -ArgumentList "run","python","scripts/evolve.py","--generations","0","--hours","8" `
        -WorkingDirectory "C:\Users\abero\dev\Alpha4Gate" `
        -RedirectStandardOutput $logfile `
        -RedirectStandardError "$logfile.err" `
@@ -132,12 +291,11 @@ parent process; only the fitness fan-out parallelises.
 parallelization plan to verify a parallel run completes a generation):
 
 ```powershell
-PS> uv run python scripts/evolve.py --concurrency 2 --pool-size 2 --hours 0
+PS> uv run python scripts/evolve.py --concurrency 2 --pool-size 2
 ```
 
-`--hours 0` disables the wall-clock budget so the loop exits as soon as
-the pool is exhausted. Useful for CI / smoke checks; never use for
-production runs.
+The default `--generations 1` makes this exit after a single generation —
+ideal for CI / smoke checks. For longer runs add `--generations 0 --hours N`.
 
 **Parallel-run idempotence (Decision D-6).** Each worker writes
 `data/evolve_round_<wid>.json` for its own per-game progress; the parent
