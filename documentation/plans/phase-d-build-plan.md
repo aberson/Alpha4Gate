@@ -104,6 +104,7 @@ Phase D does NOT replace the evolve loop. After Phase D ships, evolve continues 
 **Type:** code
 **Issue:** #164
 **Flags:** --reviewers code --isolation worktree
+**Status:** DONE (2026-05-19)
 
 **What to build.** Tag rule based on its `condition.field` + `requires.field`:
 - (a) **build-order** — `condition.field == "game_time_seconds"` AND `requires` checks structure/tech existence (e.g., `requires.field == "has_cybernetics_core"`).

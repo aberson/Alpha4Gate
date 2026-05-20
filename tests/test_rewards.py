@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -402,3 +403,21 @@ class TestRewardLogging:
         calc = RewardCalculator(log_dir=deep_dir)
         assert deep_dir.exists()
         calc.close()
+
+
+def test_every_rule_has_valid_category() -> None:
+    """Contract: every rule in reward_rules.json must carry a category in {a,b,c,d}.
+
+    Phase D Step D.4 mechanically reads ``category == "a"`` to drive build-order
+    migration. The loader at ``bots/v13/learning/rewards.py`` does not validate
+    this field, so a typo (``"A"``), whitespace, or omission would silently
+    bypass D.4's migration. This test enforces the producer-consumer contract.
+    """
+    valid = {"a", "b", "c", "d"}
+    data = json.loads(RULES_PATH.read_text(encoding="utf-8"))
+    rules = data["rules"] if isinstance(data, dict) else data
+    for r in rules:
+        assert "category" in r, f"rule {r.get('id')!r} missing category field"
+        assert (
+            r["category"] in valid
+        ), f"rule {r['id']} category={r['category']!r} not in {{a,b,c,d}}"
