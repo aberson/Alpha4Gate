@@ -377,6 +377,7 @@ Multiple rules referencing the same structure at different timings collapse into
 **Type:** code
 **Issue:** #270
 **Flags:** --reviewers code --isolation worktree
+**Status:** DONE (2026-05-20)
 
 **What to build.** `tests/test_phase_d_smoke.py` — a single integration test that:
 
