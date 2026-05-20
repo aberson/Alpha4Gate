@@ -340,6 +340,7 @@ Multiple rules referencing the same structure at different timings collapse into
 **Type:** code
 **Issue:** #169
 **Flags:** --reviewers code --isolation worktree
+**Status:** DONE (2026-05-20)
 
 **What to build.**
 - Add `"use_build_order_reward": false` and `"build_order_reward_alpha": 1.0` to `bots/current/data/hyperparams.json`.

@@ -12,5 +12,7 @@
   "net_arch": [128, 128],
   "policy_type": "MlpPolicy",
   "kl_rules_coef": 0.0,
-  "use_imitation_init": false
+  "use_imitation_init": false,
+  "use_build_order_reward": false,
+  "build_order_reward_alpha": 1.0
 }

@@ -27,9 +27,11 @@ _PPO_KWARGS = {
 # to_ppo_kwargs() drops these silently so PPO() does not choke on them.
 # Trainer pulls these directly from the full params dict.
 _TRAINING_KWARGS = {
-    "policy_type",        # "MlpPolicy" | "MlpLstmPolicy"
-    "kl_rules_coef",      # 0.0 disables KL-to-rules auxiliary loss
-    "use_imitation_init", # load v0_pretrain as starting point when true
+    "policy_type",                # "MlpPolicy" | "MlpLstmPolicy"
+    "kl_rules_coef",              # 0.0 disables KL-to-rules auxiliary loss
+    "use_imitation_init",         # load v0_pretrain as starting point when true
+    "use_build_order_reward",     # Phase D.6: gate build-order edit-distance reward summand
+    "build_order_reward_alpha",   # Phase D.6: scaling coefficient for build-order summand
 }
 
 
