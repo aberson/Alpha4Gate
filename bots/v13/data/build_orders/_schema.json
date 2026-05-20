@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://alpha4gate.local/schemas/build_order_trajectory.json",
+  "title": "BuildOrderTrajectory",
+  "description": "Time-gated build-order trajectory consumed by the Phase D build-order reward. Parallel to bots/current/build_orders.py::BuildStep (supply-gated, in-game sequencer) -- this schema is time-gated and scores edit-distance vs. the bot's actual build during a game.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "targets"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable trajectory label (matches the filename stem)."
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/Target"}
+    },
+    "tolerance_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 30,
+      "description": "Half-width of the timing match window used by edit-distance scoring in D.3."
+    }
+  },
+  "$defs": {
+    "Target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "target", "time_seconds"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["build", "train", "research"],
+          "description": "Verb vocabulary mirrors bots/current/build_orders.py::BuildStep.action."
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unit / structure / upgrade name. Convention: lowercase, no separators except for upgrade ids which use snake_case (e.g. 'pylon', 'gateway', 'cyberneticscore', 'roboticsfacility', 'warp_gate_research'). D.3 normalizes the bot's CamelCase BuildStep.target (e.g. 'CyberneticsCore') to this canonical form before edit-distance scoring."
+        },
+        "time_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Game-clock seconds at which this target should be reached."
+        },
+        "weight": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 1.0,
+          "description": "Per-step weight applied to edit-distance scoring in D.3."
+        }
+      }
+    }
+  }
+}

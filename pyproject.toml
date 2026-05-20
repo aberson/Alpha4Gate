@@ -41,6 +41,7 @@ dev = [
     "mypy",
     "httpx",
     "pre-commit",
+    "jsonschema>=4.26.0",
 ]
 viewer = [
     "pygame>=2.5",

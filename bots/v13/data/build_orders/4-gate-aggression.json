@@ -1,0 +1,17 @@
+{
+  "name": "4-gate-aggression",
+  "targets": [
+    {"action": "build", "target": "pylon",              "time_seconds":  18, "weight": 1.0},
+    {"action": "build", "target": "gateway",            "time_seconds":  30, "weight": 1.5},
+    {"action": "build", "target": "assimilator",        "time_seconds":  75, "weight": 1.0},
+    {"action": "build", "target": "cyberneticscore",    "time_seconds": 140, "weight": 1.5},
+    {"action": "build", "target": "gateway",            "time_seconds": 170, "weight": 1.0},
+    {"action": "build", "target": "gateway",            "time_seconds": 200, "weight": 1.0},
+    {"action": "build", "target": "gateway",            "time_seconds": 230, "weight": 1.0},
+    {"action": "research", "target": "warp_gate_research", "time_seconds": 240, "weight": 1.5},
+    {"action": "build", "target": "pylon",              "time_seconds": 260, "weight": 1.0},
+    {"action": "train", "target": "zealot",             "time_seconds": 290, "weight": 1.0},
+    {"action": "train", "target": "stalker",            "time_seconds": 320, "weight": 1.0}
+  ],
+  "tolerance_seconds": 30
+}

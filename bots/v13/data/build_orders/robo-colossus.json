@@ -1,0 +1,18 @@
+{
+  "name": "robo-colossus",
+  "targets": [
+    {"action": "build", "target": "pylon",              "time_seconds":  18, "weight": 1.0},
+    {"action": "build", "target": "gateway",            "time_seconds":  30, "weight": 1.5},
+    {"action": "build", "target": "assimilator",        "time_seconds":  75, "weight": 1.0},
+    {"action": "build", "target": "assimilator",        "time_seconds": 100, "weight": 1.0},
+    {"action": "build", "target": "cyberneticscore",    "time_seconds": 140, "weight": 1.5},
+    {"action": "build", "target": "nexus",              "time_seconds": 200, "weight": 1.0},
+    {"action": "build", "target": "roboticsfacility",   "time_seconds": 210, "weight": 2.0},
+    {"action": "research", "target": "warp_gate_research", "time_seconds": 230, "weight": 1.0},
+    {"action": "train", "target": "observer",           "time_seconds": 260, "weight": 1.0},
+    {"action": "build", "target": "roboticsbay",        "time_seconds": 270, "weight": 2.0},
+    {"action": "build", "target": "gateway",            "time_seconds": 300, "weight": 1.0},
+    {"action": "train", "target": "colossus",           "time_seconds": 360, "weight": 2.0}
+  ],
+  "tolerance_seconds": 30
+}

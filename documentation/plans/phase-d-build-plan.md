@@ -140,6 +140,7 @@ The `category` field is additive. The existing rule loader at [rewards.py:130-14
 **Type:** code
 **Issue:** #165
 **Flags:** --reviewers code --isolation worktree
+**Status:** DONE (2026-05-19)
 
 **What to build.** Schema for `bots/current/data/build_orders/<label>.json`:
 
