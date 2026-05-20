@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from bots.v13.learning.features import BASE_GAME_FEATURE_DIM
+from bots.v13.learning.features import _DB_STATE_FEATURE_COUNT
 
 _log = logging.getLogger(__name__)
 
@@ -220,6 +220,11 @@ _LATER_ADDED_COLS: list[tuple[str, str]] = [
     ("next_enemy_cloak_count", "INTEGER DEFAULT 0"),
     ("action_probs", "TEXT DEFAULT NULL"),
     ("win_prob", "REAL DEFAULT NULL"),
+    # Phase D Step D.5: active build-order identifier (filename stem from
+    # ``bots/<v>/data/build_orders/``). NULL for legacy rows and for steps
+    # where no build-order is active. Consumed by the encoder's z-slot
+    # one-hot block via :func:`bots.v13.learning.features._resolve_z_index`.
+    ("current_build_order", "TEXT DEFAULT NULL"),
 ]
 
 
@@ -331,6 +336,7 @@ class TrainingDB:
         done: bool = False,
         action_probs: list[float] | None = None,
         win_prob: float | None = None,
+        current_build_order: str | None = None,
     ) -> None:
         """Insert a single (s, a, r, s') transition.
 
@@ -340,6 +346,9 @@ class TrainingDB:
         action_probs: optional list of action probabilities from the neural
         engine, stored as JSON text.
         win_prob: optional heuristic P(win) for the (s, a) pair, in [0, 1].
+        current_build_order: optional active build-order identifier (filename
+        stem from ``bots/<v>/data/build_orders/``). ``None`` (default) stores
+        NULL — legacy callers that don't pass this kwarg keep working.
         """
         values: list[Any] = [game_id, step_index, game_time]
         values.extend(int(v) for v in state)
@@ -348,17 +357,18 @@ class TrainingDB:
         if next_state is not None:
             values.extend(int(v) for v in next_state)
         else:
-            values.extend([None] * BASE_GAME_FEATURE_DIM)
+            values.extend([None] * _DB_STATE_FEATURE_COUNT)
         values.append(1 if done else 0)
         values.append(json.dumps(action_probs) if action_probs is not None else None)
         values.append(float(win_prob) if win_prob is not None else None)
+        values.append(current_build_order)
 
         cols = (
             ["game_id", "step_index", "game_time"]
             + _STATE_COLS
             + ["action", "reward"]
             + _NEXT_STATE_COLS
-            + ["done", "action_probs", "win_prob"]
+            + ["done", "action_probs", "win_prob", "current_build_order"]
         )
         placeholders = ", ".join("?" * len(values))
         col_str = ", ".join(cols)
@@ -375,7 +385,7 @@ class TrainingDB:
         """Sample n random transitions, returning (states, actions, rewards).
 
         Returns:
-            states: shape (n, BASE_GAME_FEATURE_DIM) — raw integer values (not normalized)
+            states: shape (n, _DB_STATE_FEATURE_COUNT) — raw integer values (not normalized)
             actions: shape (n,)
             rewards: shape (n,)
         """
@@ -387,13 +397,20 @@ class TrainingDB:
             ).fetchall()
         if not rows:
             return (
-                np.zeros((0, BASE_GAME_FEATURE_DIM), dtype=np.float32),
+                np.zeros((0, _DB_STATE_FEATURE_COUNT), dtype=np.float32),
                 np.zeros(0, dtype=np.int64),
                 np.zeros(0, dtype=np.float32),
             )
-        states = np.array([r[:BASE_GAME_FEATURE_DIM] for r in rows], dtype=np.float32)
-        actions = np.array([_coerce_action(r[BASE_GAME_FEATURE_DIM]) for r in rows], dtype=np.int64)
-        rewards = np.array([r[BASE_GAME_FEATURE_DIM + 1] for r in rows], dtype=np.float32)
+        states = np.array(
+            [r[:_DB_STATE_FEATURE_COUNT] for r in rows], dtype=np.float32
+        )
+        actions = np.array(
+            [_coerce_action(r[_DB_STATE_FEATURE_COUNT]) for r in rows],
+            dtype=np.int64,
+        )
+        rewards = np.array(
+            [r[_DB_STATE_FEATURE_COUNT + 1] for r in rows], dtype=np.float32
+        )
         return states, actions, rewards
 
     def get_game_result(self, game_id: str) -> str | None:

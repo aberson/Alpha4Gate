@@ -373,6 +373,9 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
             curr_raw = self._snapshot_to_raw(
                 info.get("snapshot", GameSnapshot())
             )
+            # Phase D Step D.5: thread ``current_build_order`` from the
+            # previous-step snapshot (matches how ``prev_raw`` is sourced —
+            # the transition's "state" half describes the previous step).
             self._db.store_transition(
                 game_id=self._game_id,
                 step_index=self._step_index,
@@ -384,6 +387,7 @@ class SC2Env(gymnasium.Env[NDArray[np.float32], int]):
                 done=done,
                 action_probs=info.get("action_probs"),
                 win_prob=info.get("win_prob"),
+                current_build_order=self._last_snapshot.current_build_order,
             )
 
         self._last_snapshot = info.get("snapshot")

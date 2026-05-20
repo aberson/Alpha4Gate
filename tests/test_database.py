@@ -452,3 +452,171 @@ class TestLegacySchemaMigration:
             conn.close()
         assert row is not None
         assert row[0] == pytest.approx(0.55)
+
+
+class TestPhaseD5BuildOrderColumn:
+    """Phase D Step D.5 migration guard for ``current_build_order``.
+
+    The active-bot DB (``bots.current.learning.database``) declares the
+    new column via ``_LATER_ADDED_COLS``. A synthetic legacy DB without
+    the column must (1) get it ALTERed in on next open, (2) keep
+    legacy-row reads returning NULL, and (3) accept new writes that
+    populate the column.
+    """
+
+    # We mirror the test_database._create_legacy_db helper here using the
+    # SAME pre-migration schema, but exercise the active-bot DB class so
+    # the post-D.5 ``_LATER_ADDED_COLS`` (which v0 does NOT carry) is the
+    # one driving the migration.
+
+    def _create_legacy_db(self, path: Path) -> None:
+        import sqlite3
+
+        conn = sqlite3.connect(str(path))
+        conn.executescript(
+            """
+            CREATE TABLE games (
+                game_id TEXT PRIMARY KEY,
+                map_name TEXT NOT NULL,
+                difficulty INTEGER NOT NULL,
+                result TEXT NOT NULL,
+                duration_secs REAL NOT NULL,
+                total_reward REAL NOT NULL,
+                model_version TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE TABLE transitions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id TEXT NOT NULL,
+                step_index INTEGER NOT NULL,
+                game_time REAL NOT NULL,
+                supply_used INTEGER NOT NULL,
+                supply_cap INTEGER NOT NULL,
+                minerals INTEGER NOT NULL,
+                vespene INTEGER NOT NULL,
+                army_supply INTEGER NOT NULL,
+                worker_count INTEGER NOT NULL,
+                base_count INTEGER NOT NULL,
+                enemy_near INTEGER NOT NULL,
+                enemy_supply INTEGER NOT NULL,
+                action INTEGER NOT NULL,
+                reward REAL NOT NULL,
+                next_supply_used INTEGER,
+                next_supply_cap INTEGER,
+                next_minerals INTEGER,
+                next_vespene INTEGER,
+                next_army_supply INTEGER,
+                next_worker_count INTEGER,
+                next_base_count INTEGER,
+                next_enemy_near INTEGER,
+                next_enemy_supply INTEGER,
+                done INTEGER NOT NULL DEFAULT 0
+            );
+            """
+        )
+        conn.commit()
+        conn.close()
+
+    def test_current_build_order_listed_in_later_added_cols(self) -> None:
+        from bots.current.learning.database import _LATER_ADDED_COLS
+
+        col_names = [name for name, _ in _LATER_ADDED_COLS]
+        assert "current_build_order" in col_names
+
+    def test_current_build_order_added_to_legacy_db(self, tmp_path: Path) -> None:
+        import sqlite3
+
+        from bots.current.learning.database import TrainingDB as CurrentTrainingDB
+
+        legacy_path = tmp_path / "legacy.db"
+        self._create_legacy_db(legacy_path)
+
+        # Pre-condition: legacy table doesn't have the new column.
+        conn = sqlite3.connect(str(legacy_path))
+        before = {r[1] for r in conn.execute("PRAGMA table_info(transitions)").fetchall()}
+        conn.close()
+        assert "current_build_order" not in before
+
+        db = CurrentTrainingDB(legacy_path)
+        try:
+            conn = sqlite3.connect(str(legacy_path))
+            after = {
+                r[1] for r in conn.execute("PRAGMA table_info(transitions)").fetchall()
+            }
+            conn.close()
+            assert "current_build_order" in after
+        finally:
+            db.close()
+
+    def test_current_build_order_legacy_row_reads_null(self, tmp_path: Path) -> None:
+        """A row written without the new column should read back NULL."""
+        import sqlite3
+
+        from bots.current.learning.database import TrainingDB as CurrentTrainingDB
+        from bots.current.learning.features import (
+            _DB_STATE_FEATURE_COUNT,
+        )
+
+        legacy_path = tmp_path / "legacy.db"
+        self._create_legacy_db(legacy_path)
+
+        db = CurrentTrainingDB(legacy_path)
+        try:
+            db.store_game("g_legacy", "Simple64", 1, "win", 60.0, 1.0, "current")
+            state = np.zeros(_DB_STATE_FEATURE_COUNT, dtype=np.float32)
+            # Legacy caller pattern: no ``current_build_order`` kwarg.
+            db.store_transition(
+                "g_legacy", 0, 60.0, state, action=0, reward=0.0
+            )
+        finally:
+            db.close()
+
+        conn = sqlite3.connect(str(legacy_path))
+        try:
+            row = conn.execute(
+                "SELECT current_build_order FROM transitions "
+                "WHERE game_id = 'g_legacy'"
+            ).fetchone()
+        finally:
+            conn.close()
+        assert row is not None
+        assert row[0] is None
+
+    def test_current_build_order_new_row_persists_string(self, tmp_path: Path) -> None:
+        """A new row with ``current_build_order='X'`` should round-trip."""
+        import sqlite3
+
+        from bots.current.learning.database import TrainingDB as CurrentTrainingDB
+        from bots.current.learning.features import (
+            _DB_STATE_FEATURE_COUNT,
+        )
+
+        legacy_path = tmp_path / "legacy.db"
+        self._create_legacy_db(legacy_path)
+
+        db = CurrentTrainingDB(legacy_path)
+        try:
+            db.store_game("g_new", "Simple64", 1, "win", 60.0, 1.0, "current")
+            state = np.zeros(_DB_STATE_FEATURE_COUNT, dtype=np.float32)
+            db.store_transition(
+                "g_new",
+                0,
+                60.0,
+                state,
+                action=0,
+                reward=0.0,
+                current_build_order="4-gate-aggression",
+            )
+        finally:
+            db.close()
+
+        conn = sqlite3.connect(str(legacy_path))
+        try:
+            row = conn.execute(
+                "SELECT current_build_order FROM transitions "
+                "WHERE game_id = 'g_new'"
+            ).fetchone()
+        finally:
+            conn.close()
+        assert row is not None
+        assert row[0] == "4-gate-aggression"

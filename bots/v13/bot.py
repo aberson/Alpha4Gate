@@ -36,7 +36,7 @@ from bots.v13.give_up import (
     should_give_up,
 )
 from bots.v13.learning import winprob_heuristic
-from bots.v13.learning.features import _FEATURE_SPEC
+from bots.v13.learning.features import _DB_STATE_FEATURE_COUNT, _FEATURE_SPEC
 from bots.v13.learning.neural_engine import DecisionMode, NeuralDecisionEngine
 from bots.v13.learning.rewards import RewardCalculator
 from bots.v13.learning.threat_classes import THREAT_CLASS_MAP
@@ -333,6 +333,13 @@ class Alpha4GateBot(BotAI):
             if bucket is not None:
                 enemy_counts[bucket] = enemy_counts.get(bucket, 0) + 1
 
+        # Phase D Step D.5 added ``current_build_order: str | None`` to
+        # GameSnapshot, so the previous ``**own_counts`` / ``**enemy_counts``
+        # spread (both ``dict[str, int]``) no longer passes strict mypy as
+        # an unconstrained kwargs spread — the str-typed field is in the
+        # accepted-keyword union. The ``# type: ignore[arg-type]`` confines
+        # the relaxation to the two spread sites; the explicit kwargs above
+        # are still type-checked.
         return GameSnapshot(
             supply_used=int(self.supply_used),
             supply_cap=int(self.supply_cap),
@@ -351,8 +358,8 @@ class Alpha4GateBot(BotAI):
             enemy_structure_count=len(self.enemy_structures),
             cannon_count=len(self.structures(UnitTypeId.PHOTONCANNON)),
             battery_count=len(self.structures(UnitTypeId.SHIELDBATTERY)),
-            **own_counts,
-            **enemy_counts,
+            **own_counts,  # type: ignore[arg-type]
+            **enemy_counts,  # type: ignore[arg-type]
         )
 
     async def on_step(self, iteration: int) -> None:
@@ -541,9 +548,14 @@ class Alpha4GateBot(BotAI):
     ) -> None:
         """Record a (s, a, r, s') transition into the training DB."""
         assert self._training_db is not None
-        # Raw (un-normalized) feature vector for DB storage
+        # Raw (un-normalized) feature vector for DB storage. Only the first
+        # ``_DB_STATE_FEATURE_COUNT`` (=40) entries of ``_FEATURE_SPEC`` are
+        # scalar GameSnapshot attributes; later entries (e.g. the 8 z-slot
+        # one-hot features added in Phase D Step D.5) are not attributes on
+        # the snapshot and ride to the DB through a separate column
+        # (``current_build_order``) instead.
         raw = np.array(
-            [getattr(snapshot, field) for field, _ in _FEATURE_SPEC],
+            [getattr(snapshot, field) for field, _ in _FEATURE_SPEC[:_DB_STATE_FEATURE_COUNT]],
             dtype=np.float32,
         )
         action = self._STATE_TO_ACTION[state]
@@ -569,6 +581,7 @@ class Alpha4GateBot(BotAI):
                 done=False,
                 action_probs=action_probs,
                 win_prob=winprob,
+                current_build_order=snapshot.current_build_order,
             )
             self._transition_step += 1
 
@@ -597,6 +610,9 @@ class Alpha4GateBot(BotAI):
             next_state=None,
             done=True,
             win_prob=winprob,
+            current_build_order=(
+                self._prev_snapshot.current_build_order if self._prev_snapshot else None
+            ),
         )
 
     # ------------------------------------------------------------------ #

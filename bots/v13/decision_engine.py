@@ -89,6 +89,12 @@ class GameSnapshot:
     enemy_heavy_count: int = 0
     enemy_capital_count: int = 0
     enemy_cloak_count: int = 0
+    # Phase D Step D.5: optional active build-order identifier. ``None`` when
+    # no build-order is active (the default — keeps existing constructor
+    # sites green). Consumed by :func:`bots.v13.learning.features.encode`
+    # to fill the 8-slot z one-hot block, and persisted as a TEXT column in
+    # the ``transitions`` table via ``store_transition``.
+    current_build_order: str | None = None
 
 
 @dataclass
