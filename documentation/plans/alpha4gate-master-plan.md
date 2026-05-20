@@ -198,9 +198,8 @@ Per phase:
 ```
 Track 1 — Validation   [Phase A]    on current src/alpha4gate/                                  ✅
 Track 2 — Versioning   [0–5]        subprocess spike → bots/v0/ → registry → self-play → ladder → sandbox  ✅
-Track 5 — Operational  [8, 9, 6, 7]  Phase 8 (Linux training substrate) ✅ Steps 1-10 shipped, Step 11 24h soak pending; Phase 9 (improve-bot-evolve) operational
+Track 5 — Operational  [8, 9, 6, 7]  Phase 8 (Linux training substrate) ✅ Steps 1-11 shipped; Phase 9 (improve-bot-evolve) operational
 Track 3 — Capability   [B, D, E]    per-version improvements inside bots/current/**             after Phase 9
-Track 4 — Capability-F [F]          deferred; only if B/D/E insufficient                        after Phase 9
 Track 6 — Multi-race   [G]          post-Phase-6 operational; Zerg then Terran via per-race bots/<race>_v0/ stacks
 Track 7 — Directed Practice  [H, I, J]   mini-games substrate → custom Protoss maps → role decision; investigation-blocked
 Track 8 — Observable         [K, L, M]   pool metadata → replay-stream-as-live viewer → NL-prompt seed selector
@@ -217,15 +216,13 @@ the queue ahead of B/D/E.
 
 Within Track 5: Phase 9 → Phase 7 (operational improvement on the
 existing /improve-bot-advised loop) → Phase 6 (cross-version PPO regime;
-defer until at least one of B/D/E ships so it has a non-trivial trainee).
+runs independently of B/D/E now that evolve is producing the cross-version
+improvements directly).
 
 ## Decision graph
 
 ```
 Phase A ✅ → Phase 0 ✅ → Phase 1 ✅ → Phase 2 ✅ → Phase 3 ✅ → Phase 4 ✅ → Phase 5 ✅
-                                                                                       │
-                                                                                       ▼
-                                                                          Phase B Step 6 (#133)  ← clean-up; ~30 min
                                                                                        │
                                                                                        ▼
                                                                           ┌───────────────────────┐
@@ -237,19 +234,19 @@ Phase A ✅ → Phase 0 ✅ → Phase 1 ✅ → Phase 2 ✅ → Phase 3 ✅ → 
                                                                                      │
                 ┌─────────────────────────────────┬──────────────────────────────────┤
                 ▼                                 ▼                                  ▼
-          Phase 8 (headless Linux substrate;     Phase 7 (advised staleness)    Phase B / D / E (capabilities,
-          parallel substrate; Steps 1-10         standalone, operational         driven by Phase 9 loop;
-          shipped 2026-04-29; Step 11 24h        improvement)                    individual phase order
-          soak pending — independent of                                          determined by what shows up
-          Phase 9 mechanics)                                                     in evolve runs)
+          Phase 8 ✅ (headless Linux              Phase 7 (advised staleness)    Phase B / D / E (capabilities,
+          substrate; parallel substrate;          standalone, operational         driven by Phase 9 loop;
+          Steps 1-11 shipped — substrate         improvement)                    individual phase order
+          de-facto validated by v4→v13                                           determined by what shows up
+          via May 2026 evolve soaks)                                             in evolve runs)
                                                                                      │
                                                                                      ▼
                                                                           Phase 6 (cross-version PPO regime;
-                                                                          needs ≥ 1 of B/D/E shipped)
+                                                                          independent of B/D/E — evolve
+                                                                          fills the cross-version slot)
                                                                                      │
                                                                                      ▼
                                                                           Phase G (multi-race)
-                                                                          Phase F (transformer; deferred)
 
 Tracks 7 / 8 / 9 / 10 (added 2026-04-27, append to Phase 9 ✅ root):
                                                                           Phase 9 ✅
@@ -259,7 +256,6 @@ Tracks 7 / 8 / 9 / 10 (added 2026-04-27, append to Phase 9 ✅ root):
                           Track 7 (Directed)         Track 8 (Observable)    Track 9 (Research)    Track 10 (Stats)
                           Phase H → I → J            Phase K → L → M         N ✅ → P / Q parallel  Phase R → S+
                                                                              O scripted v1 anytime
-                                                                             O-v2 deferred
 ```
 
 Phase 9 is independent of B/D/E/6/7. Phase 7 is independent of 6/9. Once
@@ -272,8 +268,7 @@ Tracks 7-10 are independent of each other and of the existing Track
 default sequencing: Phase N (win-prob, ✅ shipped 2026-04-27) → Phases P / Q in
 parallel after their investigations land. Phase O scripted v1 ships
 anytime after the Hydra investigation drafts the controller-switching
-contract; Phase O-v2 (learned controller) stays deferred alongside
-Phase F.
+contract.
 
 ## Baseline (as of 2026-04-17)
 
@@ -638,8 +633,10 @@ All three.
 
 ### Kill criterion
 
-Target head collapses to single mode. May indicate insufficient signal —
-Phase F might be needed first. Mark phase "deferred pending F".
+Target head collapses to single mode. Indicates insufficient signal in
+the current obs/reward to differentiate targets — mark Phase E "deferred
+pending more obs/reward work" and either re-examine via evolve runs or
+defer the autoregressive head until a richer signal exists.
 
 ### Rollback
 
@@ -649,8 +646,12 @@ Delete promoted `vN`; prior versions unaffected by design.
 
 ## Phase 6 — Self-play-driven improvement loop
 
-**Track:** Operational. **Prerequisites:** Phase 5 + at least one of
-{B, D, E} promoted (so there's a non-trivial starting point).
+**Track:** Operational. **Prerequisites:** Phase 5. The earlier prereq
+"at least one of {B, D, E} promoted" was dropped 2026-05-19 — evolve
+(Phase 9) is already producing cross-version improvements directly, and
+Phase 6's PPO-training-driven cross-version regime no longer needs a B/D/E
+capability to ride on. Phase 6 is now an optional PPO extension to the
+running evolve loop rather than a prerequisite-gated phase.
 
 > **Build detail lives in
 > `documentation/plans/phase-6-build-plan.md`. Read it before starting
@@ -757,7 +758,7 @@ No data migrations.
 
 ## Phase 8 — Headless Linux SC2 training infrastructure
 
-**Status: Steps 1-9 SHIPPED 2026-04-29.** Step 10 (this section) shipped same day. Step 11 (24-hour Linux evolve soak — MANDATORY observation per plan-feature skill rule) is the only remaining work. Step 12 (cloud cost dry-run on AWS spot) was removed 2026-04-29 — see plan history.
+**Status: COMPLETE.** Steps 1-10 shipped 2026-04-29; Step 11 (originally scheduled 8h Linux evolve soak) closed 2026-05-19 — the headless Linux substrate has been running real evolve work since 2026-04-30 and the production version pointer advanced v4 → v13 across multiple multi-hour Windows + Linux soaks in May 2026 (see soak records under `documentation/soak-test-runs/evolve-2026-05-*`). A dedicated 8h ceremonial observation soak is no longer load-bearing; Step 11's done-when items (≥2 promotion attempts, no orphan SC2 processes, sandbox hook integrity) have all been satisfied incidentally by production load. Step 12 (cloud cost dry-run on AWS spot) was removed 2026-04-29 — see plan history.
 
 **Track:** Operational. **Prerequisites:** Phase 5 (sandbox + skill integration). Independent of Phase 9 evolve, Phase 6 self-play, Phase 7 advised-staleness, and capability phases B/D/E.
 
@@ -787,7 +788,7 @@ Eleven build steps:
 | 8 | Linux CI workflow (unit tests + ruff + mypy) | DONE (`f6d3412`) |
 | 9 | Multi-stage Dockerfile + `.dockerignore` + cloud-deployment runbook | DONE (`11bfc6f`) |
 | 10 | Master-plan integration (this section, decision graph, time budget) | DONE |
-| 11 | 24-hour Linux evolve soak (MANDATORY observation) | PENDING |
+| 11 | Dedicated Linux evolve soak — closed as ceremony 2026-05-19; production load v4→v13 substituted | DONE (ceremonial-cut) |
 
 ### Tests
 
@@ -800,21 +801,20 @@ Per the build doc — covered exhaustively there. Headline:
 
 ### Effort
 
-Steps 1-10 shipped in roughly 5 days of operator + agent work spread across 2026-04-25 → 2026-04-29. Step 11 is a 24-hour wall-clock observation.
+Steps 1-10 shipped in roughly 5 days of operator + agent work spread across 2026-04-25 → 2026-04-29. Step 11 was scheduled as an 8h Linux soak but closed 2026-05-19 as ceremony — see status note above.
 
 ### Validation
 
-Step 11 morning report shows: ≥ 2 promotion attempts (matches the Windows baseline soak `20260423-2052`); per-game wall-clock vs Windows baseline; per-instance RAM under sustained load; zero orphaned `SC2_x64` processes after teardown; pre-commit hook still rejects out-of-sandbox commits during the run.
+De-facto validation: the headless Linux substrate has run real evolve work since 2026-04-30 (first headless soak v4 → v7 on 2026-04-30, plus subsequent Windows + Linux multi-hour soaks through 2026-05-08 that advanced the production pointer to v13). Promotion-attempt count, wall-clock, RAM, and orphan-process counts have all been observed under sustained load without a dedicated 8h ceremonial window.
 
 ### Gate
 
 - All 5 `Step 9` done-when items pass (validated 2026-04-29; build + smoke + CMD override + non-root + cache reuse).
-- Step 11 produces a soak-test record under `documentation/soak-test-runs/evolve-linux-24h-<TS>.md`.
 - No Linux-specific regressions in `linux-tests.yml` after Phase 8 ships.
 
 ### Kill criterion
 
-Step 11 surfaces a sustained-Linux failure mode (parallel-startup race, SQLite WAL contention, replay-path quirk per burnysc2 §4.7) that doesn't reproduce on Windows AND doesn't have an obvious fix. In that case the Phase 8 deliverable is partial — keep the SC2PATH resolver + Linux CI + Dockerfile (independently useful for reproducibility, dev-loop hygiene, regression catching), defer the throughput-unlock claim to a future plan.
+N/A post-close. If a Linux-specific failure mode surfaces in future production load (parallel-startup race, SQLite WAL contention, replay-path quirk per burnysc2 §4.7), file it as a defect on Phase 8's shipped artifacts and fix-forward; the Phase itself stays closed.
 
 ### Rollback
 
@@ -961,58 +961,6 @@ earned its keep). See
 for the full report. Next follow-up: PFSP-lineage regression gate
 (regression currently tests only the immediate prior parent; PFSP would
 sample a distribution of ancestors weighted by strength).
-
----
-
-## Phase F — Entity transformer encoder
-
-**Track:** Capability-F. **Status:** Deferred. Only enter if B–E have all
-landed and the bot is clearly bottlenecked by loss of per-unit information.
-
-**Prerequisites:** Phases A, B, E merged and promoted. D preferred.
-
-> **Build detail lives in
-> `documentation/plans/phase-f-build-plan.md`. Read it before starting
-> work on this phase.**
-
-**Goal:** Replace scalar feature trunk with a transformer over a
-variable-length unit list to preserve per-unit info (health, shields,
-position, type) that the histogram throws away.
-
-### Scope summary
-
-6 steps (F.1–F.6): variable-length pad/mask `BaseFeaturesExtractor` →
-2-layer 4-head 64-dim transformer (~100k params, no new dep) →
-per-unit feature spec → concat with scalar trunk → fresh
-`v0_pretrain_transformer` (cannot reuse prior pretrain — input shape
-differs) → A/B vs best B/E version.
-
-### Tests
-
-`tests/test_entity_transformer.py`, `tests/test_imitation_transformer.py`.
-
-### Effort
-
-~2 weeks.
-
-### Validation
-
-Beat best B/E version by ≥ 5% WR over 20 games at difficulty 3 AND
-lower loss variance AND Elo gain ≥ +20 over 20 self-play games.
-
-### Gate
-
-All three.
-
-### Kill criterion
-
-Training diverges (NaN, policy collapse) OR no WR improvement after the
-full 2-week build. Scalar histogram was sufficient — delete the
-transformer version; keep A–E promoted versions.
-
-### Rollback
-
-Trivial: `rm -rf bots/vN+1/`. Prior stacks untouched.
 
 ---
 
@@ -1368,8 +1316,7 @@ Phase O is unblocked; scripted Hydra v1 can begin once a 4-way evolve
 soak demonstrates emergent reliability under multi-hour load.
 **Prerequisites:** Phase N (✅ shipped, win-prob is the candidate
 switching signal); evolve parallelization sub-plan (✅ shipped). Hydra
-investigation runs in parallel, evaluating whether learned-controller
-**Phase O-v2** is worth doing post-v1.
+investigation runs in parallel, scoping the v1 controller design.
 
 **Goal:** Ship a *scripted* meta-controller that dispatches among N
 themed expert sub-policies (Skytoss, Ground, Cheese-rush, etc.).
@@ -1415,23 +1362,13 @@ Both validation criteria.
 
 After 1 week of build + first soak, scripted v1 fails to beat
 monolith parent OR controller collapses to a single expert in
->50% of games. Learned v2 won't fix what scripted couldn't probe;
-defer Phase O entirely (and Phase O-v2) and document the negative
+>50% of games. Defer Phase O entirely and document the negative
 result.
 
 ### Rollback
 
 Delete the Hydra version; expert sub-policies stay in registry as
 their own `bots/<expert>_vN/` versions, no harm done.
-
-### Phase O-v2 (learned controller — deferred)
-
-Sits alongside Phase F as a deferred capstone item. Only revives if
-the Hydra investigation §6 concludes (a) scripted v1 produced a
-clear lift over monolith, AND (b) ablation analysis suggests a
-learned controller would lift further, AND (c) the chosen
-formulation is feasible CPU-only. See
-[hydra-hierarchical-ppo-investigation.md](../investigations/hydra-hierarchical-ppo-investigation.md).
 
 ---
 
@@ -1561,9 +1498,8 @@ its own future phase, scoped by investigation §6 backlog.
 
 ## Compute target
 
-Single Windows 11 box, CPU-only PyTorch (no CUDA). Phase F adds load —
-if CPU training exceeds 2× baseline cycle wall-clock, that's F's kill
-signal. GPU support explicitly out of scope.
+Single Windows 11 box, CPU-only PyTorch (no CUDA). GPU support
+explicitly out of scope.
 
 ## Time budget
 
@@ -1581,9 +1517,8 @@ signal. GPU support explicitly out of scope.
 | E | 1 w | 1 w | 2 w (SB3 override painful) |
 | 6 | 2 h code | open-ended soak | ongoing |
 | 7 | 1 d build | 1 d build + 1 overnight validation | 3 d (heuristic tuning) |
-| 8 | 4 d (Steps 1-10) + 8 h soak (Step 11) | 5 d (actual: 2026-04-25 → 2026-04-29) + 8 h soak | 1 w (Linux-specific surprises in soak) |
+| 8 | ✅ shipped 2026-05-19 | ✅ shipped 2026-05-19 | n/a |
 | 9 | 3 d code (steps 1–6) | 3–5 d code + 1 h smoke + overnight soak | 1 w (dev-apply sub-agent edge cases) |
-| F | 1.5 w | 2 w | 3 w (training destabilizes) |
 | H | 2 d | 3 d | 1 w (PySC2 integration friction) |
 | I | 1 d/map | 1.5 d/map | 3 d/map (SC2 editor learning curve) |
 | J | 1 d | 2 d | 1 w (gate tuning is noisy) |
@@ -1592,17 +1527,14 @@ signal. GPU support explicitly out of scope.
 | M | 1 d | 1–2 d | 4 d (NL-prompt brittleness) |
 | N | 1 d | 1–2 d | 4 d (give-up trigger tuning) |
 | O (scripted v1) | 4 d | 1 w | 2 w (controller tuning + expert collapse) |
-| O-v2 (learned, deferred) | 2 w | 4–6 w | 8 w |
 | P | 1 w | 2 w | 4 w (corpus access blocker) |
 | Q | 1–2 d | 3 d | 1 w |
 | R | 1 d | 2 d | 1 w |
 | **Sub-total (A–E + 0–5 + 6 wire-up + 7 + 9)** | **~5 w** | **~7–8 w** | **~12–13 w** |
 | **+ 20% integration buffer** | +1.0 w | +1.6 w | +2.6 w |
-| **Total (excl. F)** | **~6 w** | **~9–10 w** | **~15 w** |
-| **+ F if chased** | +1.5 w | +2 w | +3 w |
+| **Total** | **~6 w** | **~9–10 w** | **~15 w** |
 | **+ G (multi-race)** | +6 w | +8–10 w | +14 w |
 | **+ Tracks 7-10 (H/I/J + K/L/M + N/O/P/Q + R)** | +3 w | +6–8 w | +14 w |
-| **+ O-v2 if revived** | +2 w | +4–6 w | +8 w |
 
 ## What's NOT in this plan (deliberately)
 
@@ -1645,11 +1577,15 @@ signal. GPU support explicitly out of scope.
   The "reward role" from the mini-game investigation, if recommended,
   applies to *curriculum pretraining* only. Rated full-SC2 game
   reward stays as-is.
-- **Learned-controller Hydra v1.** Considered and rejected 2026-04-27
-  — scripted controller v1 (Phase O) ships first to validate the
-  expert-composition prerequisite cheaply. Learned controller is
-  Phase O-v2, deferred alongside Phase F until scripted v1 produces
-  evidence that warrants it.
+- **Learned-controller Hydra v1.** Considered and rejected 2026-04-27;
+  the learned-controller follow-on (formerly Phase O-v2) was cut entirely
+  2026-05-19. Scripted controller v1 (Phase O) is the only Hydra phase
+  on the plan.
+- **Entity-transformer encoder (formerly Phase F).** Cut entirely
+  2026-05-19. Kill criterion ("B–E shipped without measurable lift")
+  effectively never fired because evolve picks the targets, not the
+  human. Revisit only if a concrete failure mode names per-unit
+  information as the binding constraint.
 
 ## Historical phases (from the archived always-up plan)
 
@@ -1726,6 +1662,46 @@ Investigations that informed the current direction:
 ## Plan history
 
 Append-only — do not edit prior entries.
+
+- *2026-05-19* — **Plan trim: 5 cuts.** (1) **Phase 8 Step 11 closed.**
+  The dedicated 8h Linux evolve soak was kept as a "MANDATORY observation"
+  done-when, but the headless Linux substrate has been running real
+  evolve work since 2026-04-30 (v4 → v7 first headless soak; production
+  pointer advanced v7 → v13 across May 2026 Windows + Linux soaks under
+  `documentation/soak-test-runs/evolve-2026-05-*`). Step 11's done-when
+  items (≥2 promotion attempts, no orphan SC2 processes, sandbox hook
+  integrity) have all been satisfied incidentally; a ceremonial 8h
+  observation window is no longer load-bearing. Phase 8 now COMPLETE.
+  (2) **Phase 6 prereq dropped.** Phase 6's "needs ≥1 of B/D/E
+  shipped" prerequisite assumed Phase 6 (cross-version PPO regime) was
+  the cross-version improvement engine. Evolve (Phase 9) is now
+  producing cross-version improvements directly without B/D/E having
+  shipped — the prereq is obsolete. Phase 6 still exists as an
+  optional PPO extension to evolve but no longer gates on capability
+  phases. (3) **Phase F entity-transformer cut entirely.** The kill
+  criterion ("B–E shipped without measurable lift") effectively never
+  fires because evolve picks the targets, not the human. Phase F
+  section removed; Phase E kill criterion reworded to drop the
+  "deferred pending F" hook; Compute-target subsection scrubbed of
+  Phase F load reference; time-budget rows dropped. Plan now has no
+  Track 4. Moved to "What's NOT in this plan" with revival condition
+  "concrete failure mode names per-unit information as the binding
+  constraint." (4) **Phase O-v2 learned-controller cut entirely.**
+  Already deferred indefinitely with no path to revival short of
+  scripted-v1 producing positive evidence. Removed dedicated
+  subsection, decision-graph node, time-budget rows; Phase O kill
+  criterion reworded to drop "(and Phase O-v2)" tail. Existing
+  "Learned-controller Hydra v1" entry in "What's NOT in this plan"
+  reworded to cite the cut. (5) **Phase B Step 6 cleanup line item
+  removed from decision graph.** The 30-minute Step 6 cleanup node
+  between Phase 5 ✅ and Phase 9 ✅ was ceremonial — obs gains have
+  already shipped through evolve promotions v0 → v13 without a
+  dedicated B Step 6 snapshot. Tactical-bugs T.1-T.12 reference at
+  Phase B Step 5 stayed (still legitimate WR-inflation concern), but
+  the decision-graph node is gone. Tracks structure trimmed (Track 4
+  removed). Plan history Tracks 7/8/9/10 entry (2026-04-27) referenced
+  Phase O-v2 + Phase F — both references obsoleted by this cut but
+  left in place per append-only rule.
 
 - *2026-05-01* — **Dashboard: Alerts tab folded into Processes (6 → 5
   tabs).** Operator reported not using the Alerts tab. `AlertsPanel`
