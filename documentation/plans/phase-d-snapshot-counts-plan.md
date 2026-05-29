@@ -4,7 +4,7 @@
 **Track:** Capability (Phase D completion)
 **Prerequisites:** Phase D automated section (D.1–D.6.5) shipped 2026-05-20 on master @ `18b20a7`. This feature is a pure additive extension; no preflight required beyond a clean tree.
 **Effort estimate:** ~3 hours code + review + 1 build step. ~½ day end-to-end.
-**Status:** Drafted 2026-05-20.
+**Status:** COMPLETE 2026-05-28 — Step 1 shipped in `1cccf36` (1677→1678 tests; ruff + mypy --strict clean; `_COUNT_FIELD_TO_ACTION` 21→26). Drafted 2026-05-20.
 
 ## 0. Path convention (read first)
 
