@@ -192,6 +192,64 @@ class TestRewardCalculatorChain:
         )
         assert calc._active_build_order.name == "4-gate-aggression"
 
+    def test_all_new_count_fields_register_events(self) -> None:
+        """Producer→consumer assertion for the 5 GameSnapshot count fields
+        added by the snapshot-counts follow-up: a 0→positive delta on each
+        new field must flow through ``_COUNT_FIELD_TO_ACTION`` and land an
+        executed-action event in ``_executed_actions``.
+
+        Each field is exercised in ISOLATION — a fresh ``RewardCalculator``,
+        a zero-count baseline call (seeds ``_prev_counts``), then a delta
+        call bumping only that one field 0→1. This is stronger than bumping
+        all five at once: a target *swap* between two fields (e.g.
+        ``pylon_count`` → ``("build", "assimilator")``) would survive an
+        all-at-once set-membership check but fails here, because the
+        isolated field's expected event would be absent and the swapped-in
+        event would leak. ``_executed_actions`` stores
+        ``(action, target, game_time)`` tuples, so membership is asserted on
+        the ``(action, target)`` pair.
+        """
+        new_field_events = {
+            "pylon_count": ("build", "pylon"),
+            "assimilator_count": ("build", "assimilator"),
+            "cyberneticscore_count": ("build", "cyberneticscore"),
+            "roboticsbay_count": ("build", "roboticsbay"),
+            "warp_gate_research_count": ("research", "warp_gate_research"),
+        }
+        all_new_events = set(new_field_events.values())
+        for field, expected in new_field_events.items():
+            calc = RewardCalculator(
+                RULES_PATH,
+                hyperparams={
+                    "use_build_order_reward": True,
+                    "build_order_reward_alpha": 1.0,
+                },
+            )
+            # Baseline: every new count defaults to 0 — seeds ``_prev_counts``.
+            baseline = _smoke_snapshot(current_build_order="4-gate-aggression")
+            calc.compute_step_reward(asdict(baseline))
+
+            # Delta: only ``field`` goes 0→1, so it is the sole positive delta
+            # among the new count fields.
+            delta = _smoke_snapshot(
+                current_build_order="4-gate-aggression",
+                game_time_seconds=120.0,
+                **{field: 1},
+            )
+            calc.compute_step_reward(asdict(delta))
+
+            pairs = {(action, target) for action, target, _ in calc._executed_actions}
+            assert expected in pairs, (
+                f"{field}: {expected!r} not registered in _executed_actions; "
+                f"got pairs={sorted(pairs)}"
+            )
+            # Swap guard: bumping only ``field`` must not register any OTHER
+            # new-field event.
+            leaked = (all_new_events - {expected}) & pairs
+            assert not leaked, (
+                f"{field}: bumping only {field} leaked other new-field events {sorted(leaked)}"
+            )
+
     def test_compute_step_reward_returns_finite_without_build_order(self) -> None:
         """Flag ON + ``current_build_order=None`` → still finite float,
         no exception, and the build-order path correctly skips (no

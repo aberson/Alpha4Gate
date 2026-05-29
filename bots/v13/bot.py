@@ -358,6 +358,13 @@ class Alpha4GateBot(BotAI):
             enemy_structure_count=len(self.enemy_structures),
             cannon_count=len(self.structures(UnitTypeId.PHOTONCANNON)),
             battery_count=len(self.structures(UnitTypeId.SHIELDBATTERY)),
+            pylon_count=len(self.structures(UnitTypeId.PYLON)),
+            assimilator_count=len(self.structures(UnitTypeId.ASSIMILATOR)),
+            cyberneticscore_count=len(self.structures(UnitTypeId.CYBERNETICSCORE)),
+            roboticsbay_count=len(self.structures(UnitTypeId.ROBOTICSBAY)),
+            warp_gate_research_count=int(
+                UpgradeId.WARPGATERESEARCH in self.state.upgrades
+            ),
             **own_counts,  # type: ignore[arg-type]
             **enemy_counts,  # type: ignore[arg-type]
         )

@@ -66,6 +66,11 @@ class GameSnapshot:
     enemy_structure_count: int = 0
     cannon_count: int = 0
     battery_count: int = 0
+    pylon_count: int = 0
+    assimilator_count: int = 0
+    cyberneticscore_count: int = 0
+    roboticsbay_count: int = 0
+    warp_gate_research_count: int = 0
     zealot_count: int = 0
     stalker_count: int = 0
     sentry_count: int = 0

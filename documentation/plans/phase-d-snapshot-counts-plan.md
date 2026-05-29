@@ -59,6 +59,7 @@ ONE step. The change is small (~30-50 LOC) and tightly coupled; splitting just a
 **Type:** code
 **Issue:** #271
 **Flags:** `--reviewers code --isolation worktree`
+**Status:** DONE (2026-05-28)
 
 **What to build.**
 

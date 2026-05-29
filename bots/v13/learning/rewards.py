@@ -65,16 +65,23 @@ _OPS: dict[str, Any] = {
 # Targets use the lowercase / snake_case canonical form documented in
 # ``bots/<v>/data/build_orders/_schema.json`` (so case-insensitive equality
 # in :func:`bots.v13.learning.build_order_reward.compute_progress` matches).
-# Pylons, assimilators, cybernetics-cores, etc. lack dedicated count fields
-# on ``GameSnapshot``; they intentionally don't appear here and just don't
-# contribute to the derived sequence -- the edit-distance scorer handles
-# missing-target deletions via per-target weights.
+# Phase D follow-up (snapshot-counts) added dedicated ``GameSnapshot`` count
+# fields for pylon, assimilator, cyberneticscore, roboticsbay, and
+# warp_gate_research, so all five build-order trajectory targets are now
+# tracked here and contribute executed-action events to the derived sequence.
+# ``warp_gate_research`` keeps its underscore: ``compute_progress`` normalizes
+# via ``.lower()`` only, which preserves it and matches the trajectory target.
 _COUNT_FIELD_TO_ACTION: dict[str, tuple[str, str]] = {
     "gateway_count": ("build", "gateway"),
     "robo_count": ("build", "roboticsfacility"),
     "forge_count": ("build", "forge"),
     "cannon_count": ("build", "photoncannon"),
     "battery_count": ("build", "shieldbattery"),
+    "pylon_count": ("build", "pylon"),
+    "assimilator_count": ("build", "assimilator"),
+    "cyberneticscore_count": ("build", "cyberneticscore"),
+    "roboticsbay_count": ("build", "roboticsbay"),
+    "warp_gate_research_count": ("research", "warp_gate_research"),
     "base_count": ("build", "nexus"),
     "zealot_count": ("train", "zealot"),
     "stalker_count": ("train", "stalker"),
