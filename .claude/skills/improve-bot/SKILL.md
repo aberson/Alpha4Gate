@@ -308,7 +308,7 @@ Append to `$LOGFILE`:
 
 - Run duration + stop reason
 - Baseline → final metric deltas (all measures from Phase 1)
-- Attempt table: slug, issue #, branch, result (merged / failed / rolled-back), SHA
+- Attempt table with exactly these five columns and no others: `slug`, `issue #`, `branch`, `result` (merged / failed / rolled-back), `SHA`. Do NOT add a failure-signature column — failure signatures belong in the per-issue close comment (see Phase 4), not in this table.
 - Rollback log if any fired
 - Links to every GitHub issue opened during the run
 - Suggested next action ("soak-N with same config", "fix issue #X and retry", "metric Y regressed, investigate")
