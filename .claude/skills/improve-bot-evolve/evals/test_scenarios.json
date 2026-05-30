@@ -1,0 +1,27 @@
+{
+  "skill": "improve-bot-evolve",
+  "version": "1.0",
+  "scenarios": [
+    {
+      "id": "scenario_1",
+      "name": "Bare overnight run, two promotions",
+      "description": "Main path: invoked with no flags. SC2 installed, claude CLI authenticated, no advised run active, clean git. Four generations run within the 4h budget; gens 1 and 4 promote, gen 2 rolls back, gen 3 fails the import gate. Exercises banner, defaults, full generation table, two-promotion consistency, and the wall-clock stop reason.",
+      "context": "User invokes `/improve-bot-evolve` with no flags. Pre-flight: `git status --porcelain` is empty, branch is master, in sync with origin; SC2 present at C:/Program Files (x86)/StarCraft II/; `claude --version` + haiku ping succeed; data/advised_run_state.json absent. Parent starts at v5. Backend not yet running on 8765, so exactly one `uv run python -m bots.v0.runner --serve` is started. Seed mirror game returns a SelfPlayRecord. evolve.py runs 4 generations: gen1 fitness 3/2/5 → stack-apply-pass → regression pass → promoted v5→v6; gen2 fitness 1/3/6 → stack-apply-pass → regression rollback → ROLLBACK; gen3 fitness 2/2/5 (+1 crash) → stack-apply-import-fail → regression — → no promote; gen4 fitness 4/1/5 → stack-apply-pass → regression pass → promoted v6→v7. Wall-clock budget of 4h is reached after gen4. Final parent v7. Total evictions 6. The skill writes the Phase 4 morning report and emits its [evo-auto] commits for the two promotions and one rollback.",
+      "expected_assertions": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
+    },
+    {
+      "id": "scenario_2",
+      "name": "Pool-exhausted run with no promotions",
+      "description": "Edge path: a strong parent. Every generation either rolls back or fails the import gate, no generation promotes, and the pool empties before the wall-clock budget. Exercises the pool-exhausted stop reason, the start==end parent consistency rule, the no-promote import-fail row shape, and the Generations-promoted=0 consistency.",
+      "context": "User invokes `/improve-bot-evolve --pool-size 6 --hours 4`. Pre-flight clean; SC2 + claude OK; no advised run. Parent starts and stays at v9. Two generations run: gen1 fitness 1/2/3 → stack-apply-import-fail → regression — → no promote; gen2 fitness 1/1/4 → stack-apply-pass → regression rollback → ROLLBACK. After gen2 the pool refresh produces no new active items and fewer than 1 active imp remains, so the loop exits with stop_reason pool-exhausted before the 4h budget. Generations completed 2, generations promoted 0, parent end v9 (unchanged). Only the rollback commit carries [evo-auto] (the import-fail generation produced no promote commit). The morning report is written with stop reason pool-exhausted.",
+      "expected_assertions": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19, 22, 23, 24, 25]
+    },
+    {
+      "id": "scenario_3",
+      "name": "Advised-run interlock refusal",
+      "description": "Conditional path: an advised run is already in progress. Pre-flight detects data/advised_run_state.json status 'running' and refuses to start the loop before any generation, banner, or SC2 work. Exercises the concurrent-run interlock rule and confirms no second --serve and no SC2 kill occur.",
+      "context": "User invokes `/improve-bot-evolve`. Pre-flight reads data/advised_run_state.json and finds {\"status\": \"running\", \"run_id\": \"advised-20260530-0140\"}. Per the interlock the skill prints that the advised run is active and STOPs (exit 1) without starting a backend, without running the seed game, without generating a pool, and without writing a generation table. No commits are made and SC2 is left untouched.",
+      "expected_assertions": [19, 21, 22, 23]
+    }
+  ]
+}

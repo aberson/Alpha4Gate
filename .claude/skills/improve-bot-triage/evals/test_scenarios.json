@@ -1,0 +1,27 @@
+{
+  "skill": "improve-bot-triage",
+  "version": "1.0",
+  "scenarios": [
+    {
+      "id": "scenario_1",
+      "name": "Mixed-classification run log, user picks the build-step finding",
+      "description": "Main path: a well-formed improve-bot run log with one finding of each major type. Exercises extraction of all five heading prefixes, classification into all four substantive tags, the fixed table, and the [build-step] pick producing an /improve-bot --self-improve-code invocation. Verifies only ONE finding is tagged [build-step].",
+      "context": "User invokes /improve-bot-triage with no flags. The most recent file resolved by `ls -t documentation/soak-test-runs/improve-*.md | head -1` is `documentation/soak-test-runs/improve-20260430-0900.md` with the following contents:\n\n---\n# improve-bot run 20260430-0900\n\n## Run summary\n- T0: 2026-04-30 09:00:00\n- flavor: --self-improve-code\n- stop reason: wall-clock budget (2h) reached\n- error count: 0\n- games: 50\n\n## Primary finding — Schema mismatch on Decisions tab\nThe producer writes claude_advisor fields but the UI dashboard for the Decisions tab expects state-machine fields. This is a concrete regression in the endpoint `src/orchestrator/decisions_api.py`; a ~10-line shim would fix it. broken since the v3 promotion.\n\n## Secondary finding — PPO declining win rate\nObserved cycle win rates dropping 0.5 -> 0.167 over 4 cycles. Candidate root causes: reward shaping over-penalizing expansions. This needs an offline investigation / experiment, not a code edit. hypothesis: the win_prob heuristic is leaking into reward.\n\n## Tertiary finding — Phase 4.7 terminal sentinel holding\nThe terminal sentinel added in Phase 4.7 Step 3 shows 0 failed_games across 50+ training games (vs soak-4b 6/12). validated end-to-end; no action needed. HOLDING POSITIVE.\n\n## Skill feedback — Wall-clock leak during interactive phases\nThe improve-bot daemon ran unsupervised for 4h+ while phase 1 and phase 2 talked to the operator. This is a skill bug in improve-bot itself — the meta-skill should add a phase 3 leak check.\n\n## Suggested next actions\nReview the Decisions tab shim and the reward-shaping investigation. Consider whether to pause evolve.\n---\n\nAfter the skill prints the pickable table, the user replies: `1`",
+      "expected_assertions": [1, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 22, 23, 24, 25]
+    },
+    {
+      "id": "scenario_2",
+      "name": "First-match precedence and ambiguous fallback, user picks the research finding",
+      "description": "Conditional/edge path: one finding contains keywords for BOTH rule 1 (research) and rule 4 (build-step) — must resolve to [research] by first-match-wins. A second finding matches no rule and must fall to [ambiguous]. User picks the research finding; output must propose a GH issue (not an /improve-bot invocation) and must NOT execute gh.",
+      "context": "User invokes /improve-bot-triage --file documentation/soak-test-runs/improve-20260501-1400.md. The file exists with these contents:\n\n---\n# improve-bot run 20260501-1400\n\n## Run summary\n- T0: 2026-05-01 14:00:00\n- flavor: --self-improve-code\n- stop reason: clean exit\n- error count: 2\n- games: 30\n\n## Primary finding — Dashboard latency hypothesis\nThe dashboard tab renders slowly. We have a hypothesis that the endpoint in `src/orchestrator/api.py` is doing an N+1 query. This needs more investigation / a profiling experiment before we touch code. (Body intentionally contains both 'hypothesis'/'investigation' AND 'dashboard'/'endpoint'/a .py path.)\n\n## Secondary finding — Operator mood\nThe operator seemed tired during the run. No clear keyword for any classification rule appears in this body. Just a note about session vibe.\n---\n\nAfter the skill prints the table, the user replies: `1`",
+      "expected_assertions": [1, 3, 4, 6, 7, 11, 12, 13, 14, 15, 16, 18, 22, 24, 25]
+    },
+    {
+      "id": "scenario_3",
+      "name": "File present but using wrong headings — STOP with no-findings message",
+      "description": "STOP edge path: the resolved log exists but uses headings that do not match any recognized finding prefix, so fewer than 1 finding is extracted. The skill must STOP and print the 'no findings extracted' message rather than producing a table or fuzzy-matching the off-spec headings.",
+      "context": "User invokes /improve-bot-triage --run 20260502-0800. The skill resolves LOG=`documentation/soak-test-runs/improve-20260502-0800.md`, which exists with these contents:\n\n---\n# improve-bot run 20260502-0800\n\n## Overview\nA general note about the run.\n\n## Observations\nThings looked fine. No recognized finding headings here.\n\n## Wrap-up\nDone.\n---\n\nNo '## Primary finding', '## Secondary finding', '## Tertiary finding', '## Skill feedback', or '## Suggested next actions' heading appears anywhere in the file.",
+      "expected_assertions": [5, 25]
+    }
+  ]
+}

@@ -1,0 +1,223 @@
+{
+  "skill": "improve-bot-advised",
+  "version": "1.0",
+  "description": "True/false evaluation for the improve-bot-advised skill. Anchored on the structured TEXT report (Phase 6 iteration summary, Phase 8 morning report, dashboard state file) plus the NEVER/MUST/IF behavioral rules. The skill is MIXED (runs games + side effects + writes a structured report); assertions are scoped to observable text output a grader can read.",
+  "passing_threshold": "23/25",
+  "categories": [
+    {
+      "name": "Bootstrap & banner",
+      "evals": [
+        {
+          "id": 1,
+          "statement": "The run output opens with the sandbox banner containing the literal lines 'I can edit:   bots/current/**' and 'I cannot edit: src/orchestrator/, pyproject.toml, tests/, frontend/, scripts/'.",
+          "source": "SKILL.md, lines 68-76",
+          "defect_type": "required-content — fixed-string missing",
+          "result": null
+        },
+        {
+          "id": 2,
+          "statement": "The banner is printed before any other output (it is the first content emitted, not preceded by flag-parse logging or game output).",
+          "source": "SKILL.md, line 69",
+          "defect_type": "conditional-behavior — ordering rule not applied",
+          "result": null
+        },
+        {
+          "id": 3,
+          "statement": "When invoked with no flags, the output contains no question to the user — it proceeds directly with defaults (training mode, replay observe, 10 games, 4 hours) and logs the chosen defaults.",
+          "source": "SKILL.md, lines 14, 33",
+          "defect_type": "anti-pattern — explicit-rule violation (zero-input contract)",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Flag resolution",
+      "evals": [
+        {
+          "id": 4,
+          "statement": "If '--mode dev' or '--mode both' is given WITHOUT '--self-improve-code', the output logs the literal auto-downgrade message 'dev/both mode requires --self-improve-code, falling back to training-only' and does not ask the user.",
+          "source": "SKILL.md, line 36",
+          "defect_type": "conditional-behavior — auto-downgrade rule not applied",
+          "result": null
+        },
+        {
+          "id": 5,
+          "statement": "If '--backlog' is set, the output logs that backlog mode implies --self-improve-code (e.g. 'backlog mode implies --self-improve-code').",
+          "source": "SKILL.md, line 37",
+          "defect_type": "conditional-behavior — implied-flag rule not applied",
+          "result": null
+        },
+        {
+          "id": 6,
+          "statement": "If '--backlog' is set but no open (non-SHIPPED) items are found, the output logs a fallback message (e.g. 'backlog exhausted, falling back') and continues the run rather than stopping.",
+          "source": "SKILL.md, line 38",
+          "defect_type": "conditional-behavior — fallback rule not applied",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Backend / process lifecycle",
+      "evals": [
+        {
+          "id": 7,
+          "statement": "The output never shows a second '--serve' process being started while one is already running; at most one API-only --serve process is alive at any time.",
+          "source": "SKILL.md, lines 134, 150, 487",
+          "defect_type": "anti-pattern — explicit-rule violation (never two servers)",
+          "result": null
+        },
+        {
+          "id": 8,
+          "statement": "No process-kill step in the output targets SC2_x64.exe; kill commands match only Python/uv 'alpha4gate' processes and explicitly exclude SC2.",
+          "source": "SKILL.md, lines 564, 687, 838",
+          "defect_type": "anti-pattern — explicit-rule violation (never kill SC2)",
+          "result": null
+        },
+        {
+          "id": 9,
+          "statement": "Between iterations the output confirms port 8765 is free before proceeding to the next iteration's Phase 1 (does not start games while the port is still occupied).",
+          "source": "SKILL.md, lines 575-586",
+          "defect_type": "conditional-behavior — port-free gate not applied",
+          "result": null
+        },
+        {
+          "id": 10,
+          "statement": "For a daemon training soak, the output shows the API-only backend being shut down before the daemon starts, and the API-only backend being restarted after the soak — never both running simultaneously.",
+          "source": "SKILL.md, lines 487-546",
+          "defect_type": "conditional-behavior — daemon swap sequence not applied",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Validation gate",
+      "evals": [
+        {
+          "id": 11,
+          "statement": "A win-rate drop greater than the fail-threshold percent (default 30%) is reported as FAIL, and a drop within threshold is reported as PASS.",
+          "source": "SKILL.md, lines 381-394",
+          "defect_type": "conditional-behavior — threshold gate not applied",
+          "result": null
+        },
+        {
+          "id": 12,
+          "statement": "Quality-gate breakage, degenerate behavior (idle / no production / instant death), or game crashes are reported as a hard FAIL regardless of the percentage threshold.",
+          "source": "SKILL.md, lines 397, 390-393",
+          "defect_type": "conditional-behavior — hard-fail bypass not applied",
+          "result": null
+        },
+        {
+          "id": 13,
+          "statement": "If the Elo promotion gate returns promoted=False, the output does NOT commit and logs that the iteration passed WR validation but failed the Elo gate.",
+          "source": "SKILL.md, lines 417-418",
+          "defect_type": "conditional-behavior — Elo gate not applied",
+          "result": null
+        },
+        {
+          "id": 14,
+          "statement": "On a failed iteration that was training-type, the output shows the reward/hyperparam config file(s) being reverted to their pre-iteration state.",
+          "source": "SKILL.md, lines 352, 422",
+          "defect_type": "conditional-behavior — revert-on-fail not applied",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Iteration summary (Phase 6)",
+      "evals": [
+        {
+          "id": 15,
+          "statement": "Each per-iteration summary contains the labeled bullets 'Selected improvement', 'Principle(s) addressed', 'What changed', 'Validation result', 'Metrics', and 'Wall clock used'.",
+          "source": "SKILL.md, lines 434-443",
+          "defect_type": "structural — missing required output part",
+          "result": null
+        },
+        {
+          "id": 16,
+          "statement": "When an iteration passed and produced changes, the commit message includes the '[advised-auto]' marker.",
+          "source": "SKILL.md, lines 454-457",
+          "defect_type": "required-content — fixed-string missing",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Morning report (Phase 8)",
+      "evals": [
+        {
+          "id": 17,
+          "statement": "The morning report contains a '## Summary' section reporting Duration, Iterations attempted, Iterations passed, and Stop reason.",
+          "source": "SKILL.md, lines 619-623",
+          "defect_type": "structural — missing required output part",
+          "result": null
+        },
+        {
+          "id": 18,
+          "statement": "The morning report contains a 'Baseline -> Final Metrics' table whose columns are exactly Metric | Baseline | Final | Delta.",
+          "source": "SKILL.md, lines 625-631",
+          "defect_type": "structural — wrong table columns",
+          "result": null
+        },
+        {
+          "id": 19,
+          "statement": "The morning report contains an 'Iteration Log' table whose columns are exactly # | Improvement | Type | Principles | Result | Win Rate Delta.",
+          "source": "SKILL.md, lines 633-638",
+          "defect_type": "structural — wrong table columns",
+          "result": null
+        },
+        {
+          "id": 20,
+          "statement": "The morning report's Stop reason is one of the three allowed values: 'budget exhausted', '3 consecutive failures', or 'user interrupt'.",
+          "source": "SKILL.md, lines 623, 606",
+          "defect_type": "content — out-of-enum value",
+          "result": null
+        },
+        {
+          "id": 21,
+          "statement": "The morning report includes a 'Tag Cheatsheet' code block containing the literal nuke command 'git reset --hard \"advised/run/$RUN_TS/baseline\"'.",
+          "source": "SKILL.md, lines 648-653",
+          "defect_type": "required-content — fixed-string missing",
+          "result": null
+        },
+        {
+          "id": 22,
+          "statement": "The report includes 'Improvements Not Attempted' and 'Suggested Next Action' sections.",
+          "source": "SKILL.md, lines 640-645",
+          "defect_type": "structural — missing required output part",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Dashboard state file",
+      "evals": [
+        {
+          "id": 23,
+          "statement": "The dashboard state JSON written to data/advised_run_state.json includes the keys run_id, status, phase, phase_name, iteration, and updated_at, and updated_at is refreshed on each write.",
+          "source": "SKILL.md, lines 755-792",
+          "defect_type": "structural — missing required output part",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Sanity & coverage",
+      "evals": [
+        {
+          "id": 24,
+          "statement": "The generated evals.json is valid JSON, ids are sequential starting at 1, and passing_threshold equals (total-2)/total.",
+          "source": "skill-eval-setup SKILL.md, lines 216-222",
+          "defect_type": "n/a-sanity",
+          "result": null
+        },
+        {
+          "id": 25,
+          "statement": "The produced output covers each of the skill's major phases (Bootstrap, Observe, Analyze/Backlog, Select, Execute, Validate, Report, Cleanup, Morning Report) with at least one anchored assertion.",
+          "source": "SKILL.md, lines 65, 169, 211, 303, 315, 358, 429, 550, 610",
+          "defect_type": "n/a-coverage",
+          "result": null
+        }
+      ]
+    }
+  ]
+}

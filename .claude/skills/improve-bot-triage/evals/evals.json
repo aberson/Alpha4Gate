@@ -1,0 +1,218 @@
+{
+  "skill": "improve-bot-triage",
+  "version": "1.0",
+  "description": "True/false evaluation for the improve-bot-triage skill. The skill reads one /improve-bot run log, extracts and classifies findings, emits a pickable table, and on a pick prints a fixed-form recommended next invocation. The entire output is gradable text.",
+  "passing_threshold": "23/25",
+  "categories": [
+    {
+      "name": "Phase 1 — Source log resolution",
+      "evals": [
+        {
+          "id": 1,
+          "statement": "The output prints the resolved log path at the top, so the user knows which log is being triaged.",
+          "source": "SKILL.md, line 49 ('Print the resolved path to the user at the top of the output')",
+          "defect_type": "structural",
+          "result": null
+        },
+        {
+          "id": 2,
+          "statement": "When the resolved $LOG does not exist, the output STOPS and reports which directory was searched and what patterns were tried, instead of producing a triage table or guessing a different file.",
+          "source": "SKILL.md, line 47 ('If $LOG does not exist, STOP and tell the user which directory was searched and what patterns were tried. Do not guess.')",
+          "defect_type": "conditional-behavior",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Phase 2 — Finding extraction",
+      "evals": [
+        {
+          "id": 3,
+          "statement": "Every finding the output lists corresponds to a '## ' heading in the source log whose text starts with one of the five recognized prefixes (Primary finding, Secondary finding(s), Tertiary finding, Skill feedback candidate / Skill feedback, Suggested next actions); no heading outside this set is treated as a finding.",
+          "source": "SKILL.md, lines 55-62 (recognized finding-heading prefixes)",
+          "defect_type": "content",
+          "result": null
+        },
+        {
+          "id": 4,
+          "statement": "The output header shows run context drawn from '## Run summary' / top-of-file metadata (at least one of T0, flavor, stop reason, error count).",
+          "source": "SKILL.md, line 69 ('Also grab any ## Run summary or top-of-file metadata (T0, flavor, stop reason, error count)')",
+          "defect_type": "structural",
+          "result": null
+        },
+        {
+          "id": 5,
+          "statement": "When fewer than 1 finding is extracted, the output STOPS and reports the 'no findings extracted from $LOG — is the file using the expected headings?' message instead of fuzzy-matching other headings.",
+          "source": "SKILL.md, line 70 ('If fewer than 1 finding is extracted, STOP and report ... Do not fall back to fuzzy matching.')",
+          "defect_type": "conditional-behavior",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Phase 3 — Classification",
+      "evals": [
+        {
+          "id": 6,
+          "statement": "Every finding in the table carries exactly one classification tag drawn from the closed set {[research], [observation-only], [skill-fix], [build-step], [ambiguous]} — no other tag string appears.",
+          "source": "SKILL.md, lines 78-82 (the five classification outcomes)",
+          "defect_type": "content",
+          "result": null
+        },
+        {
+          "id": 7,
+          "statement": "A finding whose body contains any of 'research', 'investigation', 'root cause', 'hypothesis', 'candidate root causes', or 'experiment' is classified [research].",
+          "source": "SKILL.md, line 78 (rule 1)",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 8,
+          "statement": "A finding whose body contains any of 'validated', 'HOLDING', 'POSITIVE', 'end-to-end', 'validated end-to-end', or 'no action needed' (and does not match an earlier rule) is classified [observation-only].",
+          "source": "SKILL.md, line 79 (rule 2)",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 9,
+          "statement": "A finding whose body contains any of 'wall clock', 'phase 0'-'phase 4', 'skill', 'improve-bot itself', or 'meta-skill' (and does not match an earlier rule) is classified [skill-fix].",
+          "source": "SKILL.md, line 80 (rule 3)",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 10,
+          "statement": "A finding whose body contains any of 'producer', 'UI component', 'dashboard', 'tab', 'endpoint', 'API path', 'broken', 'regression', 'fix', or a concrete file path ending in .py/.ts/.tsx (and does not match an earlier rule) is classified [build-step].",
+          "source": "SKILL.md, line 81 (rule 4)",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 11,
+          "statement": "Classification follows first-match-wins top-to-bottom: when a finding body contains keywords for two rules, it gets the tag of the lower-numbered (earlier) rule, not a later one. (E.g. a body containing both 'hypothesis' and 'dashboard' classifies [research], not [build-step].)",
+          "source": "SKILL.md, line 76 ('first-match wins, top to bottom')",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 12,
+          "statement": "A finding whose body matches none of rules 1-4 is classified [ambiguous] rather than being dropped or forced into another tag.",
+          "source": "SKILL.md, line 82 (rule 5, 'Otherwise → [ambiguous]')",
+          "defect_type": "conditional-behavior",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Phase 4 — Pickable list",
+      "evals": [
+        {
+          "id": 13,
+          "statement": "The pickable list is a markdown table whose header row is exactly '| # | Type | Title | One-line hook |' (four columns in that order).",
+          "source": "SKILL.md, line 98 (table header literal)",
+          "defect_type": "format",
+          "result": null
+        },
+        {
+          "id": 14,
+          "statement": "Each table row's '#' column is a sequential integer index (1, 2, 3, ...) usable as a pick number.",
+          "source": "SKILL.md, lines 100-104 (numbered rows) + line 106 ('(1-N, or none)')",
+          "defect_type": "structural",
+          "result": null
+        },
+        {
+          "id": 15,
+          "statement": "The output ends the table section by asking the user which finding to target, offering the 'none' option (e.g. 'Which finding do you want to target? (1-N, or none)').",
+          "source": "SKILL.md, line 106 ('Which finding do you want to target? (1-N, or none)')",
+          "defect_type": "required-content",
+          "result": null
+        },
+        {
+          "id": 16,
+          "statement": "The table block includes a 'Source:' line naming the LOG path and a run-metadata line (T0/duration/errors/games), not just the bare table.",
+          "source": "SKILL.md, lines 95-96 ('Source: <LOG path>' and 'Run metadata: ...')",
+          "defect_type": "structural",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Phase 5 — Per-pick fixed-form output",
+      "evals": [
+        {
+          "id": 17,
+          "statement": "When the picked finding is [build-step], the output prints a recommended invocation whose command line begins with the literal '/improve-bot --self-improve-code' followed by a quoted scope.",
+          "source": "SKILL.md, line 122 ('/improve-bot --self-improve-code \"<title>: <brief scope from summary>\"')",
+          "defect_type": "required-content",
+          "result": null
+        },
+        {
+          "id": 18,
+          "statement": "When the picked finding is [research], the output does NOT print an /improve-bot invocation; instead it proposes filing/commenting a GH issue with a 'research' label and states /improve-bot is the wrong tool for a research item.",
+          "source": "SKILL.md, lines 133-146 ('This is research, not /improve-bot material.' ... 'Do NOT try to launch /improve-bot against a research item')",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 19,
+          "statement": "When the picked finding is [observation-only], the output states no further action is needed (records a POSITIVE validation) and does NOT emit an /improve-bot or /build-step command.",
+          "source": "SKILL.md, lines 150-156 ('This finding records a POSITIVE validation. No further action needed.')",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 20,
+          "statement": "When the picked finding is [skill-fix], the output states /improve-bot cannot fix itself and recommends a manual SKILL.md edit + commit/push + a feedback memory entry, rather than an /improve-bot invocation.",
+          "source": "SKILL.md, lines 160-169 ('/improve-bot cannot fix itself. The recommended flow is: 1. Edit the skill file ...')",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 21,
+          "statement": "When the picked finding is [ambiguous], the output asks one sharp disambiguating question and explicitly declines to guess a target, rather than emitting any command.",
+          "source": "SKILL.md, lines 173-177 ('Ask the user one sharp question ... Do NOT guess.')",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 22,
+          "statement": "The pick output prints commands only — it does not actually execute /improve-bot, gh, or any command (the text frames them as 'Recommended next invocation' / 'Proposed action', not as run results).",
+          "source": "SKILL.md, line 115 ('Do not execute commands — just print them and explain') + line 183 (Phase 6 STOP)",
+          "defect_type": "anti-pattern",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Anti-patterns & safety rails",
+      "evals": [
+        {
+          "id": 23,
+          "statement": "At most ONE finding in the table is classified [build-step] per triage output (the skill is one-at-a-time by design).",
+          "source": "SKILL.md, line 193 ('Never classify more than one finding as [build-step] for the same pick prompt')",
+          "defect_type": "anti-pattern",
+          "result": null
+        },
+        {
+          "id": 24,
+          "statement": "The output never claims to have opened a GH issue or modified/rewritten the source run log; any GH-issue action is presented as a draft to confirm, and the log is treated read-only.",
+          "source": "SKILL.md, lines 191-192 ('Never rewrite the source run log. Read-only.' / 'Never open GH issues silently — always show the draft and ask first.')",
+          "defect_type": "anti-pattern",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Sanity",
+      "evals": [
+        {
+          "id": 25,
+          "statement": "The produced output is a single self-contained triage response (header + table OR a STOP message), with no orphaned placeholder tokens like '<RUN_TS>', '<flavor>', or '<LOG path>' left unfilled in the rendered text.",
+          "source": "SKILL.md, lines 89-107 (Phase 4 template uses placeholders that must be substituted)",
+          "defect_type": "n/a-sanity",
+          "result": null
+        }
+      ]
+    }
+  ]
+}

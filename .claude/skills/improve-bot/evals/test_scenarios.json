@@ -1,0 +1,27 @@
+{
+  "skill": "improve-bot",
+  "version": "1.0",
+  "scenarios": [
+    {
+      "id": "scenario_1",
+      "name": "Hybrid overnight run with one merged attempt and one rollback",
+      "description": "Main path: open-ended suggestion + --self-improve-code triggers the hybrid flavor, runs the Phase 4 loop, lands one merged attempt and one rolled-back attempt, and emits the full Phase 5 morning report.",
+      "context": "User invokes: /improve-bot --self-improve-code \"run overnight and improve the bot's performance\". Phase 0 classifies as hybrid (open-ended + flag set). Phase 1 defaults: measure = win rate vs difficulty 1; stops = 2h wall clock, error budget 4/5, watchdog on. data/ reset fresh. SKILL_START=2026-05-29 22:00; PHASE4_T0=2026-05-29 22:18 (INTERACTIVE_ELAPSED=18 min, under 30 so no leak check). Baseline tag improve-bot/run/20260529-2218/baseline pushed; baseline win rate 0.42. Phase 4 ran two attempts: attempt 'reduce-orphan-transitions' (issue #201, branch improve-bot/run/20260529-2218/reduce-orphan-transitions) passed gates, merged at SHA a1b2c3d, validation soak clean -> result merged; attempt 'eager-natural-expand' (issue #202, same branch namespace) passed gates and merged, but validation soak error count climbed above baseline+1 -> automatic rollback via --force-with-lease to the prior merged tag -> result rolled-back. Final win rate 0.51. Loop stopped on 2h wall-clock budget. Produce the Phase 5 morning report appended to the run log.",
+      "expected_assertions": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 19, 20, 21, 22, 23, 24, 25]
+    },
+    {
+      "id": "scenario_2",
+      "name": "Demo flavor rehearsal — no-mutation contract",
+      "description": "Edge path: --demo flag forces demo flavor. Daemon off, no git writes, no tags. Tests the demo-specific conditional behavior (baseline field 'n/a (demo)', no tag created) and that the report still names a measure.",
+      "context": "User invokes: /improve-bot --demo \"verify the alerts pipeline before tonight's soak\". Phase 0 classifies as demo (flag overrides). Phase 1: stop = 30 min wall clock (demo default); error budget and watchdog N/A. Phase 2 snapshots data/ to data-snapshots/data.demo-snapshot-<TS>. Backend launched WITHOUT --daemon. SKILL_START=2026-05-30 19:00; demo has no Phase 4 so PHASE4_T0 is set as the observation-start anchor 19:05. No baseline tag created. Observation measure: error-budget silence (no watchdog trips) plus dashboard/alert observation; default win rate vs difficulty 1 noted as observation baseline only. §3.5 synthetic alert pre-flight run. At 30 min stop, data/ diffed against the snapshot (no diff). Produce the Phase 5 demo report.",
+      "expected_assertions": [1, 2, 5, 11, 12, 14, 15, 19, 20, 21, 22, 25]
+    },
+    {
+      "id": "scenario_3",
+      "name": "Wall-clock leak check fires on a training run",
+      "description": "Conditional edge path: interactive Phase 1/2 overran 30 min while the daemon was already running, so the Phase 3 leak check fires, the skill stops and presents the three options, the operator picks (a) Reset, and the header records INTERACTIVE_ELAPSED + the chosen option.",
+      "context": "User invokes: /improve-bot \"raise win rate vs difficulty 1 past 50%\". Phase 0 classifies as training (metric axis, no flags). Phase 1 measure = win rate vs difficulty 1; stops = 2h wall clock, error budget 4/5, watchdog on; data/ reset fresh. Backend with --daemon launched during Phase 2 §3.2 at SKILL_START=2026-05-30 23:00. Interactive Q&A + pre-flight dragged on; at Phase 3 entry the clock is 23:47, so INTERACTIVE_ELAPSED = 47 min (> 30 min). The leak check fires. The skill STOPS and presents three options: (a) Reset, (b) Absorb, (c) Stop. Operator chooses (a) Reset: daemon stopped via POST /api/training/stop, the 47 min of unsupervised daemon work archived as a 'bonus observation' in the run log, wall-clock budget reset, PHASE4_T0 re-anchored to 23:50. Baseline tag improve-bot/run/20260530-2350/baseline pushed; baseline win rate 0.46. Produce the run-start header reflecting the leak-check handling.",
+      "expected_assertions": [11, 12, 13, 16, 18, 19, 20, 21, 22, 24, 25]
+    }
+  ]
+}

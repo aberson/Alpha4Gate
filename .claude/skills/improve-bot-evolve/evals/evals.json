@@ -1,0 +1,218 @@
+{
+  "skill": "improve-bot-evolve",
+  "version": "1.0",
+  "description": "True/false evaluation for the improve-bot-evolve skill. Anchors on the structured Phase 4 Morning Report (header fields, generation table, columns), the run-start banner, the [evo-auto] commit formats, and the zero-input / safety-rail rules.",
+  "passing_threshold": "23/25",
+  "categories": [
+    {
+      "name": "Morning Report structure (Phase 4)",
+      "evals": [
+        {
+          "id": 1,
+          "statement": "The morning report begins with a top-level heading of the form '# Evolve run — <RUN_TS>'.",
+          "source": "SKILL.md, line 337",
+          "defect_type": "structural",
+          "result": null
+        },
+        {
+          "id": 2,
+          "statement": "The report header block contains all of these labelled fields: 'Parent (start):', 'Parent (end):', 'Wall-clock budget:', 'Started:', 'Finished:', 'Generations completed:', 'Generations promoted:', 'Total evictions:', and 'Stop reason:'. If any one of these labels is missing, this grades FALSE.",
+          "source": "SKILL.md, lines 339-347",
+          "defect_type": "structural",
+          "result": null
+        },
+        {
+          "id": 3,
+          "statement": "The report contains a '## Generations' section heading followed by a Markdown table.",
+          "source": "SKILL.md, lines 349-357",
+          "defect_type": "structural",
+          "result": null
+        },
+        {
+          "id": 4,
+          "statement": "The Generations table header row is exactly the columns 'gen | fitness pass/close/fail | stack-apply | regression | outcome' in that order; any reordered, renamed, added, or dropped column grades FALSE.",
+          "source": "SKILL.md, lines 351-352",
+          "defect_type": "format",
+          "result": null
+        },
+        {
+          "id": 5,
+          "statement": "Each Generations table row has exactly 5 cells (one per column header); a row with a different cell count grades FALSE.",
+          "source": "SKILL.md, lines 351-356",
+          "defect_type": "format",
+          "result": null
+        },
+        {
+          "id": 6,
+          "statement": "The number of data rows in the Generations table equals the value reported in the 'Generations completed:' header field; a mismatch grades FALSE.",
+          "source": "SKILL.md, lines 344-356",
+          "defect_type": "internal-inconsistency",
+          "result": null
+        },
+        {
+          "id": 7,
+          "statement": "The 'Stop reason:' field value is one of exactly the three literal strings 'wall-clock', 'pool-exhausted', or 'dashboard-stop'; any other value grades FALSE.",
+          "source": "SKILL.md, lines 328, 347",
+          "defect_type": "required-content",
+          "result": null
+        },
+        {
+          "id": 8,
+          "statement": "Each Generations table 'stack-apply' cell uses one of the documented outcome tokens (e.g. 'stack-apply-pass', 'stack-apply-import-fail', or '—' for a generation with no fitness-pass imp); a free-text or undocumented stack-apply value grades FALSE.",
+          "source": "SKILL.md, lines 353-356, 419",
+          "defect_type": "conditional-behavior",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Report / state internal consistency",
+      "evals": [
+        {
+          "id": 9,
+          "statement": "Every Generations table row whose 'outcome' cell reads 'promoted vN → vN+1' has a 'regression' cell of 'pass'; a row claiming a promotion with a 'rollback' or '—' regression cell grades FALSE.",
+          "source": "SKILL.md, lines 281-286, 353-356",
+          "defect_type": "internal-inconsistency",
+          "result": null
+        },
+        {
+          "id": 10,
+          "statement": "The count of rows whose 'outcome' cell indicates a promotion equals the 'Generations promoted:' header field value; a mismatch grades FALSE.",
+          "source": "SKILL.md, lines 345, 353-356",
+          "defect_type": "internal-inconsistency",
+          "result": null
+        },
+        {
+          "id": 11,
+          "statement": "The 'Parent (start):' value matches the baseline parent version and 'Parent (end):' matches the final parent after the last promotion; if no generation promoted, start and end parent are identical.",
+          "source": "SKILL.md, lines 339-340, 356",
+          "defect_type": "internal-inconsistency",
+          "result": null
+        },
+        {
+          "id": 12,
+          "statement": "Any row whose 'regression' cell is 'rollback' has an 'outcome' cell of 'ROLLBACK' (not a promotion); a rollback regression paired with a promote outcome grades FALSE.",
+          "source": "SKILL.md, lines 286, 354",
+          "defect_type": "internal-inconsistency",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Run-start banner (Phase 0.0)",
+      "evals": [
+        {
+          "id": 13,
+          "statement": "The run output begins with the sandbox banner containing the literal line about EVO_AUTO scope ('Sandbox active (EVO_AUTO scope)').",
+          "source": "SKILL.md, lines 61-70",
+          "defect_type": "required-content",
+          "result": null
+        },
+        {
+          "id": 14,
+          "statement": "The banner states the editable scope as 'bots/**' and NOT 'bots/current/**'; if the banner shows the advised-style 'bots/current/**' scope, this grades FALSE.",
+          "source": "SKILL.md, lines 66, 73, 544",
+          "defect_type": "anti-pattern",
+          "result": null
+        },
+        {
+          "id": 15,
+          "statement": "The banner names the commit marker as '[evo-auto]' and the env var as 'EVO_AUTO=1'; the advised-style '[advised-auto]' / 'ADVISED_AUTO=1' values grade FALSE.",
+          "source": "SKILL.md, lines 67-68, 74-75",
+          "defect_type": "anti-pattern",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Commit format ([evo-auto])",
+      "evals": [
+        {
+          "id": 16,
+          "statement": "Every promotion or rollback commit message body contains the literal token '[evo-auto]' on its own line; a commit body missing '[evo-auto]' as a standalone line grades FALSE.",
+          "source": "SKILL.md, lines 304, 312, 316",
+          "defect_type": "required-content",
+          "result": null
+        },
+        {
+          "id": 17,
+          "statement": "The stack-promotion commit subject is of the form 'evolve: generation N promoted stack (M imps)' and the body lists each stacked imp title as a bullet.",
+          "source": "SKILL.md, lines 296-305",
+          "defect_type": "format",
+          "result": null
+        },
+        {
+          "id": 18,
+          "statement": "A regression-rollback commit body references the reverted promote SHA (e.g. 'Reverts <sha>'); a rollback commit body with no reverted-SHA reference grades FALSE.",
+          "source": "SKILL.md, lines 286, 308-313",
+          "defect_type": "required-content",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Zero-input & autonomy contract",
+      "evals": [
+        {
+          "id": 19,
+          "statement": "When invoked with no flags, the output contains no question to the user asking which defaults to use (pool size, games-per-eval, hours, or map); any '(y/n)' or 'which would you like' prompt grades FALSE.",
+          "source": "SKILL.md, lines 22, 81",
+          "defect_type": "anti-pattern",
+          "result": null
+        },
+        {
+          "id": 20,
+          "statement": "The output reflects the documented safe defaults when no flags are passed: pool size 10, 5 games per eval, 4-hour budget, map Simple64.",
+          "source": "SKILL.md, lines 22, 35-37, 40",
+          "defect_type": "content",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Safety rails & anti-patterns",
+      "evals": [
+        {
+          "id": 21,
+          "statement": "The run does not start a second '--serve' backend process; if the output shows starting more than one --serve process, this grades FALSE.",
+          "source": "SKILL.md, lines 143, 152",
+          "defect_type": "anti-pattern",
+          "result": null
+        },
+        {
+          "id": 22,
+          "statement": "Cleanup does NOT kill the SC2 process (SC2_x64.exe); any output that kills SC2_x64.exe grades FALSE.",
+          "source": "SKILL.md, lines 374, 439, 545",
+          "defect_type": "anti-pattern",
+          "result": null
+        },
+        {
+          "id": 23,
+          "statement": "The pre-flight refuses to start when an advised run is active (data/advised_run_state.json status 'running'); proceeding into the loop while an advised run is active grades FALSE.",
+          "source": "SKILL.md, lines 104-115, 126, 437",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 24,
+          "statement": "On a stack-apply import-check failure, that generation's regression cell is '—' (skipped) and its outcome is 'no promote'; an import-fail generation that still shows a regression result or a promotion grades FALSE.",
+          "source": "SKILL.md, lines 14, 274, 355",
+          "defect_type": "conditional-behavior",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Sanity",
+      "evals": [
+        {
+          "id": 25,
+          "statement": "The morning report is valid, self-contained Markdown (a heading, a header field block, and one Generations table) with no unresolved template placeholders like '<RUN_TS>' or '<sha>' left literally in the rendered output.",
+          "source": "SKILL.md, lines 334-357",
+          "defect_type": "n/a-sanity",
+          "result": null
+        }
+      ]
+    }
+  ]
+}

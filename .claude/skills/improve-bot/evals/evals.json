@@ -1,0 +1,213 @@
+{
+  "skill": "improve-bot",
+  "version": "1.0",
+  "description": "True/false evaluation for the improve-bot skill, anchored on the structured morning-report markdown (Phase 5) plus the run-start header, fixed-string rules, and conditional flavor behavior.",
+  "passing_threshold": "23/25",
+  "categories": [
+    {
+      "name": "Phase 5 morning report — required sections",
+      "evals": [
+        {
+          "id": 1,
+          "statement": "The morning report contains a run-duration line AND a stop-reason line (e.g. 'wall-clock budget exhausted', '3 consecutive failed attempts', 'watchdog trip').",
+          "source": "SKILL.md, line 321",
+          "defect_type": "structural",
+          "result": null
+        },
+        {
+          "id": 2,
+          "statement": "The morning report reports baseline-to-final metric deltas for every measure selected in Phase 1 (not just one measure when multiple were configured).",
+          "source": "SKILL.md, line 322",
+          "defect_type": "content",
+          "result": null
+        },
+        {
+          "id": 3,
+          "statement": "The morning report includes an attempt table whose columns are exactly slug, issue #, branch, result, and SHA.",
+          "source": "SKILL.md, line 323",
+          "defect_type": "structural",
+          "result": null
+        },
+        {
+          "id": 4,
+          "statement": "Every result value in the attempt table is one of the fixed forms 'merged', 'failed', or 'rolled-back' — no free-form result wording.",
+          "source": "SKILL.md, line 323",
+          "defect_type": "required-content",
+          "result": null
+        },
+        {
+          "id": 5,
+          "statement": "The morning report includes a 'Suggested next action' entry phrased as a concrete action (e.g. 'soak-N with same config', 'fix issue #X and retry', 'metric Y regressed, investigate'), not a vague 'continue improving'.",
+          "source": "SKILL.md, line 326",
+          "defect_type": "content",
+          "result": null
+        },
+        {
+          "id": 6,
+          "statement": "The morning report includes links to every GitHub issue opened during the run.",
+          "source": "SKILL.md, line 325",
+          "defect_type": "content",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Tag cheatsheet — fixed-form content",
+      "evals": [
+        {
+          "id": 7,
+          "statement": "The report contains a 'Tag cheatsheet' section.",
+          "source": "SKILL.md, line 327",
+          "defect_type": "structural",
+          "result": null
+        },
+        {
+          "id": 8,
+          "statement": "The tag cheatsheet's list-everything command is exactly 'git tag -l \"improve-bot/run/$RUN_TS/*\"' with the literal glob suffix '/*'.",
+          "source": "SKILL.md, line 329",
+          "defect_type": "required-content",
+          "result": null
+        },
+        {
+          "id": 9,
+          "statement": "The tag cheatsheet's NUKE-whole-run command resets hard to the baseline tag 'improve-bot/run/$RUN_TS/baseline' (not to a remote ref and not to master).",
+          "source": "SKILL.md, line 331",
+          "defect_type": "required-content",
+          "result": null
+        },
+        {
+          "id": 10,
+          "statement": "The tag cheatsheet includes the see-what-landed command 'git log \"improve-bot/run/$RUN_TS/baseline..master\" --oneline'.",
+          "source": "SKILL.md, line 330",
+          "defect_type": "required-content",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Run-start header (Phase 3) — required content",
+      "evals": [
+        {
+          "id": 11,
+          "statement": "The run-start header records BOTH the SKILL_START timestamp (when /improve-bot was invoked) AND the PHASE4_T0 timestamp (when Phase 4 iteration begins).",
+          "source": "SKILL.md, line 198",
+          "defect_type": "required-content",
+          "result": null
+        },
+        {
+          "id": 12,
+          "statement": "The run-start header lists flavor, the selected measures, stop conditions, data state, and the on/off state of the --demo and --self-improve-code flags.",
+          "source": "SKILL.md, line 197",
+          "defect_type": "content",
+          "result": null
+        },
+        {
+          "id": 13,
+          "statement": "When the leak check fired, the run-start header records INTERACTIVE_ELAPSED and which option (a/b/c) was chosen.",
+          "source": "SKILL.md, line 199",
+          "defect_type": "conditional-behavior",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Conditional flavor behavior",
+      "evals": [
+        {
+          "id": 14,
+          "statement": "If the flavor is demo, the run-start header's baseline-tag field reads 'n/a (demo)' rather than naming a created tag.",
+          "source": "SKILL.md, line 201",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 15,
+          "statement": "If the flavor is demo, the output creates and pushes NO git tag (no 'improve-bot/run/.../baseline' tag is created); RUN_TS exists only as a local logging var.",
+          "source": "SKILL.md, line 193",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 16,
+          "statement": "When the classified flavor is training (a metric axis or empty suggestion with no flags), the output enables the daemon (launches with --daemon) and performs no source-code commits.",
+          "source": "SKILL.md, line 40",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 17,
+          "statement": "If --demo and --self-improve-code are both present, the skill stops and asks which the user meant rather than proceeding with a flavor.",
+          "source": "SKILL.md, line 42",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 18,
+          "statement": "When INTERACTIVE_ELAPSED exceeds 30 min at Phase 3 entry, the output STOPS and presents exactly three options (a) Reset / (b) Absorb / (c) Stop rather than silently entering Phase 4.",
+          "source": "SKILL.md, lines 167-175",
+          "defect_type": "conditional-behavior",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Anti-patterns — safety rails",
+      "evals": [
+        {
+          "id": 19,
+          "statement": "The output never issues a plain 'git push --force' (force-push appears only as the '--force-with-lease' automatic-rollback path in Phase 4).",
+          "source": "SKILL.md, line 341",
+          "defect_type": "anti-pattern",
+          "result": null
+        },
+        {
+          "id": 20,
+          "statement": "The output contains no 'git reset --hard' targeting a remote ref (e.g. origin/master); reset-hard appears only against a local tag the skill itself created this run.",
+          "source": "SKILL.md, line 344",
+          "defect_type": "anti-pattern",
+          "result": null
+        },
+        {
+          "id": 21,
+          "statement": "The output never deletes a 'baseline', 'merged', or 'final' tag.",
+          "source": "SKILL.md, line 345",
+          "defect_type": "anti-pattern",
+          "result": null
+        },
+        {
+          "id": 22,
+          "statement": "No git command in the output uses '--no-verify' to bypass hooks.",
+          "source": "SKILL.md, line 343",
+          "defect_type": "anti-pattern",
+          "result": null
+        },
+        {
+          "id": 23,
+          "statement": "In a hybrid run, no source-code merge or push to master occurs unless --self-improve-code is set (without the flag, hybrid degrades to training-only with no code touched).",
+          "source": "SKILL.md, lines 227-228",
+          "defect_type": "conditional-behavior",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Sanity & coverage",
+      "evals": [
+        {
+          "id": 24,
+          "statement": "The Phase 4 wall-clock budget checks measure elapsed time from PHASE4_T0, not from SKILL_START or the baseline tag timestamp.",
+          "source": "SKILL.md, lines 234-236",
+          "defect_type": "n/a-coverage",
+          "result": null
+        },
+        {
+          "id": 25,
+          "statement": "The output is a single coherent run-plan/report that names a flavor and at least one performance measure (default 'win rate vs difficulty 1' when unspecified).",
+          "source": "SKILL.md, lines 52-60",
+          "defect_type": "n/a-sanity",
+          "result": null
+        }
+      ]
+    }
+  ]
+}

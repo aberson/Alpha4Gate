@@ -1,0 +1,199 @@
+{
+  "skill": "a4g-ui-test",
+  "version": "1.0",
+  "description": "True/false evaluation for the a4g-ui-test skill. Anchored on the structured text artifact the skill emits when run: its resolved-config / delegation summary and the downstream PASS/FAIL report, NOT on screenshots or live app state.",
+  "passing_threshold": "21/23",
+  "categories": [
+    {
+      "name": "Invocation & arguments",
+      "evals": [
+        {
+          "id": 1,
+          "statement": "The emitted summary echoes the --problem value as the thing being fixed or verified.",
+          "source": "SKILL.md, lines 25-27",
+          "defect_type": "content",
+          "result": null
+        },
+        {
+          "id": 2,
+          "statement": "If no --max-iter is supplied, the reported max developer-reviewer iterations is exactly 2 (the documented default), not blank or some other number.",
+          "source": "SKILL.md, line 29",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 3,
+          "statement": "The summary does NOT report --keep-evidence as enabled (true) when the invocation omitted the flag, since its documented default is false.",
+          "source": "SKILL.md, line 30",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 4,
+          "statement": "When an --issue number is provided, the report names that exact issue number as the one to close on PASS; when omitted, the report references no issue-close action.",
+          "source": "SKILL.md, lines 27-28",
+          "defect_type": "conditional-behavior",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Step 0 — Path resolution",
+      "evals": [
+        {
+          "id": 5,
+          "statement": "Every exercise/delegation path reported in the output is an absolute path, not a relative one.",
+          "source": "SKILL.md, line 44",
+          "defect_type": "content",
+          "result": null
+        },
+        {
+          "id": 6,
+          "statement": "The reported EXERCISE_PATH resolves under <PROJECT_DIR>/.claude/skills/a4g-ui-test/exercises/ and ends in a Python file from that exercises directory.",
+          "source": "SKILL.md, lines 38-42",
+          "defect_type": "content",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Step 1 — gitignore guard",
+      "evals": [
+        {
+          "id": 7,
+          "statement": "The output reports ensuring a .ui-review-evidence entry exists in .gitignore (added if missing, left alone if present).",
+          "source": "SKILL.md, lines 46-51",
+          "defect_type": "process",
+          "result": null
+        },
+        {
+          "id": 8,
+          "statement": "The gitignore step does NOT append a duplicate .ui-review-evidence line when one is already present (the grep guard suppresses re-adding it).",
+          "source": "SKILL.md, line 50",
+          "defect_type": "anti-pattern",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Step 2 — Delegation config",
+      "evals": [
+        {
+          "id": 9,
+          "statement": "The delegation summary reports the start command as exactly 'bash scripts/live-test.sh'.",
+          "source": "SKILL.md, line 60",
+          "defect_type": "content",
+          "result": null
+        },
+        {
+          "id": 10,
+          "statement": "The reported --ready-url is exactly http://localhost:8765/api/commands/mode (the API readiness probe), not the frontend URL.",
+          "source": "SKILL.md, line 61",
+          "defect_type": "content",
+          "result": null
+        },
+        {
+          "id": 11,
+          "statement": "The reported dashboard --url is exactly http://localhost:5173.",
+          "source": "SKILL.md, line 62",
+          "defect_type": "content",
+          "result": null
+        },
+        {
+          "id": 12,
+          "statement": "The reported --pages list contains exactly the six dashboard routes (root, /#/stats, /#/build-orders, /#/replays, /#/decisions, /#/training) with no missing or extra page.",
+          "source": "SKILL.md, lines 63-64",
+          "defect_type": "structural",
+          "result": null
+        },
+        {
+          "id": 13,
+          "statement": "The reported viewport is exactly 1920x1080.",
+          "source": "SKILL.md, line 65",
+          "defect_type": "content",
+          "result": null
+        },
+        {
+          "id": 14,
+          "statement": "The reported stop-signal is exactly 'process-group', not a per-process kill or other value.",
+          "source": "SKILL.md, line 66",
+          "defect_type": "content",
+          "result": null
+        },
+        {
+          "id": 15,
+          "statement": "Optional flags (--issue, --max-iter, --keep-evidence, --record-video, --record-har) appear in the delegation invocation ONLY when the user supplied them; absent flags are not passed with fabricated values.",
+          "source": "SKILL.md, lines 67-71",
+          "defect_type": "conditional-behavior",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Domain context block",
+      "evals": [
+        {
+          "id": 16,
+          "statement": "The problem statement passed to reviewers includes an ALPHA4GATE CONTEXT block, not the bare user problem alone.",
+          "source": "SKILL.md, lines 76-90",
+          "defect_type": "structural",
+          "result": null
+        },
+        {
+          "id": 17,
+          "statement": "The domain context lists all six dashboard tabs by name: Live, Stats, Build Orders, Replays, Decisions, Training.",
+          "source": "SKILL.md, line 81",
+          "defect_type": "content",
+          "result": null
+        },
+        {
+          "id": 18,
+          "statement": "The domain context states the API server is at localhost:8765 and the dashboard at localhost:5173 (ports not swapped).",
+          "source": "SKILL.md, lines 81-82",
+          "defect_type": "content",
+          "result": null
+        },
+        {
+          "id": 19,
+          "statement": "The domain context preserves the literal backend log patterns 'Cmd OK: <action> <target>' (executed) and 'Cmd FAIL: <action> <target>' (failed) without altering their semantics.",
+          "source": "SKILL.md, line 87",
+          "defect_type": "required-content",
+          "result": null
+        },
+        {
+          "id": 20,
+          "statement": "The domain context states the SC2 game is started manually by the user and the skill starts only the bot + API + frontend.",
+          "source": "SKILL.md, line 89",
+          "defect_type": "content",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Exercise selection & prerequisites",
+      "evals": [
+        {
+          "id": 21,
+          "statement": "When no --exercise-cmd is given, the chosen exercise is test_commands.py (the documented default), not test_mode_switch.py or test_mute.py.",
+          "source": "SKILL.md, lines 96-113",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 22,
+          "statement": "The output surfaces the SC2-must-be-running prerequisite (the skill cannot start SC2 itself) before or alongside launching the flow.",
+          "source": "SKILL.md, lines 116-119",
+          "defect_type": "content",
+          "result": null
+        },
+        {
+          "id": 23,
+          "statement": "The output is valid, parseable text with each delegation arg appearing at most once (no contradictory duplicate --url / --ready-url / --pages values).",
+          "source": "SKILL.md, lines 57-72",
+          "defect_type": "n/a-sanity",
+          "result": null
+        }
+      ]
+    }
+  ]
+}

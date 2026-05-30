@@ -1,0 +1,192 @@
+{
+  "skill": "a4g-dashboard-check",
+  "version": "1.0",
+  "description": "True/false evaluation for the a4g-dashboard-check skill. This is a SIDE-EFFECT skill (screenshots dashboard tabs); assertions anchor on the durable TEXT artifact the skill emits in Step 4 — the detected-tier line and the per-tab summary table with verdicts — not on screenshots or live app state.",
+  "passing_threshold": "20/22",
+  "categories": [
+    {
+      "name": "Step 1 — State detection report",
+      "evals": [
+        {
+          "id": 1,
+          "statement": "The output names exactly one detected review tier drawn from the set {T1, T2, T3, T4, T5} (e.g. begins '**System state:** T1 (Fresh Start)').",
+          "source": "SKILL.md, lines 51-60 (tier table) and line 90 (report tier-line example)",
+          "defect_type": "structural",
+          "result": null
+        },
+        {
+          "id": 2,
+          "statement": "The detected tier is consistent with the probed conditions described in the scenario: it is NOT a higher tier than the probe signals support (e.g. does not report T3 'Game Active' when backend state is idle, and does not report T5 when advised_run_state.json status is not 'running').",
+          "source": "SKILL.md, lines 53-59 (per-tier Conditions column: T3 requires backend state in_game; T5 requires advised_run_state.json status running)",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 3,
+          "statement": "If the scenario states backend OR frontend is DOWN, the output reports which of the two is missing and stops without producing a per-tab review table.",
+          "source": "SKILL.md, line 61",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 4,
+          "statement": "When the scenario states backend or frontend is DOWN, the output does NOT attempt or describe starting the backend or frontend (no 'uv run ... --serve' or 'npm run dev' start action presented as a remediation step taken).",
+          "source": "SKILL.md, line 61 ('report which is missing and stop — do NOT attempt to start them')",
+          "defect_type": "anti-pattern",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Step 4 — Report structure",
+      "evals": [
+        {
+          "id": 5,
+          "statement": "The output contains a Markdown table whose header row has exactly three columns named Tab, Status, and Issues (in that order).",
+          "source": "SKILL.md, lines 87-98 (Step 4 report table template)",
+          "defect_type": "format",
+          "result": null
+        },
+        {
+          "id": 6,
+          "statement": "The summary table includes a row per tab that was actually reviewed in the scenario (a full check covers all tabs; a --tabs-scoped check covers only the named tabs).",
+          "source": "SKILL.md, lines 87-98 (one row per tab) and lines 71-76 (--tabs scoping)",
+          "defect_type": "structural",
+          "result": null
+        },
+        {
+          "id": 7,
+          "statement": "Every Status cell in the summary table is one of the three defined markers: a healthy check, a warning marker, or a broken marker — not free-form prose in the Status column.",
+          "source": "SKILL.md, lines 92-100 (Status uses check / warning / broken markers)",
+          "defect_type": "format",
+          "result": null
+        },
+        {
+          "id": 8,
+          "statement": "Every table row whose Status is a warning or broken marker has a non-empty Issues description; rows are never flagged warning/broken with a blank Issues cell.",
+          "source": "SKILL.md, line 100 ('Flag any tab with issues as warning or broken with a description')",
+          "defect_type": "content",
+          "result": null
+        },
+        {
+          "id": 9,
+          "statement": "A tab that the scenario describes as exhibiting a defect (e.g. duplicate BACKEND-SERVER entries, offline banner, empty game history when DB has games) is flagged with a warning or broken marker — NOT a healthy marker.",
+          "source": "SKILL.md, line 100 and tier failure-indicator columns (lines 113-121)",
+          "defect_type": "conditional-behavior",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Step 2/3 — Capture and evidence",
+      "evals": [
+        {
+          "id": 10,
+          "statement": "The output references the screenshot capture step using the capture script (capture.mjs) rather than claiming screenshots were produced by some other unstated mechanism.",
+          "source": "SKILL.md, lines 64-80 (Step 2 capture via capture.mjs)",
+          "defect_type": "process",
+          "result": null
+        },
+        {
+          "id": 11,
+          "statement": "When the scenario uses --tabs to scope the check, the capture invocation in the output passes those tab names as arguments to capture.mjs (does not capture all tabs).",
+          "source": "SKILL.md, lines 71-76 (capture.mjs with specific tab args)",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 12,
+          "statement": "The output reports the evidence location as the gitignored '.ui-dashboard-evidence/' directory (not an invented or unstated path).",
+          "source": "SKILL.md, line 79",
+          "defect_type": "required-content",
+          "result": null
+        },
+        {
+          "id": 13,
+          "statement": "The output does NOT claim screenshots were captured by navigating to hash URLs; if a capture mechanism detail is stated it is click-based tab navigation.",
+          "source": "SKILL.md, line 77 ('click-based navigation (not hash URLs)')",
+          "defect_type": "anti-pattern",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Tier-specific review criteria",
+      "evals": [
+        {
+          "id": 14,
+          "statement": "Per-tab Issues text references criteria appropriate to the DETECTED tier (e.g. a T1 Fresh Start review does not assert live game time is ticking or minerals/gas are non-zero, which are T3-only expectations).",
+          "source": "SKILL.md, lines 106-121 (T1 criteria) vs lines 142-156 (T3 additional expectations)",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 15,
+          "statement": "For a T1/T2 review, the Live tab Issues text treats 'Waiting for game data...' as a normal/healthy state, not as a failure.",
+          "source": "SKILL.md, line 113 (Live: 'Waiting for game data...' is normal) and line 138",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 16,
+          "statement": "For a T5 Advised Run review, the output does NOT flag 'Advisor CLI failed' alerts during replay-mode games as a defect (they are documented as expected and harmless).",
+          "source": "SKILL.md, line 183",
+          "defect_type": "anti-pattern",
+          "result": null
+        },
+        {
+          "id": 17,
+          "statement": "If the scenario surfaces the Improvements tab in a T1 context, the review verifies the red 'Reset Training Data' button renders — and the output does NOT describe clicking 'Yes' on its confirmation dialog.",
+          "source": "SKILL.md, line 129 ('Do NOT click \"Yes\" during a check')",
+          "defect_type": "anti-pattern",
+          "result": null
+        },
+        {
+          "id": 18,
+          "statement": "For a T3 Game Active review, the Live tab is flagged as a defect if the scenario shows frozen/non-advancing game time, supply, minerals, or gas (real-time data must be advancing).",
+          "source": "SKILL.md, lines 146 and 151-156 (Key T3 checks: not frozen, time advancing, non-zero supply/minerals/gas)",
+          "defect_type": "conditional-behavior",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Anti-patterns and grounding",
+      "evals": [
+        {
+          "id": 19,
+          "statement": "The output does not invent dashboard tabs that are not in the skill's tab set (Live, Stats, Decisions, Training, Loop, Advisor, Improvements, Processes, Alerts; plus Ladder where applicable).",
+          "source": "SKILL.md, lines 111-121 (T1 tab list)",
+          "defect_type": "content",
+          "result": null
+        },
+        {
+          "id": 20,
+          "statement": "Status verdicts are grounded in the scenario's described screenshot contents, not asserted from live app state the skill did not observe (a tab with no described evidence is not marked healthy by assumption).",
+          "source": "SKILL.md, lines 82-83 (Step 3: review each screenshot via Read tool) and line 100",
+          "defect_type": "content",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Sanity / coverage",
+      "evals": [
+        {
+          "id": 21,
+          "statement": "The report is delivered as text (tier line plus the summary table) and is self-contained enough to read without opening the screenshot PNGs.",
+          "source": "SKILL.md, lines 85-100 (Step 4 — Report)",
+          "defect_type": "n/a-sanity",
+          "result": null
+        },
+        {
+          "id": 22,
+          "statement": "The output covers all four procedure steps end-to-end: state detection, capture, per-screenshot review, and the final report.",
+          "source": "SKILL.md, lines 28-101 (Procedure: Step 1 through Step 4)",
+          "defect_type": "n/a-coverage",
+          "result": null
+        }
+      ]
+    }
+  ]
+}
