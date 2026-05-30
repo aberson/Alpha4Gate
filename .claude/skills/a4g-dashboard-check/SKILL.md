@@ -28,8 +28,8 @@ detects the current system state and applies the correct review criteria for tha
 
 ### Step 1 — Detect system state
 
-Before capturing screenshots, probe the system to determine what's running. This
-determines which review tier to apply.
+Check what's running before capturing screenshots; this determines which review
+tier to apply.
 
 ```bash
 # Backend
@@ -48,7 +48,7 @@ curl -s http://localhost:8765/api/training/daemon 2>/dev/null  →  daemon state
 cat data/advised_run_state.json 2>/dev/null  →  status: running|completed|...
 ```
 
-Map the results to a **review tier**:
+Apply the results to a **review tier**:
 
 | Tier | Conditions | Description |
 |------|-----------|-------------|
@@ -84,9 +84,9 @@ Read each screenshot using the Read tool and review against the tier-specific cr
 
 ### Step 4 — Report
 
-Output the detected tier and a summary table:
+Return the detected tier and a summary table:
 
-```
+```text
 **System state:** T1 (Fresh Start) — backend + frontend only
 
 | Tab | Status | Issues |
@@ -97,7 +97,7 @@ Output the detected tier and a summary table:
 | ... | ... | ... |
 ```
 
-Flag any tab with issues as `⚠` (warning) or `✗` (broken) with a description.
+Mark any tab with issues as `⚠` (warning) or `✗` (broken) with a description.
 
 ---
 
@@ -105,8 +105,8 @@ Flag any tab with issues as `⚠` (warning) or `✗` (broken) with a description
 
 ### T1: Fresh Start (backend + frontend only)
 
-The minimum viable state. Dashboard should load, connect via WebSocket, and display
-historical data from the DB. No live game data expected.
+Confirm the dashboard loads, connects via WebSocket, and displays historical data
+from the DB. This is the minimum viable state; no live game data expected.
 
 | Tab | Expected | Failure indicators |
 |-----|----------|-------------------|
@@ -126,7 +126,9 @@ historical data from the DB. No live game data expected.
 - Historical data renders correctly from DB
 - No duplicate backend processes on Processes tab
 - Port 8765 shows "bound" (green)
-- Improvements tab: "Reset Training Data" button visible in Reward Trends controls row (red button, right-aligned). Clicking shows confirmation dialog with warning text and Yes/Cancel buttons. Do NOT click "Yes" during a check — just verify the button and dialog render.
+- Improvements tab: red "Reset Training Data" button renders in the Reward Trends
+  controls row, and its confirmation dialog (warning text + Yes/Cancel) renders.
+  Do NOT click "Yes" during a check — just verify the button and dialog render.
 
 ### T2: SC2 Ready (+ SC2 running)
 
@@ -139,7 +141,7 @@ Same as T1, plus:
 
 ### T3: Game Active (+ live game in progress)
 
-Live data should be streaming. This is the richest state to verify.
+Verify live data is streaming. This is the richest state to check.
 
 | Tab | Additional expectations beyond T1 |
 |-----|----------------------------------|
@@ -156,7 +158,7 @@ Live data should be streaming. This is the richest state to verify.
 
 ### T4: Daemon Active (+ training daemon running)
 
-The daemon auto-spawns games every 60 seconds.
+Note the daemon auto-spawns games every 60 seconds.
 
 | Tab | Additional expectations beyond T1 |
 |-----|----------------------------------|
@@ -173,7 +175,7 @@ The daemon auto-spawns games every 60 seconds.
 
 ### T5: Advised Run Active (+ /improve-bot-advised running)
 
-The most complex state. The advisor loop drives everything.
+Note this is the most complex state; the advisor loop drives everything.
 
 | Tab | Additional expectations beyond T1 |
 |-----|----------------------------------|
