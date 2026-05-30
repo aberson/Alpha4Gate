@@ -293,7 +293,7 @@ If stack-apply promoted anything:
 
 ### 2.4 Commit format
 
-Stack promotion:
+Stack promotion. Subject MUST be exactly `evolve: generation N promoted stack (M imps)` where `N` is the 1-based generation index and `M` is the count of stacked fitness-pass imps; the body MUST list one `- <imp title>` bullet per stacked imp, then a blank line, then `[evo-auto]`. Emit this commit for EVERY promoted generation (e.g. scenario gen 1 → `evolve: generation 1 promoted stack (3 imps)`, gen 4 → `evolve: generation 4 promoted stack (4 imps)`):
 ```text
 evolve: generation 3 promoted stack (3 imps)
 
@@ -331,10 +331,10 @@ The loop exits when ANY of:
 
 ## Phase 4: Morning Report
 
-Write the final report to `$LOGFILE` and print to stdout.
+Write the final report to `$LOGFILE` and print to stdout. The block below is a fully-rendered example, not a template — every `<...>` token (RUN_TS, sha, ISO timestamps, imp titles) MUST be substituted with the run's actual values before printing. The emitted report must contain no literal `<...>` placeholders ANYWHERE — including inside any commit bodies quoted into the report (substitute every `<imp title>` with the real imp name and every `<promote_sha>` / `<sha>` with the real short SHA): only a `# Evolve run — <concrete RUN_TS>` heading, the header field block, and one filled-in Generations table.
 
 ```markdown
-# Evolve run — <RUN_TS>
+# Evolve run — 20260421-2133
 
 - Parent (start): v5
 - Parent (end):   v9
