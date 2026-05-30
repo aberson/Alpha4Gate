@@ -86,18 +86,25 @@ Read each screenshot using the Read tool and review against the tier-specific cr
 
 Return the detected tier and a summary table:
 
+Begin the report by stating that screenshots were captured by the `capture.mjs` script (name it explicitly — do not say "captured all tabs" without naming the mechanism) and report the evidence location as the gitignored `.ui-dashboard-evidence/` directory (the path from Step 2 — never an invented or unstated path).
+
+The summary table has exactly three columns — **Tab**, **Status**, **Issues** (in that order). Every reviewed-tab row's **Issues** cell MUST cite the specific per-tab PNG its verdict rests on — the file `capture.mjs` wrote for that tab, named `<tab>.png` under `.ui-dashboard-evidence/` (e.g. `.ui-dashboard-evidence/live.png`, `.ui-dashboard-evidence/processes.png`). The tab name maps to the PNG basename verbatim. A row whose verdict cites no capture file does NOT satisfy the proof discipline — do not emit a row without its evidence file.
+
 ```text
 **System state:** T1 (Fresh Start) — backend + frontend only
+**Capture:** all 9 tabs captured via `.claude/skills/a4g-dashboard-check/capture.mjs`, saved to `.ui-dashboard-evidence/` (gitignored)
 
 | Tab | Status | Issues |
 |-----|--------|--------|
-| Live | ✓ | Connected, idle, "Waiting for game data..." |
-| Stats | ✓ | 52 games displayed, 0% win rate, game history paginated |
-| Processes | ⚠ | 2 duplicate BACKEND-SERVER entries |
+| Live | ✓ | `.ui-dashboard-evidence/live.png` — Connected, idle, "Waiting for game data..." (expected/normal at T1/T2 — no game started yet, not a defect) |
+| Stats | ✓ | `.ui-dashboard-evidence/stats.png` — 52 games displayed, 0% win rate, game history paginated |
+| Processes | ⚠ | `.ui-dashboard-evidence/processes.png` — 2 duplicate BACKEND-SERVER entries |
 | ... | ... | ... |
 ```
 
 Mark any tab with issues as `⚠` (warning) or `✗` (broken) with a description.
+
+Any row whose Issues cell describes a documented expected/benign state MUST explicitly label it `expected` or `normal` in the cell text itself — never rely on the `✓` marker alone to imply it. This distinguishes an examined-and-expected state from a silent unexamined pass. Examples that MUST carry an explicit `expected/normal` tag: T1/T2 Live "Waiting for game data..." (no game started yet — normal); T5 Alerts "Advisor CLI failed" during replay-mode games (expected and harmless). Genuine defects keep their `⚠`/`✗` description as before.
 
 ---
 
