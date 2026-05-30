@@ -116,7 +116,7 @@ Based on the picked finding's classification, produce ONE of the following outpu
 
 ### `[build-step]` → emit `/improve-bot` invocation
 
-```
+```text
 Recommended next invocation:
 
     /improve-bot --self-improve-code "<title>: <brief scope from summary>"
@@ -130,7 +130,7 @@ Notes:
 
 ### `[research]` → offer to file / comment a GH issue
 
-```
+```text
 This is research, not /improve-bot material.
 
 Proposed action: file a new issue (or comment on an existing one) with the
@@ -147,7 +147,7 @@ offline experimentation facility and /build-step is the wrong tool.
 
 ### `[observation-only]` → no action
 
-```
+```text
 This finding records a POSITIVE validation. No further action needed.
 If you want to document the validation for future reference, consider:
   - Adding a note to the related plan doc or README.
@@ -157,7 +157,7 @@ If you want to document the validation for future reference, consider:
 
 ### `[skill-fix]` → manual skill edit + memory candidate
 
-```
+```text
 /improve-bot cannot fix itself. The recommended flow is:
   1. Edit the skill file directly in .claude/skills/<skill>/SKILL.md
   2. Commit + push the fix as its own commit.
@@ -170,7 +170,7 @@ content for this finding right now.
 
 ### `[ambiguous]` → clarify
 
-```
+```text
 This finding isn't clearly classifiable. Before acting:
   - Ask the user one sharp question that would disambiguate type.
   - Do NOT guess. Unknown targets waste run budgets.
