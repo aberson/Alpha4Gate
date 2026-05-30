@@ -113,6 +113,26 @@ Note the three exercise scripts in `exercises/`, each targeting a different UI a
 Pass `--exercise-cmd` with an absolute path to select a specific exercise.
 Default (no `--exercise-cmd`) uses `test_commands.py`.
 
+## Reporting — evidence-cited verdict
+
+The durable output of every run is a PASS/FAIL report. Per dev `.claude/rules` review-proof / evidence-citation discipline, **no verdict may be asserted without a cited capture**: each per-page and per-flow verdict MUST name the specific screenshot or evidence artifact (filename/path under the evidence directory, e.g. `.ui-review-evidence/<page>.png`, `.ui-review-evidence/<flow>-after.png`, or the relevant log/HAR file) that it rests on. A result with no cited capture is invalid — re-run to capture the missing artifact rather than asserting an uncited verdict.
+
+Emit the report in this shape:
+
+```text
+Overall: PASS | FAIL  (evidence: .ui-review-evidence/)
+Per page:
+- Live           PASS — .ui-review-evidence/live.png
+- Stats          PASS — .ui-review-evidence/stats.png
+- Build Orders   FAIL — .ui-review-evidence/build-orders.png (empty table; see backend.log line N)
+- ...
+Per flow:
+- command submit PASS — .ui-review-evidence/test_commands-before.png + test_commands-after.png
+- ...
+```
+
+When `--keep-evidence` is not set, copy the cited artifacts to a preserved location (or pass `--keep-evidence`) before the run tears down the evidence directory, so the report's cited filenames remain resolvable after the run.
+
 ## Prerequisites
 
 - SC2 must be running (the skill cannot start SC2 itself)
