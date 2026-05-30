@@ -573,8 +573,15 @@ Use `TaskStop` on every background task ID that was started during this iteratio
 
 ```bash
 # 5. Verify port 8765 is free — block until it is (max 15 seconds)
+#    Runs EVERY iteration (training-only iterations included — there is no soak
+#    to gate on, so this is the only between-iteration port check). On success,
+#    echo a positive confirmation so the run output records that the port was
+#    free before the next iteration's Phase 1 starts.
 for attempt in 1 2 3 4 5; do
-    python -c "import socket; s=socket.socket(); r=s.connect_ex(('127.0.0.1',8765)); s.close(); exit(0 if r!=0 else 1)" && break
+    if python -c "import socket; s=socket.socket(); r=s.connect_ex(('127.0.0.1',8765)); s.close(); exit(0 if r!=0 else 1)"; then
+        echo "Port 8765 confirmed free — OK to start next iteration's Phase 1"
+        break
+    fi
     echo "Port 8765 still in use, waiting..."
     sleep 3
 done
