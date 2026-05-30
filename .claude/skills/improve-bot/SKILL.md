@@ -7,8 +7,6 @@ argument: The improvement suggestion (optional). Examples: "raise win rate vs di
 
 # /improve-bot
 
-Entry point for a long autonomous run that aims to improve the Alpha4Gate bot along some measurable axis.
-
 ## Three camps of "improvement"
 
 | Camp | Flavors | What changes | Flag |
@@ -26,8 +24,6 @@ Entry point for a long autonomous run that aims to improve the Alpha4Gate bot al
 | **dev**       | Plan doc → `/build-phase` → commits                                          | You already know what to fix                      |
 | **hybrid**    | Training reacts to failures, opens issues, spawns `/build-step` work, loops  | Overnight unattended code self-improvement        |
 
-The `--self-improve-code` flag gates autonomous **source-code** changes (Phase 4 hybrid loop). Without it, the skill will not merge or push code on its own. The `--demo` flag forces the demo flavor and disables all mutation paths (daemon off, `data/` snapshot-verified, no git writes).
-
 ---
 
 ## Phase 0: Classify the suggestion
@@ -39,15 +35,13 @@ Parse the argument. Separate any flags (`--demo`, `--self-improve-code`) from th
 3. **dev** — suggestion names a known bug or a concrete code change (e.g. "fix orphaned transitions", references a GH issue). `--self-improve-code` is not required for dev because the user has already authorized a specific fix by naming it.
 4. **training** — default: suggestion names a metric axis or is absent (e.g. "raise win rate vs diff 1", or empty). Daemon ON, learning self-improvement via normal training loop.
 
-Flag conflicts: `--demo` + `--self-improve-code` is contradictory — stop and ask which one the user meant. `--demo` silently disables any `--self-improve-code` authorization for the duration of the run.
-
-If the suggestion is ambiguous, ask ONE disambiguating question, then proceed. Do not punt with "too vague" — the whole point of this skill is that "improve the bot's performance" IS a valid request, you just need to pick the measure.
+Flag conflicts: `--demo` + `--self-improve-code` is contradictory — stop and ask which one the user meant. `--demo` silently disables any `--self-improve-code` authorization for the duration of the run. If the suggestion is ambiguous, ask ONE disambiguating question, then proceed — do not punt with "too vague"; "improve the bot's performance" IS a valid request, you just need to pick the measure.
 
 ---
 
 ## Phase 1: Front-loaded conversation
 
-These questions lock the run down so it can go unattended. Scale them down based on what the suggestion already answered — never re-ask what's already clear.
+These questions lock the run down so it can go unattended. Scale them to what the suggestion already answered — never re-ask what's already clear.
 
 1. **Performance measure** (the gate). Options:
    - Win rate vs difficulty N
@@ -127,15 +121,11 @@ Canonical pre-flight lives in `documentation/soak-test-runs/README.md`. Execute 
 
 Note that §3.5 specifically is the alerts-pipeline verification — do not conflate it with "the pre-flight" broadly. Both §2 and §3 must pass.
 
-For **demo** flavor, §2 still applies (minus daemon config values, since the daemon is off), and §3 still applies except §3.2 runs **without** `--daemon`. Run §3.5 as written — the alerts-pipeline verification is exactly what demo mode is for.
-
-If either document's section numbers drift, read `documentation/soak-test-runs/README.md` top-to-bottom to find the current checklist boundaries and adapt. Do not invent pre-flight items that aren't in the doc.
+For **demo** flavor, §2 still applies (minus daemon config values, since the daemon is off), and §3 still applies except §3.2 runs **without** `--daemon`. Run §3.5 as written — the alerts-pipeline verification is exactly what demo mode is for. If either document's section numbers drift, read `documentation/soak-test-runs/README.md` top-to-bottom to find the current checklist boundaries and adapt — do not invent pre-flight items that aren't in the doc.
 
 ### Launch command
 
-Read the most recent `documentation/soak-test-runs/soak-*.md` to learn the current soak-launch convention. **Mimic it exactly** — do not invent a new invocation. If the convention is unclear, stop and ask.
-
-For **demo** flavor, take the most recent soak launch command and remove the `--daemon` flag — everything else stays (env vars, tee, DEBUG_ENDPOINTS, etc.). Do not invent a different backend entry point.
+Read the most recent `documentation/soak-test-runs/soak-*.md` to learn the current soak-launch convention. **Mimic it exactly** — do not invent a new invocation. If the convention is unclear, stop and ask. For **demo** flavor, take that same launch command and remove the `--daemon` flag — everything else stays (env vars, tee, DEBUG_ENDPOINTS, etc.); do not invent a different backend entry point.
 
 ### Stdout buffering + tee from start
 
@@ -160,7 +150,7 @@ All subsequent soak launches use `2>&1 | tee -a "$LOGFILE"`.
 
 Before doing anything else in Phase 3, check how long the **interactive** portion of the run has been going. Record `SKILL_START` as the timestamp when Phase 0 first ran (clock-wall time when the user invoked `/improve-bot`). At Phase 3 entry, compute:
 
-```
+```text
 INTERACTIVE_ELAPSED = now - SKILL_START
 ```
 
@@ -231,9 +221,7 @@ Write a run-start header to `$LOGFILE`:
 
 ## Phase 4: Self-improve-code loop (hybrid + `--self-improve-code` only)
 
-Inner loop. Alternates a short training window with a reactive dev attempt. Repeats until **wall-clock budget (measured from `PHASE4_T0`, NOT from `SKILL_START` or the baseline tag)** is exhausted OR 3 consecutive failed attempts OR a watchdog trip during a validation soak.
-
-At every iteration boundary, recompute `now - PHASE4_T0` and compare against the configured budget. If it exceeds the budget, stop the loop cleanly and go to Phase 5 regardless of how much work is in flight.
+Inner loop. Alternates a short training window with a reactive dev attempt. Repeats until **wall-clock budget (measured from `PHASE4_T0`, NOT from `SKILL_START` or the baseline tag)** is exhausted OR 3 consecutive failed attempts OR a watchdog trip during a validation soak. At every iteration boundary, recompute `now - PHASE4_T0` and compare against the configured budget; if it exceeds the budget, stop the loop cleanly and go to Phase 5 regardless of how much work is in flight.
 
 ### One attempt
 
@@ -253,7 +241,7 @@ At every iteration boundary, recompute `now - PHASE4_T0` and compare against the
    - Capture issue number as `ISSUE`.
 
 4. **Hand off to `/build-step`** on the attempt branch:
-   ```
+   ```text
    /build-step --problem "<issue body verbatim>" --issue $ISSUE --reviewers code
    ```
 
@@ -286,7 +274,7 @@ At every iteration boundary, recompute `now - PHASE4_T0` and compare against the
 
 ### Automatic rollback
 
-Triggered by: post-merge validation soak regression OR post-merge quality gate failure (shouldn't happen since we gate before merging, but belt-and-suspenders).
+Triggered by: post-merge validation soak regression OR post-merge quality gate failure.
 
 ```bash
 PREV=$(git tag -l "improve-bot/run/$RUN_TS/*/merged" | tail -n 2 | head -n 1)
