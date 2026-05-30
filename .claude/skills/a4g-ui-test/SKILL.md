@@ -1,13 +1,12 @@
 ---
 name: a4g-ui-test
-description: Alpha4Gate wrapper for ui-review-loop. Starts the bot + API + frontend, exercises the command panel via Playwright, and runs three evidence-based reviewers. Invoke as "/a4g-ui-test --problem '...' [--issue N]".
+description: Alpha4Gate wrapper for ui-review-loop. Starts bot + API + frontend, drives the command panel via Playwright, runs three reviewers. Invoke as "/a4g-ui-test --problem '...'".
 user-invocable: true
 ---
 
 # Alpha4Gate UI Test
 
-Wrapper around `/ui-review-loop` with Alpha4Gate-specific config: startup command,
-dashboard URL, page list, exercise script, and domain context for reviewers.
+Use `/ui-review-loop` with Alpha4Gate-specific config: startup command, dashboard URL, page list, exercise script, and domain context for reviewers.
 
 ## When to use
 
@@ -18,7 +17,7 @@ Use this when verifying Alpha4Gate UI behavior end-to-end:
 
 ## Invocation
 
-```
+```text
 /a4g-ui-test --problem "Fix missing WS broadcast for inline-parsed commands" --issue 12
 ```
 
@@ -41,7 +40,7 @@ SKILL_DIR="$PROJECT_DIR/.claude/skills/a4g-ui-test"
 EXERCISE_PATH="$SKILL_DIR/exercises/test_commands.py"
 ```
 
-All exercise paths are resolved to **absolute paths** before delegation.
+Always resolve exercise paths to **absolute paths** before delegation, never relative ones.
 
 ### Step 1 — Ensure .gitignore entry
 
@@ -52,16 +51,18 @@ grep -q '\.ui-review-evidence' .gitignore 2>/dev/null || echo '.ui-review-eviden
 
 ### Step 2 — Delegate to ui-review-loop
 
-Invoke `/ui-review-loop` with Alpha4Gate config:
+Run `/ui-review-loop` with the Alpha4Gate config below:
 
-```
+```text
 /ui-review-loop \
   --problem "<user problem>\n\nALPHA4GATE CONTEXT:\n<domain context below>" \
   --start-cmd "bash scripts/live-test.sh" \
   --exercise-cmd "<EXERCISE_PATH absolute>" \
   --ready-url "http://localhost:8765/api/commands/mode" \
   --url "http://localhost:5173" \
-  --pages '["http://localhost:5173", "http://localhost:5173/#/stats", "http://localhost:5173/#/build-orders", "http://localhost:5173/#/replays", "http://localhost:5173/#/decisions", "http://localhost:5173/#/training"]' \
+  --pages '["http://localhost:5173", "http://localhost:5173/#/stats",
+            "http://localhost:5173/#/build-orders", "http://localhost:5173/#/replays",
+            "http://localhost:5173/#/decisions", "http://localhost:5173/#/training"]' \
   --viewport "1920x1080" \
   --stop-signal "process-group" \
   --issue <if provided> \
@@ -73,9 +74,9 @@ Invoke `/ui-review-loop` with Alpha4Gate config:
 
 ### Domain context appended to problem statement
 
-The following is appended to `--problem` so all three reviewers understand Alpha4Gate:
+Add the following to `--problem` so all three reviewers understand Alpha4Gate:
 
-```
+```text
 ALPHA4GATE CONTEXT:
 - Dashboard at localhost:5173 has tabs: Live, Stats, Build Orders, Replays, Decisions, Training
 - API server at localhost:8765 serves REST + WebSocket endpoints
@@ -91,7 +92,7 @@ ALPHA4GATE CONTEXT:
 
 ### Exercise scripts
 
-Three exercise scripts in `exercises/`, each targeting a different UI area:
+Note the three exercise scripts in `exercises/`, each targeting a different UI area:
 
 **`test_commands.py`** (default) — Command panel submit flow:
 1. Waits for command input to be visible
@@ -109,7 +110,7 @@ Three exercise scripts in `exercises/`, each targeting a different UI area:
 2. Clicks to mute, verifies text changes to "Claude Muted"
 3. Clicks to unmute, verifies text returns to "Mute Claude"
 
-To use a specific exercise, pass `--exercise-cmd` with its absolute path.
+Pass `--exercise-cmd` with an absolute path to select a specific exercise.
 Default (no `--exercise-cmd`) uses `test_commands.py`.
 
 ## Prerequisites
