@@ -2,7 +2,7 @@
   "skill": "improve-bot-evolve",
   "version": "1.0",
   "description": "True/false evaluation for the improve-bot-evolve skill. Anchors on the structured Phase 4 Morning Report (header fields, generation table, columns), the run-start banner, the [evo-auto] commit formats, and the zero-input / safety-rail rules.",
-  "passing_threshold": "23/25",
+  "passing_threshold": "30/32",
   "categories": [
     {
       "name": "Morning Report structure (Phase 4)",
@@ -198,6 +198,60 @@
           "statement": "On a stack-apply import-check failure, that generation's regression cell is '—' (skipped) and its outcome is 'no promote'; an import-fail generation that still shows a regression result or a promotion grades FALSE.",
           "source": "SKILL.md, lines 14, 274, 355",
           "defect_type": "conditional-behavior",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Quality bars (adversarial)",
+      "evals": [
+        {
+          "id": 26,
+          "statement": "If the 'Stop reason:' field is 'wall-clock', the elapsed wall-clock time (Finished minus Started) is at least the 'Wall-clock budget:' value; a wall-clock stop whose elapsed span is shorter than the stated budget grades FALSE.",
+          "source": "SKILL.md, lines 322-328, 342-347",
+          "defect_type": "internal-inconsistency",
+          "result": null
+        },
+        {
+          "id": 27,
+          "statement": "If the 'Stop reason:' field is 'pool-exhausted', the report body states that the pool emptied (no active imps remained / pool refresh produced none) AND the elapsed wall-clock span is less than the 'Wall-clock budget:' value; a pool-exhausted report lacking that statement, or whose elapsed span already met the budget, grades FALSE.",
+          "source": "SKILL.md, lines 324-328",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 28,
+          "statement": "The morning report names the run's baseline restore point — the 'evolve/run/<RUN_TS>/baseline' git tag — so the operator can fully revert the run from the report alone; a report that omits any reference to the baseline tag (or restore point) grades FALSE.",
+          "source": "SKILL.md, lines 172-178, 506-515, 528-534",
+          "defect_type": "missing-content",
+          "result": null
+        },
+        {
+          "id": 29,
+          "statement": "Each Generations table row with a promotion outcome is traceable to its '[evo-auto]' promote commit in the report — the report cites the promote commit SHA (or short SHA) for every promoted generation; a promoted row with no commit SHA recorded in the report grades FALSE.",
+          "source": "SKILL.md, lines 20, 274-277, 296-305",
+          "defect_type": "missing-content",
+          "result": null
+        },
+        {
+          "id": 30,
+          "statement": "Every Generations table row whose outcome is 'ROLLBACK' is accompanied in the report body by the reverted promote SHA (the commit that the regression 'git revert' undid); a ROLLBACK row with no reverted-SHA reference anywhere in the report grades FALSE.",
+          "source": "SKILL.md, lines 286, 308-313",
+          "defect_type": "missing-content",
+          "result": null
+        },
+        {
+          "id": 31,
+          "statement": "When a fitness phase reports a crashed imp (e.g. a '(+N crash)' annotation in a fitness cell), the report accounts for that imp's terminal disposition as evicted/surfaced — a crash is never silently dropped from the eviction/disposition accounting; a report that shows a crash annotation but never reflects the crashed imp in its eviction or disposition reporting grades FALSE.",
+          "source": "SKILL.md, lines 247, 266, 355; .claude/rules/code-quality.md (silent exception fallthrough)",
+          "defect_type": "silent-fallthrough",
+          "result": null
+        },
+        {
+          "id": 32,
+          "statement": "The report enumerates the run's '[evo-auto]' commits (promotions and regression reverts) such that the number enumerated equals 'Generations promoted:' plus the count of 'ROLLBACK' outcome rows; a report that records no [evo-auto] commit list, or whose enumerated count disagrees with promoted-plus-rollback, grades FALSE.",
+          "source": "SKILL.md, lines 20, 286, 296-313, 345, 353-356",
+          "defect_type": "internal-inconsistency",
           "result": null
         }
       ]

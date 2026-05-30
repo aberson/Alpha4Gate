@@ -2,7 +2,7 @@
   "skill": "improve-bot",
   "version": "1.0",
   "description": "True/false evaluation for the improve-bot skill, anchored on the structured morning-report markdown (Phase 5) plus the run-start header, fixed-string rules, and conditional flavor behavior.",
-  "passing_threshold": "23/25",
+  "passing_threshold": "30/32",
   "categories": [
     {
       "name": "Phase 5 morning report — required sections",
@@ -205,6 +205,60 @@
           "statement": "The output is a single coherent run-plan/report that names a flavor and at least one performance measure (default 'win rate vs difficulty 1' when unspecified).",
           "source": "SKILL.md, lines 52-60",
           "defect_type": "n/a-sanity",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Quality bars (adversarial)",
+      "evals": [
+        {
+          "id": 26,
+          "statement": "When at least one automatic rollback fired during the run, the morning report's rollback log names the specific prior tag the run reset HEAD to (the '/<slug>/merged' or '/baseline' tag used as the rollback target), not merely a free-text note that 'a rollback occurred'.",
+          "source": "SKILL.md, lines 280-285 (PREV target) + line 313 ('Rollback log if any fired'); code-quality.md (traceability)",
+          "defect_type": "content",
+          "result": null
+        },
+        {
+          "id": 27,
+          "statement": "When the run stopped because of 3 consecutive failed attempts (zero merged work), the morning report states the no-progress outcome explicitly and reports the baseline-to-final metric delta as zero/unchanged (or regressed) WITHOUT claiming any improvement; failures are surfaced, not hidden behind an empty or omitted attempt table.",
+          "source": "SKILL.md, lines 292 (3 consecutive failed -> stop) + 322-323 (deltas + attempt table); code-quality.md silent-exception-fallthrough / 'failures not hidden'",
+          "defect_type": "content",
+          "result": null
+        },
+        {
+          "id": 28,
+          "statement": "For a demo run, the report includes an explicit data/-integrity verdict line stating the stop-time diff of data/ against the data.demo-snapshot was clean (no mutation, demo contract upheld) — not merely an implicit 'demo finished'.",
+          "source": "SKILL.md, line 198 + lines 64, 112 (snapshot is the contract; any diff flagged loudly)",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 29,
+          "statement": "For a demo run, the report states the outcome of the §3.5 synthetic alert pre-flight (the alerts-pipeline verification), since that verification is the primary deliverable of demo flavor.",
+          "source": "SKILL.md, lines 196, 120-122",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 30,
+          "statement": "When the Phase 3 wall-clock leak check fired and the operator chose (a) Reset, the run-start header records that the unsupervised daemon work was archived as a 'bonus observation' (not silently discarded) AND that PHASE4_T0 was re-anchored to the post-reset start time used for the Phase 4 budget.",
+          "source": "SKILL.md, lines 161, 174 (option a archives + re-anchors); scenario_3 context",
+          "defect_type": "conditional-behavior",
+          "result": null
+        },
+        {
+          "id": 31,
+          "statement": "The morning report references posting a short summary to the umbrella GitHub issue (the run's 'self-improve-run'-labeled issue) so the report is phone-readable — not only the local run-log writeup.",
+          "source": "SKILL.md, line 323",
+          "defect_type": "content",
+          "result": null
+        },
+        {
+          "id": 32,
+          "statement": "When a rollback fired, the attempt-table row for the rolled-back attempt carries the fixed result token 'rolled-back' (and the corresponding GitHub issue is reported as commented with the regression, not silently closed as a clean success).",
+          "source": "SKILL.md, lines 266, 323 (result tokens) + line 314 (rollback log)",
+          "defect_type": "required-content",
           "result": null
         }
       ]

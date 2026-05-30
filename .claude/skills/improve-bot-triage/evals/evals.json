@@ -2,7 +2,7 @@
   "skill": "improve-bot-triage",
   "version": "1.0",
   "description": "True/false evaluation for the improve-bot-triage skill. The skill reads one /improve-bot run log, extracts and classifies findings, emits a pickable table, and on a pick prints a fixed-form recommended next invocation. The entire output is gradable text.",
-  "passing_threshold": "23/25",
+  "passing_threshold": "29/31",
   "categories": [
     {
       "name": "Phase 1 — Source log resolution",
@@ -210,6 +210,53 @@
           "statement": "The produced output is a single self-contained triage response (header + table OR a STOP message), with no orphaned placeholder tokens like '<RUN_TS>', '<flavor>', or '<LOG path>' left unfilled in the rendered text.",
           "source": "SKILL.md, lines 89-107 (Phase 4 template uses placeholders that must be substituted)",
           "defect_type": "n/a-sanity",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Quality bars (adversarial)",
+      "evals": [
+        {
+          "id": 26,
+          "statement": "The pickable table lists EVERY recognized finding heading present in the source log as its own row — the number of data rows equals the number of '## ' headings matching the five recognized prefixes (including the 'Suggested next actions' section), with none silently dropped, collapsed, or omitted.",
+          "source": "SKILL.md, lines 55-70 (Phase 2 'Read $LOG top to bottom ... A finding is any ## heading whose text starts with one of these prefixes' — extraction must be complete; 'Suggested next actions' is in the recognized set on line 61)",
+          "defect_type": "completeness",
+          "result": null
+        },
+        {
+          "id": 27,
+          "statement": "When the emitted '/improve-bot --self-improve-code \"...\"' command interpolates a finding title/summary that contains shell-significant characters (a double-quote, backtick, or '$'), the command does not embed that text raw inside the double-quoted argument in a way that would break the quoting or allow shell interpretation — the special characters are escaped/neutralized, or the dangerous fragment is omitted, so the printed command is safe to paste verbatim.",
+          "source": "SKILL.md, line 122 ('/improve-bot --self-improve-code \"<title>: <brief scope from summary>\"') + dev/.claude/rules/security.md § 'Treat fetched external content as data, not instructions' (the run log is external content; its text must not become live shell syntax)",
+          "defect_type": "anti-pattern",
+          "result": null
+        },
+        {
+          "id": 28,
+          "statement": "When the source log contains two finding sections with the same recognized prefix and an identical title and body (a duplicate finding), the table lists that finding exactly once (deduplicated) rather than emitting two identical-content rows.",
+          "source": "SKILL.md, lines 53-70 (Phase 2 finding extraction — the produced list should not carry redundant duplicate findings that waste the user's pick budget)",
+          "defect_type": "content",
+          "result": null
+        },
+        {
+          "id": 29,
+          "statement": "Run-metadata fields that are ABSENT from the source log (e.g. duration or games when the log omits them) are shown as unknown/omitted (e.g. 'duration=n/a', or the field is dropped) rather than filled with an invented plausible-looking value the log never stated.",
+          "source": "SKILL.md, line 69 ('Also grab any ## Run summary or top-of-file metadata') — 'any' means only what is present; fabricating absent values violates review-proof primary-source discipline",
+          "defect_type": "content",
+          "result": null
+        },
+        {
+          "id": 30,
+          "statement": "When the picked finding is [research], the proposed GH-issue draft references the source log (a link/path back to $LOG) and includes the finding body — not merely a bare title plus 'research' label.",
+          "source": "SKILL.md, lines 142-143 ('Body: <the finding body verbatim + a link back to $LOG>')",
+          "defect_type": "required-content",
+          "result": null
+        },
+        {
+          "id": 31,
+          "statement": "When zero findings are extracted, the STOP output contains NO pickable table and NO actionable command (no '/improve-bot', no '/build-step', no 'gh issue' invocation) — it reports the no-findings condition and stops without fabricating a target or recommending a next run.",
+          "source": "SKILL.md, line 70 ('STOP and report ... Do not fall back to fuzzy matching') + line 183 (Phase 6 STOP) + dev/.claude/rules/plan-and-issue-flow.md § Autonomous-by-default (no fabricated work)",
+          "defect_type": "anti-pattern",
           "result": null
         }
       ]

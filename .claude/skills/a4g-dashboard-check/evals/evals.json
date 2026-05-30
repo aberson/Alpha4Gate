@@ -2,7 +2,7 @@
   "skill": "a4g-dashboard-check",
   "version": "1.0",
   "description": "True/false evaluation for the a4g-dashboard-check skill. This is a SIDE-EFFECT skill (screenshots dashboard tabs); assertions anchor on the durable TEXT artifact the skill emits in Step 4 — the detected-tier line and the per-tab summary table with verdicts — not on screenshots or live app state.",
-  "passing_threshold": "20/22",
+  "passing_threshold": "25/27",
   "categories": [
     {
       "name": "Step 1 — State detection report",
@@ -184,6 +184,46 @@
           "statement": "The output covers all four procedure steps end-to-end: state detection, capture, per-screenshot review, and the final report.",
           "source": "SKILL.md, lines 28-101 (Procedure: Step 1 through Step 4)",
           "defect_type": "n/a-coverage",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Quality bars (adversarial)",
+      "evals": [
+        {
+          "id": 23,
+          "statement": "Every reviewed-tab row in the summary table cites the specific screenshot its verdict rests on — naming the tab's evidence file (e.g. 'processes.png', 'live.png') or an explicit per-tab reference into '.ui-dashboard-evidence/'. A row whose Issues/verdict cites no capture at all does NOT satisfy this.",
+          "source": "SKILL.md lines 82-83 (Step 3: review each screenshot via Read) + line 79 (.ui-dashboard-evidence/) + capture.mjs line 71 (per-tab PNG named '<tab>.png'); review-proof discipline (.claude/rules + CLAUDE.md): every verdict cites the specific evidence it rests on.",
+          "defect_type": "evidence-citation",
+          "result": null
+        },
+        {
+          "id": 24,
+          "statement": "Every row marked with a warning or broken marker attributes the defect to specific observed screenshot content — i.e. the Issues cell says what was seen in that tab's capture (e.g. 'Processes screenshot shows two BACKEND-SERVER rows'), not merely a bare label or restatement of the symptom name with no observed-evidence grounding.",
+          "source": "SKILL.md line 100 (flag with a description) + lines 82-83 (review the screenshot); review-proof: no claim without observed, cited evidence.",
+          "defect_type": "evidence-citation",
+          "result": null
+        },
+        {
+          "id": 25,
+          "statement": "For an un-scoped (no --tabs) full check, the report represents every tab the capture step produced as its own row and does not silently drop captured tabs; and any tab whose screenshot did not capture (capture.mjs would log '✗ <tab>' with no PNG saved) is explicitly marked uncaptured/unverified rather than omitted or marked healthy by assumption.",
+          "source": "SKILL.md lines 87-98 (one row per tab) + capture.mjs lines 18-30 (full tab set) and lines 74-76 (per-tab capture-failure path logs '✗' and saves no PNG); grounding: absence of a capture is not a pass.",
+          "defect_type": "coverage",
+          "result": null
+        },
+        {
+          "id": 26,
+          "statement": "Rows representing documented expected/benign states explicitly label them as expected or normal in the Issues cell (e.g. T1/T2 Live 'Waiting for game data...' tagged as normal; T5 'Advisor CLI failed' replay-mode alert tagged as expected/harmless) so the verdict cannot be misread as a silent unexamined pass.",
+          "source": "SKILL.md line 113 ('Waiting for game data...' is normal), line 183 ('Advisor CLI failed' ... expected and harmless); distinguish expected-state vs defect explicitly.",
+          "defect_type": "false-positive-discipline",
+          "result": null
+        },
+        {
+          "id": 27,
+          "statement": "The detected-tier line cites the specific probe evidence it rests on — the relevant Step 1 probe outputs (e.g. backend /api/status state, SC2 process present/absent, daemon state, advised_run_state.json status) — rather than asserting the tier with no supporting probe results stated.",
+          "source": "SKILL.md lines 29-60 (Step 1 probes determine tier) + line 90 (tier line); review-proof: the tier verdict must cite the probe evidence it rests on.",
+          "defect_type": "evidence-citation",
           "result": null
         }
       ]

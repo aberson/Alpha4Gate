@@ -2,7 +2,7 @@
   "skill": "a4g-ui-test",
   "version": "1.0",
   "description": "True/false evaluation for the a4g-ui-test skill. Anchored on the structured text artifact the skill emits when run: its resolved-config / delegation summary and the downstream PASS/FAIL report, NOT on screenshots or live app state.",
-  "passing_threshold": "21/23",
+  "passing_threshold": "27/29",
   "categories": [
     {
       "name": "Invocation & arguments",
@@ -191,6 +191,53 @@
           "statement": "The output is valid, parseable text with each delegation arg appearing at most once (no contradictory duplicate --url / --ready-url / --pages values).",
           "source": "SKILL.md, lines 57-72",
           "defect_type": "n/a-sanity",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Quality bars (adversarial)",
+      "evals": [
+        {
+          "id": 24,
+          "statement": "The final PASS/FAIL report grounds its verdict in cited evidence: every per-page or per-flow verdict names the specific screenshot or evidence artifact (filename/path under the evidence directory) it rests on, rather than asserting a result with no cited capture.",
+          "source": "SKILL.md lines 16, 30, 33-34 (durable output is a verdict; review-proof / evidence-citation discipline per dev/.claude/rules — no claim without observed evidence)",
+          "defect_type": "missing-evidence-citation",
+          "result": null
+        },
+        {
+          "id": 25,
+          "statement": "The report explicitly states a per-page verdict for ALL SIX target pages (Live/root, Stats, Build Orders, Replays, Decisions, Training); none of the six is silently omitted or left unmentioned.",
+          "source": "SKILL.md lines 63-64, 81 (six pages enumerated in --pages and domain context; coverage completeness)",
+          "defect_type": "incomplete-coverage",
+          "result": null
+        },
+        {
+          "id": 26,
+          "statement": "The report does NOT issue an overall PASS verdict over any page or flow that the same output describes as broken, errored, blank, or failing (no false-positive PASS contradicting a described failure).",
+          "source": "SKILL.md lines 16, 88 (visual + log evidence; failure log patterns) — false-positive discipline",
+          "defect_type": "false-positive-pass",
+          "result": null
+        },
+        {
+          "id": 27,
+          "statement": "If the run, exercise, or any page capture failed (startup error, Playwright timeout, missing screenshot), the report says so explicitly and does NOT fabricate a PASS/FAIL verdict for the un-captured page; it reports the capture failure instead.",
+          "source": "SKILL.md lines 116-119 (prerequisites can fail), 33-34 — false-negative / no-fabrication discipline",
+          "defect_type": "fabricated-verdict",
+          "result": null
+        },
+        {
+          "id": 28,
+          "statement": "Every visual or behavioral claim in the report (e.g. 'command appears in history with executed badge', 'Live page shows minerals/gas/supply') is tied to a cited capture or log line; the report makes no visual claim that is not backed by a named piece of observed evidence.",
+          "source": "SKILL.md lines 84-90 (the visual/behavioral facts reviewers assert) — grounding: no visual claim without cited capture",
+          "defect_type": "ungrounded-claim",
+          "result": null
+        },
+        {
+          "id": 29,
+          "statement": "The report distinguishes the command-flow / exercise outcome (did the submitted command reach the history and get an executed/rejected status badge) as its own cited verdict, separate from the static per-page render verdicts, rather than collapsing the dynamic exercise result into a single undifferentiated overall PASS.",
+          "source": "SKILL.md lines 14-16, 97-101, 84-86 (the command submit -> WS broadcast -> history flow is the primary thing under test)",
+          "defect_type": "incomplete-coverage",
           "result": null
         }
       ]

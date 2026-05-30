@@ -2,7 +2,7 @@
   "skill": "improve-bot-advised",
   "version": "1.0",
   "description": "True/false evaluation for the improve-bot-advised skill. Anchored on the structured TEXT report (Phase 6 iteration summary, Phase 8 morning report, dashboard state file) plus the NEVER/MUST/IF behavioral rules. The skill is MIXED (runs games + side effects + writes a structured report); assertions are scoped to observable text output a grader can read.",
-  "passing_threshold": "23/25",
+  "passing_threshold": "30/32",
   "categories": [
     {
       "name": "Bootstrap & banner",
@@ -215,6 +215,60 @@
           "statement": "The produced output covers each of the skill's major phases (Bootstrap, Observe, Analyze/Backlog, Select, Execute, Validate, Report, Cleanup, Morning Report) with at least one anchored assertion.",
           "source": "SKILL.md, lines 65, 169, 211, 303, 315, 358, 429, 550, 610",
           "defect_type": "n/a-coverage",
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "Quality bars (adversarial)",
+      "evals": [
+        {
+          "id": 26,
+          "statement": "Each per-iteration summary states an explicit commit disposition: when the iteration passed-and-committed it cites the commit (SHA or message with the '[advised-auto]' marker); when it did NOT commit (e.g. Elo gate failed, or validation failed) it explicitly says no commit was made. A summary that omits any commit/no-commit line fails.",
+          "source": "SKILL.md, lines 429-459, 417-418 (Elo no-commit branch); Phase 6.1 template lists no commit-disposition line so a faithful render omits it",
+          "defect_type": "structural — missing required output part (commit disposition not surfaced per iteration)",
+          "result": null
+        },
+        {
+          "id": 27,
+          "statement": "For an iteration that passed win-rate validation but failed the Elo promotion gate, the iteration summary's Validation result is reported as a distinct non-committed state (e.g. 'PASS (WR) / Elo-gate FAIL — not committed' or 'ELO-GATED'), NOT as a bare 'PASS'. Reporting it as plain 'PASS' (which implies the change landed) fails.",
+          "source": "SKILL.md, lines 399-418 (Elo gate) vs line 440 (Phase 6.1 template offers only 'Validation result: PASS/FAIL', no Elo-gated state)",
+          "defect_type": "content — out-of-enum / misleading status for the Elo no-commit branch",
+          "result": null
+        },
+        {
+          "id": 28,
+          "statement": "After the daemon training-soak process kill, the output verifies from observed effect that SC2_x64.exe survived (e.g. explicitly reports SC2 still running / was excluded by the kill), rather than only running a kill command whose filter happens to exclude SC2. The never-kill-SC2 invariant must be checkable from output, not merely implied by the command's match expression.",
+          "source": "SKILL.md, lines 518-527, 838 (kill filters exclude SC2 but no post-kill SC2-alive confirmation is emitted)",
+          "defect_type": "anti-pattern — safety invariant not verifiable from output (effect-based confirmation absent)",
+          "result": null
+        },
+        {
+          "id": 29,
+          "statement": "Each FAILED iteration's summary names the specific failure cause (e.g. degenerate/zero-production, win-rate drop beyond threshold, or game crash) instead of a bare 'FAIL'. A summary or Iteration-Log row that records only 'FAIL' without the distinguishing reason fails.",
+          "source": "SKILL.md, lines 389-397 (distinct hard-fail causes) vs lines 434-443 / 633-638 (templates carry no failure-reason field)",
+          "defect_type": "structural — failure cause not surfaced (silent collapse of distinct hard-fail reasons)",
+          "result": null
+        },
+        {
+          "id": 30,
+          "statement": "The Phase 8 morning-report Summary reports the run's net git effect — how many iteration commits actually landed on master (equivalently, whether master moved past the baseline tag). A run where nothing committed must show 0 commits landed / master == baseline; the Summary template's 'Iterations passed' count alone does not satisfy this.",
+          "source": "SKILL.md, lines 619-623 (Summary template lists Iterations attempted/passed + Stop reason but no commits-landed / master-vs-baseline line)",
+          "defect_type": "structural — missing required output part (net git effect not reported)",
+          "result": null
+        },
+        {
+          "id": 31,
+          "statement": "When '--mode both' (or dev) is auto-downgraded to training-only, the run's reported mode preserves the distinction between requested and effective mode (e.g. the morning report or dashboard state notes requested=both, effective=training). Reporting only the effective 'training' mode with no record that 'both' was requested fails.",
+          "source": "SKILL.md, line 36 (auto-downgrade) vs lines 619-631 / 766 (report + state record only the effective mode, losing the requested value)",
+          "defect_type": "content — original requested mode not preserved in run reporting",
+          "result": null
+        },
+        {
+          "id": 32,
+          "statement": "When the loop stops early (3 consecutive failures or a dashboard stop request) before the wall-clock budget, the morning report states the run's resume/terminality disposition — whether the run can be resumed and from where, or that it is terminal and master is at baseline. A report that gives the early Stop reason but no resume/terminality guidance fails.",
+          "source": "SKILL.md, lines 604-606 (3-fail early stop), 820-821 (dashboard stop) vs Phase 8 report (lines 610-654) which carries no resume-point / terminality statement",
+          "defect_type": "conditional-behavior — resumability after interruption not surfaced in report",
           "result": null
         }
       ]

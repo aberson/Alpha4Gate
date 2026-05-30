@@ -7,7 +7,7 @@
       "name": "T1 Fresh Start with one duplicate-process defect",
       "description": "Main path. Backend + frontend up, SC2 not running, no active game — tier resolves to T1. All tabs render except the Processes tab shows two BACKEND-SERVER entries, which must be flagged. Exercises full-tab capture, correct tier selection, and defect flagging in the summary table.",
       "context": "Probe results: `curl http://localhost:8765/api/status` returns state 'idle'. `curl http://localhost:3000` returns 200. `Get-Process SC2_x64` returns nothing (SC2 not running). `curl http://localhost:8765/api/training/daemon` returns daemon state 'idle'. `data/advised_run_state.json` does not exist. No --tabs flag (full check). Screenshots captured for all 9 tabs into .ui-dashboard-evidence/. Reading the screenshots: Live tab shows green 'Live' dot and 'Waiting for game data...' with the Command Panel visible. Stats shows 52 games, summary cards, paginated Game History, 'Last connected' 30s ago. Decisions has a few log entries. Training shows current checkpoint, 52 games, win-rate windows. Loop shows daemon 'IDLE (stopped)' and a config panel. Advisor shows a prior COMPLETED run. Improvements shows the reward-trends chart and a red 'Reset Training Data' button rendering correctly. Processes shows backend ON / port 8765 bound, BUT lists TWO BACKEND-SERVER python --serve entries. Alerts is empty.",
-      "expected_assertions": [1, 2, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 17, 19, 20, 21, 22]
+      "expected_assertions": [1, 2, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27]
     },
     {
       "id": "scenario_2",
@@ -21,7 +21,7 @@
       "name": "T5 Advised Run, scoped to --tabs advisor,stats with a frozen-live defect probe",
       "description": "Conditional path combining tier escalation, --tabs scoping, the expected/harmless advisor alert rule, and a T3-style frozen-data check. Tier resolves to T5 because advised_run_state.json status is running. Only the advisor and stats tabs are captured and reviewed.",
       "context": "Invoked as `/a4g-dashboard-check --tabs advisor,stats`. Probe results: `curl http://localhost:8765/api/status` returns state 'in_game'. `curl http://localhost:3000` returns 200. `Get-Process SC2_x64` returns a PID (SC2 running). daemon state 'idle'. `data/advised_run_state.json` exists with status 'running', Updated timestamp 1 min ago. `advised_run_control.json` shows stop_run: false. capture.mjs invoked with only the advisor and stats tab args; two screenshots saved to .ui-dashboard-evidence/. Reading screenshots: Advisor tab shows status 'RUNNING', phase 3/7, iteration 4, a progress bar that is advancing, and an iteration-history table; the Alerts area (visible inline) includes one 'Advisor CLI failed' entry during a replay-mode game. Stats tab shows game count increasing and 'Last connected' updating in real time; Game History adding new rows. The Live tab was NOT captured (out of --tabs scope).",
-      "expected_assertions": [1, 2, 5, 6, 7, 10, 11, 12, 16, 19, 20, 21]
+      "expected_assertions": [1, 2, 5, 6, 7, 10, 11, 12, 16, 19, 20, 21, 23, 26, 27]
     }
   ]
 }
