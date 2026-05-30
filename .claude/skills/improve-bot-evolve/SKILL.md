@@ -15,7 +15,7 @@ Autonomous generation-phase improvement loop. Every generation:
 3. **Regression** — if anything was promoted, new parent plays prior parent for `--games-per-eval` games. On rollback, `git revert` the promote commit (also under `EVO_AUTO=1`) and restore the pointer.
 4. **Pool refresh** — close-loss and benched-pass imps go back to active (retry cap enforced; cap=3 total evals before eviction). Claude tops up the active pool back to `--pool-size` with fresh orthogonal imps targeting the new parent.
 
-**Gate-reduction note (2026-04-23):** The legacy third gate — a 5-game composition batch testing the stacked candidate against the parent before promotion — was removed per [evolve-gate-reduction-plan.md](../../documentation/plans/evolve-gate-reduction-plan.md). Regression already catches bad-interaction stacks as "new parent loses to prior parent", and the extra Bernoulli filter dominated promotion rate without adding unique detection capability. The import-check gate that used to live inside composition migrated into the stack-apply step.
+**Gate-reduction note (2026-04-23):** The legacy third gate — a 5-game composition batch testing the stacked candidate against the parent before promotion — was removed per [evolve-gate-reduction-plan.md](../../../documentation/plans/evolve-gate-reduction-plan.md). Regression already catches bad-interaction stacks as "new parent loses to prior parent", and the extra Bernoulli filter dominated promotion rate without adding unique detection capability. The import-check gate that used to live inside composition migrated into the stack-apply step.
 
 **Design goal:** `/improve-bot-evolve` in a fresh context window with no additional input should produce a measurably stronger parent version after a few hours, with every promotion recorded as an `[evo-auto]` commit and every regression recorded as an `[evo-auto]` revert.
 
@@ -60,7 +60,7 @@ Budget math: pool=10, games-per-eval=5 → ~55 games per generation (50 fitness 
 
 Print this banner at the start of every run (before any other output):
 
-```
+```text
 🔒 Sandbox active (EVO_AUTO scope)
   I can edit:   bots/** (any version dir, including new ones from snapshot_current)
   I cannot edit: src/orchestrator/, pyproject.toml, tests/, frontend/, scripts/
@@ -294,7 +294,7 @@ If stack-apply promoted anything:
 ### 2.4 Commit format
 
 Stack promotion:
-```
+```text
 evolve: generation 3 promoted stack (3 imps)
 
 - Chrono boost auto-cast
@@ -305,7 +305,7 @@ evolve: generation 3 promoted stack (3 imps)
 ```
 
 Regression rollback:
-```
+```text
 evolve: generation 3 regression rollback
 
 Reverts abc123def456. regression rollback: new v7 1-4 prior v6 (needed 3); pointer reset
@@ -549,7 +549,7 @@ git push origin master --force-with-lease
 
 ## Relationship to Other Skills
 
-```
+```text
 /improve-bot-evolve (outer loop, this skill)
   ├── Phase 0: Bootstrap (sandbox, pre-flight, baseline tag, start backend)
   ├── Phase 1: Seed + Pool (mirror games, generate_pool via Claude)
