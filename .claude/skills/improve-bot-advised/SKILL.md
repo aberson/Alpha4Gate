@@ -68,7 +68,7 @@ After the batch completes, feed both the game logs AND the advisor's decision lo
 
 Print this banner at the start of every run (before any other output):
 
-```
+```text
 🔒 Sandbox active
   I can edit:   bots/current/**
   I cannot edit: src/orchestrator/, pyproject.toml, tests/, frontend/, scripts/
@@ -329,7 +329,7 @@ Based on the selected improvement's `type`:
 - The improvement requires source code changes
 - **Requires `--self-improve-code`** — if not set, skip this improvement and pick the next candidate
 - Format the improvement into an `/improve-bot` invocation:
-  ```
+  ```text
   /improve-bot <concrete_change description> --self-improve-code
   ```
 - Spawn this as a sub-agent on a branch
@@ -844,7 +844,7 @@ All safety rails from `/improve-bot` apply here. Additionally:
 
 `/improve-bot-advised` is the **outer strategic loop**. `/improve-bot` is a **building block** used for dev-type improvements.
 
-```
+```text
 /improve-bot-advised (outer loop)
   ├── Phase 1: Observe (run games)
   ├── Phase 2: Analyze (Claude + guiding principles)
