@@ -528,15 +528,18 @@ Unknown keys are logged as warnings.
 
 After each RL cycle, `_log_diagnostics()` evaluates the model on predefined test states:
 
-**Input:** `bots/v0/data/diagnostic_states.json` — hand-crafted scenarios:
-```json
-[
-  {"name": "Early game minerals low", "features": [30, 50, 100, 0, 10, 12, 1, 0, 0, 30, 1, 0, 0, 0, 5, 0, 0]},
-  ...
-]
-```
+**Input:** `bots/v0/data/diagnostic_states.json` — hand-crafted regression canary scenarios
+(4–5 fixed observation vectors covering typical early/mid-game states). **This file does
+not currently exist.** It was always intended to be hand-authored (not trainer-emitted),
+but was never written after the Phase 1 → Phase 2 reorg. `_log_diagnostics()` checks for
+the file and silently no-ops when absent — there is no production impact. The Models tab
+Step 9 KL heuristic (`scripts/compute_weight_dynamics.py`) already derives equivalent
+diagnostics by sampling 100 transitions from `training.db` as a fallback. To activate the
+canary path, hand-author `diagnostic_states.json` with a few fixed vectors and commit it
+to `bots/v0/data/` (tracked via the `.gitignore` negation on `hyperparams.json`).
 
-**Output:** `bots/v0/data/training_diagnostics.json` — per-cycle action distributions:
+**Output:** `bots/v0/data/training_diagnostics.json` — per-cycle action distributions
+(only written when `diagnostic_states.json` is present):
 ```json
 [
   {
@@ -548,9 +551,6 @@ After each RL cycle, `_log_diagnostics()` evaluates the model on predefined test
   }
 ]
 ```
-
-This is the only way to see how the model's behavior changes across cycles. It's
-written to disk (persistent) but not surfaced in the dashboard.
 
 ### Error handling
 
@@ -598,5 +598,5 @@ written to disk (persistent) but not surfaced in the dashboard.
 | `bots/v0/runner.py` | CLI entry point — `--train`, `--decision-mode`, `--serve`, `--daemon` |
 | `bots/v0/data/checkpoints/` | Checkpoint files + manifest.json |
 | `bots/v0/data/hyperparams.json` | PPO hyperparameter defaults + `policy_type`, `kl_rules_coef`, `use_imitation_init` |
-| `bots/v0/data/diagnostic_states.json` | Hand-crafted test states for diagnostics |
-| `bots/v0/data/training_diagnostics.json` | Per-cycle action distributions on test states |
+| `bots/v0/data/diagnostic_states.json` | Hand-crafted regression canary states — **does not currently exist**; `_log_diagnostics()` no-ops when absent |
+| `bots/v0/data/training_diagnostics.json` | Per-cycle action distributions on canary states (only written when `diagnostic_states.json` is present) |
