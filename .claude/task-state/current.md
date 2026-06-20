@@ -1,9 +1,9 @@
 # Current Task State
 
 **Task:** Phase EL (Evolution Lines) — build the parallel-lineage / baseline-DB / diversity-extinction evolve substrate
-**Status:** AGENT STEPS COMPLETE (EL.1–EL.5 DONE; EL.6/EL.7 are operator/wait)
-**Last written:** 2026-06-20T04:00:00Z
-**Session SHA:** a1b657c
+**Status:** EL.1–EL.6 DONE (EL.7 multi-hour soak is the only remainder)
+**Last written:** 2026-06-20T16:30:00Z
+**Session SHA:** 7137e7c
 
 ## Next Action
 
