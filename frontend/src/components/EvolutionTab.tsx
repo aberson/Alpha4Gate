@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { useEvolveRun } from "../hooks/useEvolveRun";
+import { useEvolveRun, useEvolveLineages } from "../hooks/useEvolveRun";
 import type {
   EvolveCurrentRound,
   EvolvePoolItem,
@@ -8,6 +8,9 @@ import type {
   EvolveRunState,
   EvolveLastResult,
   RunningRound,
+  EvolveLineage,
+  EvolveDiversityMatrix,
+  EvolveExtinctionEvent,
 } from "../hooks/useEvolveRun";
 import { StaleDataBanner } from "./StaleDataBanner";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -1116,6 +1119,239 @@ function CliFlagsStrip({ argv }: { argv: string[] | null | undefined }) {
   );
 }
 
+// --- Phase EL: lineages + diversity + extinction (EL.5) ---
+
+// One lineage card: id, head version, status, and mean baseline fitness.
+function LineageCard({ lineage }: { lineage: EvolveLineage }) {
+  const fitness =
+    lineage.baseline_fitness !== null
+      ? `${(lineage.baseline_fitness * 100).toFixed(1)}%`
+      : "—";
+  return (
+    <div
+      className="stat-card"
+      data-testid={`lineage-card-${lineage.lineage_id}`}
+      style={{
+        padding: "12px 16px",
+        borderLeft: "3px solid #9b59b6",
+        borderRadius: "6px",
+        backgroundColor: "rgba(255,255,255,0.02)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "10px",
+          marginBottom: "6px",
+        }}
+      >
+        <strong style={{ fontSize: "1em" }}>{lineage.lineage_id}</strong>
+        <PoolStatusBadge status={lineage.status} />
+      </div>
+      <div style={{ fontSize: "0.85em", color: "#aaa" }}>
+        head <code>{lineage.head_version || "—"}</code>
+        {" · "}
+        baseline fitness{" "}
+        <strong style={{ color: "#ddd" }}>{fitness}</strong>
+      </div>
+    </div>
+  );
+}
+
+function LineageCards({ lineages }: { lineages: EvolveLineage[] }) {
+  return (
+    <div
+      data-testid="lineage-cards"
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+        gap: "12px",
+      }}
+    >
+      {lineages.map((ln) => (
+        <LineageCard key={ln.lineage_id} lineage={ln} />
+      ))}
+    </div>
+  );
+}
+
+// Pairwise diversity matrix — header row/col = lineage ids; cells are the
+// fingerprint distance to 2 decimals, "—" for null (incomparable).
+function DiversityMatrix({ matrix }: { matrix: EvolveDiversityMatrix }) {
+  const { lineage_ids: ids, distances } = matrix;
+  if (ids.length === 0) {
+    return (
+      <div style={{ color: "#888", fontSize: "0.85em" }}>
+        No diversity data yet
+      </div>
+    );
+  }
+  return (
+    <table
+      data-testid="diversity-matrix"
+      style={{ fontSize: "0.85em", borderCollapse: "collapse" }}
+    >
+      <thead>
+        <tr>
+          <th />
+          {ids.map((id) => (
+            <th
+              key={id}
+              style={{
+                padding: "4px 8px",
+                color: "#aaa",
+                fontWeight: 600,
+                textAlign: "center",
+              }}
+            >
+              {id}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {ids.map((rowId, i) => (
+          <tr key={rowId}>
+            <th
+              style={{
+                padding: "4px 8px",
+                color: "#aaa",
+                fontWeight: 600,
+                textAlign: "right",
+              }}
+            >
+              {rowId}
+            </th>
+            {ids.map((colId, j) => {
+              const value = distances[i]?.[j] ?? null;
+              const text = value !== null ? value.toFixed(2) : "—";
+              return (
+                <td
+                  key={colId}
+                  data-testid={`diversity-cell-${i}-${j}`}
+                  style={{
+                    padding: "4px 8px",
+                    textAlign: "center",
+                    fontFamily: "monospace",
+                    color: i === j ? "#555" : "#ddd",
+                  }}
+                >
+                  {text}
+                </td>
+              );
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+// Extinction timeline — one entry per culled lineage.
+function ExtinctionTimeline({
+  events,
+}: {
+  events: EvolveExtinctionEvent[];
+}) {
+  if (events.length === 0) {
+    return (
+      <div style={{ color: "#888", fontSize: "0.85em" }}>
+        No extinctions yet
+      </div>
+    );
+  }
+  return (
+    <ul
+      data-testid="extinction-timeline"
+      style={{ listStyle: "none", padding: 0, margin: 0 }}
+    >
+      {events.map((ev, i) => (
+        <li
+          key={`${ev.generation}-${ev.lineage_id}-${i}`}
+          data-testid="extinction-event"
+          style={{
+            display: "flex",
+            alignItems: "baseline",
+            gap: "10px",
+            padding: "6px 0",
+            borderBottom: "1px solid rgba(255,255,255,0.05)",
+            fontSize: "0.88em",
+          }}
+        >
+          <span
+            style={{
+              fontFamily: "monospace",
+              color: "#888",
+              minWidth: "48px",
+            }}
+          >
+            gen {ev.generation}
+          </span>
+          <span style={{ color: "#ddd" }}>
+            lineage <strong>{ev.lineage_id}</strong>
+            {" (head "}
+            <code>{ev.head_version || "—"}</code>
+            {") culled — dominated by "}
+            <strong>{ev.dominated_by || "—"}</strong>
+            {ev.reason ? (
+              <span style={{ color: "#888" }}>: {ev.reason}</span>
+            ) : null}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function LineagesSection() {
+  const lineages = useEvolveLineages();
+  const data = lineages.data;
+  const hasLineages = (data?.lineages.length ?? 0) > 0;
+
+  return (
+    <section
+      data-testid="lineages-section"
+      style={{ marginTop: "32px", marginBottom: "24px" }}
+    >
+      <h3 style={{ marginBottom: "4px" }}>Lineages &amp; Diversity</h3>
+      <p style={{ color: "#888", fontSize: "0.85em", margin: "0 0 12px" }}>
+        Phase EL multi-lineage substrate: parallel lineages, their pairwise
+        behavioral diversity (fingerprint distance over baseline opponents),
+        and the lineages the population manager has culled for redundancy.
+      </p>
+
+      {!hasLineages ? (
+        <div
+          className="stat-card"
+          style={{ padding: "16px", color: "#888", fontSize: "0.9em" }}
+        >
+          No lineages yet — the single-lineage (pre-EL) evolve loop does not
+          populate <code>data/lineages.json</code>.
+        </div>
+      ) : (
+        <>
+          <LineageCards lineages={data?.lineages ?? []} />
+
+          <div style={{ marginTop: "20px" }}>
+            <h4 style={{ marginBottom: "8px" }}>Diversity Matrix</h4>
+            <DiversityMatrix
+              matrix={
+                data?.diversity_matrix ?? { lineage_ids: [], distances: [] }
+              }
+            />
+          </div>
+
+          <div style={{ marginTop: "20px" }}>
+            <h4 style={{ marginBottom: "8px" }}>Extinction Timeline</h4>
+            <ExtinctionTimeline events={data?.extinction_events ?? []} />
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 // --- Main component ---
 
 export function EvolutionTab() {
@@ -1416,6 +1652,8 @@ export function EvolutionTab() {
           />
         </>
       )}
+
+      <LineagesSection />
 
       {message ? (
         <div

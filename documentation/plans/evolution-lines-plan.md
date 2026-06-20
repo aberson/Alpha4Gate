@@ -252,6 +252,7 @@ pressure is the standard escape from that local optimum.
 - **Depends on:** EL.1, EL.2, EL.3.
 
 ### Step EL.5: Dashboard lineage + extinction surfacing
+- **Status:** DONE (2026-06-20)
 - **Problem:** Add `GET /api/evolve/lineages` to the active version's
   `bots/current/api.py` (reads `data/lineages.json` + `data/fingerprints.json`
   via a dedicated `_evolve_dir` resolver, per `.claude/rules/bot-runtime.md`),

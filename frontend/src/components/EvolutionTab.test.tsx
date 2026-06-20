@@ -25,6 +25,7 @@ interface MockFixture {
   results?: Record<string, unknown>;
   currentRound?: Record<string, unknown>;
   runningRounds?: Record<string, unknown>;
+  lineages?: Record<string, unknown>;
 }
 
 interface PutCapture {
@@ -54,6 +55,11 @@ function mockFetch(
     run_id: null,
     rounds: [],
   };
+  const lineages = fixture.lineages ?? {
+    lineages: [],
+    diversity_matrix: { lineage_ids: [], distances: [] },
+    extinction_events: [],
+  };
   const currentRound = fixture.currentRound ?? {
     active: false,
     generation: null,
@@ -77,6 +83,9 @@ function mockFetch(
     init?: RequestInit,
   ): Promise<Response> => {
     const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("/api/evolve/lineages")) {
+      return jsonResponse(lineages);
+    }
     if (url.includes("/api/evolve/running-rounds")) {
       return jsonResponse(runningRounds);
     }
@@ -887,5 +896,108 @@ describe("EvolutionTab", () => {
     // still visible to the operator.
     expect(screen.getByTestId("worker-badge-2")).toBeTruthy();
     expect(screen.getByTestId("worker-badge-3")).toBeTruthy();
+  });
+
+  // --- Phase EL: lineages / diversity / extinction (EL.5) ---
+
+  const lineagesFixture = {
+    lineages: [
+      {
+        lineage_id: "line-a",
+        head_version: "v1",
+        status: "active",
+        baseline_fitness: 0.65,
+        per_baseline: { rush: 0.9, macro: 0.4 },
+      },
+      {
+        lineage_id: "line-b",
+        head_version: "v2",
+        status: "active",
+        baseline_fitness: null,
+        per_baseline: {},
+      },
+    ],
+    diversity_matrix: {
+      lineage_ids: ["line-a", "line-b"],
+      distances: [
+        [0.0, 0.5],
+        [0.5, 0.0],
+      ],
+    },
+    extinction_events: [
+      {
+        generation: 7,
+        lineage_id: "line-c",
+        head_version: "v5",
+        dominated_by: "line-a",
+        reason: "redundant: distance 0.04 < 0.10",
+      },
+    ],
+  };
+
+  it("renders 'No lineages yet' when the lineages list is empty", async () => {
+    installFetch({ state: idleState });
+    render(<EvolutionTab />);
+    const section = await screen.findByTestId("lineages-section");
+    expect(section.textContent ?? "").toMatch(/No lineages yet/i);
+    expect(screen.queryByTestId("lineage-cards")).toBeNull();
+  });
+
+  it("renders lineage cards with head version, status, and fitness", async () => {
+    installFetch({ state: idleState, lineages: lineagesFixture });
+    render(<EvolutionTab />);
+    await screen.findByTestId("lineage-cards");
+    const cardA = screen.getByTestId("lineage-card-line-a");
+    expect(cardA.textContent ?? "").toContain("line-a");
+    expect(cardA.textContent ?? "").toContain("v1");
+    // 0.65 -> "65.0%"
+    expect(cardA.textContent ?? "").toContain("65.0%");
+    // Null fitness renders as an em-dash.
+    const cardB = screen.getByTestId("lineage-card-line-b");
+    expect(cardB.textContent ?? "").toContain("—");
+  });
+
+  it("renders the diversity matrix with formatted distances and a 0 diagonal", async () => {
+    installFetch({ state: idleState, lineages: lineagesFixture });
+    render(<EvolutionTab />);
+    await screen.findByTestId("diversity-matrix");
+    // Diagonal cells are 0.00.
+    expect(screen.getByTestId("diversity-cell-0-0").textContent).toBe("0.00");
+    expect(screen.getByTestId("diversity-cell-1-1").textContent).toBe("0.00");
+    // Off-diagonal cell is the formatted distance.
+    expect(screen.getByTestId("diversity-cell-0-1").textContent).toBe("0.50");
+  });
+
+  it("renders '—' for a null (incomparable) diversity cell", async () => {
+    installFetch({
+      state: idleState,
+      lineages: {
+        ...lineagesFixture,
+        diversity_matrix: {
+          lineage_ids: ["line-a", "line-b"],
+          distances: [
+            [0.0, null],
+            [null, 0.0],
+          ],
+        },
+      },
+    });
+    render(<EvolutionTab />);
+    await screen.findByTestId("diversity-matrix");
+    expect(screen.getByTestId("diversity-cell-0-1").textContent).toBe("—");
+  });
+
+  it("renders the extinction timeline", async () => {
+    installFetch({ state: idleState, lineages: lineagesFixture });
+    render(<EvolutionTab />);
+    await screen.findByTestId("extinction-timeline");
+    const events = screen.getAllByTestId("extinction-event");
+    expect(events.length).toBe(1);
+    const text = events[0].textContent ?? "";
+    expect(text).toContain("gen 7");
+    expect(text).toContain("line-c");
+    expect(text).toContain("v5");
+    expect(text).toContain("line-a");
+    expect(text).toContain("redundant");
   });
 });

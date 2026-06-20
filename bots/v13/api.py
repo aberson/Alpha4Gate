@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import sqlite3
@@ -1369,6 +1370,10 @@ _EVOLVE_CONTROL_FILE = "evolve_run_control.json"
 _EVOLVE_POOL_FILE = "evolve_pool.json"
 _EVOLVE_RESULTS_FILE = "evolve_results.jsonl"
 _EVOLVE_CURRENT_ROUND_FILE = "evolve_current_round.json"
+# Phase EL substrate registries (cross-version, repo-root ``data/``):
+# lineages keyed by ``lineage_id``; fingerprints keyed by ``version``.
+_EVOLVE_LINEAGES_FILE = "lineages.json"
+_EVOLVE_FINGERPRINTS_FILE = "fingerprints.json"
 
 _EVOLVE_CURRENT_ROUND_IDLE: dict[str, Any] = {
     "active": False,
@@ -1631,6 +1636,143 @@ async def get_evolve_results() -> dict[str, Any]:
         except json.JSONDecodeError:
             continue
     return {"rounds": rounds}
+
+
+@app.get("/api/evolve/lineages")
+async def get_evolve_lineages() -> dict[str, Any]:
+    """Surface Phase EL lineages, diversity, and extinction events.
+
+    Reads three cross-version registries from ``_evolve_dir`` (repo-root
+    ``data/``, NOT the per-version ``_data_dir``):
+
+    - ``lineages.json`` — registry keyed by ``lineage_id`` (each entry has
+      ``head_version`` + ``status``).
+    - ``fingerprints.json`` — registry keyed by ``version`` (each entry has
+      a ``per_baseline`` win-rate vector). A lineage's ``baseline_fitness``
+      is the mean of its head version's vector; its diversity distance to
+      another lineage is the pairwise :func:`fingerprint_distance` between
+      the two heads' fingerprints.
+    - ``evolve_results.jsonl`` — the extinction rows (``phase ==
+      "extinction"``) projected into the ``extinction_events`` list.
+
+    Every file is optional: a fresh project with none of them returns
+    ``{"lineages": [], "diversity_matrix": {...empty...},
+    "extinction_events": []}`` with HTTP 200 so the dashboard never errors
+    on the pre-EL single-lineage state. ``fingerprint_distance`` returns
+    ``float("nan")`` for incomparable (no shared baselines) head pairs; we
+    map that sentinel — and any non-finite mean — to JSON ``null`` because
+    JSON cannot carry NaN. The diagonal is always ``0.0``.
+    """
+    from orchestrator.fingerprint import Fingerprint, fingerprint_distance
+
+    lineages_raw = _read_json_file(_evolve_dir / _EVOLVE_LINEAGES_FILE) or {}
+    fingerprints_raw = (
+        _read_json_file(_evolve_dir / _EVOLVE_FINGERPRINTS_FILE) or {}
+    )
+
+    # Parse each head version's fingerprint once (tolerating malformed
+    # entries: a bad fingerprint just means "no fingerprint for this head").
+    fingerprints: dict[str, Fingerprint] = {}
+    for version, entry in fingerprints_raw.items():
+        if not isinstance(entry, dict):
+            continue
+        entry.setdefault("version", version)
+        try:
+            fingerprints[version] = Fingerprint.from_dict(entry)
+        except ValueError:
+            continue
+
+    # Build the lineage list. Insertion order of the registry is preserved.
+    lineage_ids: list[str] = []
+    head_versions: list[str] = []
+    lineages_out: list[dict[str, Any]] = []
+    for lineage_id, entry in lineages_raw.items():
+        if not isinstance(entry, dict):
+            continue
+        head_version = str(entry.get("head_version", ""))
+        status = str(entry.get("status", "active"))
+        fp = fingerprints.get(head_version)
+        # Drop non-finite (nan/inf) entries so the response is valid JSON
+        # (FastAPI serializes with allow_nan=True, which would emit literal
+        # ``NaN`` and break the frontend ``fetch().json()``) AND so the TS
+        # type ``per_baseline: {[name]: number}`` stays honest — no nulls.
+        per_baseline = (
+            {k: v for k, v in fp.per_baseline.items() if math.isfinite(v)}
+            if fp is not None
+            else {}
+        )
+        baseline_fitness: float | None = None
+        if per_baseline:
+            mean = sum(per_baseline.values()) / len(per_baseline)
+            baseline_fitness = mean if math.isfinite(mean) else None
+        lineage_ids.append(lineage_id)
+        head_versions.append(head_version)
+        lineages_out.append(
+            {
+                "lineage_id": lineage_id,
+                "head_version": head_version,
+                "status": status,
+                "baseline_fitness": baseline_fitness,
+                "per_baseline": per_baseline,
+            }
+        )
+
+    # Pairwise diversity matrix between lineage HEADS. nan / incomparable /
+    # a head without a fingerprint -> null; diagonal -> 0.0.
+    distances: list[list[float | None]] = []
+    for i, head_i in enumerate(head_versions):
+        row: list[float | None] = []
+        fp_i = fingerprints.get(head_i)
+        for j, head_j in enumerate(head_versions):
+            if i == j:
+                row.append(0.0)
+                continue
+            fp_j = fingerprints.get(head_j)
+            if fp_i is None or fp_j is None:
+                row.append(None)
+                continue
+            dist = fingerprint_distance(fp_i, fp_j)
+            row.append(dist if math.isfinite(dist) else None)
+        distances.append(row)
+
+    # Extinction timeline from the results jsonl.
+    extinction_events: list[dict[str, Any]] = []
+    results_path = _evolve_dir / _EVOLVE_RESULTS_FILE
+    if results_path.exists():
+        try:
+            lines = results_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            lines = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                row = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            if row.get("phase") != "extinction":
+                continue
+            extinction_events.append(
+                {
+                    "generation": _safe_int(row.get("generation")),
+                    "lineage_id": str(row.get("lineage_id", "")),
+                    "head_version": str(row.get("head_version", "")),
+                    "dominated_by": str(row.get("dominated_by", "")),
+                    "reason": str(row.get("reason", "")),
+                }
+            )
+
+    return {
+        "lineages": lineages_out,
+        "diversity_matrix": {
+            "lineage_ids": lineage_ids,
+            "distances": distances,
+        },
+        "extinction_events": extinction_events,
+    }
 
 
 @app.get("/api/system/substrate")

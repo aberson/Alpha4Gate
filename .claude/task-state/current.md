@@ -1,25 +1,28 @@
 # Current Task State
 
 **Task:** Phase EL (Evolution Lines) — build the parallel-lineage / baseline-DB / diversity-extinction evolve substrate
-**Status:** BUILDING (EL.1–EL.4 DONE; EL.5 next — LAST agent step)
-**Last written:** 2026-06-20T03:00:00Z
-**Session SHA:** 561d9fd
+**Status:** AGENT STEPS COMPLETE (EL.1–EL.5 DONE; EL.6/EL.7 are operator/wait)
+**Last written:** 2026-06-20T04:00:00Z
+**Session SHA:** a1b657c
 
 ## Next Action
 
-Continue `/build-phase` for Phase EL — EL.5 (Dashboard lineage + extinction surfacing, #277) is the LAST agent-completable step. FRONTEND-touching → `--reviewers runtime --ui --start-cmd "bash scripts/start-dev.sh" --url http://localhost:3000` (Playwright evidence). Goal completes after EL.5; halt before EL.6 (operator).
+GOAL MET: EL.1–EL.5 built + merged to master, pytest 1773 + vitest 218 green. The remaining steps are NOT agent-completable and require the operator running the real SC2 stack:
 
-```
-/build-phase --plan documentation/plans/evolution-lines-plan.md --resume EL.5
-```
+- **EL.6 (#278, operator smoke):** one real multi-lineage round —
+  `python scripts/evolve.py --lineages 2 --pool-size 2 --games-per-eval 3 --fitness-mode both --population-cap 2 --generations 1 --no-commit`
+  (also covers the EL.5 dashboard visual: open the Evolution tab, confirm the lineage list + diversity matrix + extinction timeline render). Write a record under documentation/soak-test-runs/evolution-lines-smoke-<ts>.md.
+- **EL.7 (#279, wait soak):** multi-hour 2–3 lineage run —
+  `python scripts/evolve.py --lineages 3 --population-cap 3 --hours 6 --fitness-mode both`
 
-EL.5: add GET /api/evolve/lineages to bots/current/api.py (reuse existing `_evolve_dir` resolver at bots/v13/api.py:53 — reads data/lineages.json + data/fingerprints.json), extend EvolutionTab.tsx with lineage list + diversity matrix + extinction-event timeline, bump useEvolveRun.ts cacheKey. Full suite after EL.4 = 1765.
+Resume after EL.6 via `/build-phase --plan documentation/plans/evolution-lines-plan.md --resume EL.6` if desired (build-phase will halt at the operator/wait steps).
 
 ## Completed
 - EL.1 Lineage registry + round-robin scheduler: PASS iter 2/3. lineages.py overlay; current.txt shape unchanged; --lineages 1 byte-identical. Merged 2675c43.
 - EL.2 Baseline opponent DB + fitness gauntlet: PASS iter 2/3. baselines.py registry + scripts/baseline.py CLI + run_baseline_gauntlet + --fitness-mode {parent,baseline,both} (parent byte-identical). Merged ddd7be6.
 - EL.3 Behavioral diversity fingerprint: PASS iter 2/3. fingerprint.py; fingerprint_distance (nan sentinel for incomparable pairs). Merged 561d9fd.
 - EL.4 Population manager — diversity-driven extinction: PASS iter 2/3. decide_extinctions (pure) + run_loop wiring; --population-cap (default 0=disabled, byte-identical) + --diversity-threshold; phase:"extinction" row. Correctness reviewer confirmed cull logic provably safe. Full suite 1765.
+- EL.5 Dashboard lineage + extinction surfacing: PASS iter 2/3. GET /api/evolve/lineages (bots/v13/api.py, reuses _evolve_dir) + EvolutionTab lineage cards/diversity matrix/extinction timeline + useEvolveLineages hook. nan→null/drop; reuses fingerprint_distance. pytest TestClient 8 + vitest 218. Built --reviewers code (live Playwright deferred to EL.6 operator smoke per bot-runtime backend-lifecycle rule). Full suite 1773.
 
 ## WIP
 

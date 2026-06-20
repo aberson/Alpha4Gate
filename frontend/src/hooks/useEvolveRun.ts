@@ -258,6 +258,64 @@ export interface RunningRoundsResponse {
   rounds: RunningRound[];
 }
 
+// --- Phase EL lineages / diversity / extinction (from
+// /api/evolve/lineages) ---
+//
+// EL.5 surfaces the Phase EL substrate: the lineage registry
+// (data/lineages.json), the per-baseline fingerprint vectors
+// (data/fingerprints.json) folded into a pairwise diversity matrix, and
+// the extinction rows (phase == "extinction") from evolve_results.jsonl.
+// A fresh project (pre-EL single-lineage state) returns empty arrays.
+
+export interface EvolveLineage {
+  lineage_id: string;
+  head_version: string;
+  status: string;
+  // Mean of the head version's per-baseline win-rate vector, or null
+  // when the head has no fingerprint yet.
+  baseline_fitness: number | null;
+  // The head's fingerprint vector ({} when the head has no fingerprint).
+  per_baseline: Record<string, number>;
+}
+
+export interface EvolveDiversityMatrix {
+  lineage_ids: string[];
+  // Row-major pairwise fingerprint distance between lineage heads.
+  // Diagonal is 0.0; null = incomparable (no shared baselines, or a head
+  // without a fingerprint) — the backend maps the NaN sentinel to null.
+  distances: (number | null)[][];
+}
+
+export interface EvolveExtinctionEvent {
+  generation: number;
+  lineage_id: string;
+  head_version: string;
+  dominated_by: string;
+  reason: string;
+}
+
+export interface EvolveLineagesData {
+  lineages: EvolveLineage[];
+  diversity_matrix: EvolveDiversityMatrix;
+  extinction_events: EvolveExtinctionEvent[];
+}
+
+// Fresh cache key for the new endpoint (own schema, own polling). Not a
+// bump of CACHE_KEY_SUFFIX — that key namespaces the useEvolveRun
+// endpoints; a brand-new endpoint gets its own independent key.
+const LINEAGES_CACHE_KEY = "/api/evolve/lineages::lineages-v1";
+
+/**
+ * Hook for the Phase EL lineages / diversity / extinction view. Polls
+ * ``/api/evolve/lineages`` (read-only; no control surface).
+ */
+export function useEvolveLineages(): UseApiResult<EvolveLineagesData> {
+  return useApi<EvolveLineagesData>("/api/evolve/lineages", {
+    pollMs: 10000,
+    cacheKey: LINEAGES_CACHE_KEY,
+  });
+}
+
 // --- Hook return type ---
 
 export interface UseEvolveRunResult {
