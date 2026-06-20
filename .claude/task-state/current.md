@@ -7,7 +7,14 @@
 
 ## Next Action
 
-Run `/build-phase --plan documentation/plans/evolution-lines-plan.md` to execute Phase EL Steps 1–7 (issues #273–#279). Steps are largely sequential: EL.1 → EL.2 (share scripts/evolve.py) → EL.3 → EL.4 → EL.5 (frontend, --ui) → EL.6 (operator smoke) → EL.7 (wait soak).
+Goal-driven build of the agent-completable slice (EL.1–EL.5), then build-phase halts at the EL.6 operator smoke gate:
+
+```
+/goal "Phase EL steps EL.1-EL.5 (GitHub issues #273-#277) are built, merged to master, and pytest + vitest are green - stop at the EL.6 operator smoke gate (#278)"
+/build-phase --plan documentation/plans/evolution-lines-plan.md
+```
+
+Steps are largely sequential: EL.1 → EL.2 (share scripts/evolve.py) → EL.3 → EL.4 → EL.5 (frontend, --ui). EL.6 (operator smoke) + EL.7 (wait soak) are NOT agent-completable — run them manually after EL.5 lands. Do NOT widen the /goal to cover EL.6/EL.7 (busy-poll on operator/clock-gated steps — see feedback_goal_mode_only_agent_completable).
 
 ## WIP
 
