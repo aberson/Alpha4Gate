@@ -236,7 +236,7 @@ When `--backlog` is set, **replace** the fresh strategic-analysis step (2.1/2.2)
      "concrete_change": "<item body, verbatim — the downstream /improve-bot call will use this>"
    }
    ```
-   All backlog items are treated as `type: "dev"` — they're tactical code fixes, not reward/config edits. If you encounter a backlog item that obviously targets `reward_rules.json` or `hyperparams.json`, flag it in the iteration log but still treat it as dev (the downstream /improve-bot worker can decide).
+   All backlog items are treated as `type: "dev"` — they're tactical code fixes, not reward/config edits. If you encounter a backlog item that obviously targets `reward_rules.json` or `hyperparams.json`, flag it in the iteration log but still treat it as dev (the downstream /improve-bot worker can decide). Backlog mode never emits `type: "training"` or `type: "soak"` items — those types come only from fresh strategic analysis (§2.1/§2.2).
 6. If zero open items remain, fall back to fresh strategic analysis (Phase 2.1) per the flag resolution rule. Log "backlog exhausted, falling back".
 7. Skip Phase 2.1 and 2.2 entirely. Apply Phase 2.3 (mode filter) — since all items are `type: "dev"` and `--backlog` forced `--self-improve-code`+`--mode both`, all items pass the filter.
 
@@ -244,17 +244,43 @@ When `--backlog` is set, **replace** the fresh strategic-analysis step (2.1/2.2)
 
 ### 2.1 Build the analysis prompt
 
+**First, compute the staleness report** for the current version BEFORE building the prompt. The orchestrator module shipped in Phase 7 answers one question: *is this version's neural policy stale relative to the reward rules that should be shaping it?* (recent eval win-rate trend flat-or-falling AND `reward_rules.json` edited after the newest checkpoint). Run it and capture the JSON:
+
+```bash
+CURRENT="$(cat bots/current/current.txt 2>/dev/null)"
+STALENESS_JSON="$(python -m orchestrator.staleness "$CURRENT" 2>/dev/null || echo '{}')"
+echo "staleness_report: $STALENESS_JSON" >> "$LOGFILE"
+```
+
+`python -m orchestrator.staleness <version>` prints a JSON object with these fields:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `is_stale` | bool | `true` when the eval win-rate trend is flat-or-falling AND the reward rules were edited after the newest checkpoint |
+| `eval_wr_trend` | float | Slope of win(0/1) vs game-index over the recent window. Negative = falling, ~0 = flat, positive = rising |
+| `checkpoint_age_seconds` | int | Newest checkpoint mtime minus `reward_rules.json` mtime. **Negative** = reward rules edited *after* the checkpoint (policy is behind the signal) |
+| `recent_win_rates` | list[float] | Windowed win rates (one per 10-game bucket), oldest → newest |
+| `reason` | str | Human-readable explanation of which condition(s) fired |
+
+If the command fails (e.g. fewer than 10 games for the version, no `training.db` yet), it exits non-zero; treat the report as empty (`{}`) and proceed — staleness is an additional signal, never a blocker.
+
 Construct a Claude prompt that includes:
 
 1. **Game data summary:** Win/loss record, average game duration, per-game timeline highlights, aggregate stats
 2. **Decision log entries** (if available from live mode): What the advisor suggested, what the bot did
 3. **The full guiding principles document** (`documentation/sc2/protoss/guiding-principles.md` — all 32 sections)
 4. **Iteration context** (unless `--fresh`): What was tried in prior iterations and outcomes
+5. **`staleness_report` input block:** Inject the captured JSON verbatim as a labelled block, e.g.:
+   ```text
+   staleness_report:
+   {"is_stale": true, "eval_wr_trend": -0.012, "checkpoint_age_seconds": -3600, "recent_win_rates": [0.6, 0.5, 0.4], "reason": "STALE: trend falling ...; reward rules newer than checkpoint by 3600s"}
+   ```
 
 The prompt asks Claude to:
 - Identify which guiding principles are being violated most frequently
 - Find the top 10-20 specific, actionable improvements
-- For each improvement, classify as `training` (reward/hyperparam change) or `dev` (code change)
+- For each improvement, classify as `training` (reward/hyperparam change), `dev` (code change), or `soak` (run the daemon in `hybrid` decision-mode so the PPO policy retrains on the current reward rules)
+- **Consider these factors when ranking:** principle-violation frequency, expected win-rate impact, and **policy staleness** — when `staleness_report.is_stale` is `true` (or `checkpoint_age_seconds` is negative), the reward signal has moved but the policy never retrained on it, so weigh a `soak` improvement that lets the policy catch up before proposing further reward edits
 - Rank by estimated impact on win rate
 - Provide a concrete description of what to change
 
@@ -285,16 +311,35 @@ Claude should return structured JSON:
       "principle_ids": [4],
       "expected_impact": "high",
       "concrete_change": "Add chrono_boost_manager.py with priority queue: probes > warp gate > upgrades"
+    },
+    {
+      "rank": 3,
+      "type": "soak",
+      "soak_hours": 2,
+      "decision_mode": "hybrid",
+      "rationale": "Policy is stale (staleness_report.is_stale=true): reward_rules.json was edited after the newest checkpoint, so retrain the PPO policy on the current rewards before proposing more reward edits"
     }
   ]
 }
 ```
+
+There are **three** improvement types:
+
+| `type` | Shape | Constraint |
+|--------|-------|------------|
+| `training` | `{"type": "training", "title", "description", "concrete_change", ...}` | Edits `reward_rules.json` / `hyperparams.json` (no source code) |
+| `dev` | `{"type": "dev", "title", "description", "concrete_change", ...}` | Source-code change (requires `--self-improve-code`) |
+| `soak` | `{"type": "soak", "soak_hours": N, "decision_mode": "hybrid", "rationale": "..."}` | `soak_hours ∈ [1, 4]` — runs the daemon in `hybrid` decision-mode so the PPO policy retrains on the current reward rules. Proposed mainly when `staleness_report.is_stale` is true. |
+
+The `soak` type carries no `concrete_change` (it changes no files) — its work is the daemon run itself. `soak_hours` MUST be an integer in `[1, 4]`; values outside the range are clamped at routing time (see §4.2).
 
 ### 2.3 Filter by mode
 
 - `--mode training`: Keep only `type: "training"` improvements
 - `--mode dev`: Keep only `type: "dev"` improvements
 - `--mode both`: Keep all
+
+`type: "soak"` improvements pass the filter in **every** mode (training, dev, both). A soak edits no files — it just lets the existing policy catch up to the current reward rules — so it is safe under the training-only contract and never requires `--self-improve-code`.
 
 If filtering leaves zero candidates, log this and re-run analysis asking specifically for the allowed type(s).
 
@@ -335,11 +380,103 @@ Based on the selected improvement's `type`:
 - Spawn this as a sub-agent on a branch
 - `/improve-bot` handles: branch creation, code change, quality gates (pytest/mypy/ruff), merge
 
+**Soak path** (`type: "soak"`):
+
+The improvement changes no files — it runs the daemon in `hybrid` decision-mode so the PPO policy retrains on the current reward rules (closing the staleness gap surfaced by §2.1). It mirrors the §6.3 Training-soak daemon lifecycle, with only two deltas: a **longer duration** (the clamped `soak_hours`) and **`--decision-mode hybrid`** so the policy is actually consulted (a `rules` run never touches PPO — see [`.claude/rules/bot-runtime.md`](.claude/rules/bot-runtime.md) § Decision modes and PPO).
+
+1. **Clamp `soak_hours` first** against the loop's wall-clock budget (see §4.2). Use the clamped integer `SOAK_HOURS` value for everything below. **If the clamp yields `SOAK_HOURS < 1`** (insufficient remaining budget), **skip the soak entirely** — do NOT proceed to step 2; treat the improvement as a no-op, leave the API-only backend running, and continue Phase 4 dispatch. (This guard ensures the backend is never torn down for a 0-hour soak.)
+2. **Gracefully shut down the API-only backend** (preserves `data/` — no DB touched), exactly as §6.3 step 1:
+   ```bash
+   # 1. Shut down existing API-only backend
+   curl -s -X POST http://localhost:8765/api/shutdown || true
+   # Wait for port to free (max 10s)
+   for i in 1 2 3 4 5; do
+       python -c "import socket; s=socket.socket(); r=s.connect_ex(('127.0.0.1',8765)); s.close(); exit(0 if r!=0 else 1)" && break
+       sleep 2
+   done
+   ```
+3. **Start the daemon in `hybrid` mode** and run it for `SOAK_HOURS` (the §6.3 start command + `--decision-mode hybrid`; the loop is bounded by wall-clock, not a 2-game count):
+   ```bash
+   # 2. Start backend with daemon in hybrid mode (daemon auto-runs games + trains PPO)
+   DEBUG_ENDPOINTS=1 PYTHONUNBUFFERED=1 uv run python -m bots.current.runner --serve --daemon --decision-mode hybrid 2>&1 &
+   DAEMON_PID=$!
+
+   # Run for the clamped soak duration OR until the overall wall-clock cap, whichever is first
+   SOAK_START=$(date +%s)
+   SOAK_SECONDS=$((SOAK_HOURS * 3600))
+   while true; do
+       SOAK_ELAPSED=$(( $(date +%s) - SOAK_START ))
+       if [ $SOAK_ELAPSED -ge $SOAK_SECONDS ]; then echo "Soak duration reached (${SOAK_HOURS}h)"; break; fi
+       # Also stop if the overall --hours budget is exhausted (defensive; the clamp keeps soak <= 50% of budget)
+       if [ $(( $(date +%s) - LOOP_START )) -ge $((HOURS * 3600)) ]; then echo "Overall wall-clock budget reached during soak"; break; fi
+       sleep 30
+   done
+   ```
+4. **Gracefully stop the daemon** — the §6.3 MANDATORY SOAK CLEANUP, verbatim:
+   ```bash
+   # --- MANDATORY SOAK CLEANUP (always runs, even on timeout) ---
+   # 1. Graceful shutdown via API
+   curl -s -X POST http://localhost:8765/api/shutdown || true
+   sleep 2
+
+   # 2. Force-kill any remaining Python/uv runner processes spawned by the soak.
+   #    Match on the --daemon flag to avoid killing non-daemon backends.
+   powershell.exe -Command "Get-WmiObject Win32_Process | Where-Object { \$_.CommandLine -match 'alpha4gate.*--daemon' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }"
+
+   # 3. Verify port 8765 is free before continuing
+   for attempt in 1 2 3 4 5; do
+       python -c "import socket; s=socket.socket(); r=s.connect_ex(('127.0.0.1',8765)); s.close(); exit(0 if r!=0 else 1)" && break
+       sleep 2
+   done
+   ```
+5. **Restart the API-only backend** so the dashboard stays alive, verbatim from §6.3:
+   ```bash
+   # Restart API-only backend (no daemon) for dashboard monitoring
+   DEBUG_ENDPOINTS=1 PYTHONUNBUFFERED=1 uv run python -m bots.current.runner --serve 2>&1 &
+   BACKEND_PID=$!
+   # Verify it's up
+   for i in 1 2 3 4 5; do
+       python -c "import socket; s=socket.socket(); r=s.connect_ex(('127.0.0.1',8765)); s.close(); exit(0 if r==0 else 1)" && break
+       sleep 1
+   done
+   ```
+6. **Continue Phase 4 dispatch** (Phase 4.3 quality gates, then Phase 5 validation). A soak edits no source, so the gates just confirm the tree is still clean; the validation games then measure whether the retrained policy improved.
+
+This is the routing logic only. The live multi-hour soak run is validated separately (operator Step 6 / #280) — do **not** require a live soak to land this path.
+
 ### 4.2 Execution budget
 
 Each improvement attempt gets a budget slice:
 - **Training:** `--games` count of games (default 10) at max speed (~5-10 min)
 - **Dev:** delegated to `/improve-bot` which manages its own timing, but capped at 30 min wall-clock
+- **Soak:** the clamped `soak_hours` (see below), bounded so soak time never exceeds 50% of the total `--hours` budget
+
+**Soak budget clamp (`type: "soak"`):** Compute the clamp from the loop's EXISTING shell wall-clock budget — the `--hours` arg (`$HOURS`) minus elapsed, using the `LOOP_START` / `$(date +%s)` pattern (same arithmetic as §7.3). There is **no** `advised_run_state.json` or any JSON state file — do not read or invent one.
+
+```bash
+# remaining_hours = (--hours budget) - (elapsed since LOOP_START), as a float
+ELAPSED_S=$(( $(date +%s) - LOOP_START ))
+REMAINING_S=$(( HOURS * 3600 - ELAPSED_S ))
+# Requested value from Claude's improvement record (already constrained to [1,4] by the schema)
+REQUESTED_HOURS=<improvement.soak_hours>
+# Clamp to min(remaining/2, 4) and FLOOR to a whole hour: soak must stay <= 50% of the TOTAL
+# budget and <= 4h. Output MUST be an integer — the §4.1 soak loop uses integer-only bash
+# arithmetic ($((SOAK_HOURS * 3600))), which is a hard syntax error on a float like "2.0".
+SOAK_HOURS=$(python -c "import sys; req=float(sys.argv[1]); rem=int(sys.argv[2]); print(int(max(0, min(req, rem/3600.0/2.0, 4.0))))" "$REQUESTED_HOURS" "$REMAINING_S")
+if python -c "import sys; sys.exit(0 if float(sys.argv[1]) < float(sys.argv[2]) else 1)" "$SOAK_HOURS" "$REQUESTED_HOURS"; then
+    echo "WARNING: soak_hours requested ${REQUESTED_HOURS}h clamped to ${SOAK_HOURS}h (must be <= min(remaining/2, 4))" | tee -a "$LOGFILE"
+fi
+# Budget too small to fund even a 1h soak (needs >=2h remaining): skip the soak entirely and
+# continue Phase 4 dispatch. The §4.1 path MUST check this BEFORE shutting down the backend —
+# never tear down the API-only backend for a 0h soak.
+if [ "$SOAK_HOURS" -lt 1 ]; then
+    echo "Skipping soak: insufficient remaining budget (need >=2h remaining for a 1h soak)" | tee -a "$LOGFILE"
+fi
+```
+
+- The cap is `min(remaining_hours / 2, 4)`: soak time is held to **≤ 50%** of the total `--hours` budget (computed against remaining wall-clock so a soak can never run past the run's deadline) and a hard **4-hour** ceiling.
+- If the clamp yields `< 1` hour (budget nearly exhausted), there is not enough wall-clock left for a meaningful soak — skip the soak improvement, log "insufficient remaining budget for soak", and pick the next candidate.
+- If Claude requested more than the clamp allows, log the warning above and use the clamped value. Never honor a `soak_hours` that would push soak time past 50% of the budget.
 
 ### 4.3 Quality gates (always, after any change)
 

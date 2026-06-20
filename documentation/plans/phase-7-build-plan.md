@@ -124,6 +124,7 @@ Version→path resolution: `src/orchestrator/registry.py`. Do NOT import from `b
   `soak_hours ∈ [1, 4]`.
 - **Type:** code
 - **Issue:** #181
+- **Status:** DONE (2026-06-20)
 - **Flags:** --reviewers code
 - **Files:** `.claude/skills/improve-bot-advised/SKILL.md` (Phase 2 prompt + response-schema example + constraints)
 - **Depends on:** Step 1 (the `staleness_report` JSON shape comes from `StalenessReport`).
@@ -142,11 +143,12 @@ existing JSON response schema; keep the existing `training`/`dev` types intact.
 
 - **Problem:** When Phase 2 returns `type: "soak"`, Phase 4 routes it through a daemon-lifecycle
   path (save API-only backend state → graceful shutdown preserving `data/` → spawn
-  `python -m bots.v0.runner --serve --daemon --decision-mode hybrid` for the (clamped) duration →
+  `python -m bots.current.runner --serve --daemon --decision-mode hybrid` for the (clamped) duration →
   graceful daemon shutdown → restart API-only backend → continue dispatch), mirroring the existing
   `training` daemon pattern but with longer duration + hybrid mode.
 - **Type:** code
 - **Issue:** #182
+- **Status:** DONE (2026-06-20)
 - **Flags:** --reviewers code
 - **Files:** `.claude/skills/improve-bot-advised/SKILL.md` (Phase 4 dispatch — add a `soak` case)
 - **Depends on:** Step 2 (the improvement type must exist before routing).
@@ -171,6 +173,7 @@ start/stop sequence verbatim; the only deltas are duration and the `--decision-m
   a JSON state file (none exists). If Claude requests more, log a warning and clamp.
 - **Type:** code
 - **Issue:** #183
+- **Status:** DONE (2026-06-20)
 - **Flags:** --reviewers code
 - **Files:** `.claude/skills/improve-bot-advised/SKILL.md` (Phase 4 — clamp before the Step 3 soak path)
 - **Depends on:** Step 3 (routing must exist for the guard to wrap).
