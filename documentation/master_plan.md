@@ -1,5 +1,46 @@
 # Alpha4Gate — Master Plan (Platform + AlphaStar + Versioning)
 
+## Plan index
+
+Single spine for the project. Status as of 2026-06-20. Each phase's narrative lives in the sections below; deep build detail lives in the linked sub-plan docs. Sub-plans that are fully shipped or cut are archived; sub-plans with work remaining stay under `documentation/plans/` and are linked here.
+
+### Active sub-plans — work remaining (`documentation/plans/`)
+
+| Sub-plan | Phase | Status / remaining work |
+|---|---|---|
+| [phase-d-build-plan.md](documentation/plans/phase-d-build-plan.md) | D | Automated build COMPLETE (incl. snapshot-counts follow-up); **M1/M2 operator validation pending** |
+| [evolution-lines-plan.md](documentation/plans/evolution-lines-plan.md) | EL | EL.1-EL.5 shipped 2026-06-20; **EL.6 smoke + EL.7 soak operator-pending** |
+| [phase-6-build-plan.md](documentation/plans/phase-6-build-plan.md) | 6 | Self-play-driven improvement loop - planned |
+| [phase-7-build-plan.md](documentation/plans/phase-7-build-plan.md) | 7 | Advised loop stale-policy detection - planned (standalone) |
+| [phase-e-build-plan.md](documentation/plans/phase-e-build-plan.md) | E | Autoregressive action head - planned |
+| [phase-g-build-plan.md](documentation/plans/phase-g-build-plan.md) | G | Multi-race support - future |
+| [phase-h-build-plan.md](documentation/plans/phase-h-build-plan.md) | H | Mini-game substrate - investigation-blocked |
+| [phase-k-build-plan.md](documentation/plans/phase-k-build-plan.md) | K | Observable pool organisation - future |
+| [phase-q-build-plan.md](documentation/plans/phase-q-build-plan.md) | Q | harvest-engineer skill - investigation-blocked |
+
+### Archived sub-plans — shipped or cut (`documentation/archived/`)
+
+| Sub-plan | Outcome |
+|---|---|
+| [phase-1-build-plan.md](documentation/archived/phase-1-build-plan.md) | Phase 1 COMPLETE - bots/v0 migration |
+| [phase-2-build-plan.md](documentation/archived/phase-2-build-plan.md) | Phase 2 COMPLETE - registry + snapshot tool |
+| [phase-3-build-plan.md](documentation/archived/phase-3-build-plan.md) | Phase 3 COMPLETE - subprocess self-play runner |
+| [phase-4-build-plan.md](documentation/archived/phase-4-build-plan.md) | Phase 4 COMPLETE - Elo ladder + cross-version promotion |
+| [phase-5-build-plan.md](documentation/archived/phase-5-build-plan.md) | Phase 5 COMPLETE - sandbox enforcement + skill integration |
+| [phase-8-build-plan.md](documentation/archived/phase-8-build-plan.md) | Phase 8 COMPLETE - headless Linux training substrate |
+| [phase-9-build-plan.md](documentation/archived/phase-9-build-plan.md) | Phase 9 OPERATIONAL - improve-bot-evolve loop |
+| [phase-b-build-plan.md](documentation/archived/phase-b-build-plan.md) | Phase B COMPLETE - unit-type histogram observation |
+| [phase-n-build-plan.md](documentation/archived/phase-n-build-plan.md) | Phase N COMPLETE - win-probability + give-up |
+| [phase-d-snapshot-counts-plan.md](documentation/archived/phase-d-snapshot-counts-plan.md) | Phase D follow-up COMPLETE - 5 GameSnapshot count fields (#271) |
+| [dashboard-refactor-plan.md](documentation/archived/dashboard-refactor-plan.md) | COMPLETE - 6-tab dashboard refactor |
+| [models-tab-plan.md](documentation/archived/models-tab-plan.md) | COMPLETE - Models dashboard tab |
+| [evolve-parallelization-plan.md](documentation/archived/evolve-parallelization-plan.md) | COMPLETE - parallel evolve workers |
+| [evolve-gate-reduction-plan.md](documentation/archived/evolve-gate-reduction-plan.md) | COMPLETE - Phase 9 Step 10 gate reduction |
+| [evolve-parallelization-iter3-prompt.md](documentation/archived/evolve-parallelization-iter3-prompt.md) | OBSOLETE - iter-3 prompt superseded |
+| [phase-f-build-plan.md](documentation/archived/phase-f-build-plan.md) | CUT - removed from master plan (2026-05-19 trim) |
+
+Phases A and 0 (completed 2026-04-15/16) and earlier pre-master-plan work are documented inline below and under `documentation/archived/`.
+
 ## Source
 
 This plan is the third-generation merge. It supersedes three predecessors,
@@ -383,7 +424,7 @@ Phase 3's `selfplay.py`. Spike script was throwaway; no rollback artifact.
 ## Phase 1 — Move full stack + data to `bots/v0/`; scaffold orchestrator ✅
 
 **Status: COMPLETE** (tag `master-plan/1/final` on `e477235`, 2026-04-16).
-Build detail in `documentation/plans/phase-1-build-plan.md` — read it before
+Build detail in `documentation/archived/phase-1-build-plan.md` — read it before
 reopening this phase.
 
 `src/alpha4gate/` deleted, full bot stack at `bots/v0/`. Per-version data
@@ -400,7 +441,7 @@ tests green.
 ## Phase 2 — Registry + full-stack snapshot tool ✅
 
 **Status: COMPLETE** (tag `master-plan/2/final` on `f26bb55`, 2026-04-16).
-Build detail in `documentation/plans/phase-2-build-plan.md` — read it before
+Build detail in `documentation/archived/phase-2-build-plan.md` — read it before
 reopening this phase.
 
 `registry.list_versions()`, `registry.get_version_dir()`,
@@ -415,7 +456,7 @@ SC2 game on the snapshotted version. 943 tests, mypy strict (62 files).
 ## Phase 3 — Subprocess self-play runner ✅
 
 **Status: COMPLETE** (tag `master-plan/3/final` on `85d5fb2`, 2026-04-17).
-Build detail in `documentation/plans/phase-3-build-plan.md` — read it before
+Build detail in `documentation/archived/phase-3-build-plan.md` — read it before
 reopening this phase.
 
 `src/orchestrator/selfplay.py` + `scripts/selfplay.py`: subprocess batch
@@ -433,7 +474,7 @@ live batch PASS, 20-game soak clean. 967 tests.
 ## Phase 4 — Elo ladder + cross-version promotion ✅
 
 **Status: COMPLETE** (tag `master-plan/4/final` on `dba2d40`, 2026-04-17).
-Build detail in `documentation/plans/phase-4-build-plan.md` — read it before
+Build detail in `documentation/archived/phase-4-build-plan.md` — read it before
 reopening this phase.
 
 `src/orchestrator/ladder.py`: standard Elo K=32, seeding from
@@ -455,7 +496,7 @@ Elo delta 0 → correctly rejected. 1011 tests, 129 vitest.
 **Status: COMPLETE** (commits land via #118–#122 closures; no
 `master-plan/5/final` tag was cut; latest sandbox docs commit `0c9e273`,
 2026-04-17). 1020 tests, zero mypy/ruff. Build detail in
-`documentation/plans/phase-5-build-plan.md` — read it before reopening this
+`documentation/archived/phase-5-build-plan.md` — read it before reopening this
 phase.
 
 `scripts/check_sandbox.py` pre-commit hook + `tests/test_sandbox_hook.py`
@@ -484,14 +525,16 @@ the hook spec across multiple plan sections.
 
 ---
 
-## Phase B — Unit-type histogram observation expansion
+## Phase B — Unit-type histogram observation expansion ✅
+
+**Status: COMPLETE** (DONE 2026-04-17 — unit-type histogram observation shipped and folded into the production stack via successive promotions; build detail archived).
 
 **Track:** Capability. **Prerequisites:** Phase 5 (so it runs inside the
 sandbox as a skill-driven improvement, or as a human PR on
 `bots/current/**`).
 
 > **Build detail lives in
-> `documentation/plans/phase-b-build-plan.md`. Read it before starting
+> `documentation/archived/phase-b-build-plan.md`. Read it before starting
 > work on this phase.**
 
 **Goal:** Answer "is observation signal the binding constraint on win
@@ -763,7 +806,7 @@ No data migrations.
 **Track:** Operational. **Prerequisites:** Phase 5 (sandbox + skill integration). Independent of Phase 9 evolve, Phase 6 self-play, Phase 7 advised-staleness, and capability phases B/D/E.
 
 > **Build detail and per-step problem statements live in
-> `documentation/plans/phase-8-build-plan.md`. Read that document
+> `documentation/archived/phase-8-build-plan.md`. Read that document
 > before starting work on this phase — the impact tables, design
 > decisions, risks/open questions, and testing strategy are canonical
 > there, not summarised here.**
@@ -830,7 +873,7 @@ Revert Phase 8 commits on `src/orchestrator/paths.py`, `bots/v{0,1,2}/config.py`
 integration). Independent of B/D/E/6/7 — ships standalone.
 
 > **Build detail and step issues (#154–#161) live in
-> `documentation/plans/phase-9-build-plan.md`. Read that document
+> `documentation/archived/phase-9-build-plan.md`. Read that document
 > before starting work on this phase — the per-step problem statements,
 > impact tables, design decisions, risks/open questions, and testing
 > strategy are canonical there, not summarised here.**
@@ -925,7 +968,7 @@ directories accumulated during runs are safe to `rm -rf`.
 ### Post-Step-10 enhancement — gate reduction (2026-04-23)
 
 Build plan:
-[documentation/plans/evolve-gate-reduction-plan.md](evolve-gate-reduction-plan.md).
+[documentation/archived/evolve-gate-reduction-plan.md](documentation/archived/evolve-gate-reduction-plan.md).
 
 Collapses the evolve pipeline from **3 gates** (fitness + composition +
 regression) to **2 gates** (fitness + regression), with the
@@ -1263,7 +1306,7 @@ Phase O (Hydra meta-controller) can now consume the win-prob signal as
 its switching trigger.
 
 > **Build detail at
-> `documentation/plans/phase-n-build-plan.md`.**
+> `documentation/archived/phase-n-build-plan.md`.**
 
 **Goal:** Ship Option (c) heuristic from the win-probability
 investigation as the per-step P(win) signal: heuristic formula in
@@ -1311,7 +1354,7 @@ Drop heuristic module + DB column; remove give-up trigger.
 
 **Track:** Capability research. **Status:** Active — evolve parallelization
 sub-plan SHIPPED 2026-04-30
-(`documentation/plans/evolve-parallelization-plan.md`, umbrella #235).
+(`documentation/archived/evolve-parallelization-plan.md`, umbrella #235).
 Phase O is unblocked; scripted Hydra v1 can begin once a 4-way evolve
 soak demonstrates emergent reliability under multi-hour load.
 **Prerequisites:** Phase N (✅ shipped, win-prob is the candidate
@@ -1790,7 +1833,7 @@ Append-only — do not edit prior entries.
   based meta-controller over themed expert sub-policies); learned-
   controller v2 is deferred alongside Phase F as a capstone, only
   revived if scripted v1 produces evidence warranting it.
-  `documentation/plans/selfplay-viewer-plan.md` archived to
+  `documentation/archived/selfplay-viewer-observer-plan.md` archived to
   `documentation/archived/selfplay-viewer-observer-plan.md`
   (superseded by Phase L). Auxiliary-features section's "Self-play
   viewer" entry rewritten to point at Phase L. Time-budget table
@@ -1821,7 +1864,7 @@ Append-only — do not edit prior entries.
   + training-safety (the bots still see fog; only the observer sees
   everything, so bot decisions are unaffected and the viewer is safe to
   run during rated soaks). New plan at
-  `documentation/plans/selfplay-viewer-plan.md` (7 steps, blocking spike
+  `documentation/archived/selfplay-viewer-observer-plan.md` (7 steps, blocking spike
   at Step 1). Prior 2-screen plan archived at
   `documentation/archived/selfplay-viewer-2-screen-plan.md`.
 
@@ -1895,7 +1938,7 @@ Append-only — do not edit prior entries.
     `documentation/` → `documentation/plans/` for path consistency with
     the master plan and `improve-bot-evolve-plan.md`. Renamed
     `documentation/unit-type-histogram-plan.md` →
-    `documentation/plans/phase-b-build-plan.md` (this was the Phase B
+    `documentation/archived/phase-b-build-plan.md` (this was the Phase B
     build doc all along, just under a non-conforming name). Archived
     completed always-up-era plans (`phase-4-5-backlog.md`,
     `phase-4-7-eval-pipeline-fixes.md`,
@@ -1928,7 +1971,7 @@ Append-only — do not edit prior entries.
   Operational track. Pointer-style merge: Phase 8 carries the canonical
   fields (Goal, Track, Prereqs, Scope summary, Tests, Effort, Validation,
   Gate, Kill criterion, Rollback) plus a strong pointer back to the
-  build doc, which moved to `documentation/plans/improve-bot-evolve-plan.md`
+  build doc, which moved to `documentation/archived/phase-9-build-plan.md`
   and stays live as the build-detail source of truth (not archived).
 
   In the same pass, completed phases A, 0, 1, 2, 3, 4, 5 were compressed
