@@ -462,7 +462,9 @@ REQUESTED_HOURS=<improvement.soak_hours>
 # Clamp to min(remaining/2, 4) and FLOOR to a whole hour: soak must stay <= 50% of the TOTAL
 # budget and <= 4h. Output MUST be an integer — the §4.1 soak loop uses integer-only bash
 # arithmetic ($((SOAK_HOURS * 3600))), which is a hard syntax error on a float like "2.0".
-SOAK_HOURS=$(python -c "import sys; req=float(sys.argv[1]); rem=int(sys.argv[2]); print(int(max(0, min(req, rem/3600.0/2.0, 4.0))))" "$REQUESTED_HOURS" "$REMAINING_S")
+# Single source of truth for the clamp is orchestrator.staleness.clamp_soak_hours (unit-tested
+# in tests/test_advised_soak_routing.py) — do NOT reinline the arithmetic here.
+SOAK_HOURS=$(python -c "from orchestrator.staleness import clamp_soak_hours; print(clamp_soak_hours(float('$REQUESTED_HOURS'), $REMAINING_S))")
 if python -c "import sys; sys.exit(0 if float(sys.argv[1]) < float(sys.argv[2]) else 1)" "$SOAK_HOURS" "$REQUESTED_HOURS"; then
     echo "WARNING: soak_hours requested ${REQUESTED_HOURS}h clamped to ${SOAK_HOURS}h (must be <= min(remaining/2, 4))" | tee -a "$LOGFILE"
 fi

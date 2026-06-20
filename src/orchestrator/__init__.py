@@ -19,10 +19,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from orchestrator.staleness import StalenessReport, compute_staleness
+    from orchestrator.staleness import (
+        StalenessReport,
+        clamp_soak_hours,
+        compute_staleness,
+    )
 
 __all__ = [
     "StalenessReport",
+    "clamp_soak_hours",
     "compute_staleness",
 ]
 
@@ -36,7 +41,7 @@ def __getattr__(name: str) -> Any:
     Resolving on first attribute access keeps ``from orchestrator import
     compute_staleness`` working without that side effect.
     """
-    if name in ("StalenessReport", "compute_staleness"):
+    if name in ("StalenessReport", "clamp_soak_hours", "compute_staleness"):
         from orchestrator import staleness
 
         return getattr(staleness, name)

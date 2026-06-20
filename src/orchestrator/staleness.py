@@ -50,11 +50,61 @@ from orchestrator.registry import get_data_dir
 
 __all__ = [
     "StalenessReport",
+    "clamp_soak_hours",
     "compute_staleness",
 ]
 
 _BUCKET_SIZE = 10
 """Games per win-rate bucket in :attr:`StalenessReport.recent_win_rates`."""
+
+_SOAK_HOURS_HARD_CAP = 4.0
+"""Hard ceiling on a single soak's duration, in hours (see :func:`clamp_soak_hours`)."""
+
+
+def clamp_soak_hours(requested_hours: float, remaining_seconds: int) -> int:
+    """Clamp a requested soak duration to a safe whole-hour budget.
+
+    The ``soak`` improvement type in ``improve-bot-advised`` runs the daemon for
+    a number of hours so the PPO policy can retrain on the current reward rules.
+    This is the single source of truth for how that request is bounded against
+    the loop's remaining wall-clock budget. The result is
+
+    ``int(max(0, min(requested_hours, remaining_seconds / 3600.0 / 2.0, 4.0)))``
+
+    i.e. the duration is held to **all** of:
+
+    * ``<= requested_hours`` — never run longer than asked;
+    * ``<= half the remaining wall-clock`` (``remaining_seconds / 3600 / 2``) so
+      a soak can never consume more than 50% of what's left of the budget and
+      thus can never run past the run's deadline;
+    * ``<= 4 hours`` — a hard ceiling regardless of budget;
+    * ``>= 0`` — never negative.
+
+    The float minimum is then **floored to a whole hour** via :class:`int`,
+    because the §4.1 soak loop uses integer-only bash arithmetic
+    (``$((SOAK_HOURS * 3600))``), which is a syntax error on a float like
+    ``"2.0"``. A return of ``0`` is the documented skip-guard case: the caller
+    skips the soak entirely (``[ "$SOAK_HOURS" -lt 1 ]``) rather than tearing
+    down the backend for a 0-hour run.
+
+    Parameters
+    ----------
+    requested_hours:
+        Soak duration Claude asked for (schema-constrained to ``[1, 4]``, but
+        this function does not assume that and clamps any non-negative value).
+    remaining_seconds:
+        Wall-clock seconds left in the overall ``--hours`` budget
+        (``HOURS * 3600 - elapsed``). May be ``<= 0`` near the deadline, in
+        which case the result is ``0``.
+
+    Returns
+    -------
+    int
+        Whole-hour soak duration in ``[0, 4]``; ``0`` signals "skip the soak".
+    """
+    half_remaining_hours = remaining_seconds / 3600.0 / 2.0
+    clamped = min(requested_hours, half_remaining_hours, _SOAK_HOURS_HARD_CAP)
+    return int(max(0.0, clamped))
 
 
 @dataclass(frozen=True)

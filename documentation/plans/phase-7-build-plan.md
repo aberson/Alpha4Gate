@@ -195,6 +195,7 @@ file that does not exist).
   `compute_staleness` to a real per-version `training.db`.
 - **Type:** code
 - **Issue:** #184
+- **Status:** DONE (2026-06-20)
 - **Flags:** --reviewers code --isolation worktree
 - **Files:** `tests/test_staleness_signal.py` (NEW), `tests/test_advised_soak_routing.py` (NEW)
 - **Depends on:** Steps 1, 3, 4.
