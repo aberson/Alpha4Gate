@@ -64,6 +64,7 @@ if TYPE_CHECKING:
         Improvement,
         RegressionResult,
     )
+    from orchestrator.lineages import Lineage
 
 # Ensure repo root is on sys.path so ``orchestrator`` is importable when the
 # script is invoked directly (``python scripts/evolve.py``). The
@@ -288,6 +289,19 @@ def build_parser() -> argparse.ArgumentParser:
             "(no subprocess overhead). N>1 fans out via "
             "scripts/evolve_worker.py subprocesses (Decision D-1 / D-3 "
             "of evolve-parallelization-plan.md)."
+        ),
+    )
+    parser.add_argument(
+        "--lineages",
+        type=int,
+        default=1,
+        help=(
+            "Number of parallel lineages to schedule across (default: 1). "
+            "Default 1 with no data/lineages.json takes the byte-identical "
+            "single-lineage code path. N>1 (or a non-empty "
+            "data/lineages.json) round-robins each generation across "
+            "lineages, flipping bots/current/current.txt to each lineage's "
+            "head before its generation runs (Phase EL Step 1)."
         ),
     )
     return parser
@@ -2917,6 +2931,68 @@ def _record_parallel_failure(
 
 
 # ---------------------------------------------------------------------------
+# Lineage scheduling (Phase EL Step 1)
+# ---------------------------------------------------------------------------
+
+
+def _load_lineage_registry_if_engaged(
+    lineages_arg: int,
+) -> dict[str, Lineage]:
+    """Return the lineage registry IFF multi-lineage scheduling is engaged.
+
+    Engaged when ``--lineages > 1`` OR a non-empty ``data/lineages.json``
+    exists. In that case the effective registry (implicit ``main`` when the
+    file is absent/empty, else the on-disk one) is returned. Otherwise
+    returns ``{}`` so the caller takes the byte-identical single-lineage
+    path — the back-compat invariant.
+
+    A malformed/unreadable registry is logged and treated as absent (empty
+    dict) so a bad file never aborts the run; with ``--lineages 1`` that
+    means the single-lineage path, and with ``--lineages > 1`` it means the
+    implicit ``main`` lineage built inline (see below) — deliberately NOT
+    re-reading via ``load_or_default_lineages``, which would raise again on
+    the same malformed file.
+    """
+    from orchestrator.lineages import (
+        DEFAULT_LINEAGE_ID,
+        Lineage,
+        current_version,
+        default_lineages_path,
+        load_lineages,
+    )
+
+    path = default_lineages_path()
+    try:
+        on_disk = load_lineages(path)
+    except Exception as exc:  # noqa: BLE001 — bad file must not abort run
+        _log.warning(
+            "evolve: could not read lineage registry at %s (%s); "
+            "ignoring it",
+            path,
+            exc,
+        )
+        on_disk = {}
+
+    if lineages_arg <= 1 and not on_disk:
+        # Default path: --lineages 1 and no registry → single-lineage.
+        return {}
+
+    if on_disk:
+        return on_disk
+    # --lineages > 1 but no (or malformed) registry → implicit single
+    # ``main`` lineage. Build it inline rather than re-reading the file:
+    # ``load_or_default_lineages`` would call ``load_lineages`` a second
+    # time and re-raise on a malformed file, aborting the run.
+    head = current_version()
+    return {
+        DEFAULT_LINEAGE_ID: Lineage(
+            lineage_id=DEFAULT_LINEAGE_ID,
+            head_version=head,
+        )
+    }
+
+
+# ---------------------------------------------------------------------------
 # Orchestration loop
 # ---------------------------------------------------------------------------
 
@@ -3243,6 +3319,29 @@ def run_loop(
             generation=generation_index,
         )
 
+    # --- Lineage scheduling setup (Phase EL Step 1) ---
+    # Back-compat invariant: with --lineages 1 (default) AND no non-empty
+    # data/lineages.json, ``_lineage_heads`` is empty and the per-generation
+    # scheduling block below is a no-op — the loop runs the exact pre-EL
+    # single-lineage code path. Multi-lineage scheduling engages ONLY when
+    # --lineages > 1 OR a non-empty registry exists on disk.
+    _lineage_heads: dict[str, str] = {}
+    _last_lineage_id: str | None = None
+    _lineages_arg = int(getattr(args, "lineages", 1) or 1)
+    _lineages_registry = _load_lineage_registry_if_engaged(_lineages_arg)
+    if _lineages_registry:
+        _lineage_heads = {
+            lid: lin.head_version for lid, lin in _lineages_registry.items()
+        }
+        _log.info(
+            "evolve: multi-lineage scheduling engaged across %d lineage(s): "
+            "%s",
+            len(_lineage_heads),
+            ", ".join(
+                f"{lid}@{head}" for lid, head in _lineage_heads.items()
+            ),
+        )
+
     # --- Generation loop ---
     generations_completed = 0
     generations_promoted = 0
@@ -3279,6 +3378,35 @@ def run_loop(
 
         generation_index += 1
         gen_start_monotonic = time_fn()
+
+        # --- Lineage scheduling (Phase EL Step 1) ---
+        # When multi-lineage scheduling is engaged, round-robin to the next
+        # lineage and flip bots/current/current.txt to its head BEFORE the
+        # generation runs. ``parent_current`` becomes this lineage's head;
+        # any promotion this generation advances ``parent_current``, which
+        # we write back to ``_lineage_heads`` at the bottom of the loop so
+        # the lineage's branch persists across its turns. The pointer flip
+        # uses the existing primitive (``_primitive_restore_pointer``) — it
+        # does NOT change the pointer file's shape or registry semantics.
+        _gen_lineage_id: str | None = None
+        if _lineage_heads:
+            from orchestrator.lineages import next_lineage
+
+            _gen_lineage_id = next_lineage(
+                _lineages_registry, _last_lineage_id
+            )
+            _last_lineage_id = _gen_lineage_id
+            lineage_head = _lineage_heads[_gen_lineage_id]
+            if lineage_head != parent_current:
+                _primitive_restore_pointer(lineage_head)
+            parent_current = lineage_head
+            _log.info(
+                "evolve: generation %d scheduled on lineage %r (head %s)",
+                generation_index,
+                _gen_lineage_id,
+                lineage_head,
+            )
+
         _log.info(
             "evolve: generation %d — %d active imps, parent=%s",
             generation_index,
@@ -3796,6 +3924,11 @@ def run_loop(
             for offset, imp in enumerate(fresh_imps):
                 pool.append(imp)
                 per_item_state[start_idx + offset] = PerItemState()
+
+        # Persist this lineage's (possibly advanced) head so its next turn
+        # branches from the right version. No-op in single-lineage mode.
+        if _gen_lineage_id is not None:
+            _lineage_heads[_gen_lineage_id] = parent_current
 
         gen_durations_seconds.append(
             max(0.0, time_fn() - gen_start_monotonic)

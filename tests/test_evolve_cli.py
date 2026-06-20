@@ -451,6 +451,7 @@ def test_default_flags(cli: ModuleType) -> None:
     assert args.current_round_path.name == "evolve_current_round.json"
     assert args.post_training_cycles == 0
     assert args.backend_url == "http://localhost:8765"
+    assert args.lineages == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1887,3 +1888,269 @@ def test_run_loop_persists_run_id_and_concurrency_into_state_file(
     assert len(payload["gen_durations_seconds"]) == 1
     assert payload["gen_durations_seconds"][0] >= 0.0
     assert payload["generations_target"] == args.generations
+
+
+# ---------------------------------------------------------------------------
+# 18. Multi-lineage scheduling (Phase EL Step 1) — production wiring
+# ---------------------------------------------------------------------------
+
+
+def test_lineages_default_one_takes_single_lineage_path(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--lineages 1 with no registry never flips the pointer to a lineage head.
+
+    Back-compat invariant: the multi-lineage scheduling block stays a no-op,
+    so ``_primitive_restore_pointer`` is not called from the scheduler at all
+    (the only pointer writes come from stack-apply/regression, neither of
+    which fires here since fitness always fails).
+    """
+    import orchestrator.lineages as lineages_mod
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    # Point the registry lookup at an empty tmp data/ so no file is found.
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+
+    flips: list[str] = []
+    monkeypatch.setattr(
+        cli, "_primitive_restore_pointer", lambda v: flips.append(v)
+    )
+
+    args = _build_args(tmp_path, pool_size=2, generations=1)
+    args.lineages = 1
+    pool = _make_pool(2)
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=_ScriptedFitness(["fail", "fail"]),
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+    assert flips == []  # scheduler never engaged → no head flip
+
+
+def test_lineages_two_round_robins_and_flips_pointer(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--lineages 2 with an on-disk registry flips the pointer to each head.
+
+    Integration through the production entry point (``run_loop``): the
+    scheduler reads ``data/lineages.json`` via ``orchestrator.lineages``,
+    round-robins across the two lineages, and flips
+    ``bots/current/current.txt`` to each lineage's head before its
+    generation using the existing ``_primitive_restore_pointer``. Two
+    generations → ``main`` (v0) then ``line-2`` (v9).
+    """
+    import orchestrator.lineages as lineages_mod
+    from orchestrator.lineages import Lineage, write_lineages
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+
+    # Seed a real 2-lineage registry under tmp data/.
+    registry = {
+        "main": Lineage(lineage_id="main", head_version="v0"),
+        "line-2": Lineage(lineage_id="line-2", head_version="v9"),
+    }
+    write_lineages(tmp_path / "data" / "lineages.json", registry)
+
+    flips: list[str] = []
+    monkeypatch.setattr(
+        cli, "_primitive_restore_pointer", lambda v: flips.append(v)
+    )
+
+    args = _build_args(tmp_path, pool_size=2, generations=2)
+    args.lineages = 2
+    pool = _make_pool(2)
+
+    # Record which parent each fitness eval ran against, per generation.
+    # Use "close" so imps flip back to active and the pool survives into
+    # gen 2 (a "fail" pool would exhaust after gen 1 and never schedule the
+    # second lineage).
+    fitness_parents: list[str] = []
+
+    def recording_fitness(parent: str, imp: Improvement, **k: Any) -> Any:
+        fitness_parents.append(parent)
+        return _fitness(imp, bucket="close", parent=parent)
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=recording_fitness,
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+    # The persisted registry is written with sort_keys=True, so the loaded
+    # insertion order is alphabetical: line-2 (v9) then main (v0). The
+    # round-robin therefore schedules line-2 in gen 1 and main in gen 2.
+    # The pointer is flipped to whichever lineage head differs from the
+    # live parent (v0) at scheduling time — v9 at least.
+    assert "v9" in flips
+    # Both lineage heads were exercised as a fitness parent across the two
+    # generations — proof the scheduler advanced ``parent_current`` to each
+    # lineage's head. (2 imps per generation → 4 fitness evals total.)
+    assert set(fitness_parents) == {"v0", "v9"}
+    # Gen 1 is line-2 (v9); both of its imps ran against v9.
+    assert fitness_parents[0] == "v9"
+    assert fitness_parents[1] == "v9"
+
+
+def test_lineage_promotion_advances_head_for_next_turn(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lineage that promotes branches from its ADVANCED head next turn.
+
+    Drives a real promotion through ``run_loop`` (integration via the
+    production entry point) and verifies the head-writeback persistence:
+    after ``line-2`` promotes ``v9 -> v10`` on its first turn (gen 1), its
+    second turn (gen 3) must run fitness against the advanced ``v10`` —
+    NOT its original ``v9`` head.
+
+    Schedule (registry sort_keys=True → load order line-2, main):
+      gen 1: line-2 @ v9  → one imp passes → promote v9 -> v10
+      gen 2: main   @ v0  → all "close" (no promotion)
+      gen 3: line-2 @ v10 → fitness must see v10 (the advanced head)
+
+    ``run_regression_fn`` returns no rollback so the promotion sticks.
+    """
+    import orchestrator.lineages as lineages_mod
+    from orchestrator.lineages import Lineage, write_lineages
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+    # Promotion path runs post-promotion hooks; stub so the real bot code
+    # is not invoked under the tmp registry.
+    monkeypatch.setattr(
+        "bots.v0.learning.post_promotion_hooks.run_post_promotion_hooks",
+        lambda _v: None,
+    )
+
+    registry = {
+        "main": Lineage(lineage_id="main", head_version="v0"),
+        "line-2": Lineage(lineage_id="line-2", head_version="v9"),
+    }
+    write_lineages(tmp_path / "data" / "lineages.json", registry)
+
+    monkeypatch.setattr(
+        cli, "_primitive_restore_pointer", lambda _v: None
+    )
+
+    args = _build_args(tmp_path, pool_size=3, generations=3)
+    args.lineages = 2
+    pool = _make_pool(3)
+
+    # Record (generation, parent) per fitness call. Promote line-2's first
+    # turn by passing exactly one imp against v9 while keeping the other two
+    # active ("close") so the pool survives to gen 3.
+    fitness_parents: list[str] = []
+
+    def scripted_fitness(parent: str, imp: Improvement, **k: Any) -> Any:
+        fitness_parents.append(parent)
+        # Pass the rank-1 imp ONLY when evaluated against v9 (line-2 gen 1)
+        # so v9 promotes to v10; everything else stays active via "close".
+        if parent == "v9" and imp.rank == 1:
+            return _fitness(imp, bucket="pass", parent=parent)
+        return _fitness(imp, bucket="close", parent=parent)
+
+    stack_apply = _ScriptedStackApply([(True, "v10")])
+    regression = _ScriptedRegression([False])  # no rollback → promotion sticks
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=scripted_fitness,
+        stack_apply_fn=stack_apply,
+        run_regression_fn=regression,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+
+    # Promotion happened exactly once, v9 -> v10, and regression passed.
+    assert len(stack_apply.calls) == 1
+    assert stack_apply.calls[0]["parent"] == "v9"
+    assert len(regression.calls) == 1
+    assert regression.calls[0]["new_parent"] == "v10"
+    assert regression.calls[0]["prior_parent"] == "v9"
+
+    # The head-writeback contract: line-2's SECOND turn (gen 3) ran fitness
+    # against the ADVANCED head v10, never its original v9.
+    # gen 1 (line-2 @ v9): 3 fitness calls against v9
+    # gen 2 (main  @ v0):  2 active imps (rank-1 promoted in gen 1) → v0
+    # gen 3 (line-2 @ v10): the surviving imps → v10
+    assert "v10" in fitness_parents, fitness_parents
+    # Every gen-3 (line-2 second turn) eval was against v10, not v9.
+    gen3_parents = fitness_parents[5:]
+    assert gen3_parents, fitness_parents
+    assert set(gen3_parents) == {"v10"}, fitness_parents
+
+
+def test_lineage_no_flip_when_head_equals_live_parent(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No redundant pointer write when a lineage's head == the live parent.
+
+    When the scheduled lineage's ``head_version`` already equals the live
+    ``parent_current``, ``_primitive_restore_pointer`` must NOT be called
+    for that generation (the pointer is not re-written to the same value).
+
+    Single-lineage registry whose head (v0) matches the live parent
+    (``current_version_fn`` → v0). With fitness always "fail" there is no
+    promotion either, so the ONLY possible pointer write is the scheduler's
+    flip — which must not fire because head == parent.
+    """
+    import orchestrator.lineages as lineages_mod
+    from orchestrator.lineages import Lineage, write_lineages
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+
+    registry = {"main": Lineage(lineage_id="main", head_version="v0")}
+    write_lineages(tmp_path / "data" / "lineages.json", registry)
+
+    flips: list[str] = []
+    monkeypatch.setattr(
+        cli, "_primitive_restore_pointer", lambda v: flips.append(v)
+    )
+
+    # --lineages 1 but a non-empty on-disk registry still engages the
+    # scheduler (engaged when --lineages > 1 OR a non-empty registry exists).
+    args = _build_args(tmp_path, pool_size=2, generations=1)
+    args.lineages = 1
+    pool = _make_pool(2)
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=_ScriptedFitness(["fail", "fail"]),
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+    # head (v0) == live parent (v0) → scheduler did NOT re-write the pointer.
+    assert flips == []

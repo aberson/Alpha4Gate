@@ -175,6 +175,7 @@ pressure is the standard escape from that local optimum.
 
 <!-- autofix-applied: 2026-06-19 -->
 ### Step EL.1: Lineage registry + round-robin scheduler
+- **Status:** DONE (2026-06-19)
 - **Problem:** Add `src/orchestrator/lineages.py` (`Lineage` dataclass,
   atomic `lineages.json` read/write, `next_lineage()` round-robin) and wrap
   the `scripts/evolve.py` generation loop so it schedules across N

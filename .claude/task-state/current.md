@@ -1,20 +1,22 @@
 # Current Task State
 
 **Task:** Phase EL (Evolution Lines) — build the parallel-lineage / baseline-DB / diversity-extinction evolve substrate
-**Status:** READY_FOR_BUILD
-**Last written:** 2026-06-19T00:00:00Z
-**Session SHA:** 154f7b0
+**Status:** BUILDING (EL.1 DONE; EL.2 next)
+**Last written:** 2026-06-19T01:00:00Z
+**Session SHA:** 0c5d7dc
 
 ## Next Action
 
-Goal-driven build of the agent-completable slice (EL.1–EL.5), then build-phase halts at the EL.6 operator smoke gate:
+Continue `/build-phase` for Phase EL — EL.2 (Baseline opponent DB + fitness gauntlet, #274) is next. Goal-scoped to EL.1–EL.5, halt at EL.6.
 
 ```
-/goal "Phase EL steps EL.1-EL.5 (GitHub issues #273-#277) are built, merged to master, and pytest + vitest are green - stop at the EL.6 operator smoke gate (#278)"
-/build-phase --plan documentation/plans/evolution-lines-plan.md
+/build-phase --plan documentation/plans/evolution-lines-plan.md --resume EL.2
 ```
 
-Steps are largely sequential: EL.1 → EL.2 (share scripts/evolve.py) → EL.3 → EL.4 → EL.5 (frontend, --ui). EL.6 (operator smoke) + EL.7 (wait soak) are NOT agent-completable — run them manually after EL.5 lands. Do NOT widen the /goal to cover EL.6/EL.7 (busy-poll on operator/clock-gated steps — see feedback_goal_mode_only_agent_completable).
+Steps largely sequential: EL.1 ✅ → EL.2 (shares scripts/evolve.py with EL.1) → EL.3 → EL.4 → EL.5 (frontend, --ui). EL.6 (operator smoke) + EL.7 (wait soak) NOT agent-completable.
+
+## Completed
+- [pending-sha] EL.1 Lineage registry + round-robin scheduler: PASS iter 2/3 (+ new tests; 1678→ baseline holds). lineages.py overlay; current.txt shape unchanged; back-compat --lineages 1 byte-identical.
 
 ## WIP
 

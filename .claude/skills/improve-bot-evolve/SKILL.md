@@ -2,7 +2,7 @@
 name: improve-bot-evolve
 description: Autonomous generation-phase improvement loop. Generates a pool of Claude-proposed improvements, fitness-tests each vs the current parent, stacks the winners onto a new snapshot (with an import-check gate), and regression-checks against the prior parent — repeating for hours until the pool or wall-clock budget is exhausted. Designed for overnight unattended runs.
 user-invocable: true
-argument: Optional flags only — no free-text suggestion needed. Flags: `--pool-size N` (default 10), `--games-per-eval N` (default 5), `--hours N` (default 4), `--concurrency N` (default 1), `--map NAME` (default Simple64), `--no-commit` (dev/test only), `--results-path PATH`, `--pool-path PATH`, `--state-path PATH`, `--run-log PATH`, `--resume`, `--post-training-cycles N`.
+argument: Optional flags only — no free-text suggestion needed. Flags: `--pool-size N` (default 10), `--games-per-eval N` (default 5), `--hours N` (default 4), `--concurrency N` (default 1), `--lineages N` (default 1; bare invocation stays single-lineage), `--map NAME` (default Simple64), `--no-commit` (dev/test only), `--results-path PATH`, `--pool-path PATH`, `--state-path PATH`, `--run-log PATH`, `--resume`, `--post-training-cycles N`.
 required-env: SC2 installed at `C:/Program Files (x86)/StarCraft II/`, `claude` CLI on PATH and authenticated (OAuth subscription token OR `ANTHROPIC_API_KEY` — whichever the CLI is set up with).
 ---
 
@@ -37,6 +37,7 @@ The outer phase shape (pre-flight → seed → loop → decision → report) is 
 | `--games-per-eval` | int | `5` | Games in each phase evaluation (fitness / regression). Pass threshold = strict majority of this count. |
 | `--hours` | float | `4.0` | Wall-clock budget. `0` disables the check (test-only). |
 | `--concurrency` | int | `1` | Number of fitness-eval workers run in parallel by `scripts/evolve.py`. `1` is byte-identical to the historical serial path (Decision D-1 in `documentation/plans/evolve-parallelization-plan.md`). `>1` fans the fitness phase out across N worker subprocesses; stack-apply + regression remain serial. |
+| `--lineages` | int | `1` | Number of parallel lineages to round-robin across. `1` with no `data/lineages.json` is byte-identical to the historical single-lineage path. `>1` (or a non-empty `data/lineages.json`) flips `bots/current/current.txt` to each lineage's head before its generation, so the loop interleaves divergent branches (Phase EL). A bare `/improve-bot-evolve` invocation stays single-lineage. |
 | `--map` | str | `Simple64` | SC2 map name |
 | `--game-time-limit` | int | `1800` | SC2 in-game time limit per game, in seconds |
 | `--hard-timeout` | float | `2700.0` | Wall-clock timeout per game, in seconds |
