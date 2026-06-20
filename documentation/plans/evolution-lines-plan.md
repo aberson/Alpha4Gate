@@ -215,6 +215,7 @@ pressure is the standard escape from that local optimum.
 - **Depends on:** none (independent of EL.1; can build in parallel).
 
 ### Step EL.3: Behavioral diversity fingerprint
+- **Status:** DONE (2026-06-20)
 - **Problem:** Add `src/orchestrator/fingerprint.py` with
   `compute_fingerprint(version)` (v1 = per-baseline win-rate vector from the
   EL.2 gauntlet), `fingerprint_distance(a, b)`, and atomic persistence to

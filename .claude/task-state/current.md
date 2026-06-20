@@ -1,19 +1,21 @@
 # Current Task State
 
 **Task:** Phase EL (Evolution Lines) — build the parallel-lineage / baseline-DB / diversity-extinction evolve substrate
-**Status:** BUILDING (EL.1, EL.2 DONE; EL.3 next)
-**Last written:** 2026-06-20T00:00:00Z
-**Session SHA:** 2675c43
+**Status:** BUILDING (EL.1–EL.3 DONE; EL.4 next)
+**Last written:** 2026-06-20T02:00:00Z
+**Session SHA:** ddd7be6
 
 ## Next Action
 
-Continue `/build-phase` for Phase EL — EL.3 (Behavioral diversity fingerprint, #275) is next. Goal-scoped to EL.1–EL.5, halt at EL.6.
+Continue `/build-phase` for Phase EL — EL.4 (Population manager — diversity-driven extinction, #276) is next. Goal-scoped to EL.1–EL.5, halt at EL.6.
 
 ```
-/build-phase --plan documentation/plans/evolution-lines-plan.md --resume EL.3
+/build-phase --plan documentation/plans/evolution-lines-plan.md --resume EL.4
 ```
 
-Steps: EL.1 ✅ → EL.2 ✅ → EL.3 (fingerprint, depends on EL.2 gauntlet output) → EL.4 (population/extinction) → EL.5 (frontend, --ui). EL.6 (operator smoke) + EL.7 (wait soak) NOT agent-completable.
+Steps: EL.1 ✅ → EL.2 ✅ → EL.3 ✅ → EL.4 (population/extinction; consumes fingerprint_distance + baseline fitness + lineage scheduler) → EL.5 (frontend, --ui). EL.6 (operator smoke) + EL.7 (wait soak) NOT agent-completable.
+
+NOTE for EL.4: fingerprint_distance returns float('nan') for incomparable (no shared baselines) pairs — EL.4's "distance < threshold → cull" must treat nan as "not redundant" (math.isnan guard; `nan < threshold` is already False, which is the safe direction).
 
 ## Completed
 - EL.1 Lineage registry + round-robin scheduler: PASS iter 2/3. lineages.py overlay; current.txt shape unchanged; --lineages 1 byte-identical. Merged 2675c43.
