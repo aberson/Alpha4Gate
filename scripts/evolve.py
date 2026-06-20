@@ -58,6 +58,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
+    from orchestrator.baselines import Baseline
     from orchestrator.contracts import SelfPlayRecord
     from orchestrator.evolve import (
         FitnessResult,
@@ -289,6 +290,21 @@ def build_parser() -> argparse.ArgumentParser:
             "(no subprocess overhead). N>1 fans out via "
             "scripts/evolve_worker.py subprocesses (Decision D-1 / D-3 "
             "of evolve-parallelization-plan.md)."
+        ),
+    )
+    parser.add_argument(
+        "--fitness-mode",
+        choices=("parent", "baseline", "both"),
+        default="parent",
+        help=(
+            "Fitness signal mode (Phase EL Step 2). Default 'parent' is "
+            "the byte-identical historical behavior: per-imp fitness vs "
+            "the snapshotted parent, no baseline gauntlet. 'baseline' and "
+            "'both' additionally run a baseline gauntlet for each "
+            "newly-promoted version against data/baselines.json and LOG + "
+            "record the result (the per-imp promotion gate is unchanged in "
+            "this step). If data/baselines.json is empty/absent, "
+            "'baseline'/'both' behave like 'parent' (no gauntlet)."
         ),
     )
     parser.add_argument(
@@ -3004,6 +3020,7 @@ def run_loop(
     run_fitness_fn: Callable[..., FitnessResult] | None = None,
     stack_apply_fn: Callable[..., StackApplyOutcome] | None = None,
     run_regression_fn: Callable[..., RegressionResult] | None = None,
+    run_gauntlet_fn: Callable[..., Any] | None = None,
     claude_fn: Callable[[str], str] | None = None,
     commit_fn: Callable[..., tuple[bool, str | None]] | None = None,
     revert_fn: Callable[..., bool] | None = None,
@@ -3033,6 +3050,10 @@ def run_loop(
         from orchestrator.evolve import run_regression_eval
 
         run_regression_fn = run_regression_eval
+    # Phase EL Step 2: the baseline-gauntlet seam is resolved LAZILY at the
+    # post-promotion call site, and ONLY when --fitness-mode is
+    # baseline/both. The default 'parent' mode never touches it, keeping
+    # that path byte-identical (no extra import, no behavior change).
     if commit_fn is None:
         commit_fn = git_commit_evo_auto
     if revert_fn is None:
@@ -3111,6 +3132,41 @@ def run_loop(
 
     concurrency_int = int(getattr(args, "concurrency", 1) or 1)
     generations_target_int = int(getattr(args, "generations", 0) or 0)
+
+    # Phase EL Step 2: baseline-gauntlet mode. Default 'parent' leaves the
+    # historical path byte-identical; 'baseline'/'both' run a gauntlet for
+    # each newly-promoted version (LOG + record only — the promotion gate
+    # is unchanged in this step). Baselines are loaded once, lazily, only
+    # when a non-parent mode is requested.
+    fitness_mode = str(getattr(args, "fitness_mode", "parent") or "parent")
+    _gauntlet_baselines: list[Baseline] = []
+    if fitness_mode in ("baseline", "both"):
+        from orchestrator.baselines import (
+            default_baselines_path,
+            load_baselines,
+        )
+
+        _baselines_path = default_baselines_path()
+        try:
+            _gauntlet_baselines = list(
+                load_baselines(_baselines_path).values()
+            )
+        except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            _log.warning(
+                "evolve: --fitness-mode=%s but failed to load baselines "
+                "from %s (%s); treating as empty (parent-like, no gauntlet)",
+                fitness_mode,
+                _baselines_path,
+                exc,
+            )
+            _gauntlet_baselines = []
+        if not _gauntlet_baselines:
+            _log.warning(
+                "evolve: --fitness-mode=%s but no baselines registered at "
+                "%s; behaving like 'parent' (no gauntlet will run)",
+                fitness_mode,
+                _baselines_path,
+            )
 
     # sys.argv[1:] snapshot — what flags this run was launched with.
     # Surfaced on the dashboard so the operator can see at a glance
@@ -3715,6 +3771,71 @@ def run_loop(
                             "promotion already committed, continuing",
                             stack_result.new_version,
                         )
+
+                    # Phase EL Step 2: baseline gauntlet. Only when the
+                    # operator opted into baseline/both mode AND at least
+                    # one baseline is registered. The gauntlet does NOT
+                    # change the promotion gate in this step — it LOGS +
+                    # records the candidate's win rate vs the panel so a
+                    # later step can drive gating off it. Wrapped
+                    # defense-in-depth so a gauntlet crash never blocks an
+                    # already-committed promotion.
+                    if (
+                        fitness_mode in ("baseline", "both")
+                        and _gauntlet_baselines
+                    ):
+                        try:
+                            _gauntlet_fn = run_gauntlet_fn
+                            if _gauntlet_fn is None:
+                                from orchestrator.evolve import (
+                                    run_baseline_gauntlet,
+                                )
+
+                                _gauntlet_fn = run_baseline_gauntlet
+                            gauntlet_result = _gauntlet_fn(
+                                stack_result.new_version,
+                                _gauntlet_baselines,
+                                games_each=args.games_per_eval,
+                                map_name=args.map,
+                                game_time_limit=args.game_time_limit,
+                                hard_timeout=args.hard_timeout,
+                                run_batch_fn=run_batch_fn,
+                            )
+                            _log.info(
+                                "evolve: baseline gauntlet for %s — mean "
+                                "win rate %.3f across %d baseline(s): %s",
+                                stack_result.new_version,
+                                gauntlet_result.mean_win_rate,
+                                len(gauntlet_result.per_baseline),
+                                gauntlet_result.per_baseline,
+                            )
+                            append_phase_result(
+                                args.results_path,
+                                {
+                                    "phase": "gauntlet",
+                                    "generation": generation_index,
+                                    "candidate": gauntlet_result.candidate,
+                                    "per_baseline": dict(
+                                        gauntlet_result.per_baseline
+                                    ),
+                                    "mean_win_rate": (
+                                        gauntlet_result.mean_win_rate
+                                    ),
+                                    "games_each": gauntlet_result.games_each,
+                                    "outcome": "gauntlet",
+                                    "reason": (
+                                        "baseline gauntlet for "
+                                        f"{gauntlet_result.candidate}: mean "
+                                        f"{gauntlet_result.mean_win_rate:.3f}"
+                                    ),
+                                },
+                            )
+                        except Exception:  # noqa: BLE001 — defense-in-depth
+                            _log.exception(
+                                "evolve: baseline gauntlet crashed for %s; "
+                                "promotion already committed, continuing",
+                                stack_result.new_version,
+                            )
                 else:
                     # Import-check or commit failed; snapshot rolled
                     # back inside the helper. No promotion this

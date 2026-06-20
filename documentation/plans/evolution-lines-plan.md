@@ -196,6 +196,7 @@ pressure is the standard escape from that local optimum.
 - **Depends on:** none.
 
 ### Step EL.2: Baseline opponent database + fitness gauntlet
+- **Status:** DONE (2026-06-20)
 - **Problem:** Add `src/orchestrator/baselines.py` + `scripts/baseline.py`
   CLI (register/list/freeze a version as a named baseline; `data/baselines.json`),
   and `run_baseline_gauntlet(candidate, baselines, games_each)` in

@@ -1,22 +1,23 @@
 # Current Task State
 
 **Task:** Phase EL (Evolution Lines) — build the parallel-lineage / baseline-DB / diversity-extinction evolve substrate
-**Status:** BUILDING (EL.1 DONE; EL.2 next)
-**Last written:** 2026-06-19T01:00:00Z
-**Session SHA:** 0c5d7dc
+**Status:** BUILDING (EL.1, EL.2 DONE; EL.3 next)
+**Last written:** 2026-06-20T00:00:00Z
+**Session SHA:** 2675c43
 
 ## Next Action
 
-Continue `/build-phase` for Phase EL — EL.2 (Baseline opponent DB + fitness gauntlet, #274) is next. Goal-scoped to EL.1–EL.5, halt at EL.6.
+Continue `/build-phase` for Phase EL — EL.3 (Behavioral diversity fingerprint, #275) is next. Goal-scoped to EL.1–EL.5, halt at EL.6.
 
 ```
-/build-phase --plan documentation/plans/evolution-lines-plan.md --resume EL.2
+/build-phase --plan documentation/plans/evolution-lines-plan.md --resume EL.3
 ```
 
-Steps largely sequential: EL.1 ✅ → EL.2 (shares scripts/evolve.py with EL.1) → EL.3 → EL.4 → EL.5 (frontend, --ui). EL.6 (operator smoke) + EL.7 (wait soak) NOT agent-completable.
+Steps: EL.1 ✅ → EL.2 ✅ → EL.3 (fingerprint, depends on EL.2 gauntlet output) → EL.4 (population/extinction) → EL.5 (frontend, --ui). EL.6 (operator smoke) + EL.7 (wait soak) NOT agent-completable.
 
 ## Completed
-- [pending-sha] EL.1 Lineage registry + round-robin scheduler: PASS iter 2/3 (+ new tests; 1678→ baseline holds). lineages.py overlay; current.txt shape unchanged; back-compat --lineages 1 byte-identical.
+- EL.1 Lineage registry + round-robin scheduler: PASS iter 2/3. lineages.py overlay; current.txt shape unchanged; --lineages 1 byte-identical. Merged 2675c43.
+- EL.2 Baseline opponent DB + fitness gauntlet: PASS iter 2/3. baselines.py registry + scripts/baseline.py CLI + run_baseline_gauntlet + --fitness-mode {parent,baseline,both} (parent byte-identical). Full suite was 1700 after EL.1.
 
 ## WIP
 

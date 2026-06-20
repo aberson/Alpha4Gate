@@ -64,7 +64,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from orchestrator.contracts import SelfPlayRecord
 from orchestrator.registry import (
@@ -78,13 +78,18 @@ _log = logging.getLogger(__name__)
 
 __all__ = [
     "FitnessResult",
+    "GauntletResult",
     "Improvement",
     "RegressionResult",
     "apply_improvement",
     "generate_pool",
+    "run_baseline_gauntlet",
     "run_fitness_eval",
     "run_regression_eval",
 ]
+
+if TYPE_CHECKING:
+    from orchestrator.baselines import Baseline
 
 
 ImprovementType = Literal["training", "dev"]
@@ -800,6 +805,174 @@ def run_regression_eval(
         games=games,
         rolled_back=rolled_back,
         reason=reason,
+    )
+
+
+# ---------------------------------------------------------------------------
+# run_baseline_gauntlet (Phase EL Step 2)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class GauntletResult:
+    """Outcome of :func:`run_baseline_gauntlet` — candidate vs baseline panel.
+
+    Fields
+    ------
+    candidate:
+        The version under test (e.g. ``"v8"``).
+    per_baseline:
+        ``{baseline_name: win_rate}`` — the candidate's win rate (a float
+        in ``[0.0, 1.0]``) against each baseline. Draws / crashes count
+        against the win rate (they are decided games that the candidate
+        did not win). A baseline whose games were all draws/crashes
+        scores 0.0.
+    mean_win_rate:
+        Scalar fitness — the mean of ``per_baseline`` values across the
+        registered baselines, or ``0.0`` when no baselines were supplied.
+    games_each:
+        Games played against each baseline.
+    record:
+        Flat list of every :class:`SelfPlayRecord` across all baselines,
+        in baseline order, for downstream forensics.
+    """
+
+    candidate: str
+    per_baseline: dict[str, float]
+    mean_win_rate: float
+    games_each: int
+    record: list[SelfPlayRecord]
+
+
+def run_baseline_gauntlet(
+    candidate: str,
+    baselines: list[Baseline],
+    *,
+    games_each: int = 5,
+    map_name: str = "Simple64",
+    game_time_limit: int = 1800,
+    hard_timeout: float = 2700.0,
+    run_batch_fn: Callable[..., list[SelfPlayRecord]] | None = None,
+    on_event: Callable[[dict[str, Any]], None] | None = None,
+) -> GauntletResult:
+    """Play *candidate* head-to-head vs each baseline and aggregate win rates.
+
+    For each baseline, plays ``games_each`` candidate-vs-baseline games via
+    ``run_batch`` (both versions already on disk — no snapshot), tallies
+    candidate wins with :func:`_count_wins`, and computes a win rate
+    ``wins_candidate / games_each``. The scalar fitness is the mean win
+    rate across baselines.
+
+    A baseline whose ``version`` equals *candidate* is skipped (a version
+    cannot meaningfully play itself in the gauntlet) and contributes
+    nothing to the mean. Duplicate baseline names are not expected (the
+    registry is keyed by name) but the last write wins in ``per_baseline``.
+
+    Empty-baselines case: returns ``GauntletResult`` with
+    ``per_baseline={}``, ``mean_win_rate=0.0``, and an empty record.
+
+    Progress events emitted on *on_event* (if provided):
+      - ``{"type": "gauntlet_start", "candidate", "total_baselines"}``
+      - ``{"type": "gauntlet_baseline_end", "baseline", "win_rate",
+         "wins_candidate", "games"}``
+    """
+    if run_batch_fn is None:
+        from orchestrator import selfplay
+
+        run_batch_fn = selfplay.run_batch
+
+    if not baselines:
+        _log.info(
+            "gauntlet: candidate %s has no baselines; returning 0.0 fitness",
+            candidate,
+        )
+        return GauntletResult(
+            candidate=candidate,
+            per_baseline={},
+            mean_win_rate=0.0,
+            games_each=games_each,
+            record=[],
+        )
+
+    _log.info(
+        "gauntlet: %s vs %d baseline(s), %d games each",
+        candidate,
+        len(baselines),
+        games_each,
+    )
+    if on_event is not None:
+        _safe_emit(
+            on_event,
+            {
+                "type": "gauntlet_start",
+                "candidate": candidate,
+                "total_baselines": len(baselines),
+            },
+        )
+
+    per_baseline: dict[str, float] = {}
+    all_records: list[SelfPlayRecord] = []
+    for baseline in baselines:
+        if baseline.version == candidate:
+            _log.warning(
+                "gauntlet: skipping baseline %r — its version %s IS the "
+                "candidate (a version cannot play itself)",
+                baseline.name,
+                baseline.version,
+            )
+            continue
+        records = run_batch_fn(
+            candidate,
+            baseline.version,
+            games_each,
+            map_name,
+            game_time_limit=game_time_limit,
+            hard_timeout=hard_timeout,
+        )
+        all_records.extend(records)
+        wins_cand, _wins_base = _count_wins(
+            records, candidate, baseline.version
+        )
+        win_rate = wins_cand / games_each if games_each > 0 else 0.0
+        per_baseline[baseline.name] = win_rate
+        _log.info(
+            "gauntlet: %s vs %s (%s) -> %d/%d (%.3f win rate)",
+            candidate,
+            baseline.name,
+            baseline.version,
+            wins_cand,
+            games_each,
+            win_rate,
+        )
+        if on_event is not None:
+            _safe_emit(
+                on_event,
+                {
+                    "type": "gauntlet_baseline_end",
+                    "baseline": baseline.name,
+                    "win_rate": win_rate,
+                    "wins_candidate": wins_cand,
+                    "games": games_each,
+                },
+            )
+
+    mean_win_rate = (
+        sum(per_baseline.values()) / len(per_baseline)
+        if per_baseline
+        else 0.0
+    )
+    _log.info(
+        "gauntlet outcome: %s mean win rate %.3f across %d baseline(s)",
+        candidate,
+        mean_win_rate,
+        len(per_baseline),
+    )
+    return GauntletResult(
+        candidate=candidate,
+        per_baseline=per_baseline,
+        mean_win_rate=mean_win_rate,
+        games_each=games_each,
+        record=all_records,
     )
 
 
