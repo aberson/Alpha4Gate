@@ -270,6 +270,7 @@ pressure is the standard escape from that local optimum.
 - **Depends on:** EL.1, EL.4.
 
 ### Step EL.6: Multi-lineage smoke gate
+- **Status:** DONE (2026-06-20) — PASS. ~31 min round; both lineages scheduled (line-2@v7, main@v13), gauntlet ran for v14+v15, fingerprints persisted, regression correctly rolled back v15, 0 orphans. Record: `documentation/soak-test-runs/evolution-lines-smoke-20260620.md`.
 - **Problem:** Run ONE real end-to-end multi-lineage round on SC2:
   `python scripts/evolve.py --lineages 2 --pool-size 2 --games-per-eval 3
   --fitness-mode both --population-cap 2 --generations 1 --no-commit`.
