@@ -2154,3 +2154,312 @@ def test_lineage_no_flip_when_head_equals_live_parent(
     assert rc == 0
     # head (v0) == live parent (v0) → scheduler did NOT re-write the pointer.
     assert flips == []
+
+
+def test_population_cap_zero_never_invokes_extinction(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Back-compat: --population-cap 0 never touches the extinction seam.
+
+    A multi-lineage run with the cap at its default 0 must NOT call
+    ``decide_extinctions_fn`` and must write no ``"extinction"`` rows — the
+    generation boundary stays byte-identical to its pre-EL.4 state.
+    """
+    import orchestrator.lineages as lineages_mod
+    from orchestrator.lineages import Lineage, write_lineages
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+
+    registry = {
+        "main": Lineage(lineage_id="main", head_version="v0"),
+        "line-2": Lineage(lineage_id="line-2", head_version="v9"),
+    }
+    write_lineages(tmp_path / "data" / "lineages.json", registry)
+
+    args = _build_args(tmp_path, pool_size=2, generations=2)
+    args.lineages = 2
+    args.population_cap = 0  # disabled
+    args.diversity_threshold = 0.15
+    pool = _make_pool(2)
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    extinction_calls: list[Any] = []
+
+    def boom_decide(*a: Any, **k: Any) -> Any:
+        extinction_calls.append((a, k))
+        raise AssertionError("decide_extinctions must not be called at cap 0")
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=lambda p, imp, **k: _fitness(imp, bucket="close", parent=p),
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        decide_extinctions_fn=boom_decide,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+    assert extinction_calls == []  # seam never invoked
+
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "evolve_results.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    assert not any(r.get("phase") == "extinction" for r in rows)
+
+
+def test_population_cap_culls_lineage_and_logs_extinction(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--population-cap drives decide_extinctions and culls a scheduled lineage.
+
+    Integration through the production entry point (``run_loop``): a
+    3-lineage registry over cap 2 with the extinction seam scripted to cull
+    ``line-3`` after the first generation. We assert (1) an ``"extinction"``
+    row is written to the results file carrying the culled lineage's id +
+    head + dominator + reason, and (2) the culled lineage stops being
+    scheduled — no later fitness eval runs against its head.
+    """
+    import orchestrator.lineages as lineages_mod
+    from orchestrator.lineages import Lineage, write_lineages
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+
+    # sort_keys=True load order → line-2 (v8), line-3 (v9), main (v0). The
+    # round-robin schedules line-2 first, then line-3, then main, ...
+    registry = {
+        "main": Lineage(lineage_id="main", head_version="v0"),
+        "line-2": Lineage(lineage_id="line-2", head_version="v8"),
+        "line-3": Lineage(lineage_id="line-3", head_version="v9"),
+    }
+    write_lineages(tmp_path / "data" / "lineages.json", registry)
+
+    args = _build_args(tmp_path, pool_size=2, generations=6)
+    args.lineages = 3
+    args.population_cap = 2
+    args.diversity_threshold = 0.15
+    pool = _make_pool(2)
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    # Use "close" so imps flip back to active and the pool survives across
+    # generations (a "fail" pool would exhaust and stop the loop early).
+    fitness_parents: list[str] = []
+
+    def recording_fitness(parent: str, imp: Improvement, **k: Any) -> Any:
+        fitness_parents.append(parent)
+        return _fitness(imp, bucket="close", parent=parent)
+
+    # Scripted extinction seam: cull line-3 (head v9, dominated by line-2)
+    # exactly once, the first time decide_extinctions is invoked.
+    decide_calls: list[dict[str, Any]] = []
+
+    def scripted_decide(
+        lineages: dict[str, Any],
+        fingerprints: dict[str, Any],
+        fitnesses: dict[str, float],
+        *,
+        cap: int,
+        diversity_threshold: float,
+    ) -> Any:
+        decide_calls.append(
+            {
+                "lineage_ids": sorted(lineages.keys()),
+                "cap": cap,
+                "diversity_threshold": diversity_threshold,
+            }
+        )
+        from orchestrator.population import CullDecision, PopulationVerdict
+
+        if "line-3" in lineages:
+            return PopulationVerdict(
+                kept=[lid for lid in lineages if lid != "line-3"],
+                culled=[
+                    CullDecision(
+                        lineage_id="line-3",
+                        head_version=lineages["line-3"].head_version,
+                        dominated_by="line-2",
+                        reason="extinction: line-3 dominated by line-2 (test)",
+                    )
+                ],
+            )
+        return PopulationVerdict(kept=list(lineages.keys()), culled=[])
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=recording_fitness,
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        decide_extinctions_fn=scripted_decide,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+
+    # The seam saw the cap + threshold passed through from argparse.
+    assert decide_calls, "decide_extinctions seam was never invoked"
+    assert decide_calls[0]["cap"] == 2
+    assert decide_calls[0]["diversity_threshold"] == 0.15
+
+    # An extinction row was written for line-3 with all the fields.
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "evolve_results.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    ext_rows = [r for r in rows if r.get("phase") == "extinction"]
+    assert len(ext_rows) == 1, ext_rows
+    ext = ext_rows[0]
+    assert ext["lineage_id"] == "line-3"
+    assert ext["head_version"] == "v9"
+    assert ext["dominated_by"] == "line-2"
+    assert ext["outcome"] == "extinction"
+    assert "reason" in ext
+
+    # line-3 (head v9) is culled at gen 1's boundary, BEFORE its first turn
+    # (round-robin order: line-2, line-3, main). Once extinct it is removed
+    # from both _lineage_heads and the registry and never round-robined, so
+    # no fitness eval ever runs against its head v9.
+    assert "v9" not in fitness_parents, fitness_parents
+    # The two surviving lineages still get scheduled across generations.
+    assert set(fitness_parents) == {"v8", "v0"}, fitness_parents
+
+
+def test_population_cap_real_decide_extinctions_through_gauntlet(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end real seam: real decide_extinctions on real-built fitness.
+
+    Both prior wiring tests inject ``decide_extinctions_fn``, so the REAL
+    ``orchestrator.population.decide_extinctions`` plus the EL.2-gauntlet
+    feeding block (the code that constructs ``_lineage_fitness`` /
+    ``_lineage_fingerprints`` from each gauntlet result and hands them to the
+    real decision function) never run through ``run_loop``. This closes that
+    gap: ``decide_extinctions_fn=None`` (real seam), ``--fitness-mode both``
+    with one registered baseline, and an injected ``run_gauntlet_fn`` that
+    returns a *deterministic* per-baseline vector per candidate. Two lineages
+    each promote + gauntlet; one head ends up a strictly-weaker behavioral
+    near-duplicate of the other. With ``--population-cap 1`` the real
+    decide_extinctions must cull the weaker head and an extinction row must be
+    written — exercising both the real fitness/fingerprint construction block
+    and the real decision function.
+    """
+    import orchestrator.baselines as baselines_mod
+    import orchestrator.fingerprint as fingerprint_mod
+    import orchestrator.lineages as lineages_mod
+    from orchestrator.baselines import Baseline
+    from orchestrator.evolve import GauntletResult
+    from orchestrator.lineages import Lineage, write_lineages
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+    # Keep fingerprint persistence off the real repo data dir.
+    monkeypatch.setattr(
+        fingerprint_mod,
+        "default_fingerprints_path",
+        lambda: tmp_path / "fingerprints.json",
+    )
+    # One registered baseline so the gauntlet engages (fitness-mode both).
+    monkeypatch.setattr(
+        baselines_mod,
+        "load_baselines",
+        lambda _p: {"sparring": Baseline(name="sparring", version="vBase")},
+    )
+
+    # sort_keys load order → line-2 (v8) scheduled gen 1, main (v0) gen 2.
+    registry = {
+        "main": Lineage(lineage_id="main", head_version="v0"),
+        "line-2": Lineage(lineage_id="line-2", head_version="v8"),
+    }
+    write_lineages(tmp_path / "data" / "lineages.json", registry)
+
+    args = _build_args(tmp_path, pool_size=1, generations=2)
+    args.lineages = 2
+    args.population_cap = 1
+    args.diversity_threshold = 0.15
+    args.fitness_mode = "both"
+
+    # A fresh single winner imp every time the pool is (re)generated so each
+    # generation promotes. The initial seed (no skip_mirror) and every
+    # top-up (skip_mirror=True) both return one brand-new active imp.
+    imp_counter = {"n": 0}
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        imp_counter["n"] += 1
+        return [_make_imp(title=f"win-{imp_counter['n']}", rank=1)]
+
+    # Every fitness eval passes so a promotion runs each generation.
+    def all_pass_fitness(parent: str, imp: Improvement, **k: Any) -> Any:
+        return _fitness(imp, bucket="pass", parent=parent)
+
+    # Distinct new version per promotion (gen 1: line-2 v8→v100; gen 2:
+    # main v0→v200). Regression never rolls back → heads keep the new ver.
+    stack_apply = _ScriptedStackApply([(True, "v100"), (True, "v200")])
+    regression = _ScriptedRegression([False, False])
+
+    # Deterministic gauntlet: v100 (line-2 head) scores mean 0.50; v200
+    # (main head) scores mean 0.55. Distance 0.05 < 0.15 → behaviorally
+    # redundant; v100 is strictly less fit → dominated by v200.
+    gauntlet_scores = {
+        "v100": {"sparring": 0.50},
+        "v200": {"sparring": 0.55},
+    }
+
+    def scripted_gauntlet(
+        candidate: str, baselines: list[Any], **k: Any
+    ) -> Any:
+        per_baseline = gauntlet_scores[candidate]
+        mean = sum(per_baseline.values()) / len(per_baseline)
+        return GauntletResult(
+            candidate=candidate,
+            per_baseline=dict(per_baseline),
+            mean_win_rate=mean,
+            games_each=k.get("games_each", 5),
+            record=[],
+        )
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=all_pass_fitness,
+        stack_apply_fn=stack_apply,
+        run_regression_fn=regression,
+        run_gauntlet_fn=scripted_gauntlet,
+        decide_extinctions_fn=None,  # REAL decide_extinctions
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "evolve_results.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    # The real decide_extinctions, fed by the real fitness/fingerprint
+    # construction block, culled the weaker redundant head (line-2 @ v100).
+    ext_rows = [r for r in rows if r.get("phase") == "extinction"]
+    assert len(ext_rows) == 1, ext_rows
+    ext = ext_rows[0]
+    assert ext["lineage_id"] == "line-2"
+    assert ext["head_version"] == "v100"
+    assert ext["dominated_by"] == "main"
+    assert ext["outcome"] == "extinction"

@@ -320,6 +320,32 @@ def build_parser() -> argparse.ArgumentParser:
             "head before its generation runs (Phase EL Step 1)."
         ),
     )
+    parser.add_argument(
+        "--population-cap",
+        type=int,
+        default=0,
+        help=(
+            "Maximum number of live lineages (Phase EL Step 4). Default 0 = "
+            "disabled (unbounded — no extinction; byte-identical to the "
+            "pre-EL.4 loop). When > 0 AND multi-lineage scheduling is engaged, "
+            "after each generation the population manager culls the weakest "
+            "lineages that are DOMINATED (strictly less fit AND behaviorally "
+            "redundant under --diversity-threshold) by a fitter sibling, down "
+            "to the cap. Lineages with no fitness/fingerprint yet are never "
+            "culled (the safe direction)."
+        ),
+    )
+    parser.add_argument(
+        "--diversity-threshold",
+        type=float,
+        default=0.15,
+        help=(
+            "Behavioral-redundancy threshold (Phase EL Step 4). Two lineage "
+            "heads with fingerprint_distance < this value are 'behaviorally "
+            "redundant'. Only consulted when --population-cap > 0. Default "
+            "0.15 (mean per-baseline win-rate difference)."
+        ),
+    )
     return parser
 
 
@@ -3021,6 +3047,7 @@ def run_loop(
     stack_apply_fn: Callable[..., StackApplyOutcome] | None = None,
     run_regression_fn: Callable[..., RegressionResult] | None = None,
     run_gauntlet_fn: Callable[..., Any] | None = None,
+    decide_extinctions_fn: Callable[..., Any] | None = None,
     claude_fn: Callable[[str], str] | None = None,
     commit_fn: Callable[..., tuple[bool, str | None]] | None = None,
     revert_fn: Callable[..., bool] | None = None,
@@ -3054,6 +3081,10 @@ def run_loop(
     # post-promotion call site, and ONLY when --fitness-mode is
     # baseline/both. The default 'parent' mode never touches it, keeping
     # that path byte-identical (no extra import, no behavior change).
+    # Phase EL Step 4: the extinction-decision seam is likewise resolved
+    # LAZILY at the generation-boundary call site, and ONLY when
+    # --population-cap > 0 AND multi-lineage scheduling is engaged. The
+    # default (--population-cap 0) never touches it.
     if commit_fn is None:
         commit_fn = git_commit_evo_auto
     if revert_fn is None:
@@ -3397,6 +3428,25 @@ def run_loop(
                 f"{lid}@{head}" for lid, head in _lineage_heads.items()
             ),
         )
+
+    # --- Population manager state (Phase EL Step 4) ---
+    # ``--population-cap 0`` (default) disables extinction entirely — these
+    # dicts stay empty and the generation-boundary extinction block is a
+    # no-op, keeping the default path byte-identical. When the cap is > 0 we
+    # accumulate each promoted version's baseline fitness + fingerprint from
+    # the EL.2 gauntlet (below) so the extinction decision at the generation
+    # boundary can assess lineage-head redundancy. Keyed by VERSION.
+    _population_cap = int(getattr(args, "population_cap", 0) or 0)
+    # argparse already supplies the 0.15 default, so do NOT add ``or 0.15``
+    # here: that would silently clobber a legitimate explicit
+    # ``--diversity-threshold 0`` (0.0 is falsy) into 0.15. Unlike
+    # --population-cap (where 0 is the documented disabled sentinel), a 0.0
+    # threshold is a distinct meaningful value (cull only on distance < 0.0 →
+    # effectively never redundant). The getattr default stays 0.15 for
+    # test-built namespaces that omit the field.
+    _diversity_threshold = float(getattr(args, "diversity_threshold", 0.15))
+    _lineage_fitness: dict[str, float] = {}
+    _lineage_fingerprints: dict[str, Any] = {}
 
     # --- Generation loop ---
     generations_completed = 0
@@ -3809,6 +3859,41 @@ def run_loop(
                                 len(gauntlet_result.per_baseline),
                                 gauntlet_result.per_baseline,
                             )
+                            # Phase EL Step 4: feed the population manager.
+                            # Record this promoted version's baseline fitness
+                            # + fingerprint (from the gauntlet we just ran) so
+                            # the generation-boundary extinction decision can
+                            # assess lineage-head redundancy. Only when the
+                            # cap is enabled — the default path skips this.
+                            if _population_cap > 0:
+                                from orchestrator.fingerprint import (
+                                    Fingerprint,
+                                    default_fingerprints_path,
+                                    save_fingerprint,
+                                )
+
+                                _ver = gauntlet_result.candidate
+                                _lineage_fitness[_ver] = (
+                                    gauntlet_result.mean_win_rate
+                                )
+                                _fp = Fingerprint(
+                                    version=_ver,
+                                    per_baseline=dict(
+                                        gauntlet_result.per_baseline
+                                    ),
+                                )
+                                _lineage_fingerprints[_ver] = _fp
+                                try:
+                                    save_fingerprint(
+                                        default_fingerprints_path(), _fp
+                                    )
+                                except Exception:  # noqa: BLE001
+                                    _log.exception(
+                                        "evolve: failed to persist "
+                                        "fingerprint for %s; in-memory copy "
+                                        "still drives extinction",
+                                        _ver,
+                                    )
                             append_phase_result(
                                 args.results_path,
                                 {
@@ -4050,6 +4135,74 @@ def run_loop(
         # branches from the right version. No-op in single-lineage mode.
         if _gen_lineage_id is not None:
             _lineage_heads[_gen_lineage_id] = parent_current
+
+        # --- Population manager: diversity-driven extinction (EL.4) ---
+        # Engages ONLY when --population-cap > 0 AND multi-lineage scheduling
+        # is active. The default (--population-cap 0) and single-lineage runs
+        # skip this entirely — the generation boundary is byte-identical to
+        # its pre-EL.4 state. The decision is pure (decide_extinctions); the
+        # side effects (drop culled lineages from the in-memory schedule +
+        # log an extinction event) live here.
+        if _population_cap > 0 and _lineage_heads:
+            _decide_fn = decide_extinctions_fn
+            if _decide_fn is None:
+                from orchestrator.population import decide_extinctions
+
+                _decide_fn = decide_extinctions
+
+            # Build the current live lineage set from the (possibly advanced)
+            # in-memory heads. fitnesses / fingerprints are keyed by VERSION;
+            # a lineage head never gauntleted yet is simply absent, so
+            # decide_extinctions treats it as unassessable (never culled).
+            from orchestrator.lineages import Lineage as _Lineage
+
+            _live_lineages = {
+                lid: _Lineage(lineage_id=lid, head_version=head)
+                for lid, head in _lineage_heads.items()
+            }
+            try:
+                _verdict = _decide_fn(
+                    _live_lineages,
+                    _lineage_fingerprints,
+                    _lineage_fitness,
+                    cap=_population_cap,
+                    diversity_threshold=_diversity_threshold,
+                )
+            except Exception:  # noqa: BLE001 — extinction must never abort run
+                _log.exception(
+                    "evolve: extinction decision crashed on gen %d; "
+                    "continuing without culling",
+                    generation_index,
+                )
+            else:
+                for _cull in _verdict.culled:
+                    # Drop the culled lineage from the in-memory schedule so
+                    # it stops being round-robined; the registry copy used by
+                    # next_lineage is the live driver.
+                    _lineage_heads.pop(_cull.lineage_id, None)
+                    _lineages_registry.pop(_cull.lineage_id, None)
+                    if _last_lineage_id == _cull.lineage_id:
+                        _last_lineage_id = None
+                    append_phase_result(
+                        args.results_path,
+                        {
+                            "phase": "extinction",
+                            "generation": generation_index,
+                            "lineage_id": _cull.lineage_id,
+                            "head_version": _cull.head_version,
+                            "dominated_by": _cull.dominated_by,
+                            "outcome": "extinction",
+                            "reason": _cull.reason,
+                        },
+                    )
+                    _log.info(
+                        "evolve: extinction — lineage %r (head %s) culled "
+                        "(dominated by %r) on gen %d",
+                        _cull.lineage_id,
+                        _cull.head_version,
+                        _cull.dominated_by,
+                        generation_index,
+                    )
 
         gen_durations_seconds.append(
             max(0.0, time_fn() - gen_start_monotonic)

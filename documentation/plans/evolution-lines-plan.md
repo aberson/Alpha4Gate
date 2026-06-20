@@ -232,6 +232,7 @@ pressure is the standard escape from that local optimum.
 - **Depends on:** EL.2 (consumes the gauntlet output shape).
 
 ### Step EL.4: Population manager — diversity-driven extinction
+- **Status:** DONE (2026-06-20)
 - **Problem:** Add `src/orchestrator/population.py` with
   `decide_extinctions(lineages, fingerprints, fitnesses, cap)` returning
   keep/cull/repopulate verdicts (cull only when population > cap AND a

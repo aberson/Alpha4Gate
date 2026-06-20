@@ -1,25 +1,25 @@
 # Current Task State
 
 **Task:** Phase EL (Evolution Lines) — build the parallel-lineage / baseline-DB / diversity-extinction evolve substrate
-**Status:** BUILDING (EL.1–EL.3 DONE; EL.4 next)
-**Last written:** 2026-06-20T02:00:00Z
-**Session SHA:** ddd7be6
+**Status:** BUILDING (EL.1–EL.4 DONE; EL.5 next — LAST agent step)
+**Last written:** 2026-06-20T03:00:00Z
+**Session SHA:** 561d9fd
 
 ## Next Action
 
-Continue `/build-phase` for Phase EL — EL.4 (Population manager — diversity-driven extinction, #276) is next. Goal-scoped to EL.1–EL.5, halt at EL.6.
+Continue `/build-phase` for Phase EL — EL.5 (Dashboard lineage + extinction surfacing, #277) is the LAST agent-completable step. FRONTEND-touching → `--reviewers runtime --ui --start-cmd "bash scripts/start-dev.sh" --url http://localhost:3000` (Playwright evidence). Goal completes after EL.5; halt before EL.6 (operator).
 
 ```
-/build-phase --plan documentation/plans/evolution-lines-plan.md --resume EL.4
+/build-phase --plan documentation/plans/evolution-lines-plan.md --resume EL.5
 ```
 
-Steps: EL.1 ✅ → EL.2 ✅ → EL.3 ✅ → EL.4 (population/extinction; consumes fingerprint_distance + baseline fitness + lineage scheduler) → EL.5 (frontend, --ui). EL.6 (operator smoke) + EL.7 (wait soak) NOT agent-completable.
-
-NOTE for EL.4: fingerprint_distance returns float('nan') for incomparable (no shared baselines) pairs — EL.4's "distance < threshold → cull" must treat nan as "not redundant" (math.isnan guard; `nan < threshold` is already False, which is the safe direction).
+EL.5: add GET /api/evolve/lineages to bots/current/api.py (reuse existing `_evolve_dir` resolver at bots/v13/api.py:53 — reads data/lineages.json + data/fingerprints.json), extend EvolutionTab.tsx with lineage list + diversity matrix + extinction-event timeline, bump useEvolveRun.ts cacheKey. Full suite after EL.4 = 1765.
 
 ## Completed
 - EL.1 Lineage registry + round-robin scheduler: PASS iter 2/3. lineages.py overlay; current.txt shape unchanged; --lineages 1 byte-identical. Merged 2675c43.
-- EL.2 Baseline opponent DB + fitness gauntlet: PASS iter 2/3. baselines.py registry + scripts/baseline.py CLI + run_baseline_gauntlet + --fitness-mode {parent,baseline,both} (parent byte-identical). Full suite was 1700 after EL.1.
+- EL.2 Baseline opponent DB + fitness gauntlet: PASS iter 2/3. baselines.py registry + scripts/baseline.py CLI + run_baseline_gauntlet + --fitness-mode {parent,baseline,both} (parent byte-identical). Merged ddd7be6.
+- EL.3 Behavioral diversity fingerprint: PASS iter 2/3. fingerprint.py; fingerprint_distance (nan sentinel for incomparable pairs). Merged 561d9fd.
+- EL.4 Population manager — diversity-driven extinction: PASS iter 2/3. decide_extinctions (pure) + run_loop wiring; --population-cap (default 0=disabled, byte-identical) + --diversity-threshold; phase:"extinction" row. Correctness reviewer confirmed cull logic provably safe. Full suite 1765.
 
 ## WIP
 
