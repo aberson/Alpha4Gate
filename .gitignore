@@ -83,3 +83,7 @@ frontend/build/
 # Raw capture files — only cropped/optimized GIFs should be committed in documentation/images/
 documentation/images/*.mp4
 documentation/images/*.mov
+
+# plan-expedite resume state (transient, session-local)
+.plan-expedite-state
+.plan-expedite-state.*
