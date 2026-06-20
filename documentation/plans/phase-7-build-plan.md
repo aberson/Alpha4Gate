@@ -69,6 +69,7 @@ reward rules forever without the policy ever catching up. This phase closes that
 - **Type:** code
 - **Issue:** #180
 - **Flags:** --reviewers code --isolation worktree
+- **Status:** DONE (2026-06-20)
 - **Files:** `src/orchestrator/staleness.py` (NEW), `src/orchestrator/__init__.py` (export)
 - **Depends on:** none
 - **Done when:**
@@ -88,9 +89,12 @@ reward rules forever without the policy ever catching up. This phase closes that
 `eval_wr_trend` — **re-grounded to real data.** There is no stored "deterministic eval batch"
 series in this codebase, and eval/training games are commingled in the `games` table. Compute the
 trend as the linear-regression slope of the per-game win(1)/loss(0) series over the current
-version's most recent `N` games (default `N=30`, configurable), read with SQL equivalent to
-`SELECT result FROM games WHERE model_version = ? ORDER BY rowid DESC LIMIT ?` (the same query
-`TrainingDB.get_recent_win_rate` uses). Classify slope as flat / rising / falling against a
+version's most recent `N` games (default `N=30`, configurable), read with SQL
+`SELECT result FROM games ORDER BY rowid DESC LIMIT ?` (**no `model_version` filter** — the
+per-version `training.db` is already version-scoped, and production writes decision-mode /
+checkpoint / training-cycle labels into `model_version`, never the package version, so a filter
+would match zero rows; this matches `TrainingDB.get_recent_win_rate`, which also has no filter).
+Classify slope as flat / rising / falling against a
 configurable threshold (default 0.01 WR per game). `recent_win_rates` holds the windowed WRs used
 for the regression (e.g. WR per 10-game bucket) so the report is inspectable.
 
