@@ -11,7 +11,7 @@ Single spine for the project. Status as of 2026-06-20. Each phase's narrative li
 | [phase-d-build-plan.md](documentation/plans/phase-d-build-plan.md) | D | Automated build COMPLETE (incl. snapshot-counts follow-up); **M1/M2 operator validation pending** |
 | [evolution-lines-plan.md](documentation/plans/evolution-lines-plan.md) | EL | EL.1-EL.5 shipped 2026-06-20; **EL.6 smoke + EL.7 soak operator-pending** |
 | [phase-6-build-plan.md](documentation/plans/phase-6-build-plan.md) | 6 | Self-play-driven improvement loop - planned |
-| [phase-7-build-plan.md](documentation/plans/phase-7-build-plan.md) | 7 | Advised loop stale-policy detection - planned (standalone) |
+| [phase-7-build-plan.md](documentation/plans/phase-7-build-plan.md) | 7 | Steps 1-5 SHIPPED 2026-06-20 (#180-184 closed): staleness signal + `soak` improvement type; **Step 6 operator soak (#280) pending** |
 | [phase-e-build-plan.md](documentation/plans/phase-e-build-plan.md) | E | Autoregressive action head - planned |
 | [phase-g-build-plan.md](documentation/plans/phase-g-build-plan.md) | G | Multi-race support - future |
 | [phase-h-build-plan.md](documentation/plans/phase-h-build-plan.md) | H | Mini-game substrate - investigation-blocked |

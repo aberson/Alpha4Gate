@@ -9,7 +9,7 @@ Goal: AI-vs-AI competition with transparent model introspection and autonomous s
 
 - Python 3.12, uv, burnysc2 v7.1.3, FastAPI, React+TypeScript+Vite
 - Deep learning: PyTorch, Stable Baselines 3 (PPO), SQLite for training data
-- Testing: pytest (1678 unit tests) + vitest (143 frontend tests), ruff, mypy strict mode
+- Testing: pytest (1799 unit tests) + vitest (143 frontend tests), ruff, mypy strict mode
 
 ## Commands
 
@@ -17,7 +17,7 @@ Goal: AI-vs-AI competition with transparent model introspection and autonomous s
 uv sync                                    # Install deps
 uv run python -m bots.v0 --role solo --map Simple64  # Run game
 uv run python -m bots.v0.runner --serve            # Dashboard API only
-uv run pytest                              # 1678 unit tests
+uv run pytest                              # 1799 unit tests
 uv run pytest -m sc2                       # SC2 integration tests (SC2 must be running)
 uv run ruff check .                        # Lint
 uv run mypy src bots --strict              # Type check
@@ -34,8 +34,9 @@ bash scripts/start-dev.sh                  # Start backend + frontend together (
 - `frontend/` — React dashboard (LiveView, CommandPanel, TrainingDashboard, etc.)
 - `scripts/` — live-test.sh, analyze_rewards.py, evaluate_model.py, etc.
 - `documentation/wiki/` — project wiki (start with `index.md` for system diagram + page map)
-- `documentation/plans/` — active plans (alpha4gate-master-plan.md)
-- `documentation/archived/` — completed plans (Phase 1, Phase 2, improvement cycles)
+- `documentation/master_plan.md` — single spine + plan index (active sub-plan pointers + archived list)
+- `documentation/plans/` — active sub-plans (work remaining)
+- `documentation/archived/` — completed/cut plans (Phase 1, Phase 2, improvement cycles)
 - `bots/v0/data/` — per-version state: training.db, checkpoints/, reward_rules.json, hyperparams.json
 - `data/` — legacy shared state: decision_audit.json, improvement_log.json, phase0_spike/ (gitignored)
 - `logs/` — JSONL game logs (gitignored)
@@ -52,8 +53,9 @@ All production code lives in `bots/v0/` (Phase 1 bots-v0-migration complete). `s
 All Phase 1 (rule-based) and Phase 2 (deep learning) features complete.
 Five improvement cycles done: army coherence, natural denial, neural training, strategic commands, defensive fortification.
 Wins reliably at difficulty 1-3, struggles at 4-5.
-Active plan: `documentation/plans/alpha4gate-master-plan.md` — platform + full-stack versioning + AlphaStar-style PPO upgrades. Always-up Phases 1–4.5 (daemon, evaluator, promotion gate, rollback, 10-tab dashboard) are the Baseline; full history in `documentation/archived/always-up-plan.md`.
+Active plan: `documentation/master_plan.md` — platform + full-stack versioning + AlphaStar-style PPO upgrades. Always-up Phases 1–4.5 (daemon, evaluator, promotion gate, rollback, 10-tab dashboard) are the Baseline; full history in `documentation/archived/always-up-plan.md`.
 Master plan Phases A, 0, 1, 2, 3, 4, 5 all COMPLETE. Phase 4 added Elo ladder (`src/orchestrator/ladder.py`), cross-version promotion gate, CLI (`scripts/ladder.py`), `/api/ladder` endpoint, and Ladder dashboard tab (10th). Phase 5 added sandbox enforcement (`scripts/check_sandbox.py` + `.pre-commit-config.yaml`) and wired `check_promotion()` + `[advised-auto]` into `/improve-bot-advised`. Phase 9 (improve-bot-evolve) operational, v0→v1→v2 auto-promoted overnight 2026-04-23; v3→v4 promoted 2026-04-29 after stack-apply unblock (`e7fb758`). Phase 8 (headless Linux training infrastructure) Steps 1-10 SHIPPED 2026-04-29 (Linux CI + SC2PATH resolver + `Dockerfile` + `.dockerignore` + `documentation/wiki/cloud-deployment.md`); Step 11 (24h Linux evolve soak) pending; Step 12 (cloud dry-run) removed. Phase N (winprob heuristic + give-up trigger) COMPLETE 2026-04-27 — `bots/v0/learning/winprob_heuristic.py`, `bots/v0/give_up.py`, `transitions.win_prob` column, every-10-step INFO log, `Alpha4GateBot._maybe_resign`. Live in `bots/v0/` and folded into `bots/v3/`+`v4/` via successive promotions; production runtime via `bots/current` → v4.
+Phase 7 (advised loop stale-policy detection) Steps 1–5 SHIPPED 2026-06-20 (#180–184 closed): `src/orchestrator/staleness.py` (`StalenessReport` + `compute_staleness` reading per-version `training.db` via sqlite-direct, no `bots.*` import + `clamp_soak_hours`) and a `soak` improvement type in `/improve-bot-advised` (staleness-gated extended training soak, hybrid mode, wall-clock-clamped). Step 6 operator validation soak (#280) pending. 1799 tests.
 Wiki: `documentation/wiki/index.md` — system diagram and deep-dive pages.
 
 **Important:** Do NOT import `bots.current` or `bots.<version>` from `src/orchestrator/` — triggers MetaPathFinder loop. Registry reads paths via pathlib.
