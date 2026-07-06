@@ -50,6 +50,7 @@ Usage (mirror)::
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import logging
 import sys
@@ -173,6 +174,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=5,
         help="(fitness mode) Games per fitness eval (default: 5)",
+    )
+    parser.add_argument(
+        "--screen-null-diff",
+        action="store_true",
+        help=(
+            "(fitness mode) Phase EJ.2: enable the dev-apply null-diff "
+            "screen. A candidate whose sub-agent produced no semantic .py "
+            "change raises DevApplyNullDiffError (serialized on the crash "
+            "payload as error_type) instead of playing games; the parent "
+            "dispatcher routes it to a 'screen-null-diff' row. Default off "
+            "(byte-identical: null diffs play as-is)."
+        ),
     )
     # --- mirror-mode args (issue #250) ---
     parser.add_argument(
@@ -426,6 +439,19 @@ def _run_fitness_mode(args: argparse.Namespace, run_id: str) -> int:
             # imps (Claude code-change proposals) hit
             # ``apply_improvement``'s ``NotImplementedError`` and the worker
             # exits 1 — Decision-D-7's `crash` bucket masks the real cause.
+            #
+            # Phase EJ.2: thread --screen-null-diff via a partial so a
+            # null-diff dev-apply raises DevApplyNullDiffError. The worker's
+            # generic ``except Exception`` serializes error_type on the
+            # crash payload; the parent dispatcher demuxes it to a
+            # screen-null-diff row (not the crash bucket). Only wrapped when
+            # the flag is ON so the default path passes spawn_dev_subagent
+            # through unchanged (byte-identical).
+            dev_apply_fn: Callable[..., None] = spawn_dev_subagent
+            if args.screen_null_diff:
+                dev_apply_fn = functools.partial(
+                    spawn_dev_subagent, screen_null_diff=True
+                )
             result: FitnessResult = run_fitness_eval(
                 args.parent,
                 imp,
@@ -434,7 +460,7 @@ def _run_fitness_mode(args: argparse.Namespace, run_id: str) -> int:
                 game_time_limit=args.game_time_limit,
                 hard_timeout=args.hard_timeout,
                 on_event=on_event,
-                dev_apply_fn=spawn_dev_subagent,
+                dev_apply_fn=dev_apply_fn,
             )
         except KeyboardInterrupt:
             # Let Ctrl+C / SIGINT propagate so the dispatcher's signal

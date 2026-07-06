@@ -22,12 +22,17 @@ import pytest
 
 from orchestrator.evolve import Improvement
 from orchestrator.evolve_dev_apply import (
+    DevApplyNullDiffError,
     DevApplyOutOfScopeError,
     DevApplySubagentError,
     DevApplyTimeoutError,
     DevApplyValidationError,
+    _ast_equivalent,
+    _classify_null_diff,
+    _collect_candidate_py_content,
     _collect_candidate_py_snapshot,
     _diff_py_snapshots,
+    _format_null_diff_feedback,
     _sanitize_imp_paths,
     spawn_dev_subagent,
 )
@@ -690,3 +695,309 @@ class TestSanitizeImpPaths:
         assert "bots/v3/scouting.py" not in stdin_text
         assert "Edit foo.py to add a stub." in stdin_text
         assert "Reference: scouting.py:42" in stdin_text
+
+
+# ---------------------------------------------------------------------------
+# Null-diff classifier — pure helpers (Phase EJ.2). Single source of truth
+# for the null-vs-real classification; production + tests import the same
+# functions (dev/.claude/rules/code-quality.md).
+# ---------------------------------------------------------------------------
+
+
+class TestAstEquivalent:
+    def test_whitespace_only_is_equivalent(self) -> None:
+        assert _ast_equivalent("x=1", "x  =  1") is True
+
+    def test_comment_only_is_equivalent(self) -> None:
+        assert _ast_equivalent("x = 1\n", "x = 1  # note\n") is True
+
+    def test_trailing_blank_lines_are_equivalent(self) -> None:
+        assert _ast_equivalent("x = 1\n", "x = 1\n\n\n") is True
+
+    def test_docstring_change_is_not_equivalent(self) -> None:
+        # Docstrings are ast-visible (Constant string expr) → REAL change.
+        assert _ast_equivalent('"""old."""\n', '"""new."""\n') is False
+
+    def test_value_change_is_not_equivalent(self) -> None:
+        assert _ast_equivalent("x = 1\n", "x = 2\n") is False
+
+    def test_unparseable_after_is_not_equivalent(self) -> None:
+        # A syntax error is a real change the gates own — never null.
+        assert _ast_equivalent("x = 1\n", "x = (\n") is False
+
+    def test_unparseable_before_but_valid_after_is_not_equivalent(
+        self,
+    ) -> None:
+        assert _ast_equivalent("def f(\n", "def f():\n    pass\n") is False
+
+
+class TestClassifyNullDiff:
+    def test_empty_changed_list_is_zero_edit(self) -> None:
+        assert _classify_null_diff([], {}) == "zero-edit"
+
+    def test_comment_only_change_is_ast_equivalent(
+        self, tmp_path: Path
+    ) -> None:
+        f = tmp_path / "m.py"
+        f.write_text("x = 1  # added comment\n", encoding="utf-8")
+        content_before = {f: "x = 1\n"}
+        assert _classify_null_diff([f], content_before) == "ast-equivalent"
+
+    def test_whitespace_only_change_is_ast_equivalent(
+        self, tmp_path: Path
+    ) -> None:
+        f = tmp_path / "m.py"
+        f.write_text("x   =   1\n\n", encoding="utf-8")
+        content_before = {f: "x = 1\n"}
+        assert _classify_null_diff([f], content_before) == "ast-equivalent"
+
+    def test_functional_change_is_real(self, tmp_path: Path) -> None:
+        f = tmp_path / "m.py"
+        f.write_text("x = 1\ny = 2\n", encoding="utf-8")
+        content_before = {f: "x = 1\n"}
+        assert _classify_null_diff([f], content_before) is None
+
+    def test_docstring_change_is_real(self, tmp_path: Path) -> None:
+        f = tmp_path / "m.py"
+        f.write_text('"""new docstring."""\nx = 1\n', encoding="utf-8")
+        content_before = {f: '"""old docstring."""\nx = 1\n'}
+        assert _classify_null_diff([f], content_before) is None
+
+    def test_new_file_with_real_code_is_real(self, tmp_path: Path) -> None:
+        # Absent from content_before → before-source treated as empty.
+        f = tmp_path / "new.py"
+        f.write_text("def g() -> int:\n    return 3\n", encoding="utf-8")
+        assert _classify_null_diff([f], {}) is None
+
+    def test_new_file_comment_only_is_ast_equivalent(
+        self, tmp_path: Path
+    ) -> None:
+        # A brand-new file that carries only comments has an empty AST,
+        # equal to the empty before-source → null (nothing semantic added).
+        f = tmp_path / "new.py"
+        f.write_text("# just a comment\n", encoding="utf-8")
+        assert _classify_null_diff([f], {}) == "ast-equivalent"
+
+    def test_one_real_among_equivalents_is_real(
+        self, tmp_path: Path
+    ) -> None:
+        a = tmp_path / "a.py"
+        a.write_text("x = 1  # comment\n", encoding="utf-8")
+        b = tmp_path / "b.py"
+        b.write_text("z = 9\n", encoding="utf-8")  # real change
+        content_before = {a: "x = 1\n", b: "z = 1\n"}
+        assert _classify_null_diff([a, b], content_before) is None
+
+    def test_undecodable_after_file_is_real_not_null(
+        self, tmp_path: Path
+    ) -> None:
+        """A non-UTF-8 (undecodable) after-file must classify REAL, not
+        null, and must NOT raise UnicodeDecodeError out of the classifier."""
+        f = tmp_path / "m.py"
+        f.write_bytes(b"\xff\xfe\x00 not valid utf-8 \xff")
+        # Should bias to "real change" (None), never raise.
+        assert _classify_null_diff([f], {f: "x = 1\n"}) is None
+
+
+class TestCollectPyContent:
+    def test_reads_py_sources(self, tmp_path: Path) -> None:
+        (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+        (tmp_path / "b.txt").write_text("nope\n", encoding="utf-8")
+        content = _collect_candidate_py_content(tmp_path)
+        assert content == {tmp_path / "a.py": "x = 1\n"}
+
+    def test_missing_dir_returns_empty(self, tmp_path: Path) -> None:
+        assert _collect_candidate_py_content(tmp_path / "nope") == {}
+
+    def test_undecodable_file_is_skipped(self, tmp_path: Path) -> None:
+        """A non-UTF-8 .py file is skipped (not raised) — UnicodeDecodeError
+        is a ValueError, now caught alongside OSError."""
+        (tmp_path / "ok.py").write_text("x = 1\n", encoding="utf-8")
+        (tmp_path / "bad.py").write_bytes(b"\xff\xfe garbage \x00")
+        content = _collect_candidate_py_content(tmp_path)
+        assert content == {tmp_path / "ok.py": "x = 1\n"}
+
+
+class TestNullDiffFeedback:
+    def test_feedback_mentions_no_semantic_change(self) -> None:
+        msg = _format_null_diff_feedback(2, 3)
+        assert "NO SEMANTIC CODE CHANGE" in msg
+        assert "attempt 1 of 3" in msg
+
+
+# ---------------------------------------------------------------------------
+# Null-diff screen — end-to-end through spawn_dev_subagent (Phase EJ.2)
+# ---------------------------------------------------------------------------
+
+
+class TestNullDiffScreen:
+    """The screen only fires when ``screen_null_diff=True``; default off
+    preserves the byte-identical silent-success path."""
+
+    @pytest.fixture
+    def version_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> Path:
+        repo_root = tmp_path
+        cand = repo_root / "bots" / "cand_x"
+        cand.mkdir(parents=True)
+        (cand / "foo.py").write_text("x = 1\n", encoding="utf-8")
+        monkeypatch.setattr(
+            "orchestrator.registry._repo_root",
+            lambda: repo_root,
+        )
+        return cand
+
+    def test_zero_edit_retries_then_raises_on_final_attempt(
+        self, version_dir: Path
+    ) -> None:
+        """Screen ON + no .py edit → retry-with-feedback, then
+        DevApplyNullDiffError on the last attempt (attempts=max, zero-edit)."""
+        fake = FakeRun()
+        # Plain fake: the claude call never mutates foo.py → zero-edit.
+        with pytest.raises(DevApplyNullDiffError) as excinfo:
+            spawn_dev_subagent(
+                version_dir,
+                _make_improvement(),
+                run=fake,
+                validate=False,
+                screen_null_diff=True,
+            )
+        assert excinfo.value.attempts == 3
+        assert excinfo.value.ast_equivalent is False
+
+        claude_calls = [
+            c for c in fake.calls if c[0] and c[0][0] == "claude"
+        ]
+        # Initial + 2 retries = 3 sub-agent invocations.
+        assert len(claude_calls) == 3
+        # Retries 2 and 3 carry the null-diff feedback in their stdin.
+        assert (
+            "NO SEMANTIC CODE CHANGE" in claude_calls[1][1]["input"]
+        )
+        assert (
+            "NO SEMANTIC CODE CHANGE" in claude_calls[2][1]["input"]
+        )
+
+    def test_comment_only_edit_screens_as_null(
+        self, version_dir: Path
+    ) -> None:
+        """A comment-only edit is AST-equivalent → null → raise (ast_equivalent)."""
+        fake = FakeRun()
+
+        def routed(argv: list[str], **kwargs: Any) -> _CompletedProc:
+            if argv and argv[0] == "claude":
+                (version_dir / "foo.py").write_text(
+                    "x = 1  # only a comment added\n", encoding="utf-8"
+                )
+            return fake(argv, **kwargs)
+
+        with pytest.raises(DevApplyNullDiffError) as excinfo:
+            spawn_dev_subagent(
+                version_dir,
+                _make_improvement(),
+                run=routed,
+                validate=False,
+                screen_null_diff=True,
+                max_attempts=1,
+            )
+        assert excinfo.value.ast_equivalent is True
+
+    def test_whitespace_only_edit_screens_as_null(
+        self, version_dir: Path
+    ) -> None:
+        fake = FakeRun()
+
+        def routed(argv: list[str], **kwargs: Any) -> _CompletedProc:
+            if argv and argv[0] == "claude":
+                (version_dir / "foo.py").write_text(
+                    "x   =   1\n\n\n", encoding="utf-8"
+                )
+            return fake(argv, **kwargs)
+
+        with pytest.raises(DevApplyNullDiffError) as excinfo:
+            spawn_dev_subagent(
+                version_dir,
+                _make_improvement(),
+                run=routed,
+                validate=False,
+                screen_null_diff=True,
+                max_attempts=1,
+            )
+        assert excinfo.value.ast_equivalent is True
+
+    def test_docstring_only_edit_is_real_not_null(
+        self, version_dir: Path
+    ) -> None:
+        """Docstring edits are ast-visible → REAL → screen does NOT fire."""
+        (version_dir / "foo.py").write_text(
+            '"""short docstring."""\nx = 1\n', encoding="utf-8"
+        )
+        fake = FakeRun()
+
+        def routed(argv: list[str], **kwargs: Any) -> _CompletedProc:
+            if argv and argv[0] == "claude":
+                # Different length so the (size, mtime) diff reliably fires.
+                (version_dir / "foo.py").write_text(
+                    '"""a substantially rewritten and longer docstring."""'
+                    "\nx = 1\n",
+                    encoding="utf-8",
+                )
+            return fake(argv, **kwargs)
+
+        # Should NOT raise — a docstring change is a real semantic change.
+        spawn_dev_subagent(
+            version_dir,
+            _make_improvement(),
+            run=routed,
+            validate=False,
+            screen_null_diff=True,
+            max_attempts=1,
+        )
+
+    def test_real_functional_edit_passes_through(
+        self, version_dir: Path
+    ) -> None:
+        """A genuine code change is not screened; single attempt, no raise."""
+        fake = FakeRun()
+
+        def routed(argv: list[str], **kwargs: Any) -> _CompletedProc:
+            if argv and argv[0] == "claude":
+                (version_dir / "foo.py").write_text(
+                    "x = 1\ny = 2\n", encoding="utf-8"
+                )
+            return fake(argv, **kwargs)
+
+        spawn_dev_subagent(
+            version_dir,
+            _make_improvement(),
+            run=routed,
+            validate=False,
+            screen_null_diff=True,
+        )
+        claude_calls = [
+            c for c in fake.calls if c[0] and c[0][0] == "claude"
+        ]
+        # Real change accepted on the first attempt — no retry.
+        assert len(claude_calls) == 1
+
+    def test_screen_off_zero_edit_is_byte_identical_success(
+        self, version_dir: Path
+    ) -> None:
+        """Screen OFF (default): a zero-edit still returns via the existing
+        ``if not validate or not changed_py: return`` path — no raise."""
+        fake = FakeRun()
+        # No routed edit → zero-edit. screen_null_diff defaults False.
+        spawn_dev_subagent(
+            version_dir,
+            _make_improvement(),
+            run=fake,
+        )
+        claude_calls = [
+            c for c in fake.calls if c[0] and c[0][0] == "claude"
+        ]
+        assert len(claude_calls) == 1
+        # No validation ran (nothing changed) and, crucially, no raise.
+        assert all(
+            c[0][:3] != ["uv", "run", "ruff"] for c in fake.calls
+        )

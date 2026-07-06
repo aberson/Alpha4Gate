@@ -41,9 +41,11 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import functools
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -77,6 +79,9 @@ if str(_REPO_ROOT / "src") not in sys.path:
 
 from orchestrator.evolve import (  # noqa: E402
     _restore_pointer as _primitive_restore_pointer,
+)
+from orchestrator.evolve_dev_apply import (  # noqa: E402
+    DevApplyNullDiffError,
 )
 from orchestrator.paths import resolve_sc2_path  # noqa: E402
 from orchestrator.snapshot import _drvfs_safe_rmtree  # noqa: E402
@@ -112,6 +117,14 @@ _REGRESSION_ROLLBACK: PoolItemStatus = "regression-rollback"
 
 # Upper bound on total fitness evaluations per imp (original + 2 retries).
 _RETRY_CAP = 3
+
+# Phase EJ.2: results-row outcome + fitness-count bucket for a dev-apply
+# that produced no semantic .py change (screened before any games play).
+_SCREEN_NULL_DIFF_BUCKET = "screen-null-diff"
+# Livelock guard: a 2nd CONSECUTIVE null-diff screen evicts the imp. The
+# sub-agent is non-deterministic, so one null is forgiven (imp stays
+# active for a re-roll next generation); two in a row means it's stuck.
+_NULL_DIFF_EVICT_THRESHOLD = 2
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +315,21 @@ def build_parser() -> argparse.ArgumentParser:
             "(no subprocess overhead). N>1 fans out via "
             "scripts/evolve_worker.py subprocesses (Decision D-1 / D-3 "
             "of evolve-parallelization-plan.md)."
+        ),
+    )
+    parser.add_argument(
+        "--screen-null-diff",
+        action="store_true",
+        help=(
+            "Phase EJ.2 mechanical null-diff screen. When set, a dev-apply "
+            "that produces no semantic .py change (zero edits, or only "
+            "comment/whitespace/formatting edits that parse to the same "
+            "AST) is retried with feedback, then failed loudly as a "
+            "'screen-null-diff' row WITHOUT burning fitness games — instead "
+            "of silently succeeding and passing the ~50%% fitness noise "
+            "floor. The imp returns to active for a re-roll; a 2nd "
+            "consecutive null evicts it. Docstring-only edits count as real "
+            "changes. Default off (byte-identical: null diffs play as-is)."
         ),
     )
     parser.add_argument(
@@ -499,6 +527,11 @@ class PerItemState:
     retry_count: int = 0
     first_evaluated_against: str | None = None
     last_evaluated_against: str | None = None
+    # Phase EJ.2 livelock guard: count of CONSECUTIVE null-diff screens for
+    # this imp. Bumped by the screen (never by retry_count), reset to 0 on
+    # any real (non-null) dev-apply. Reaching _NULL_DIFF_EVICT_THRESHOLD
+    # evicts. Additive + defaulted so legacy pool files round-trip.
+    consecutive_null_diffs: int = 0
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -507,6 +540,7 @@ class PerItemState:
             "retry_count": self.retry_count,
             "first_evaluated_against": self.first_evaluated_against,
             "last_evaluated_against": self.last_evaluated_against,
+            "consecutive_null_diffs": self.consecutive_null_diffs,
         }
 
     @classmethod
@@ -517,6 +551,9 @@ class PerItemState:
             retry_count=int(data.get("retry_count") or 0),
             first_evaluated_against=data.get("first_evaluated_against"),
             last_evaluated_against=data.get("last_evaluated_against"),
+            consecutive_null_diffs=int(
+                data.get("consecutive_null_diffs") or 0
+            ),
         )
 
 
@@ -589,6 +626,7 @@ def load_pool_state(
                 "retry_count",
                 "first_evaluated_against",
                 "last_evaluated_against",
+                "consecutive_null_diffs",
             )
         }
         # Back-compat: old pool files without these fields get defaults.
@@ -621,6 +659,7 @@ PhaseOutcome = Literal[
     "regression-pass",
     "regression-rollback",
     "crash",
+    "screen-null-diff",
 ]
 
 
@@ -719,6 +758,36 @@ def _crash_row(
         "error_message": str(exc),
         "error": (traceback_str.splitlines() or [str(exc)])[-1],
         "reason": f"crashed: {type(exc).__name__}: {exc}",
+    }
+
+
+def _screen_null_diff_row(
+    generation: int,
+    parent: str,
+    imp: Improvement,
+    *,
+    attempts: int | None,
+    reason: str,
+) -> dict[str, Any]:
+    """Build a fitness-phase row for a screened null-diff (Phase EJ.2).
+
+    Shares the ``phase: "fitness"`` discriminator + ``imp`` payload with
+    the crash/fitness siblings so the dashboard's RoundHistoryTable renders
+    it without a schema fork, but carries ``outcome: "screen-null-diff"``
+    and NO ``games``/``record`` (no games were played). ``attempts`` is the
+    number of dev-apply sub-agent invocations spent (``None`` when the
+    screen fired inside a worker subprocess, where the count isn't on the
+    crash-payload wire).
+    """
+    return {
+        "phase": "fitness",
+        "generation": generation,
+        "parent": parent,
+        "imp": _imp_asdict(imp),
+        "outcome": _SCREEN_NULL_DIFF_BUCKET,
+        "attempts": attempts,
+        "games": 0,
+        "reason": reason,
     }
 
 
@@ -848,6 +917,23 @@ def _last_result_snapshot_crash(
         "score": [0, 0],
         "outcome": "crash",
         "reason": f"crashed: {type(exc).__name__}: {exc}",
+    }
+
+
+def _last_result_snapshot_screen_null_diff(
+    generation: int,
+    imp: Improvement,
+    reason: str,
+) -> dict[str, Any]:
+    """Dashboard last-result snapshot for a screened null-diff (Phase EJ.2)."""
+    return {
+        "generation_index": generation,
+        "phase": "fitness",
+        "imp_title": imp.title,
+        "stacked_titles": None,
+        "score": [0, 0],
+        "outcome": _SCREEN_NULL_DIFF_BUCKET,
+        "reason": reason,
     }
 
 
@@ -1370,6 +1456,10 @@ def _apply_fitness_outcome(
     """Mutate state[idx] to reflect one fitness-eval outcome."""
     st = per_item_state[idx]
     st.retry_count += 1
+    # A completed fitness eval means the dev-apply produced a REAL change
+    # (games actually played), so the consecutive-null livelock counter
+    # resets — the guard tracks CONSECUTIVE nulls only (Phase EJ.2).
+    st.consecutive_null_diffs = 0
     st.fitness_score = [result.wins_candidate, result.games]
     st.last_evaluated_against = result.parent
     if st.first_evaluated_against is None:
@@ -1380,6 +1470,97 @@ def _apply_fitness_outcome(
         st.status = _FITNESS_CLOSE
     else:
         st.status = _EVICTED
+
+
+_NULL_DIFF_ATTEMPTS_RE = re.compile(r"after (\d+) attempt")
+
+
+def _parse_null_diff_attempts(error_message: str | None) -> int | None:
+    """Best-effort recover the attempt count from a worker's null-diff msg.
+
+    ``DevApplyNullDiffError``'s message embeds ``after N attempt(s)``. The
+    worker crash payload carries the message string but not the structured
+    ``attempts`` attribute, so the parallel dispatcher parses it back out
+    for the results row. Returns ``None`` when the message is absent or
+    doesn't match (the row's ``attempts`` field is nullable).
+    """
+    if not error_message:
+        return None
+    m = _NULL_DIFF_ATTEMPTS_RE.search(error_message)
+    return int(m.group(1)) if m else None
+
+
+def _handle_screen_null_diff(
+    *,
+    idx: int,
+    imp: Improvement,
+    parent_current: str,
+    generation_index: int,
+    per_item_state: dict[int, PerItemState],
+    fitness_counts: dict[str, int],
+    results_path: Path,
+    attempts: int | None,
+    ast_equivalent: bool | None,
+) -> dict[str, Any]:
+    """Record one screened null-diff (Phase EJ.2), shared serial + parallel.
+
+    A null-diff dev-apply is NOT a crash: no games were burned and the
+    sub-agent is non-deterministic, so this must NOT reuse the crash path
+    (``_record_parallel_failure`` / the serial crash branch) — those bump
+    ``retry_count`` and evict. Instead:
+
+    * emit a ``fitness`` / ``screen-null-diff`` results row (no games),
+    * bump the CONSECUTIVE null-diff counter (never ``retry_count``),
+    * on the 2nd consecutive null, evict (livelock terminal); otherwise
+      return the imp to ``active`` for a re-roll next generation.
+
+    Mirrors the crash branch's on-disk cadence: mutates ``per_item_state``
+    + appends the row only (no ``write_pool_state`` / ``write_state`` here —
+    the end-of-generation write persists the status). Returns the
+    ``last_result`` snapshot for the caller to store.
+    """
+    st = per_item_state[idx]
+    st.consecutive_null_diffs += 1
+    st.last_evaluated_against = parent_current
+    evicted = st.consecutive_null_diffs >= _NULL_DIFF_EVICT_THRESHOLD
+    st.status = _EVICTED if evicted else _ACTIVE
+    fitness_counts[_SCREEN_NULL_DIFF_BUCKET] = (
+        fitness_counts.get(_SCREEN_NULL_DIFF_BUCKET, 0) + 1
+    )
+    shape = (
+        "ast-equivalent"
+        if ast_equivalent
+        else ("zero-edit" if ast_equivalent is False else "null")
+    )
+    attempt_txt = f"{attempts} attempt(s)" if attempts is not None else "retries"
+    reason = (
+        f"screened null-diff ({shape}) after {attempt_txt}; "
+        + (
+            f"evicted (>= {_NULL_DIFF_EVICT_THRESHOLD} consecutive nulls)"
+            if evicted
+            else f"back to active (consecutive={st.consecutive_null_diffs})"
+        )
+    )
+    _log.warning(
+        "evolve: gen %d imp %r screened null-diff (%s); %s",
+        generation_index,
+        imp.title,
+        shape,
+        "EVICTED" if evicted else "re-activated",
+    )
+    append_phase_result(
+        results_path,
+        _screen_null_diff_row(
+            generation_index,
+            parent_current,
+            imp,
+            attempts=attempts,
+            reason=reason,
+        ),
+    )
+    return _last_result_snapshot_screen_null_diff(
+        generation_index, imp, reason
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1892,9 +2073,10 @@ def _build_worker_argv(
     game_time_limit: int,
     hard_timeout: float,
     state_dir: Path,
+    screen_null_diff: bool = False,
 ) -> list[str]:
     """Construct the argv list for one ``evolve_worker.py`` subprocess."""
-    return [
+    argv = [
         sys.executable,
         str(_REPO_ROOT / "scripts" / "evolve_worker.py"),
         "--parent",
@@ -1918,6 +2100,12 @@ def _build_worker_argv(
         "--state-dir",
         str(state_dir),
     ]
+    # Phase EJ.2: forward the null-diff screen into the worker subprocess
+    # (the worker builds its own spawn_dev_subagent). store_true flag →
+    # append only when ON, keeping the default worker argv byte-identical.
+    if screen_null_diff:
+        argv.append("--screen-null-diff")
+    return argv
 
 
 def _run_fitness_phase_parallel(
@@ -2195,6 +2383,9 @@ def _run_fitness_phase_parallel(
                     game_time_limit=args.game_time_limit,
                     hard_timeout=args.hard_timeout,
                     state_dir=state_dir,
+                    screen_null_diff=bool(
+                        getattr(args, "screen_null_diff", False)
+                    ),
                 )
                 try:
                     # Iter-3 Fix 3.2: spawn each worker in its own process
@@ -2329,6 +2520,38 @@ def _run_fitness_phase_parallel(
                             worker_crash_payload = parsed_crash
                     except (OSError, json.JSONDecodeError):
                         pass
+
+                    # Phase EJ.2: a worker that raised DevApplyNullDiffError
+                    # serialized its class name on the crash-payload wire.
+                    # That is NOT a real crash (no games burned) — route it
+                    # to the SAME screen-null-diff handler as the serial path
+                    # (row + no retry bump + stay active / evict-on-2nd-
+                    # consecutive), NOT the generic crash bucket. Compare
+                    # against the class' ``__name__`` (not a bare literal) so
+                    # a rename of the exception can't silently un-wire this.
+                    if (
+                        worker_crash_payload is not None
+                        and worker_crash_payload.get("error_type")
+                        == DevApplyNullDiffError.__name__
+                    ):
+                        last_result_snap = _handle_screen_null_diff(
+                            idx=dispatched.idx,
+                            imp=dispatched.imp,
+                            parent_current=parent_current,
+                            generation_index=generation_index,
+                            per_item_state=per_item_state,
+                            fitness_counts=fitness_counts,
+                            results_path=args.results_path,
+                            # The attempt count + null-shape are not on the
+                            # crash-payload wire; recover the count from the
+                            # message (best-effort), shape stays unknown.
+                            attempts=_parse_null_diff_attempts(
+                                worker_crash_payload.get("error_message")
+                            ),
+                            ast_equivalent=None,
+                        )
+                        completed.append(proc)
+                        continue
 
                     crash_exc = _make_crash_exc(
                         rc, worker_crash=worker_crash_payload
@@ -3110,6 +3333,19 @@ def run_loop(
 
         dev_apply_fn = spawn_dev_subagent
 
+    # Phase EJ.2: thread --screen-null-diff into the (serial) dev-apply
+    # callable. spawn_dev_subagent takes screen_null_diff as a keyword, so
+    # a partial binds it without changing the (version_dir, imp) call shape
+    # run_fitness_eval expects. Only wrapped when the flag is ON so the
+    # default path stays byte-identical (unwrapped callable). The PARALLEL
+    # path threads the flag via the worker argv instead (workers construct
+    # their own spawn_dev_subagent), so this wrap is serial-only.
+    screen_null_diff = bool(getattr(args, "screen_null_diff", False))
+    if screen_null_diff:
+        dev_apply_fn = functools.partial(
+            dev_apply_fn, screen_null_diff=True
+        )
+
     # --- Pre-flight ---
     check_git_clean()
     if not check_sc2_installed():
@@ -3548,7 +3784,13 @@ def run_loop(
 
         # ---------- FITNESS PHASE ----------
         fitness_results: dict[int, FitnessResult] = {}
-        fitness_counts = {"pass": 0, "close": 0, "fail": 0, "crash": 0}
+        fitness_counts = {
+            "pass": 0,
+            "close": 0,
+            "fail": 0,
+            "crash": 0,
+            _SCREEN_NULL_DIFF_BUCKET: 0,
+        }
 
         # Decision D-1: at --concurrency 1 take the byte-identical serial
         # code path. The pre-existing soak-history baselines compared
@@ -3608,6 +3850,25 @@ def run_loop(
                         dev_apply_fn=dev_apply_fn,
                         on_event=_on_fitness_event,
                     )
+                except DevApplyNullDiffError as exc:
+                    # Phase EJ.2: the dev-apply produced no semantic change
+                    # (screen fired). NOT a crash — no games were burned and
+                    # the sub-agent is non-deterministic, so route to the
+                    # dedicated handler (no retry-count bump; imp stays
+                    # active unless this is its 2nd consecutive null). Fires
+                    # before run_batch, so ZERO games play for this imp.
+                    last_result_snap = _handle_screen_null_diff(
+                        idx=idx,
+                        imp=imp,
+                        parent_current=parent_current,
+                        generation_index=generation_index,
+                        per_item_state=per_item_state,
+                        fitness_counts=fitness_counts,
+                        results_path=args.results_path,
+                        attempts=exc.attempts,
+                        ast_equivalent=exc.ast_equivalent,
+                    )
+                    continue
                 except Exception as exc:
                     tb = traceback.format_exc()
                     _log.error(
@@ -4263,6 +4524,11 @@ def run_loop(
                     + (
                         f" (+{fitness_counts['crash']} crash)"
                         if fitness_counts["crash"]
+                        else ""
+                    )
+                    + (
+                        f" (+{fitness_counts[_SCREEN_NULL_DIFF_BUCKET]} null)"
+                        if fitness_counts.get(_SCREEN_NULL_DIFF_BUCKET)
                         else ""
                     )
                 ),

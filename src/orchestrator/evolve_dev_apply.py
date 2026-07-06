@@ -30,6 +30,7 @@ semantic).
 
 from __future__ import annotations
 
+import ast
 import logging
 import re
 import subprocess
@@ -44,6 +45,7 @@ _log = logging.getLogger(__name__)
 
 __all__ = [
     "DevApplyError",
+    "DevApplyNullDiffError",
     "DevApplyOutOfScopeError",
     "DevApplySubagentError",
     "DevApplyTimeoutError",
@@ -90,6 +92,39 @@ class DevApplyValidationError(DevApplyError):
     def __init__(self, msg: str, *, detail: str = "") -> None:
         super().__init__(msg)
         self.detail = detail
+
+
+class DevApplyNullDiffError(DevApplyError):
+    """The sub-agent produced no semantic ``.py`` change (Phase EJ.2).
+
+    Raised only when ``screen_null_diff=True`` and every attempt yielded a
+    NULL diff — either zero ``.py`` edits at all, or edits that are
+    AST-equivalent to the before-snapshot (comment-only, whitespace-only,
+    or pure-formatting changes). Docstring edits ARE ``ast``-visible and
+    count as REAL changes, so they never trigger this.
+
+    A byte-identical candidate burns ~4 fitness games and passes the
+    strict-majority null ~50% of the time (the fitness noise floor), so
+    the screen fails loudly instead of letting the round play as-is.
+
+    Attributes
+    ----------
+    attempts:
+        How many sub-agent invocations were spent before giving up
+        (equals ``max_attempts`` on the raise path).
+    ast_equivalent:
+        ``True`` when the final null was an AST-equivalent edit (files
+        changed but parsed to the same AST); ``False`` when it was a
+        zero-edit no-op. Lets downstream log/row readers attribute which
+        null-shape occurred.
+    """
+
+    def __init__(
+        self, msg: str, *, attempts: int, ast_equivalent: bool
+    ) -> None:
+        super().__init__(msg)
+        self.attempts = attempts
+        self.ast_equivalent = ast_equivalent
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +238,7 @@ def spawn_dev_subagent(
     timeout: float = 900.0,
     validate: bool = True,
     max_attempts: int = 3,
+    screen_null_diff: bool = False,
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> None:
     """Apply *imp* to *version_dir* by shelling out to a Claude Code sub-agent.
@@ -242,6 +278,16 @@ def spawn_dev_subagent(
         re-invoke the sub-agent with the validator error appended to the
         prompt, up to two more times. A :class:`DevApplyOutOfScopeError`
         is NOT retried — that's a safety violation, not a type error.
+    screen_null_diff:
+        Phase EJ.2 mechanical null-diff screen. Default ``False`` keeps
+        today's behavior byte-identical: a zero-edit / AST-equivalent
+        candidate silently succeeds and plays as-is. When ``True``, a NULL
+        diff (no ``.py`` change, or only comment/whitespace/formatting
+        edits that parse to the same AST) routes through the existing
+        retry-with-feedback path on non-final attempts and raises
+        :class:`DevApplyNullDiffError` on the final attempt — so a
+        byte-identical candidate never burns fitness games. Docstring-only
+        edits are ``ast``-visible and count as REAL changes.
     run:
         Injected subprocess runner so tests can mock the CLI boundary
         without touching the real ``claude`` binary. Same pattern as
@@ -269,6 +315,14 @@ def spawn_dev_subagent(
     # previous-attempt edit that's been kept doesn't trip out-of-scope.
     git_before = _snapshot_repo_state(repo_root, run=run)
     py_before = _collect_candidate_py_snapshot(version_dir)
+    # Null-diff screen needs the BEFORE source of each .py for AST compare;
+    # the (size, mtime) snapshot above doesn't carry content. Captured once
+    # (like git_before / py_before) so "null" means "no semantic change vs
+    # the pre-dev-apply candidate", across all retry attempts. Guarded on
+    # ``screen_null_diff`` so the default path pays no read cost.
+    content_before: dict[Path, str] = (
+        _collect_candidate_py_content(version_dir) if screen_null_diff else {}
+    )
 
     last_validation_error: DevApplyValidationError | None = None
     feedback: str | None = None
@@ -305,6 +359,33 @@ def spawn_dev_subagent(
             max_attempts,
             len(changed_py),
         )
+
+        if screen_null_diff:
+            # Phase EJ.2: detect a mechanically-null edit BEFORE the
+            # ruff/mypy short-circuit so a byte-identical candidate can't
+            # ride the "nothing to validate → success" path into a wasted
+            # fitness eval. ``None`` = a real semantic change; otherwise
+            # the null-shape string ("zero-edit" | "ast-equivalent").
+            null_kind = _classify_null_diff(changed_py, content_before)
+            if null_kind is not None:
+                if attempt == max_attempts:
+                    raise DevApplyNullDiffError(
+                        "sub-agent produced no semantic .py change after "
+                        f"{max_attempts} attempt(s) (kind={null_kind})",
+                        attempts=attempt,
+                        ast_equivalent=(null_kind == "ast-equivalent"),
+                    )
+                _log.warning(
+                    "dev-apply: null diff (%s) on attempt %d/%d; retrying "
+                    "with feedback",
+                    null_kind,
+                    attempt,
+                    max_attempts,
+                )
+                feedback = _format_null_diff_feedback(
+                    attempt + 1, max_attempts
+                )
+                continue
 
         if not validate or not changed_py:
             # Nothing to validate — either the caller disabled gating
@@ -381,6 +462,27 @@ def _format_retry_feedback(detail: str, attempt: int, max_attempts: int) -> str:
         "Re-run the validator via Bash to confirm before exiting. If you "
         "cannot fix the errors without violating the rules, exit without "
         "further edits — the round will be discarded cleanly."
+    )
+
+
+def _format_null_diff_feedback(attempt: int, max_attempts: int) -> str:
+    """Build the retry addendum shown when the prior attempt was a null diff.
+
+    Mirrors :func:`_format_retry_feedback`'s shape (a prompt prefix the
+    caller prepends on attempt 2+), but the message tells the sub-agent
+    its edit carried no *semantic* change — a comment-only, whitespace, or
+    formatting-only edit, or no edit at all — so it must make the concrete
+    functional change or exit cleanly.
+    """
+    return (
+        f"YOUR PREVIOUS ATTEMPT PRODUCED NO SEMANTIC CODE CHANGE (attempt "
+        f"{attempt - 1} of {max_attempts}). Either you edited nothing, or "
+        "your edit only touched comments, whitespace, or formatting — the "
+        "parsed code is identical to before. Make the CONCRETE functional "
+        "change the improvement describes (docstring or comment tweaks do "
+        "NOT count). If you cannot make a real change without violating "
+        "the rules, exit without edits — the round will be discarded "
+        "cleanly."
     )
 
 
@@ -517,6 +619,94 @@ def _diff_py_snapshots(
         if sig_before is None or sig_before != sig_after:
             changed.append(path)
     return changed
+
+
+# ---------------------------------------------------------------------------
+# Null-diff screen (Phase EJ.2)
+# ---------------------------------------------------------------------------
+
+
+def _collect_candidate_py_content(version_dir: Path) -> dict[Path, str]:
+    """Map every ``.py`` file under *version_dir* to its source text.
+
+    Companion to :func:`_collect_candidate_py_snapshot` used only by the
+    null-diff screen (``screen_null_diff=True``): the AST classifier needs
+    the *before* source of each file, which the (size, mtime) snapshot
+    doesn't carry. Unreadable files are skipped — they read as new/empty
+    in :func:`_classify_null_diff`, which biases toward "real change" (the
+    safe direction — the ruff/mypy gates run next).
+    """
+    out: dict[Path, str] = {}
+    if not version_dir.is_dir():
+        return out
+    for p in version_dir.rglob("*.py"):
+        try:
+            out[p] = p.read_text(encoding="utf-8")
+        except (OSError, ValueError):
+            # ValueError covers UnicodeDecodeError (a non-UTF-8 .py file).
+            # Skip it — it reads as new/empty in _classify_null_diff, which
+            # biases toward "real change" (the safe direction).
+            continue
+    return out
+
+
+def _ast_equivalent(before_src: str, after_src: str) -> bool:
+    """True when *before_src* and *after_src* parse to identical ASTs.
+
+    Comment-only, whitespace-only, and pure-formatting edits are all
+    ``ast``-invisible, so they compare equal. Docstrings ARE ``ast``-visible
+    (they're string-literal expression statements), so a docstring-only
+    edit compares UNEQUAL — a REAL change, per the EJ.2 plan.
+
+    If *after_src* is unparseable (the edit introduced a syntax error),
+    return ``False``: a syntax error is a real change the ruff/mypy gates
+    own, never a null. A before-src that is itself unparseable but whose
+    after-src parses is likewise a real change (the edit fixed a syntax
+    error), so return ``False``.
+    """
+    try:
+        after_ast = ast.dump(ast.parse(after_src))
+    except SyntaxError:
+        return False
+    try:
+        before_ast = ast.dump(ast.parse(before_src))
+    except SyntaxError:
+        return False
+    return before_ast == after_ast
+
+
+def _classify_null_diff(
+    changed_py: list[Path],
+    content_before: dict[Path, str],
+) -> str | None:
+    """Classify a dev-apply diff for the null-diff screen.
+
+    Returns:
+      * ``None`` — a REAL semantic change: at least one changed ``.py`` is
+        not AST-equivalent to its before-snapshot (or is unparseable
+        post-edit, which the gates catch).
+      * ``"zero-edit"`` — the sub-agent changed no ``.py`` file at all.
+      * ``"ast-equivalent"`` — files changed, but every one parses to the
+        same AST as before (comment / whitespace / formatting only).
+
+    A file present in *changed_py* but absent from *content_before* is a
+    newly-created file; its before-source is treated as empty (``""``), so
+    a new file with any real code reads as a REAL change.
+    """
+    if not changed_py:
+        return "zero-edit"
+    for path in changed_py:
+        try:
+            after_src = path.read_text(encoding="utf-8")
+        except (OSError, ValueError):
+            # Can't read/decode the after-content (ValueError covers a
+            # non-UTF-8 file's UnicodeDecodeError) — don't screen it out;
+            # let the gates decide. Bias toward "real change".
+            return None
+        before_src = content_before.get(path, "")
+        if not _ast_equivalent(before_src, after_src):
+            return None
+    return "ast-equivalent"
 
 
 def _snapshot_repo_state(

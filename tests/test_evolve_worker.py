@@ -636,3 +636,168 @@ class TestMirrorMode:
         assert body["error_type"] == "RuntimeError"
         assert "burnysc2 exploded" in body["error_message"]
         assert "Traceback" in body["traceback"]
+
+
+# ---------------------------------------------------------------------------
+# Phase EJ.2: null-diff screen — PRODUCER side of the worker→parent contract
+# ---------------------------------------------------------------------------
+
+
+class TestNullDiffScreen:
+    """Closes the producer→consumer round-trip flagged by the reviewer.
+
+    ``test_evolve_parallel.py`` proves the PARENT dispatcher routes on
+    ``error_type == DevApplyNullDiffError.__name__``; these tests prove the
+    WORKER actually parses ``--screen-null-diff``, binds it into the
+    ``functools.partial(spawn_dev_subagent, ...)`` wrap, and SERIALIZES that
+    same class name on the crash payload. Without both halves, a renamed
+    exception / dropped partial / broken flag-parse would leave parallel-mode
+    screening silently dead in production while every test stays green.
+    """
+
+    def test_screen_flag_wraps_spawn_and_serializes_null_diff_error(
+        self,
+        worker: ModuleType,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        from orchestrator.evolve_dev_apply import DevApplyNullDiffError
+
+        imp = _make_imp()
+        imp_path = _write_imp(tmp_path, imp)
+        result_path = tmp_path / "result.json"
+        state_dir = tmp_path / "state"
+
+        seen: dict[str, Any] = {"screen_null_diff": None}
+
+        def fake_spawn(
+            version_dir: Any,
+            imp_arg: Improvement,
+            *,
+            screen_null_diff: bool = False,
+            **_kw: Any,
+        ) -> None:
+            # This is the real ``spawn_dev_subagent`` seam the worker wraps in
+            # a partial. Assert the flag arrived bound True, then produce a
+            # null diff exactly as the real screen would on its final attempt.
+            seen["screen_null_diff"] = screen_null_diff
+            raise DevApplyNullDiffError(
+                "sub-agent produced no semantic .py change after 3 attempt(s)",
+                attempts=3,
+                ast_equivalent=False,
+            )
+
+        def fake_run_fitness_eval(
+            parent: str, imp_arg: Improvement, **kwargs: Any
+        ) -> FitnessResult:
+            # Mirror apply_improvement: invoke the worker-built dev_apply_fn
+            # (the partial), which routes into fake_spawn and raises.
+            kwargs["dev_apply_fn"](tmp_path / "cand", imp_arg)
+            raise AssertionError("unreachable — null diff should have raised")
+
+        monkeypatch.setattr(worker, "spawn_dev_subagent", fake_spawn)
+        monkeypatch.setattr(
+            worker, "run_fitness_eval", fake_run_fitness_eval
+        )
+
+        rc = worker.main(
+            [
+                "--parent",
+                "v0",
+                "--imp-json",
+                str(imp_path),
+                "--worker-id",
+                "0",
+                "--result-path",
+                str(result_path),
+                "--games-per-eval",
+                "1",
+                "--run-id",
+                "deadbeef",
+                "--state-dir",
+                str(state_dir),
+                "--screen-null-diff",
+            ]
+        )
+        # Worker exits 1 via its generic crash path (writes a crash payload).
+        assert rc == 1
+        # The flag was PARSED by the worker's argparse AND bound into the
+        # partial that reached the dev-apply seam.
+        assert seen["screen_null_diff"] is True
+        # And the crash payload serializes the SAME class name the parent
+        # dispatcher routes on — this is the byte the two ends must agree on.
+        payload = json.loads(result_path.read_text(encoding="utf-8"))
+        assert payload["crash"] is True
+        assert payload["error_type"] == DevApplyNullDiffError.__name__
+
+    def test_screen_flag_off_passes_spawn_through_unwrapped(
+        self,
+        worker: ModuleType,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Default (no ``--screen-null-diff``): the worker passes the bare
+        ``spawn_dev_subagent`` (no partial wrap) — byte-identical to
+        pre-EJ.2."""
+        from orchestrator.evolve_dev_apply import spawn_dev_subagent
+
+        imp = _make_imp()
+        imp_path = _write_imp(tmp_path, imp)
+        result_path = tmp_path / "result.json"
+        captured: dict[str, Any] = {}
+
+        def fake_run_fitness_eval(
+            parent: str, imp_arg: Improvement, **kwargs: Any
+        ) -> FitnessResult:
+            captured["dev_apply_fn"] = kwargs["dev_apply_fn"]
+            return FitnessResult(
+                parent=parent,
+                candidate="c",
+                imp=imp_arg,
+                record=[_record("c", parent, "c")],
+                wins_candidate=1,
+                wins_parent=0,
+                games=1,
+                bucket="pass",
+                reason="ok",
+            )
+
+        monkeypatch.setattr(
+            worker, "run_fitness_eval", fake_run_fitness_eval
+        )
+
+        rc = worker.main(
+            [
+                "--parent",
+                "v0",
+                "--imp-json",
+                str(imp_path),
+                "--worker-id",
+                "0",
+                "--result-path",
+                str(result_path),
+                "--games-per-eval",
+                "1",
+                "--state-dir",
+                str(tmp_path / "state"),
+            ]
+        )
+        assert rc == 0
+        assert captured["dev_apply_fn"] is spawn_dev_subagent
+
+    def test_write_crash_serializes_null_diff_class_name(
+        self, worker: ModuleType, tmp_path: Path
+    ) -> None:
+        """Belt-and-suspenders: ``_write_crash`` on a DevApplyNullDiffError
+        emits ``error_type == DevApplyNullDiffError.__name__`` — the exact
+        symbol the parent dispatcher's routing branch compares against."""
+        from orchestrator.evolve_dev_apply import DevApplyNullDiffError
+
+        result_path = tmp_path / "crash.json"
+        worker._write_crash(
+            result_path,
+            DevApplyNullDiffError("x", attempts=3, ast_equivalent=False),
+            "traceback-text",
+        )
+        payload = json.loads(result_path.read_text(encoding="utf-8"))
+        assert payload["error_type"] == DevApplyNullDiffError.__name__

@@ -173,6 +173,7 @@ def _build_args(
     run_log: Path | None = None,
     game_time_limit: int = 1800,
     hard_timeout: float = 2700.0,
+    screen_null_diff: bool = False,
 ) -> argparse.Namespace:
     """Construct an argparse.Namespace pointing at tmp_path for all state.
 
@@ -199,6 +200,7 @@ def _build_args(
         post_training_cycles=0,
         backend_url="http://localhost:8765",
         concurrency=1,
+        screen_null_diff=screen_null_diff,
     )
 
 
@@ -2573,3 +2575,233 @@ def test_population_cap_real_decide_extinctions_through_gauntlet(
     assert ext["head_version"] == "v100"
     assert ext["dominated_by"] == "main"
     assert ext["outcome"] == "extinction"
+
+
+# ---------------------------------------------------------------------------
+# Phase EJ.2: null-diff screen (state bookkeeping + integration)
+# ---------------------------------------------------------------------------
+
+
+def test_per_item_state_roundtrips_consecutive_null_diffs(
+    cli: ModuleType,
+) -> None:
+    """The new livelock field survives the to_json / from_json round-trip,
+    and legacy pool files (without the field) default it to 0."""
+    st = cli.PerItemState(
+        status="active", retry_count=2, consecutive_null_diffs=1
+    )
+    data = st.to_json()
+    assert data["consecutive_null_diffs"] == 1
+    assert cli.PerItemState.from_json(data).consecutive_null_diffs == 1
+
+    legacy = {
+        "status": "active",
+        "fitness_score": None,
+        "retry_count": 0,
+        "first_evaluated_against": None,
+        "last_evaluated_against": None,
+    }
+    assert cli.PerItemState.from_json(legacy).consecutive_null_diffs == 0
+
+
+def test_apply_fitness_outcome_resets_consecutive_null_diffs(
+    cli: ModuleType,
+) -> None:
+    """A real (games-played) fitness eval resets the consecutive-null
+    counter — the guard tracks CONSECUTIVE nulls only."""
+    imp = _make_imp("imp-x")
+    per_item_state = {0: cli.PerItemState(consecutive_null_diffs=1)}
+    result = _fitness(imp, bucket="pass", parent="v0")
+    cli._apply_fitness_outcome(per_item_state, 0, result)
+    assert per_item_state[0].consecutive_null_diffs == 0
+
+
+def test_handle_screen_null_diff_no_retry_bump_then_evicts(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """The screen handler emits a row, bumps the consecutive-null counter
+    (never retry_count), keeps the imp active on the 1st null, and evicts
+    on the 2nd consecutive."""
+    imp = _make_imp("imp-x")
+    per_item_state = {0: cli.PerItemState()}
+    fitness_counts = {"pass": 0, "close": 0, "fail": 0, "crash": 0}
+    results_path = tmp_path / "results.jsonl"
+
+    snap = cli._handle_screen_null_diff(
+        idx=0,
+        imp=imp,
+        parent_current="v0",
+        generation_index=1,
+        per_item_state=per_item_state,
+        fitness_counts=fitness_counts,
+        results_path=results_path,
+        attempts=3,
+        ast_equivalent=False,
+    )
+    st = per_item_state[0]
+    assert st.retry_count == 0
+    assert st.consecutive_null_diffs == 1
+    assert st.status == cli._ACTIVE
+    assert fitness_counts[cli._SCREEN_NULL_DIFF_BUCKET] == 1
+    assert snap["outcome"] == "screen-null-diff"
+
+    rows = [
+        json.loads(line)
+        for line in results_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(rows) == 1
+    assert rows[0]["phase"] == "fitness"
+    assert rows[0]["outcome"] == "screen-null-diff"
+    assert rows[0]["games"] == 0
+    assert rows[0]["attempts"] == 3
+
+    # Second consecutive null → evicted.
+    cli._handle_screen_null_diff(
+        idx=0,
+        imp=imp,
+        parent_current="v0",
+        generation_index=2,
+        per_item_state=per_item_state,
+        fitness_counts=fitness_counts,
+        results_path=results_path,
+        attempts=3,
+        ast_equivalent=True,
+    )
+    assert per_item_state[0].consecutive_null_diffs == 2
+    assert per_item_state[0].status == cli._EVICTED
+    assert per_item_state[0].retry_count == 0
+
+
+def test_parse_null_diff_attempts_none_and_match(cli: ModuleType) -> None:
+    """The attempt-count parser recovers ``after N attempt`` and returns
+    None for absent/unparseable messages (the worker-path fallback)."""
+    assert cli._parse_null_diff_attempts("no count here") is None
+    assert cli._parse_null_diff_attempts(None) is None
+    assert cli._parse_null_diff_attempts("") is None
+    assert (
+        cli._parse_null_diff_attempts("no change after 5 attempt(s)") == 5
+    )
+
+
+def test_handle_screen_null_diff_attempts_none_renders_fallback(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """When the attempt count is unknown (worker-path, message didn't parse)
+    the row's ``attempts`` is None and the reason uses the 'retries'
+    fallback wording instead of 'N attempt(s)'."""
+    imp = _make_imp("imp-x")
+    per_item_state = {0: cli.PerItemState()}
+    fitness_counts = {"pass": 0, "close": 0, "fail": 0, "crash": 0}
+    results_path = tmp_path / "results.jsonl"
+
+    snap = cli._handle_screen_null_diff(
+        idx=0,
+        imp=imp,
+        parent_current="v0",
+        generation_index=1,
+        per_item_state=per_item_state,
+        fitness_counts=fitness_counts,
+        results_path=results_path,
+        attempts=None,
+        ast_equivalent=None,
+    )
+    assert "retries" in snap["reason"]
+    assert "attempt(s)" not in snap["reason"]
+
+    rows = [
+        json.loads(line)
+        for line in results_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert rows[0]["attempts"] is None
+    assert rows[0]["outcome"] == "screen-null-diff"
+
+
+def test_screen_null_diff_integration_zero_games(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end through the run_loop generation dispatch: --screen-null-diff
+    ON + a dev_apply_fn that produces a null diff must yield a screen-null-diff
+    fitness row and play ZERO games for that imp — exercising the real serial
+    dispatch/state code, the flag threading (partial), and the row emission."""
+    from orchestrator.evolve_dev_apply import DevApplyNullDiffError
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    args = _build_args(
+        tmp_path, pool_size=1, generations=1, screen_null_diff=True
+    )
+    pool = _make_pool(1)
+
+    seen = {"screen_null_diff": None}
+
+    def null_dev_apply(
+        version_dir: Any, imp: Improvement, *, screen_null_diff: bool = False
+    ) -> None:
+        # run_loop wraps this in functools.partial(screen_null_diff=True);
+        # this asserts the flag actually reached the dev-apply callable.
+        seen["screen_null_diff"] = screen_null_diff
+        raise DevApplyNullDiffError(
+            "sub-agent produced no semantic .py change after 3 attempt(s)",
+            attempts=3,
+            ast_equivalent=False,
+        )
+
+    games_played = {"n": 0}
+
+    def driving_fitness(
+        parent: str,
+        imp: Improvement,
+        *,
+        dev_apply_fn: Any = None,
+        **kwargs: Any,
+    ) -> FitnessResult:
+        # Mirror run_fitness_eval's contract: apply the imp FIRST (which
+        # raises the null-diff error before any game), THEN play games. The
+        # raise means run_batch is never reached → zero games.
+        assert dev_apply_fn is not None
+        dev_apply_fn(Path("cand_x"), imp)
+        games_played["n"] += 1  # unreachable when the screen fires
+        return _fitness(imp, bucket="pass", parent=parent)
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        return [] if k.get("skip_mirror") else pool
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=driving_fitness,
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("no winners → stack-apply must not fire")
+        ),
+        run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("no promotion → regression must not fire")
+        ),
+        current_version_fn=lambda: "v0",
+        dev_apply_fn=null_dev_apply,
+    )
+    assert rc == 0
+    # The flag was threaded through run_loop into the dev-apply callable.
+    assert seen["screen_null_diff"] is True
+    # ZERO games played for the screened imp.
+    assert games_played["n"] == 0
+
+    rows = [
+        json.loads(line)
+        for line in args.results_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    fitness_rows = [r for r in rows if r.get("phase") == "fitness"]
+    assert len(fitness_rows) == 1
+    assert fitness_rows[0]["outcome"] == "screen-null-diff"
+    assert fitness_rows[0]["games"] == 0
+    assert fitness_rows[0]["attempts"] == 3
+    # No crash row was emitted.
+    assert not any(r.get("outcome") == "crash" for r in rows)
+
+    # retry_count NOT bumped; imp back to active (1st consecutive null).
+    pool_state = json.loads(args.pool_path.read_text(encoding="utf-8"))
+    item = pool_state["pool"][0]
+    assert item["retry_count"] == 0
+    assert item["consecutive_null_diffs"] == 1
+    assert item["status"] == "active"

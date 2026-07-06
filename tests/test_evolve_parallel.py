@@ -62,6 +62,7 @@ import pytest
 
 from orchestrator.contracts import SelfPlayRecord
 from orchestrator.evolve import FitnessResult, Improvement
+from orchestrator.evolve_dev_apply import DevApplyNullDiffError
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -157,6 +158,7 @@ def _build_args(
     games_per_eval: int = 5,
     hard_timeout: float = 60.0,
     hours: float = 0.0,
+    screen_null_diff: bool = False,
 ) -> argparse.Namespace:
     return argparse.Namespace(
         pool_size=4,
@@ -177,6 +179,7 @@ def _build_args(
         post_training_cycles=0,
         backend_url="http://localhost:8765",
         concurrency=concurrency,
+        screen_null_diff=screen_null_diff,
     )
 
 
@@ -1573,6 +1576,186 @@ def test_worker_crash_no_payload_falls_back_to_synthetic(
     assert row["error_type"] == "RuntimeError"
     assert "returncode=139" in row["error_message"]
     assert "worker_traceback" not in row
+
+
+# ---------------------------------------------------------------------------
+# Phase EJ.2: null-diff screen — worker argv threading + dispatcher routing
+# ---------------------------------------------------------------------------
+
+
+def test_build_worker_argv_appends_screen_flag_when_on(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    argv = cli._build_worker_argv(
+        parent="v0",
+        imp_json_path=tmp_path / "imp.json",
+        worker_id=0,
+        result_path=tmp_path / "res.json",
+        run_id="abc12345",
+        games_per_eval=5,
+        map_name="Simple64",
+        game_time_limit=1800,
+        hard_timeout=2700.0,
+        state_dir=tmp_path,
+        screen_null_diff=True,
+    )
+    assert "--screen-null-diff" in argv
+
+
+def test_build_worker_argv_omits_screen_flag_by_default(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    argv = cli._build_worker_argv(
+        parent="v0",
+        imp_json_path=tmp_path / "imp.json",
+        worker_id=0,
+        result_path=tmp_path / "res.json",
+        run_id="abc12345",
+        games_per_eval=5,
+        map_name="Simple64",
+        game_time_limit=1800,
+        hard_timeout=2700.0,
+        state_dir=tmp_path,
+    )
+    assert "--screen-null-diff" not in argv
+
+
+def test_dispatcher_threads_screen_flag_into_worker_argv(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """--screen-null-diff on the run reaches the spawned worker's argv."""
+    args = _build_args(tmp_path, concurrency=2, screen_null_diff=True)
+    pool = [_make_imp("imp-0", rank=1)]
+    plans = [_FakeWorkerPlan(bucket="pass", returncode=0)]
+    factory = _FakePopenFactory(cli, plans)
+
+    _invoke_dispatcher(cli, pool=pool, args=args, factory=factory)
+
+    assert len(factory.logs) == 1
+    assert "--screen-null-diff" in factory.logs[0].argv
+
+
+def test_worker_null_diff_payload_routes_to_screen_not_crash(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """A worker that raised DevApplyNullDiffError (error_type on the crash
+    payload) must route to a ``screen-null-diff`` results row — NOT the
+    generic crash bucket. No retry-count bump; imp stays active; no
+    crash-log entry."""
+    args = _build_args(tmp_path, concurrency=2, screen_null_diff=True)
+    pool = [_make_imp("imp-null", rank=1)]
+    plans = [
+        _FakeWorkerPlan(
+            bucket="fail",
+            returncode=1,
+            write_result=False,
+            crash_payload={
+                "crash": True,
+                # Reference the class' __name__ so a rename of the exception
+                # breaks BOTH this test and the parent's routing branch
+                # together (refactor-safe coupling, not a bare literal).
+                "error_type": DevApplyNullDiffError.__name__,
+                "error_message": (
+                    "sub-agent produced no semantic .py change after 3 "
+                    "attempt(s) (kind=zero-edit)"
+                ),
+                "traceback": "…",
+            },
+        )
+    ]
+    factory = _FakePopenFactory(cli, plans)
+
+    (
+        fitness_results,
+        fitness_counts,
+        per_item_state,
+        _snap,
+        _stop,
+    ) = _invoke_dispatcher(cli, pool=pool, args=args, factory=factory)
+
+    # Routed to the screen bucket, NOT crash.
+    assert fitness_counts[cli._SCREEN_NULL_DIFF_BUCKET] == 1
+    assert fitness_counts["crash"] == 0
+    # No fitness result recorded (no games played).
+    assert 0 not in fitness_results
+    # retry_count NOT bumped; imp back to active (1st consecutive null);
+    # the consecutive counter advanced.
+    assert per_item_state[0].retry_count == 0
+    assert per_item_state[0].status == cli._ACTIVE
+    assert per_item_state[0].consecutive_null_diffs == 1
+    # No crash-log entry — a null diff is not a crash.
+    assert not args.crash_log_path.exists()
+
+    # Results row is a screen-null-diff fitness row with the recovered
+    # attempt count (parsed from the worker's error_message).
+    rows = [
+        json.loads(line)
+        for line in args.results_path.read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    assert len(rows) == 1
+    assert rows[0]["phase"] == "fitness"
+    assert rows[0]["outcome"] == "screen-null-diff"
+    assert rows[0]["games"] == 0
+    assert rows[0]["attempts"] == 3
+
+
+def test_worker_null_diff_second_consecutive_evicts(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """A 2nd consecutive null-diff screen evicts the imp (livelock guard)."""
+    args = _build_args(tmp_path, concurrency=2, screen_null_diff=True)
+    pool = [_make_imp("imp-null", rank=1)]
+    payload = {
+        "crash": True,
+        "error_type": DevApplyNullDiffError.__name__,
+        "error_message": "no semantic .py change after 3 attempt(s)",
+        "traceback": "…",
+    }
+    # Pre-seed the imp with one prior consecutive null.
+    per_item_state = {0: cli.PerItemState(consecutive_null_diffs=1)}
+    fitness_results: dict[int, Any] = {}
+    fitness_counts = {"pass": 0, "close": 0, "fail": 0, "crash": 0}
+
+    plans = [_FakeWorkerPlan(returncode=1, write_result=False, crash_payload=payload)]
+    factory = _FakePopenFactory(cli, plans)
+
+    def write_state_fn(**kwargs: Any) -> None:
+        pass
+
+    clock = {"t": 0.0}
+
+    def _clock() -> float:
+        clock["t"] += 1.0
+        return clock["t"]
+
+    cli._run_fitness_phase_parallel(
+        active_idxs=[0],
+        pool=pool,
+        per_item_state=per_item_state,
+        fitness_results=fitness_results,
+        fitness_counts=fitness_counts,
+        parent_current="v0",
+        parent_start="v0",
+        pool_generated_at=cli._now_iso(),
+        generation_index=1,
+        generations_completed=0,
+        generations_promoted=0,
+        args=args,
+        run_id="abc12345",
+        write_state_fn=write_state_fn,
+        time_fn=_clock,
+        start_monotonic=0.0,
+        state_dir=args.results_path.parent,
+        popen_factory=factory,
+        poll_interval_s=0.0,
+    )
+
+    assert per_item_state[0].consecutive_null_diffs == 2
+    assert per_item_state[0].status == cli._EVICTED
+    assert per_item_state[0].retry_count == 0
 
 
 # ---------------------------------------------------------------------------
