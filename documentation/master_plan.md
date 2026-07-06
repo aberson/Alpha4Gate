@@ -17,6 +17,7 @@ Single spine for the project. Status as of 2026-06-20. Each phase's narrative li
 | [phase-h-build-plan.md](documentation/plans/phase-h-build-plan.md) | H | Mini-game substrate - investigation-blocked |
 | [phase-k-build-plan.md](documentation/plans/phase-k-build-plan.md) | K | Observable pool organisation - future |
 | [phase-q-build-plan.md](documentation/plans/phase-q-build-plan.md) | Q | harvest-engineer skill - investigation-blocked |
+| [evolve-judging-plan.md](documentation/plans/evolve-judging-plan.md) | EJ | Evolve judging noise-floor shortlist (EJ.1-EJ.8) - planned 2026-07-05 |
 
 ### Archived sub-plans — shipped or cut (`documentation/archived/`)
 
@@ -1488,7 +1489,14 @@ instead of new skill.
 
 ## Phase R — Statistical robustness (Wilson CIs + SPRT)
 
-**Track:** Statistical robustness. **Status:** Investigation-blocked.
+**Track:** Statistical robustness. **Status:** Investigation-blocked;
+**partially superseded 2026-07-05** — the evolve-judging investigation
+([documentation/investigations/evolve-judging-alternatives.md](investigations/evolve-judging-alternatives.md))
+rejected SPRT for this project (indifference-zone LLR drift kills the
+modest ~0.6 true win rates evolve produces, at ~3× the game cost of a
+one-sided posterior rule). Phase EJ ships the posterior rollback bar +
+panel floor instead; re-scope Phase R after EJ (Wilson-CI reporting
+remains valid backlog).
 **Prerequisites:** Phase 9 (gates exist), Phase 8 (throughput unlocks
 matter);
 [soak-volume-statistical-robustness-investigation.md](../investigations/soak-volume-statistical-robustness-investigation.md)
