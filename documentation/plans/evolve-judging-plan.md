@@ -269,6 +269,7 @@ end-to-end instead of dying mid-fitness at L3542-3549 with stranded results.
 - **Produces:** `--panel-floor` flag + floor consumption in `scripts/evolve.py`; `panel-floor:` rollback rows; SKILL.md pairing warning; tests
 - **Done when:** unit tests with fake gauntlet results cover: sweep loss vs one anchor → rollback via the same revert path; all anchors ≥ 1 win → no effect; gauntlet crash → promotion stands (fail-open); flag OFF → byte-identical. Integration test drives the loop with fitness-mode both + fake baselines and asserts floor rollback lands a `panel-floor:` reason row. Gates clean.
 - **Depends on:** EJ.3
+- **Status:** DONE (2026-07-06)
 
 ### Step EJ.5: Refresh-time proposal dedup
 - **Problem:** The pool-refresh site appends `generate_pool` output with zero dedup (scripts/evolve.py L4128-4132) — near-duplicate titles re-enter and burn ~4-6 games each. Behind `--refresh-dedup`: normalize titles (casefold, strip punctuation/whitespace) and drop any fresh imp that (a) exact-matches an in-run promoted/stacked title, (b) has `difflib.SequenceMatcher` ratio ≥ 0.85 vs any existing pool title, or (c) duplicates another imp within the same fresh batch. One audit row per drop (`phase: "pool_dedup"`, the matched title + ratio in `reason`). Accept-short after dedup — never re-call `generate_pool` to top up (short-pool retry raises on persistent shortfall, evolve.py L1740-1744; pool-exhausted stop only triggers at 0 active, so a short pool is safe).

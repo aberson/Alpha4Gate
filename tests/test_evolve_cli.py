@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import logging
 import subprocess
 import sys
 from pathlib import Path
@@ -2877,3 +2878,640 @@ def test_screen_null_diff_integration_zero_games(
     assert item["retry_count"] == 0
     assert item["consecutive_null_diffs"] == 1
     assert item["status"] == "active"
+
+
+# ---------------------------------------------------------------------------
+# Phase EJ.4: frozen-baseline panel floor
+# ---------------------------------------------------------------------------
+
+
+def _make_gauntlet(scores: dict[str, dict[str, float]]) -> Any:
+    """Return an injectable run_gauntlet_fn scripted per-candidate.
+
+    ``scores`` maps candidate version -> {baseline name: win rate}. A 0.0 in a
+    candidate's vector is a "sweep loss" vs that anchor (the panel-floor trip).
+    """
+    from orchestrator.evolve import GauntletResult
+
+    def _fn(candidate: str, baselines: list[Any], **k: Any) -> Any:
+        per_baseline = scores[candidate]
+        mean = (
+            sum(per_baseline.values()) / len(per_baseline)
+            if per_baseline
+            else 0.0
+        )
+        return GauntletResult(
+            candidate=candidate,
+            per_baseline=dict(per_baseline),
+            mean_win_rate=mean,
+            games_each=k.get("games_each", 5),
+            record=[],
+        )
+
+    return _fn
+
+
+def _register_one_baseline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Monkeypatch load_baselines so the gauntlet engages with one anchor."""
+    import orchestrator.baselines as baselines_mod
+    from orchestrator.baselines import Baseline
+
+    monkeypatch.setattr(
+        baselines_mod,
+        "load_baselines",
+        lambda _p: {"sparring": Baseline(name="sparring", version="vBase")},
+    )
+
+
+def test_panel_floor_flag_parses_and_defaults_off(cli: ModuleType) -> None:
+    """--panel-floor parses to args.panel_floor; default is False."""
+    assert cli.build_parser().parse_args([]).panel_floor is False
+    assert (
+        cli.build_parser().parse_args(["--panel-floor"]).panel_floor is True
+    )
+
+
+def test_panel_floor_sweep_loss_rolls_back_via_revert_path(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Integration: --fitness-mode both + a registered baseline + a gauntlet
+    sweep loss (0 wins vs the anchor) rolls back an otherwise regression-PASS
+    promotion through the SAME revert machinery, and emits a ``panel-floor:``
+    reason row."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    _register_one_baseline(monkeypatch)
+
+    args = _build_args(tmp_path, pool_size=1, generations=1, no_commit=False)
+    args.fitness_mode = "both"
+    args.panel_floor = True
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return [_make_imp(title="win", rank=1)]
+
+    def all_pass(parent: str, imp: Improvement, **k: Any) -> Any:
+        return _fitness(imp, bucket="pass", parent=parent)
+
+    stack_apply = _ScriptedStackApply([(True, "v1")])
+    regression = _ScriptedRegression([False])  # regression itself PASSES
+
+    def fake_commit(
+        new_version: str, generation: int, titles: list[str], **k: Any
+    ) -> tuple[bool, str | None]:
+        return True, f"sha-{generation}"
+
+    revert_calls: list[dict[str, Any]] = []
+
+    def fake_revert(
+        promote_sha: str, generation: int, reason: str, **k: Any
+    ) -> bool:
+        revert_calls.append(
+            {"promote_sha": promote_sha, "generation": generation,
+             "reason": reason}
+        )
+        return True
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=all_pass,
+        stack_apply_fn=stack_apply,
+        run_regression_fn=regression,
+        run_gauntlet_fn=_make_gauntlet({"v1": {"sparring": 0.0}}),
+        commit_fn=fake_commit,
+        revert_fn=fake_revert,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+
+    # Rolled back through the SAME revert path, with a panel-floor reason.
+    assert len(revert_calls) == 1
+    assert revert_calls[0]["promote_sha"] == "sha-1"
+    assert revert_calls[0]["reason"].startswith("panel-floor:")
+
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["generations_promoted"] == 0
+    assert state["parent_current"] == "v0"
+
+    pool_state = json.loads(args.pool_path.read_text(encoding="utf-8"))
+    statuses = [item["status"] for item in pool_state["pool"]]
+    assert statuses.count("regression-rollback") == 1
+
+    rows = [
+        json.loads(line)
+        for line in args.results_path.read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    # The regression row is honest — regression itself did NOT roll back.
+    reg_rows = [r for r in rows if r.get("phase") == "regression"]
+    assert len(reg_rows) == 1
+    assert reg_rows[0]["rolled_back"] is False
+    # A distinct panel-floor row carries the panel-floor: reason prefix.
+    pf_rows = [r for r in rows if r.get("phase") == "panel_floor"]
+    assert len(pf_rows) == 1
+    assert pf_rows[0]["outcome"] == "panel-floor-rollback"
+    assert pf_rows[0]["reason"].startswith("panel-floor:")
+    assert pf_rows[0]["new_parent"] == "v1"
+    assert pf_rows[0]["prior_parent"] == "v0"
+
+
+def test_panel_floor_no_sweep_promotion_stands(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every anchor won at least once (no 0.0) → the panel floor is inert;
+    the regression-pass promotion stands, matching the regression-only path."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+    _register_one_baseline(monkeypatch)
+
+    args = _build_args(tmp_path, pool_size=1, generations=1, no_commit=True)
+    args.fitness_mode = "both"
+    args.panel_floor = True
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return [_make_imp(title="win", rank=1)]
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=lambda p, imp, **k: _fitness(imp, bucket="pass",
+                                                    parent=p),
+        stack_apply_fn=_ScriptedStackApply([(True, "v1")]),
+        run_regression_fn=_ScriptedRegression([False]),
+        run_gauntlet_fn=_make_gauntlet({"v1": {"sparring": 0.6}}),
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["generations_promoted"] == 1
+    assert state["parent_current"] == "v1"
+    rows = [
+        json.loads(line)
+        for line in args.results_path.read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    assert not any(r.get("phase") == "panel_floor" for r in rows)
+
+
+def test_panel_floor_gauntlet_crash_is_fail_open(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A gauntlet crash must NEVER block an already-committed promotion:
+    panel_floor_swept stays False (fail-open) and the promotion stands."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+    _register_one_baseline(monkeypatch)
+
+    args = _build_args(tmp_path, pool_size=1, generations=1, no_commit=True)
+    args.fitness_mode = "both"
+    args.panel_floor = True
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return [_make_imp(title="win", rank=1)]
+
+    def crashing_gauntlet(*a: Any, **k: Any) -> Any:
+        raise RuntimeError("gauntlet subprocess OOM")
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=lambda p, imp, **k: _fitness(imp, bucket="pass",
+                                                    parent=p),
+        stack_apply_fn=_ScriptedStackApply([(True, "v1")]),
+        run_regression_fn=_ScriptedRegression([False]),
+        run_gauntlet_fn=crashing_gauntlet,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["generations_promoted"] == 1
+    assert state["parent_current"] == "v1"
+    rows = [
+        json.loads(line)
+        for line in args.results_path.read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    assert not any(r.get("phase") == "panel_floor" for r in rows)
+
+
+def test_panel_floor_inert_when_fitness_mode_parent_logs_warning(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """--panel-floor armed with --fitness-mode=parent: the gauntlet never runs
+    (floor inert), the promotion stands, AND a startup WARNING fires."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+
+    args = _build_args(tmp_path, pool_size=1, generations=1, no_commit=True)
+    args.fitness_mode = "parent"
+    args.panel_floor = True
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return [_make_imp(title="win", rank=1)]
+
+    with caplog.at_level(logging.WARNING, logger="evolve"):
+        rc = cli.run_loop(
+            args,
+            generate_pool_fn=refresh,
+            run_fitness_fn=lambda p, imp, **k: _fitness(imp, bucket="pass",
+                                                        parent=p),
+            stack_apply_fn=_ScriptedStackApply([(True, "v1")]),
+            run_regression_fn=_ScriptedRegression([False]),
+            run_gauntlet_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError("gauntlet must not run in parent mode")
+            ),
+            current_version_fn=lambda: "v0",
+        )
+    assert rc == 0
+
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["generations_promoted"] == 1
+    assert state["parent_current"] == "v1"
+    assert any(
+        "ARMED but INERT" in rec.getMessage() for rec in caplog.records
+    ), [r.getMessage() for r in caplog.records]
+
+
+@pytest.mark.parametrize("regression_rolls_back", [True, False])
+@pytest.mark.parametrize("sweep_present", [True, False])
+def test_panel_floor_off_is_byte_identical(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    regression_rolls_back: bool,
+    sweep_present: bool,
+) -> None:
+    """With --panel-floor OFF, the rollback decision is EXACTLY
+    regression_result.rolled_back across the full (rolled_back) x (sweep) grid
+    — a sweep loss has NO effect and no panel-floor row is emitted."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+    _register_one_baseline(monkeypatch)
+
+    args = _build_args(tmp_path, pool_size=1, generations=1, no_commit=True)
+    args.fitness_mode = "both"  # gauntlet runs, but panel_floor is OFF
+    # NB: args.panel_floor deliberately left UNSET → getattr default False.
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return [_make_imp(title="win", rank=1)]
+
+    score = 0.0 if sweep_present else 0.6
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=lambda p, imp, **k: _fitness(imp, bucket="pass",
+                                                    parent=p),
+        stack_apply_fn=_ScriptedStackApply([(True, "v1")]),
+        run_regression_fn=_ScriptedRegression([regression_rolls_back]),
+        run_gauntlet_fn=_make_gauntlet({"v1": {"sparring": score}}),
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    rows = [
+        json.loads(line)
+        for line in args.results_path.read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    # The ONLY thing that decides rollback is regression_result.rolled_back.
+    if regression_rolls_back:
+        assert state["generations_promoted"] == 0
+        assert state["parent_current"] == "v0"
+    else:
+        assert state["generations_promoted"] == 1
+        assert state["parent_current"] == "v1"
+    # A sweep loss never emits a panel-floor row when the flag is off.
+    assert not any(r.get("phase") == "panel_floor" for r in rows)
+
+
+def test_panel_floor_cli_passthrough_honored_both_directions(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Production caller: run_loop honors args.panel_floor. Same fake gauntlet
+    (a 0.0 sweep) rolls back when the flag is ON and does NOT when it is OFF."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+    _register_one_baseline(monkeypatch)
+
+    def _run(dir_name: str, panel_floor: bool) -> dict[str, Any]:
+        d = tmp_path / dir_name
+        d.mkdir()
+        args = _build_args(d, pool_size=1, generations=1, no_commit=True)
+        args.fitness_mode = "both"
+        args.panel_floor = panel_floor
+
+        def refresh(*a: Any, **k: Any) -> list[Improvement]:
+            if k.get("skip_mirror"):
+                return []
+            return [_make_imp(title="win", rank=1)]
+
+        rc = cli.run_loop(
+            args,
+            generate_pool_fn=refresh,
+            run_fitness_fn=lambda p, imp, **k: _fitness(imp, bucket="pass",
+                                                        parent=p),
+            stack_apply_fn=_ScriptedStackApply([(True, "v1")]),
+            run_regression_fn=_ScriptedRegression([False]),
+            run_gauntlet_fn=_make_gauntlet({"v1": {"sparring": 0.0}}),
+            current_version_fn=lambda: "v0",
+        )
+        assert rc == 0
+        return json.loads(args.state_path.read_text(encoding="utf-8"))
+
+    on_state = _run("on", panel_floor=True)
+    off_state = _run("off", panel_floor=False)
+
+    # Flag ON → the sweep loss rolls the promotion back.
+    assert on_state["generations_promoted"] == 0
+    assert on_state["parent_current"] == "v0"
+    # Flag OFF → the identical sweep is ignored; promotion stands.
+    assert off_state["generations_promoted"] == 1
+    assert off_state["parent_current"] == "v1"
+
+
+def test_panel_floor_precedence_regression_wins_reason(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When BOTH regression rolls back AND the panel floor sweeps, the revert
+    reason is the regression reason (precedence), label stays 'rollback', but
+    the panel-floor audit row is still emitted for visibility."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    _register_one_baseline(monkeypatch)
+
+    args = _build_args(tmp_path, pool_size=1, generations=1, no_commit=False)
+    args.fitness_mode = "both"
+    args.panel_floor = True
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return [_make_imp(title="win", rank=1)]
+
+    def fake_commit(
+        new_version: str, generation: int, titles: list[str], **k: Any
+    ) -> tuple[bool, str | None]:
+        return True, f"sha-{generation}"
+
+    revert_calls: list[dict[str, Any]] = []
+
+    def fake_revert(
+        promote_sha: str, generation: int, reason: str, **k: Any
+    ) -> bool:
+        revert_calls.append({"reason": reason})
+        return True
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=lambda p, imp, **k: _fitness(imp, bucket="pass",
+                                                    parent=p),
+        stack_apply_fn=_ScriptedStackApply([(True, "v1")]),
+        run_regression_fn=_ScriptedRegression([True]),  # regression ALSO rolls
+        run_gauntlet_fn=_make_gauntlet({"v1": {"sparring": 0.0}}),
+        commit_fn=fake_commit,
+        revert_fn=fake_revert,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+    # Regression reason wins precedence (not the panel-floor: prefix).
+    assert len(revert_calls) == 1
+    assert not revert_calls[0]["reason"].startswith("panel-floor:")
+    # The rollback actually happened: promotion pulled, parent restored.
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["generations_promoted"] == 0
+    assert state["parent_current"] == "v0"
+    # The panel-floor audit row is still emitted for visibility.
+    rows = [
+        json.loads(line)
+        for line in args.results_path.read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    assert any(r.get("phase") == "panel_floor" for r in rows)
+
+
+def test_panel_floor_enforces_on_regression_crash(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A regression-eval CRASH must NOT strand a swept version as parent. The
+    sweep-loss signal is computed in the gauntlet BEFORE the (independent)
+    regression eval, so the floor still rolls back even when run_regression_fn
+    raises — the mandatory-backstop guarantee cannot depend on the regression
+    subsystem staying up."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    _register_one_baseline(monkeypatch)
+
+    args = _build_args(tmp_path, pool_size=1, generations=1, no_commit=False)
+    args.fitness_mode = "both"
+    args.panel_floor = True
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return [_make_imp(title="win", rank=1)]
+
+    def fake_commit(
+        new_version: str, generation: int, titles: list[str], **k: Any
+    ) -> tuple[bool, str | None]:
+        return True, f"sha-{generation}"
+
+    revert_calls: list[dict[str, Any]] = []
+
+    def fake_revert(
+        promote_sha: str, generation: int, reason: str, **k: Any
+    ) -> bool:
+        revert_calls.append(
+            {"promote_sha": promote_sha, "reason": reason}
+        )
+        return True
+
+    def crashing_regression(*a: Any, **k: Any) -> Any:
+        raise RuntimeError("SC2 hang — regression watchdog kill")
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=lambda p, imp, **k: _fitness(imp, bucket="pass",
+                                                    parent=p),
+        stack_apply_fn=_ScriptedStackApply([(True, "v1")]),
+        run_regression_fn=crashing_regression,
+        run_gauntlet_fn=_make_gauntlet({"v1": {"sparring": 0.0}}),
+        commit_fn=fake_commit,
+        revert_fn=fake_revert,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+
+    # The panel floor rolled back THROUGH THE SAME revert path despite the
+    # regression crash — reverted with a panel-floor reason.
+    assert len(revert_calls) == 1
+    assert revert_calls[0]["promote_sha"] == "sha-1"
+    assert revert_calls[0]["reason"].startswith("panel-floor:")
+
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["generations_promoted"] == 0
+    assert state["parent_current"] == "v0"
+
+    pool_state = json.loads(args.pool_path.read_text(encoding="utf-8"))
+    statuses = [item["status"] for item in pool_state["pool"]]
+    assert statuses.count("regression-rollback") == 1
+
+    rows = [
+        json.loads(line)
+        for line in args.results_path.read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    # The regression crash row AND the panel-floor rollback row both land.
+    assert any(
+        r.get("phase") == "regression" and r.get("outcome") == "crash"
+        for r in rows
+    )
+    pf_rows = [r for r in rows if r.get("phase") == "panel_floor"]
+    assert len(pf_rows) == 1
+    assert pf_rows[0]["reason"].startswith("panel-floor:")
+
+
+def test_panel_floor_state_resets_across_generations(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression guard for the per-generation reset of panel_floor_swept:
+    generation 1 sweeps (rolls back), generation 2 is clean and its promotion
+    MUST stand. If the swept flag ever leaked across the loop boundary, gen 2
+    would be wrongly rolled back and emit a second panel-floor row."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+    _register_one_baseline(monkeypatch)
+
+    args = _build_args(tmp_path, pool_size=1, generations=2, no_commit=True)
+    args.fitness_mode = "both"
+    args.panel_floor = True
+
+    imp_counter = {"n": 0}
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        imp_counter["n"] += 1
+        return [_make_imp(title=f"win-{imp_counter['n']}", rank=1)]
+
+    # Regression PASSES both generations — gen-1's rollback comes purely from
+    # the panel floor (v1 sweep loss), never from regression.
+    stack_apply = _ScriptedStackApply([(True, "v1"), (True, "v2")])
+    regression = _ScriptedRegression([False, False])
+    # v1 sweeps (0 wins); v2 is clean (0.6 vs the anchor).
+    gauntlet = _make_gauntlet(
+        {"v1": {"sparring": 0.0}, "v2": {"sparring": 0.6}}
+    )
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=lambda p, imp, **k: _fitness(imp, bucket="pass",
+                                                    parent=p),
+        stack_apply_fn=stack_apply,
+        run_regression_fn=regression,
+        run_gauntlet_fn=gauntlet,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+
+    # Gen 1 rolled back to v0; gen 2 promoted v2 and it STANDS.
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["generations_promoted"] == 1
+    assert state["parent_current"] == "v2"
+
+    rows = [
+        json.loads(line)
+        for line in args.results_path.read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    # Exactly ONE panel-floor row (gen 1). A leaked flag would emit a gen-2 row.
+    pf_rows = [r for r in rows if r.get("phase") == "panel_floor"]
+    assert len(pf_rows) == 1
+    assert pf_rows[0]["generation"] == 1
+    assert pf_rows[0]["new_parent"] == "v1"
+
+
+def test_panel_floor_inert_when_both_mode_but_zero_baselines(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The OTHER inert branch of the arm-check predicate: --fitness-mode both
+    with ZERO registered baselines. The gauntlet never engages (floor inert),
+    the promotion stands, and the armed-but-inert WARNING fires with its
+    'no baselines' sub-clause."""
+    import orchestrator.baselines as baselines_mod
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+    # Zero baselines registered → gauntlet cannot engage.
+    monkeypatch.setattr(baselines_mod, "load_baselines", lambda _p: {})
+
+    args = _build_args(tmp_path, pool_size=1, generations=1, no_commit=True)
+    args.fitness_mode = "both"
+    args.panel_floor = True
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return [_make_imp(title="win", rank=1)]
+
+    with caplog.at_level(logging.WARNING, logger="evolve"):
+        rc = cli.run_loop(
+            args,
+            generate_pool_fn=refresh,
+            run_fitness_fn=lambda p, imp, **k: _fitness(imp, bucket="pass",
+                                                        parent=p),
+            stack_apply_fn=_ScriptedStackApply([(True, "v1")]),
+            run_regression_fn=_ScriptedRegression([False]),
+            run_gauntlet_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError("gauntlet must not run with zero baselines")
+            ),
+            current_version_fn=lambda: "v0",
+        )
+    assert rc == 0
+
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["generations_promoted"] == 1
+    assert state["parent_current"] == "v1"
+
+    messages = [rec.getMessage() for rec in caplog.records]
+    assert any("ARMED but INERT" in m for m in messages), messages
+    assert any("no frozen baselines" in m for m in messages), messages
+
+    rows = [
+        json.loads(line)
+        for line in args.results_path.read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    assert not any(r.get("phase") == "panel_floor" for r in rows)

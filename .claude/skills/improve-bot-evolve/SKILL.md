@@ -53,6 +53,8 @@ The outer phase shape (pre-flight → seed → loop → decision → report) is 
 
 Budget math: pool=10, games-per-eval=5 → ~55 games per generation (50 fitness + 5 regression; stack-apply runs no SC2 games); with 4-hour budget and ~3-min games, roughly 1 generation per hour — ~15 min faster than the pre-2026-04-23 3-gate pipeline.
 
+**Pairing warning (EJ.3 + EJ.4):** A production soak must NOT enable `--regression-rule one-sided` without also enabling `--panel-floor` AND registering frozen baselines (`--fitness-mode both` + a non-empty `data/baselines.json`). The one-sided rule relaxes the regression bar (it trades away regression-catch to stop destroying neutral promotions), so it can miss slow drift vs frozen anchors. `--panel-floor` is its mandatory drift backstop: a promoted version that wins 0 games vs ANY registered anchor is rolled back through the same revert path. If `--panel-floor` is armed but `--fitness-mode=parent` or no baselines are registered, it is INERT and evolve logs a startup WARNING. (The full flags table lands in EJ.6.)
+
 ---
 
 ## Phase 0: Bootstrap
@@ -285,6 +287,8 @@ If stack-apply promoted anything:
 1. `run_batch(new_parent, prior_parent, games_per_eval, map)` — no snapshots.
 2. Majority new-parent win: accept the promotion, log `regression-pass`.
 3. Else: `git revert --no-commit <promote_sha>`, commit with `[evo-auto]`, flip promoted imps to `regression-rollback`, restore pointer to `prior_parent`.
+
+**Panel floor (EJ.4).** When `--panel-floor` is on, this same rollback path also fires on a baseline-gauntlet *sweep loss* — 0 wins vs ANY registered frozen anchor — even if the regression phase itself passed OR crashed (the sweep signal is computed before the regression eval and is independent of it, so a regression SC2-hang/watchdog-kill cannot strand a swept version as the parent). The decision is recorded in the gauntlet block and acted on here (one revert path); the rollback is labeled `panel-floor-rollback` and emits a `panel-floor:`-prefixed row to `evolve_results.jsonl`. This is the mandatory drift backstop for `--regression-rule one-sided` (see the Pairing warning under `## Flags`). The floor stays fail-open for the gauntlet's OWN failures (a gauntlet crash leaves it un-tripped). With `--panel-floor` off it is a no-op — byte-identical.
 
 ### 2d. Pool refresh
 

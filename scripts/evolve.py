@@ -403,6 +403,24 @@ def build_parser() -> argparse.ArgumentParser:
             "0.15 (mean per-baseline win-rate difference)."
         ),
     )
+    parser.add_argument(
+        "--panel-floor",
+        action="store_true",
+        help=(
+            "Frozen-baseline panel floor (Phase EJ.4). Default OFF is "
+            "byte-identical: the baseline gauntlet stays log-only. When ON, a "
+            "newly-promoted version that wins 0 games vs ANY registered frozen "
+            "baseline (a 'sweep loss' in the --fitness-mode {baseline,both} "
+            "gauntlet) is rolled back through the SAME revert machinery as a "
+            "regression failure. This is the mandatory drift backstop for "
+            "--regression-rule one-sided, whose relaxed bar trades away "
+            "regression-catch and so cannot catch slow drift vs frozen "
+            "anchors. INERT (with a startup WARNING) when --fitness-mode=parent "
+            "or no baselines are registered — the floor needs the gauntlet to "
+            "have teeth. Fail-open: a gauntlet crash never blocks an "
+            "already-committed promotion."
+        ),
+    )
     return parser
 
 
@@ -3464,6 +3482,26 @@ def run_loop(
                 _baselines_path,
             )
 
+    # Phase EJ Step EJ.4: frozen-baseline panel-floor arm-check. The floor
+    # only bites when the baseline gauntlet actually runs — i.e. a non-parent
+    # fitness mode AND at least one registered anchor. If the operator armed
+    # --panel-floor but the effective config makes it inert, WARN loudly: they
+    # may believe the sweep-loss drift backstop is guarding a one-sided
+    # regression run when it silently is not (plan Risk item).
+    if getattr(args, "panel_floor", False) and (
+        fitness_mode == "parent" or not _gauntlet_baselines
+    ):
+        _log.warning(
+            "evolve: --panel-floor is ARMED but INERT — %s. No sweep-loss "
+            "backstop will fire this run; --regression-rule one-sided has NO "
+            "drift floor.",
+            (
+                "fitness-mode is 'parent' (no baseline gauntlet runs)"
+                if fitness_mode == "parent"
+                else "no frozen baselines are registered"
+            ),
+        )
+
     # sys.argv[1:] snapshot — what flags this run was launched with.
     # Surfaced on the dashboard so the operator can see at a glance
     # which evolve invocation produced the visible state.
@@ -3999,6 +4037,13 @@ def run_loop(
         stack_outcome_label: str = "none"
         promote_sha: str | None = None
         promoted_imp_idxs: list[int] = []
+        # Phase EJ Step EJ.4: panel-floor decision, recorded in the gauntlet
+        # block below but ACTED ON in the regression phase (one revert path,
+        # correct ordering). Initialized here so both are in scope. Stays
+        # False whenever --panel-floor is off, the gauntlet doesn't run, or it
+        # crashes — the fail-open default that leaves promotions untouched.
+        panel_floor_swept: bool = False
+        panel_floor_reason: str = ""
 
         if not winner_idxs:
             _log.info(
@@ -4210,6 +4255,37 @@ def run_loop(
                                     ),
                                 },
                             )
+                            # Phase EJ Step EJ.4: frozen-baseline panel floor.
+                            # A "sweep loss" — 0 wins vs ANY registered anchor
+                            # — is a drift backstop the relaxed one-sided
+                            # regression rule (EJ.3) cannot cycle. We DO NOT
+                            # roll back here: the revert happens once, in the
+                            # regression phase, for correct ordering and a
+                            # single revert path. We only RECORD the decision,
+                            # still inside this gauntlet try/except so a crash
+                            # leaves panel_floor_swept False = fail-open (the
+                            # already-committed promotion stands).
+                            if getattr(args, "panel_floor", False):
+                                swept_names = [
+                                    name
+                                    for name, wr in (
+                                        gauntlet_result.per_baseline.items()
+                                    )
+                                    if wr == 0.0
+                                ]
+                                if swept_names:
+                                    panel_floor_swept = True
+                                    panel_floor_reason = (
+                                        "panel-floor: swept vs "
+                                        f"{swept_names} (0 wins)"
+                                    )
+                                    _log.warning(
+                                        "evolve: panel floor tripped for %s "
+                                        "— swept vs %s (0 wins); regression "
+                                        "phase will roll back the promotion",
+                                        stack_result.new_version,
+                                        swept_names,
+                                    )
                         except Exception:  # noqa: BLE001 — defense-in-depth
                             _log.exception(
                                 "evolve: baseline gauntlet crashed for %s; "
@@ -4271,6 +4347,64 @@ def run_loop(
                     _p.score_parent = event.get("wins_prior", _p.score_parent)
                 _current_round_writer(_p)
 
+            def _apply_rollback(
+                reason: str,
+                *,
+                promoted_imp_idxs: list[int] = promoted_imp_idxs,
+                generation_index: int = generation_index,
+                prior_parent: str = prior_parent,
+                promote_sha: str | None = promote_sha,
+                panel_floor_swept: bool = panel_floor_swept,
+                panel_floor_reason: str = panel_floor_reason,
+            ) -> None:
+                """Roll the just-committed promotion back through the SINGLE
+                revert path. Shared by the regression-rollback branch, the
+                panel-floor branch, and the regression-CRASH-with-sweep branch
+                so there is exactly ONE rollback implementation (code-quality:
+                no duplicate rollback path). The generation-scoped inputs
+                (promote_sha / promoted_imp_idxs / panel_floor_*) are captured as
+                default args at def time — the codebase's B023 idiom — so this
+                closure is pinned to THIS generation's values; it rebinds the
+                loop's live parent_current back to prior_parent."""
+                nonlocal parent_current
+                for _idx in promoted_imp_idxs:
+                    per_item_state[_idx].status = _REGRESSION_ROLLBACK
+                # Emit the panel-floor audit row whenever the floor contributed
+                # (parent_current is still the swept version at this point).
+                if panel_floor_swept:
+                    append_phase_result(
+                        args.results_path,
+                        {
+                            "phase": "panel_floor",
+                            "generation": generation_index,
+                            "new_parent": parent_current,
+                            "prior_parent": prior_parent,
+                            "outcome": "panel-floor-rollback",
+                            "reason": panel_floor_reason,
+                        },
+                    )
+                # Rollback order is load-bearing: run ``git revert`` on a CLEAN
+                # working tree first — the revert commit's reverse diff restores
+                # bots/current/current.txt to prior_parent as a side effect. The
+                # primitive deliberately leaves the pointer alone so this works;
+                # see run_regression_eval's docstring. If the revert is skipped
+                # (--no-commit) or fails, fall back to writing the pointer
+                # explicitly so in-process and on-disk state still agree.
+                _revert_ok = False
+                if promote_sha and not args.no_commit:
+                    _revert_ok = revert_fn(
+                        promote_sha, generation_index, reason
+                    )
+                    if not _revert_ok:
+                        _log.warning(
+                            "evolve: git revert failed on gen %d; operator "
+                            "must reconcile manually",
+                            generation_index,
+                        )
+                if not _revert_ok:
+                    _restore_current_pointer(prior_parent)
+                parent_current = prior_parent
+
             try:
                 regression_result = run_regression_fn(
                     parent_current,
@@ -4315,6 +4449,19 @@ def run_loop(
                     generation_index, "regression", None, exc
                 )
                 regression_outcome_label = "crash"
+                # Phase EJ Step EJ.4: the panel floor's sweep-loss signal (0
+                # wins vs a frozen anchor) is computed in the gauntlet BEFORE
+                # this regression eval and is fully independent of it. A
+                # regression CRASH (SC2 hang / watchdog kill — a real, reachable
+                # path) must NOT strand a swept version as the live parent: that
+                # would let the strongest possible drift signal cycle, defeating
+                # the "cannot cycle" backstop. So enforce the floor even on a
+                # regression crash — using the SAME single rollback path. This
+                # stays fail-open for the gauntlet's OWN failures, which leave
+                # panel_floor_swept False (nothing to enforce).
+                if panel_floor_swept:
+                    regression_outcome_label = "panel-floor-rollback"
+                    _apply_rollback(panel_floor_reason)
             else:
                 append_phase_result(
                     args.results_path,
@@ -4323,40 +4470,30 @@ def run_loop(
                 last_result_snap = _last_result_snapshot_regression(
                     generation_index, regression_result
                 )
-                if regression_result.rolled_back:
-                    regression_outcome_label = "rollback"
-                    # Flip promoted imps to regression-rollback.
-                    for idx in promoted_imp_idxs:
-                        per_item_state[idx].status = _REGRESSION_ROLLBACK
-                    # Rollback order is load-bearing: run ``git revert`` on
-                    # a CLEAN working tree first — the revert commit's
-                    # reverse diff restores bots/current/current.txt to
-                    # prior_parent as a side effect. The primitive
-                    # deliberately leaves the pointer alone so this works;
-                    # see run_regression_eval's docstring. If the revert is
-                    # skipped (--no-commit) or fails, we fall back to
-                    # writing the pointer explicitly so the in-process
-                    # state and on-disk state still agree.
-                    revert_ok = False
-                    if promote_sha and not args.no_commit:
-                        revert_ok = revert_fn(
-                            promote_sha,
-                            generation_index,
-                            regression_result.reason,
-                        )
-                        if not revert_ok:
-                            _log.warning(
-                                "evolve: git revert failed on gen %d; "
-                                "operator must reconcile manually",
-                                generation_index,
-                            )
-                    if not revert_ok:
-                        # No revert commit landed (either --no-commit dev
-                        # run, missing sha, or the revert failed). Restore
-                        # the pointer explicitly so subsequent generations
-                        # see prior_parent as the live parent.
-                        _restore_current_pointer(prior_parent)
-                    parent_current = prior_parent
+                # Phase EJ Step EJ.4: combine the regression verdict with the
+                # panel-floor decision recorded in the gauntlet block. Either
+                # a genuine regression rollback OR a panel-floor sweep loss
+                # (0 wins vs a frozen anchor) rolls the promotion back through
+                # the SAME machinery. When --panel-floor is off,
+                # panel_floor_swept is always False, so this reduces to the
+                # historical ``if regression_result.rolled_back:`` exactly —
+                # byte-identical.
+                if regression_result.rolled_back or panel_floor_swept:
+                    # Reason precedence: a real regression rollback wins over
+                    # the panel floor (it carries the posterior evidence);
+                    # panel-floor is the deciding factor only when regression
+                    # itself passed. The label distinguishes the two so the
+                    # run-log shows WHY a promotion was pulled. The rollback
+                    # itself goes through the single shared ``_apply_rollback``
+                    # (which emits the panel-floor audit row when the floor
+                    # contributed).
+                    if regression_result.rolled_back:
+                        regression_outcome_label = "rollback"
+                        rollback_reason = regression_result.reason
+                    else:
+                        regression_outcome_label = "panel-floor-rollback"
+                        rollback_reason = panel_floor_reason
+                    _apply_rollback(rollback_reason)
                 else:
                     regression_outcome_label = "pass"
                     generations_promoted += 1
@@ -4523,15 +4660,29 @@ def run_loop(
         )
         generations_completed += 1
 
-        # Summarise the generation for the run-log markdown.
+        # Summarise the generation for the run-log markdown. A panel-floor
+        # sweep loss (EJ.4) is a rollback flavor, so both labels suppress the
+        # "promoted" clause and add a rollback marker.
+        _rolled_back_label = regression_outcome_label in (
+            "rollback",
+            "panel-floor-rollback",
+        )
         stack_summary = (
             f"{stack_outcome_label}"
             + (
                 f" → promoted {parent_current}"
-                if promoted_imp_idxs and regression_outcome_label != "rollback"
+                if promoted_imp_idxs and not _rolled_back_label
                 else ""
             )
-            + (" → ROLLBACK" if regression_outcome_label == "rollback" else "")
+            + (
+                " → ROLLBACK"
+                if regression_outcome_label == "rollback"
+                else (
+                    " → PANEL-FLOOR ROLLBACK"
+                    if regression_outcome_label == "panel-floor-rollback"
+                    else ""
+                )
+            )
         )
         generation_entries.append(
             {
