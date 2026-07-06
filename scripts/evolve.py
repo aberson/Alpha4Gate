@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import difflib
 import functools
 import json
 import logging
@@ -79,6 +80,9 @@ if str(_REPO_ROOT / "src") not in sys.path:
 
 from orchestrator.evolve import (  # noqa: E402
     _restore_pointer as _primitive_restore_pointer,
+)
+from orchestrator.evolve import (  # noqa: E402
+    normalize_prior_title,
 )
 from orchestrator.evolve_dev_apply import (  # noqa: E402
     DevApplyNullDiffError,
@@ -125,6 +129,12 @@ _SCREEN_NULL_DIFF_BUCKET = "screen-null-diff"
 # sub-agent is non-deterministic, so one null is forgiven (imp stays
 # active for a re-roll next generation); two in a row means it's stuck.
 _NULL_DIFF_EVICT_THRESHOLD = 2
+
+# Phase EJ.5: SequenceMatcher ratio at/above which two normalized titles are
+# treated as near-duplicates by the refresh-time dedup (--refresh-dedup). ONE
+# source of truth — the helper AND its tests read this constant, never a
+# duplicated literal.
+_REFRESH_DEDUP_THRESHOLD = 0.85
 
 
 # ---------------------------------------------------------------------------
@@ -419,6 +429,23 @@ def build_parser() -> argparse.ArgumentParser:
             "or no baselines are registered — the floor needs the gauntlet to "
             "have teeth. Fail-open: a gauntlet crash never blocks an "
             "already-committed promotion."
+        ),
+    )
+    parser.add_argument(
+        "--refresh-dedup",
+        action="store_true",
+        help=(
+            "Mechanical refresh-time proposal dedup (Phase EJ.5). Default OFF "
+            "is byte-identical: freshly-generated pool imps are appended "
+            "verbatim, near-duplicates and all. When ON, each fresh imp whose "
+            "title (normalized via the same casefold+strip pass as the priors "
+            "filter) either exact-matches an in-run promoted title, is >= "
+            f"{_REFRESH_DEDUP_THRESHOLD:g} SequenceMatcher-similar to an "
+            "existing pool imp, or duplicates an earlier survivor in the same "
+            "batch is DROPPED before it re-enters the pool (and burns ~4-6 "
+            "fitness games). Each drop writes an auditable 'pool_dedup' row. "
+            "Accept-short: the pool is simply shorter — generate_pool is never "
+            "re-called to top up."
         ),
     )
     return parser
@@ -831,6 +858,130 @@ def append_phase_result(results_path: Path, row: dict[str, Any]) -> None:
     results_path.parent.mkdir(parents=True, exist_ok=True)
     with results_path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(row) + "\n")
+
+
+# Human-readable phrase per drop rule, folded into the audit-row reason.
+_DEDUP_RULE_PHRASE = {
+    "promoted": "in-run promoted title",
+    "pool": "existing pool title",
+    "batch": "earlier fresh imp",
+}
+
+
+def _dedup_fresh_imps(
+    fresh_imps: list[Improvement],
+    pool: list[Improvement],
+    promoted_titles_in_run: set[str],
+    *,
+    threshold: float = _REFRESH_DEDUP_THRESHOLD,
+) -> tuple[list[Improvement], list[dict[str, Any]]]:
+    """Filter freshly-generated pool imps down to non-duplicate survivors.
+
+    Pure + deterministic (stdlib only). A fresh imp is DROPPED when its
+    title — normalized via :func:`normalize_prior_title`, the ONE source of
+    truth this shares with the priors-exclusion filter — matches under any of:
+
+    * ``promoted`` — normalized EXACT-match of a title promoted (and
+      regression-survived) earlier in this run (``promoted_titles_in_run``);
+      re-proposing baked-in work.
+    * ``pool`` — ``SequenceMatcher`` ratio ``>= threshold`` against the
+      normalized title of ANY imp already in *pool* (active/stacked/evicted —
+      it was already tried this run).
+    * ``batch`` — normalized-equal OR ratio ``>= threshold`` against an
+      EARLIER survivor of this same batch (keep the first occurrence, drop
+      later near-duplicates).
+
+    Dedup is POOL-WIDE, and *pool* is shared across lineages under
+    ``--lineages N`` — so a fresh imp for one lineage that is ``>= threshold``
+    similar to ANY imp ever added for a *sibling* lineage is suppressed
+    (cross-lineage near-duplicates never re-enter). That aligns with EL.4's
+    diversity goal but means the "already tried this run" framing spans
+    independent lineage baselines; an operator combining ``--refresh-dedup``
+    with ``--lineages N`` should expect cross-lineage suppression.
+
+    Returns ``(survivors, drop_reasons)`` where each drop reason is an audit
+    payload fragment carrying the dropped title, the matched title, the ratio,
+    the rule, and a composed ``reason`` string. The caller stamps ``phase`` /
+    ``generation`` / ``outcome`` and writes it via
+    :func:`append_phase_result`. A fresh imp with an empty normalized title
+    (e.g. a schema-drifted ``None`` title) is always kept — the safe direction
+    is never to silently drop.
+    """
+    promoted_norm = {
+        normalize_prior_title(t) for t in promoted_titles_in_run
+    }
+    existing_norm = [(imp.title, normalize_prior_title(imp.title)) for imp in pool]
+
+    survivors: list[Improvement] = []
+    kept_norm: list[tuple[str, str]] = []  # (title, norm) of survivors so far
+    drop_reasons: list[dict[str, Any]] = []
+
+    for imp in fresh_imps:
+        norm = normalize_prior_title(imp.title)
+        rule: str | None = None
+        matched_title: str | None = None
+        ratio = 1.0
+
+        if not norm:
+            # Malformed / empty title: keep (never drop on a blank key).
+            survivors.append(imp)
+            kept_norm.append((imp.title, norm))
+            continue
+
+        # (a) exact normalized match of an in-run promoted title.
+        if norm in promoted_norm:
+            rule = "promoted"
+            matched_title = next(
+                (
+                    t
+                    for t in promoted_titles_in_run
+                    if normalize_prior_title(t) == norm
+                ),
+                imp.title,
+            )
+            ratio = 1.0
+
+        # (b) near-duplicate of an existing pool title.
+        if rule is None:
+            for other_title, other_norm in existing_norm:
+                r = difflib.SequenceMatcher(None, norm, other_norm).ratio()
+                if r >= threshold:
+                    rule = "pool"
+                    matched_title = other_title
+                    ratio = r
+                    break
+
+        # (c) near-duplicate of an earlier survivor in this same batch.
+        if rule is None:
+            for other_title, other_norm in kept_norm:
+                r = difflib.SequenceMatcher(None, norm, other_norm).ratio()
+                if norm == other_norm or r >= threshold:
+                    rule = "batch"
+                    matched_title = other_title
+                    ratio = 1.0 if norm == other_norm else r
+                    break
+
+        if rule is None:
+            survivors.append(imp)
+            kept_norm.append((imp.title, norm))
+            continue
+
+        rounded = round(ratio, 3)
+        drop_reasons.append(
+            {
+                "dropped_title": imp.title,
+                "matched_title": matched_title,
+                "ratio": rounded,
+                "rule": rule,
+                "reason": (
+                    f"dropped {imp.title!r}: "
+                    f"{_DEDUP_RULE_PHRASE.get(rule, rule)} matched "
+                    f"{matched_title!r} (ratio {rounded})"
+                ),
+            }
+        )
+
+    return survivors, drop_reasons
 
 
 def append_crash_log(
@@ -4575,6 +4726,41 @@ def run_loop(
                     exc,
                 )
                 fresh_imps = []
+
+            # Phase EJ.5: mechanical refresh-time proposal dedup. When
+            # --refresh-dedup is ON, drop fresh imps whose (normalized) title
+            # re-proposes an in-run promoted title, an existing pool imp, or an
+            # earlier survivor of this same batch — BEFORE they re-enter the
+            # pool and burn ~4-6 fitness games each. Runs between obtaining
+            # fresh_imps and the append below, so the enumerate/start_idx
+            # indexing stays correct on the filtered survivor list. Accept-
+            # short: a shorter pool is safe (the pool-exhausted stop only fires
+            # at 0 active) — generate_pool_fn is NEVER re-called to top up.
+            # Default OFF → byte-identical (fresh_imps appended unchanged, no
+            # pool_dedup rows).
+            if getattr(args, "refresh_dedup", False):
+                fresh_imps, _dedup_drops = _dedup_fresh_imps(
+                    fresh_imps, pool, promoted_titles_in_run
+                )
+                for _drop in _dedup_drops:
+                    # Phase name uses an underscore (like stack_apply /
+                    # panel_floor); the multi-word OUTCOME is hyphenated (like
+                    # stack-apply-pass / panel-floor-rollback). outcome sits
+                    # penultimate, right before reason, matching the sibling
+                    # inline-row idiom.
+                    append_phase_result(
+                        args.results_path,
+                        {
+                            "phase": "pool_dedup",
+                            "generation": generation_index,
+                            "dropped_title": _drop["dropped_title"],
+                            "matched_title": _drop["matched_title"],
+                            "ratio": _drop["ratio"],
+                            "rule": _drop["rule"],
+                            "outcome": "pool-dedup",
+                            "reason": _drop["reason"],
+                        },
+                    )
 
             # Append fresh imps at fresh indexes with active status.
             start_idx = len(pool)

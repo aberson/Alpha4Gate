@@ -279,6 +279,7 @@ end-to-end instead of dying mid-fitness at L3542-3549 with stranded results.
 - **Produces:** `_normalize_title` + dedup filter + `--refresh-dedup` flag in `scripts/evolve.py`; `pool_dedup` audit rows; tests
 - **Done when:** unit tests cover: exact promoted-title drop; 0.85-similar drop; sub-threshold survives; intra-batch duplicate drop; audit row shape; flag OFF → byte-identical append. Gates clean.
 - **Depends on:** none
+- **Status:** DONE (2026-07-06)
 
 ### Step EJ.6: Budget-aware final-generation fit + SKILL.md flags documentation
 - **Problem:** A generation that starts with insufficient remaining budget dispatches the full pool and dies mid-fitness (`_budget_exceeded` break at scripts/evolve.py L3542-3549), stranding up to ~25 games of un-actionable results a night. Behind `--budget-fit`: before the fitness phase, estimate per-eval wall-clock from this run's completed evals (no observed data on generation 1 → no trim), reserve budget for stack-apply (0 games) + one regression (`games_per_eval` games) + the gauntlet when `--fitness-mode` ∈ {baseline, both}, and trim `active_idxs` to the top-rank prefix that fits — never below 1. Log one `phase: "budget_fit"` row with the dropped count (no silent caps). Also: document all six Phase EJ flags in `.claude/skills/improve-bot-evolve/SKILL.md`'s Flags table (EJ.4's pairing warning included).

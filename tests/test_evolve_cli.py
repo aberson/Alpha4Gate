@@ -11,6 +11,7 @@ replaced with a scripted fake.
 from __future__ import annotations
 
 import argparse
+import difflib
 import importlib.util
 import json
 import logging
@@ -3515,3 +3516,372 @@ def test_panel_floor_inert_when_both_mode_but_zero_baselines(
         if line.strip()
     ]
     assert not any(r.get("phase") == "panel_floor" for r in rows)
+
+
+# ---------------------------------------------------------------------------
+# Phase EJ.5: refresh-time proposal dedup (--refresh-dedup)
+# ---------------------------------------------------------------------------
+
+
+def test_refresh_dedup_flag_parses_and_defaults_off(cli: ModuleType) -> None:
+    """--refresh-dedup parses to args.refresh_dedup; default is False."""
+    assert cli.build_parser().parse_args([]).refresh_dedup is False
+    assert (
+        cli.build_parser().parse_args(["--refresh-dedup"]).refresh_dedup
+        is True
+    )
+
+
+def test_dedup_threshold_is_single_source_constant(cli: ModuleType) -> None:
+    """The 0.85 threshold is ONE named constant; the helper's default IS it."""
+    import inspect
+
+    assert cli._REFRESH_DEDUP_THRESHOLD == 0.85
+    default = inspect.signature(cli._dedup_fresh_imps).parameters[
+        "threshold"
+    ].default
+    assert default is cli._REFRESH_DEDUP_THRESHOLD
+
+
+def test_dedup_uses_shared_normalize_prior_title(
+    cli: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One source of truth: EJ.5 dedup normalizes via the SAME object EJ.1's
+    priors filter uses — asserted by identity AND by a spy proving usage."""
+    from orchestrator.evolve import normalize_prior_title as canonical
+
+    # Identity: scripts/evolve.py binds the canonical normalizer, not a copy.
+    assert cli.normalize_prior_title is canonical
+
+    # Usage: the helper actually calls that module binding (not a private one).
+    calls: list[object] = []
+    real = cli.normalize_prior_title
+
+    def spy(title: object) -> str:
+        calls.append(title)
+        return cast(str, real(title))
+
+    monkeypatch.setattr(cli, "normalize_prior_title", spy)
+    cli._dedup_fresh_imps(
+        [_make_imp(title="Alpha", rank=10)],
+        [_make_imp(title="Beta", rank=1)],
+        set(),
+    )
+    assert calls, "helper never invoked the module's normalize_prior_title"
+
+
+def test_dedup_drops_exact_promoted_title_normalized(
+    cli: ModuleType,
+) -> None:
+    """(a) A fresh title that normalizes equal to an in-run promoted title is
+    dropped — even across casing/punctuation drift."""
+    fresh = [_make_imp(title="Splash Readiness!", rank=10)]
+    survivors, drops = cli._dedup_fresh_imps(
+        fresh, [], {"splash-readiness"}
+    )
+    assert survivors == []
+    assert len(drops) == 1
+    assert drops[0]["rule"] == "promoted"
+    assert drops[0]["dropped_title"] == "Splash Readiness!"
+    assert drops[0]["matched_title"] == "splash-readiness"
+    assert drops[0]["ratio"] == 1.0
+
+
+def test_dedup_drops_near_duplicate_pool_title(cli: ModuleType) -> None:
+    """(b) A fresh title >= threshold-similar to an EXISTING pool imp drops."""
+    pool = [_make_imp(title="Cannon Rush Opener", rank=1)]
+    fresh = [_make_imp(title="Canon Rush Opener", rank=10)]  # 1-char typo
+    survivors, drops = cli._dedup_fresh_imps(fresh, pool, set())
+    assert survivors == []
+    assert drops[0]["rule"] == "pool"
+    assert drops[0]["matched_title"] == "Cannon Rush Opener"
+    assert drops[0]["ratio"] >= cli._REFRESH_DEDUP_THRESHOLD
+    assert drops[0]["ratio"] < 1.0  # genuinely near, not an exact repeat
+
+
+def test_dedup_subthreshold_title_survives(cli: ModuleType) -> None:
+    """A fresh title below the ratio floor vs every pool imp survives."""
+    pool = [_make_imp(title="Zerg Rush Defense", rank=1)]
+    fresh = [_make_imp(title="Oracle Phoenix Harass", rank=10)]
+    survivors, drops = cli._dedup_fresh_imps(fresh, pool, set())
+    assert [s.title for s in survivors] == ["Oracle Phoenix Harass"]
+    assert drops == []
+
+
+def test_dedup_intrabatch_keeps_first_drops_later(cli: ModuleType) -> None:
+    """(c) Intra-batch: the first occurrence is kept, later near-dups drop."""
+    fresh = [
+        _make_imp(title="Cannon Rush Opener", rank=10),
+        _make_imp(title="Cannon Rush Opener", rank=11),  # exact dup
+        _make_imp(title="Oracle Harass", rank=12),  # unique
+    ]
+    survivors, drops = cli._dedup_fresh_imps(fresh, [], set())
+    assert [s.title for s in survivors] == [
+        "Cannon Rush Opener",
+        "Oracle Harass",
+    ]
+    assert len(drops) == 1
+    assert drops[0]["rule"] == "batch"
+    assert drops[0]["dropped_title"] == "Cannon Rush Opener"
+    assert drops[0]["matched_title"] == "Cannon Rush Opener"
+
+
+def test_dedup_audit_row_carries_titles_and_ratio(cli: ModuleType) -> None:
+    """The drop payload records the dropped title, matched title, and ratio —
+    both as structured fields and woven into the human-readable reason."""
+    pool = [_make_imp(title="Blink Stalker Micro", rank=1)]
+    fresh = [_make_imp(title="Blink Stalker Micro", rank=10)]
+    _, drops = cli._dedup_fresh_imps(fresh, pool, set())
+    row = drops[0]
+    assert set(row) >= {
+        "dropped_title",
+        "matched_title",
+        "ratio",
+        "rule",
+        "reason",
+    }
+    assert row["dropped_title"] in row["reason"]
+    assert row["matched_title"] in row["reason"]
+    assert str(row["ratio"]) in row["reason"]
+
+
+def test_dedup_keeps_empty_normalized_title(cli: ModuleType) -> None:
+    """Safe direction: a fresh imp whose title normalizes to "" (all
+    punctuation, or the empty string) is KEPT — even when a pool imp AND a
+    promoted title also normalize to "" — with no drop row and no crash. Pins
+    the ``if not norm:`` guard that a refactor could silently remove."""
+    fresh = [
+        _make_imp(title="!!!", rank=10),  # normalizes to ""
+        _make_imp(title="", rank=11),  # empty string → ""
+    ]
+    survivors, drops = cli._dedup_fresh_imps(
+        fresh,
+        [_make_imp(title="###", rank=1)],  # pool title also norms to ""
+        {"@@@"},  # promoted title also norms to ""
+    )
+    assert [s.title for s in survivors] == ["!!!", ""]
+    assert drops == []
+
+
+def test_dedup_threshold_boundary_straddles_default(cli: ModuleType) -> None:
+    """Boundary pins the exact 0.85 default (not 0.80 / 0.90): a ~0.857 pair
+    DROPS while a ~0.837 pair SURVIVES under the default threshold."""
+    norm = cli.normalize_prior_title
+    just_above = difflib.SequenceMatcher(
+        None, norm("Chrono Boost Nexus First"), norm("Chrono Boost Nexus")
+    ).ratio()
+    just_below = difflib.SequenceMatcher(
+        None, norm("Oracle Stasis Ward Harass"), norm("Oracle Stasis Ward")
+    ).ratio()
+    # Straddle guard: if these strings ever drift, this fails loudly.
+    assert just_below < cli._REFRESH_DEDUP_THRESHOLD <= just_above
+
+    _, drops_above = cli._dedup_fresh_imps(
+        [_make_imp(title="Chrono Boost Nexus First", rank=10)],
+        [_make_imp(title="Chrono Boost Nexus", rank=1)],
+        set(),
+    )
+    assert len(drops_above) == 1
+    assert drops_above[0]["rule"] == "pool"
+
+    survivors_below, drops_below = cli._dedup_fresh_imps(
+        [_make_imp(title="Oracle Stasis Ward Harass", rank=10)],
+        [_make_imp(title="Oracle Stasis Ward", rank=1)],
+        set(),
+    )
+    assert [s.title for s in survivors_below] == ["Oracle Stasis Ward Harass"]
+    assert drops_below == []
+
+
+def test_dedup_threshold_is_inclusive_at_exact_boundary(
+    cli: ModuleType,
+) -> None:
+    """>= is inclusive: a pair whose ratio EQUALS the threshold drops; nudging
+    the threshold a hair above that exact ratio flips it to survive — pinning
+    the boundary operator as ``>=`` rather than ``>``."""
+    norm = cli.normalize_prior_title
+    a, b = "Chrono Boost Nexus First", "Chrono Boost Nexus"
+    exact = difflib.SequenceMatcher(None, norm(a), norm(b)).ratio()
+
+    # threshold == ratio → dropped (inclusive >=).
+    _, drops_eq = cli._dedup_fresh_imps(
+        [_make_imp(title=a, rank=10)],
+        [_make_imp(title=b, rank=1)],
+        set(),
+        threshold=exact,
+    )
+    assert len(drops_eq) == 1
+
+    # threshold a hair above the ratio → survives (a strict > would still drop).
+    survivors_gt, drops_gt = cli._dedup_fresh_imps(
+        [_make_imp(title=a, rank=10)],
+        [_make_imp(title=b, rank=1)],
+        set(),
+        threshold=exact + 1e-9,
+    )
+    assert [s.title for s in survivors_gt] == [a]
+    assert drops_gt == []
+
+
+def _drive_refresh_dedup(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    dedup: bool,
+) -> tuple[dict[str, int], list[dict[str, Any]], dict[str, Any]]:
+    """One generation (all fitness-fail → refresh) with a duplicate-heavy
+    fresh batch; returns (generate-call counts, results rows, pool state).
+
+    ``generations=1`` runs exactly one fitness round then stops on the
+    generation cap, so ScriptedFitness supplies exactly the 4 initial-pool
+    evaluations and the refresh survivors are never re-evaluated.
+    """
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    args = _build_args(tmp_path, pool_size=4, generations=1, no_commit=True)
+    args.refresh_dedup = dedup
+
+    initial_pool = [
+        _make_imp(title="Zerg Rush Defense", rank=1),
+        _make_imp(title="Blink Micro", rank=2),
+        _make_imp(title="Warp Prism Drop", rank=3),
+        _make_imp(title="Forge Fast Expand", rank=4),
+    ]
+    fresh_batch = [
+        _make_imp(title="Zerg Rush Defense!", rank=10),  # dup of pool (b)
+        _make_imp(title="Blink Micro", rank=11),  # dup of pool (b)
+        _make_imp(title="Cannon Rush Opener", rank=12),  # unique survivor
+        _make_imp(title="Cannon Rush Opener", rank=13),  # intra-batch dup (c)
+        _make_imp(title="Oracle Harass", rank=14),  # unique survivor
+    ]
+    fitness = _ScriptedFitness(["fail", "fail", "fail", "fail"])
+
+    gen_calls = {"initial": 0, "refresh": 0}
+
+    def generate(parent: str, **kwargs: Any) -> list[Improvement]:
+        if kwargs.get("skip_mirror"):
+            gen_calls["refresh"] += 1
+            return list(fresh_batch)
+        gen_calls["initial"] += 1
+        return list(initial_pool)
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=generate,
+        run_fitness_fn=fitness,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+    rows = [
+        json.loads(line)
+        for line in args.results_path.read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    pool_state = json.loads(args.pool_path.read_text(encoding="utf-8"))
+    return gen_calls, rows, pool_state
+
+
+def test_refresh_dedup_on_drops_duplicates_pool_shorter(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Production caller, flag ON: duplicates are dropped at refresh, only
+    survivors append, and pool_dedup rows are emitted."""
+    gen_calls, rows, pool_state = _drive_refresh_dedup(
+        cli, tmp_path, monkeypatch, dedup=True
+    )
+
+    dedup_rows = [r for r in rows if r.get("phase") == "pool_dedup"]
+    # 2 pool-dup drops + 1 intra-batch drop = 3 audit rows.
+    assert len(dedup_rows) == 3
+    # Phase name is underscored; the multi-word outcome is hyphenated.
+    assert all(r["outcome"] == "pool-dedup" for r in dedup_rows)
+    assert all(r["generation"] == 1 for r in dedup_rows)
+    assert sorted(r["rule"] for r in dedup_rows) == ["batch", "pool", "pool"]
+
+    titles = [item["title"] for item in pool_state["pool"]]
+    # 4 original (now evicted) + 2 survivors = 6; only ONE "Cannon Rush Opener".
+    assert len(pool_state["pool"]) == 6
+    assert "Oracle Harass" in titles
+    assert titles.count("Cannon Rush Opener") == 1
+    assert "Zerg Rush Defense!" not in titles  # the dropped near-dup
+
+
+def test_refresh_dedup_accept_short_no_topup(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Accept-short: after dedup the pool is simply shorter — generate_pool is
+    NOT re-called to top up, and no exception is raised."""
+    gen_calls, _rows, _pool = _drive_refresh_dedup(
+        cli, tmp_path, monkeypatch, dedup=True
+    )
+    assert gen_calls["initial"] == 1
+    assert gen_calls["refresh"] == 1  # exactly one refresh call; no top-up
+
+
+def test_refresh_dedup_off_is_byte_identical(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Flag OFF: the duplicate-heavy batch appends verbatim, zero drop rows —
+    byte-identical to today's refresh append."""
+    gen_calls, rows, pool_state = _drive_refresh_dedup(
+        cli, tmp_path, monkeypatch, dedup=False
+    )
+    assert not any(r.get("phase") == "pool_dedup" for r in rows)
+    assert gen_calls["refresh"] == 1
+
+    titles = [item["title"] for item in pool_state["pool"]]
+    # 4 original + 5 fresh (all appended, dups and all) = 9.
+    assert len(pool_state["pool"]) == 9
+    assert "Zerg Rush Defense!" in titles
+    assert titles.count("Cannon Rush Opener") == 2
+
+
+def test_refresh_dedup_drops_in_run_promoted_title(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Production caller, flag ON: a fresh imp re-proposing THIS run's promoted
+    (regression-survived) title is dropped via the 'promoted' rule."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    args = _build_args(tmp_path, pool_size=1, generations=1, no_commit=True)
+    args.refresh_dedup = True
+
+    initial_pool = [_make_imp(title="Splash Readiness", rank=1)]
+    fresh_batch = [
+        _make_imp(title="Splash-Readiness!", rank=10),  # re-proposal → drop
+        _make_imp(title="Oracle Harass", rank=11),  # unique → survive
+    ]
+
+    def generate(parent: str, **kwargs: Any) -> list[Improvement]:
+        if kwargs.get("skip_mirror"):
+            return list(fresh_batch)
+        return list(initial_pool)
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=generate,
+        run_fitness_fn=_ScriptedFitness(["pass"]),
+        stack_apply_fn=_ScriptedStackApply([(True, "v1")]),
+        run_regression_fn=_ScriptedRegression([False]),  # survives → promoted
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+
+    rows = [
+        json.loads(line)
+        for line in args.results_path.read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    dedup_rows = [r for r in rows if r.get("phase") == "pool_dedup"]
+    assert len(dedup_rows) == 1
+    assert dedup_rows[0]["rule"] == "promoted"
+    assert dedup_rows[0]["dropped_title"] == "Splash-Readiness!"
+    assert dedup_rows[0]["matched_title"] == "Splash Readiness"
+
+    pool_state = json.loads(args.pool_path.read_text(encoding="utf-8"))
+    titles = [item["title"] for item in pool_state["pool"]]
+    assert "Oracle Harass" in titles
+    assert "Splash-Readiness!" not in titles
