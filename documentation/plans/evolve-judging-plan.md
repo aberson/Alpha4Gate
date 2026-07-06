@@ -234,7 +234,7 @@ end-to-end instead of dying mid-fitness at L3542-3549 with stranded results.
 ### Step EJ.1: Promoted-title priors exclusion + prompt fix
 - **Problem:** The priors pipeline re-proposes already-promoted improvements: the curator (`scripts/curate_evolve_favorites.py`) records promotion evidence (`stack_apply_observations`, L76-90) but never filters on it; priors auto-load whenever `data/evolve_favorites.json` exists (scripts/evolve.py L3274-3278); and the prompt explicitly invites "You may include them verbatim" (src/orchestrator/evolve.py L1484). Add: (a) curator `--exclude-promoted` (drop favorites stacked in a stack-apply-pass generation whose regression passed) and `--merge-existing` (cumulative merge with the existing favorites file, since `evolve_results.jsonl` is truncated per fresh run at scripts/evolve.py L1308-1324); (b) `generate_pool(exclude_titles=...)` kwarg (default None = byte-identical) that drops excluded titles from the priors block; (c) scripts/evolve.py `--priors-exclude-promoted` flag that accumulates in-run promoted titles and passes them at pool refresh (L4116-4118); (d) replace the L1484 prompt line with anti-verbatim wording for the remaining entries ("refine or supersede; do not re-propose verbatim — verbatim re-proposals of promoted work are no-ops"). All mechanical drops must accept-short, never re-raise through the short-pool retry path (evolve.py L1740-1744).
 - **Type:** code
-- **Issue:** #
+- **Issue:** #282
 - **Flags:** --reviewers code
 - **Produces:** extended `scripts/curate_evolve_favorites.py`; `exclude_titles` kwarg in `generate_pool` + `_format_priors_block`; `--priors-exclude-promoted` flag; new `tests/test_curate_favorites.py`; extended `tests/test_evolve.py` prompt-assembly cases
 - **Done when:** unit tests cover: promoted favorite excluded / non-promoted fitness-passer retained / cumulative merge preserves prior-run observations / `exclude_titles=None` produces a prompt byte-identical to today EXCEPT the deliberately reworded L1484 line (the one default-visible change in this phase — golden update called out in the diff) / in-run promoted title absent from the refresh prompt. `uv run pytest`, `uv run mypy src --strict`, `uv run ruff check .` clean; test count ≥ baseline.
@@ -243,7 +243,7 @@ end-to-end instead of dying mid-fitness at L3542-3549 with stranded results.
 ### Step EJ.2: Mechanical null-diff screen
 - **Problem:** A dev-apply sub-agent run that makes zero `.py` edits is treated as SUCCESS (`if not validate or not changed_py: return`, src/orchestrator/evolve_dev_apply.py L309-313) — the byte-identical candidate then burns ~4 games and passes fitness ~50% of the time. Behind `--screen-null-diff`: detect null diffs (empty `changed_py` OR every changed file AST-equivalent to its before-snapshot — comment/formatting-only edits must count as null); route them through the existing retry-with-feedback machinery (L325-339) with a "no semantic change" feedback message; on final-attempt null raise `DevApplyNullDiffError`. In scripts/evolve.py, catch it (both the serial path and the `--concurrency`>1 worker path via `scripts/evolve_worker.py`) and emit a `phase: "fitness", outcome: "screen-null-diff"` results row WITHOUT playing games and WITHOUT incrementing `retry_count` (do not reuse the crash handler at L2932-2958 unchanged — it evicts and increments); imp returns to active; evict after 2 consecutive null-diffs via a new additive `PerItemState.consecutive_null_diffs` field. Verify whether `frontend/src/hooks/useEvolveRun.ts` enumerates outcome strings; bump `cacheKey` if so.
 - **Type:** code
-- **Issue:** #
+- **Issue:** #283
 - **Flags:** --reviewers code
 - **Produces:** `DevApplyNullDiffError` + AST-equivalence check in `evolve_dev_apply.py`; `--screen-null-diff` flag + outcome handling in `scripts/evolve.py` + worker propagation in `scripts/evolve_worker.py`; `PerItemState.consecutive_null_diffs`; tests
 - **Done when:** unit tests cover: zero-edit → retry feedback → error; comment-only edit classified null; real edit passes through unchanged; screen outcome does not increment `retry_count`; 2nd consecutive null evicts; flag OFF → today's silent-success path byte-identical; worker path propagates the error type. Integration test drives the scripts/evolve.py loop (fake `run_batch`/claude fns, real dispatch code) with the flag on and asserts a null-diff imp produces a `screen-null-diff` row and zero games. Gates clean.
@@ -252,7 +252,7 @@ end-to-end instead of dying mid-fitness at L3542-3549 with stranded results.
 ### Step EJ.3: One-sided posterior rollback bar
 - **Problem:** `run_regression_eval` rolls back on `wins_new < games // 2 + 1` (src/orchestrator/evolve.py L746, L782) — a truly-neutral promotion is destroyed 50% of the time at n=5, and draws/crashes count against the new parent because `_count_wins` (L450-463) shrinks the decided count while the majority bar stays at 3. Build `src/orchestrator/gate_stats.py` (`posterior_prob_worse` via the exact binomial-tail identity with `math.comb`; `one_sided_rollback(wins_new, wins_prior, min_decided=4, threshold=0.85)`), add `rule: str = "majority"` to `run_regression_eval` with the early-stop threshold DERIVED from the active rule (the hardcoded stop-at-majority logic at L743-772 is wrong for the one-sided rule and at n≠5), and thread scripts/evolve.py `--regression-rule {majority,one-sided}` (default `majority`, byte-identical). One-sided semantics: rollback iff decided ≥ 4 AND P(p<0.5) ≥ 0.85 (at 5 decided: 0-5 and 1-4 only); fewer than 4 decided → keep, fail-open, reason string says why.
 - **Type:** code
-- **Issue:** #
+- **Issue:** #284
 - **Flags:** --reviewers code
 - **Produces:** `src/orchestrator/gate_stats.py`; `rule` param in `run_regression_eval`; `--regression-rule` flag; `tests/test_gate_stats.py`; extended `tests/test_evolve.py` regression cases
 - **Done when:** exact-value tests for the posterior table (0-5→rollback, 1-4→rollback, 2-3→keep at n=5; correct behavior at n=3/7/9; draw-heavy records keep under the min-decided floor); early-stop fires at rule-correct thresholds in both rules; `rule="majority"` decisions byte-identical to today across a golden table of all (wins_new, wins_prior) pairs at n=5 and n=9. Gates clean.
@@ -261,7 +261,7 @@ end-to-end instead of dying mid-fitness at L3542-3549 with stranded results.
 ### Step EJ.4: Frozen-baseline panel floor
 - **Problem:** EJ.3's honest cost is regression catch at p=0.35 dropping 76.5% → 42.8%, and the "caught later" backstop is false (the next generation compares against the same weakened bar) — so the one-sided rule needs a drift backstop that cannot cycle. The EL gauntlet already plays the promoted version vs each frozen anchor under `--fitness-mode both` and is explicitly log-only ("a later step can drive gating off it", scripts/evolve.py L3825-3832). Behind `--panel-floor`: when the gauntlet ran and any `GauntletResult.per_baseline` win rate is 0.0 (sweep loss vs any anchor), trigger the existing rollback machinery (revert-first ordering per L4030-4063) with reason prefix `panel-floor:` and flip promoted imps to `regression-rollback`. Fail-open by construction: gauntlet crash, empty registry, or `--fitness-mode parent` → floor inert (the existing defense-in-depth try/except at L3837-3923 must keep protecting the committed promotion). Document in SKILL.md that production soaks should not enable `--regression-rule one-sided` without `--panel-floor` + registered baselines.
 - **Type:** code
-- **Issue:** #
+- **Issue:** #285
 - **Flags:** --reviewers code
 - **Produces:** `--panel-floor` flag + floor consumption in `scripts/evolve.py`; `panel-floor:` rollback rows; SKILL.md pairing warning; tests
 - **Done when:** unit tests with fake gauntlet results cover: sweep loss vs one anchor → rollback via the same revert path; all anchors ≥ 1 win → no effect; gauntlet crash → promotion stands (fail-open); flag OFF → byte-identical. Integration test drives the loop with fitness-mode both + fake baselines and asserts floor rollback lands a `panel-floor:` reason row. Gates clean.
@@ -270,7 +270,7 @@ end-to-end instead of dying mid-fitness at L3542-3549 with stranded results.
 ### Step EJ.5: Refresh-time proposal dedup
 - **Problem:** The pool-refresh site appends `generate_pool` output with zero dedup (scripts/evolve.py L4128-4132) — near-duplicate titles re-enter and burn ~4-6 games each. Behind `--refresh-dedup`: normalize titles (casefold, strip punctuation/whitespace) and drop any fresh imp that (a) exact-matches an in-run promoted/stacked title, (b) has `difflib.SequenceMatcher` ratio ≥ 0.85 vs any existing pool title, or (c) duplicates another imp within the same fresh batch. One audit row per drop (`phase: "pool_dedup"`, the matched title + ratio in `reason`). Accept-short after dedup — never re-call `generate_pool` to top up (short-pool retry raises on persistent shortfall, evolve.py L1740-1744; pool-exhausted stop only triggers at 0 active, so a short pool is safe).
 - **Type:** code
-- **Issue:** #
+- **Issue:** #286
 - **Flags:** --reviewers code
 - **Produces:** `_normalize_title` + dedup filter + `--refresh-dedup` flag in `scripts/evolve.py`; `pool_dedup` audit rows; tests
 - **Done when:** unit tests cover: exact promoted-title drop; 0.85-similar drop; sub-threshold survives; intra-batch duplicate drop; audit row shape; flag OFF → byte-identical append. Gates clean.
@@ -279,7 +279,7 @@ end-to-end instead of dying mid-fitness at L3542-3549 with stranded results.
 ### Step EJ.6: Budget-aware final-generation fit + SKILL.md flags documentation
 - **Problem:** A generation that starts with insufficient remaining budget dispatches the full pool and dies mid-fitness (`_budget_exceeded` break at scripts/evolve.py L3542-3549), stranding up to ~25 games of un-actionable results a night. Behind `--budget-fit`: before the fitness phase, estimate per-eval wall-clock from this run's completed evals (no observed data on generation 1 → no trim), reserve budget for stack-apply (0 games) + one regression (`games_per_eval` games) + the gauntlet when `--fitness-mode` ∈ {baseline, both}, and trim `active_idxs` to the top-rank prefix that fits — never below 1. Log one `phase: "budget_fit"` row with the dropped count (no silent caps). Also: document all six Phase EJ flags in `.claude/skills/improve-bot-evolve/SKILL.md`'s Flags table (EJ.4's pairing warning included).
 - **Type:** code
-- **Issue:** #
+- **Issue:** #287
 - **Flags:** --reviewers code
 - **Produces:** `--budget-fit` flag + trim logic in `scripts/evolve.py`; `budget_fit` rows; SKILL.md Flags table update; tests
 - **Done when:** unit tests cover: trim to fitting prefix (rank order preserved); never trims below 1; generation-1 no-op; reserve accounts for regression + gauntlet; flag OFF → byte-identical dispatch. SKILL.md lists all six flags with defaults. Gates clean.
@@ -288,7 +288,7 @@ end-to-end instead of dying mid-fitness at L3542-3549 with stranded results.
 ### Step EJ.7: Flags-on smoke gate (real SC2)
 - **Problem:** Verify the six flags compose end-to-end on real infrastructure before an overnight soak. Register 2 frozen anchors (e.g. v10, v13) in `data/baselines.json` via the EL baselines CLI, then run one short flags-on evolve: `uv run python scripts/evolve.py --pool-size 3 --games-per-eval 3 --hours 0.75 --priors-exclude-promoted --screen-null-diff --regression-rule one-sided --panel-floor --refresh-dedup --budget-fit --fitness-mode both`. Inspect `data/evolve_results.jsonl` for the new row types where triggered, confirm no crash, no orphaned `bots/cand_*` dirs, and pointer integrity. Then run one 15-minute defaults-off smoke and confirm behavior matches a pre-EJ run (no new row types, no flag effects).
 - **Type:** operator
-- **Issue:** #
+- **Issue:** #288
 - **Produces:** smoke evidence appended to the run log under `documentation/soak-test-runs/`; pass/fail verdict per checklist item
 - **Done when:** flags-on run completes without crash; every triggered EJ mechanism left its audit row; defaults-off run shows zero behavior change; verdicts recorded.
 - **Depends on:** EJ.6
@@ -296,7 +296,7 @@ end-to-end instead of dying mid-fitness at L3542-3549 with stranded results.
 ### Step EJ.8: Overnight flags-on A/B validation soak
 - **Problem:** The investigation's numbers (null-rollback 50%→18.75%, ~5.9 games saved per avoided re-proposal, reclaimed final-generation games) are analytic; validate them against a real overnight run before any default flips. Run one standard 4h flags-on soak (`/improve-bot-evolve` flags as in EJ.7 minus the reduced sizes) and compare against the most recent flags-off soaks on: regression-rollback rate, `screen-null-diff`/`pool_dedup` catch counts, games per generation, generations completed, and promotions. Record the comparison table in the soak log; recommend (do not apply) default flips.
 - **Type:** wait
-- **Issue:** #
+- **Issue:** #289
 - **Produces:** soak report under `documentation/soak-test-runs/` with the A/B comparison table + default-flip recommendation
 - **Done when:** soak completes; comparison table filled from `evolve_results.jsonl` + run state; recommendation recorded. NOT gated on the soak showing improvement — a negative result is a valid outcome that blocks default flips.
 - **Depends on:** EJ.7
