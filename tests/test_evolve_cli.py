@@ -3885,3 +3885,392 @@ def test_refresh_dedup_drops_in_run_promoted_title(
     titles = [item["title"] for item in pool_state["pool"]]
     assert "Oracle Harass" in titles
     assert "Splash-Readiness!" not in titles
+
+
+# ---------------------------------------------------------------------------
+# Phase EJ Step EJ.6 — budget-aware final-generation fit (--budget-fit)
+# ---------------------------------------------------------------------------
+
+
+def test_budget_fit_flag_parses_and_defaults_off(cli: ModuleType) -> None:
+    """--budget-fit parses to args.budget_fit; default is False."""
+    assert cli.build_parser().parse_args([]).budget_fit is False
+    assert cli.build_parser().parse_args(["--budget-fit"]).budget_fit is True
+
+
+def test_budget_fit_active_keeps_rank_prefix(cli: ModuleType) -> None:
+    """The kept prefix is the lowest-RANK imps, NOT the lowest index — the pool
+    is not index-ordered once EJ.5 appends higher indexes."""
+    # Ranks deliberately anti-correlated with index.
+    pool = [
+        _make_imp(title="d", rank=4),
+        _make_imp(title="b", rank=2),
+        _make_imp(title="a", rank=1),
+        _make_imp(title="c", rank=3),
+    ]
+    # per_eval=100, remaining=350, reserve=100 (parent, no gauntlet):
+    # fit = floor((350-100)/100) = floor(2.5) = 2 → keep the 2 best ranks.
+    kept, dropped, reserve = cli._budget_fit_active(
+        [0, 1, 2, 3],
+        pool,
+        per_eval_s=100.0,
+        remaining_s=350.0,
+        games_per_eval=5,
+        gauntlet_baselines=0,
+    )
+    # rank 1 is idx 2, rank 2 is idx 1 — kept in ascending-rank order.
+    assert kept == [2, 1]
+    assert dropped == 2
+    assert reserve == 100.0
+
+
+def test_budget_fit_active_never_trims_below_one(cli: ModuleType) -> None:
+    """A tiny remaining budget clamps fit_count to 1, never 0 — a generation
+    always runs its single best imp."""
+    pool = _make_pool(3)  # idx0=rank1 .. idx2=rank3
+    kept, dropped, reserve = cli._budget_fit_active(
+        [0, 1, 2],
+        pool,
+        per_eval_s=100.0,
+        remaining_s=10.0,  # raw_fit = floor((10-100)/100) = -1 → clamp to 1
+        games_per_eval=5,
+        gauntlet_baselines=0,
+    )
+    assert kept == [0]  # only the rank-1 best survives
+    assert dropped == 2
+
+
+def test_budget_fit_active_ample_budget_keeps_all(cli: ModuleType) -> None:
+    """When the budget comfortably fits every imp, nothing is trimmed."""
+    pool = _make_pool(3)
+    kept, dropped, _reserve = cli._budget_fit_active(
+        [0, 1, 2],
+        pool,
+        per_eval_s=100.0,
+        remaining_s=10_000.0,
+        games_per_eval=5,
+        gauntlet_baselines=0,
+    )
+    assert sorted(kept) == [0, 1, 2]
+    assert dropped == 0
+
+
+def test_budget_fit_active_reserve_accounts_for_regression_and_gauntlet(
+    cli: ModuleType,
+) -> None:
+    """The reserve holds back one regression eval always, plus the baseline
+    gauntlet's games when a gauntlet will run — so the same budget fits fewer
+    imps in baseline/both mode than in parent mode."""
+    pool = _make_pool(5)
+    # parent mode: reserve = per_eval = 100. fit = floor((650-100)/100)=5.
+    kept_parent, dropped_parent, reserve_parent = cli._budget_fit_active(
+        [0, 1, 2, 3, 4],
+        pool,
+        per_eval_s=100.0,
+        remaining_s=650.0,
+        games_per_eval=5,
+        gauntlet_baselines=0,
+    )
+    assert reserve_parent == 100.0
+    assert len(kept_parent) == 5
+    assert dropped_parent == 0
+
+    # baseline/both with 2 anchors: per_game = 100/5 = 20; gauntlet reserve =
+    # 20*5*2 = 200; total reserve = 100 + 200 = 300.
+    # fit = floor((650-300)/100) = floor(3.5) = 3.
+    kept_g, dropped_g, reserve_g = cli._budget_fit_active(
+        [0, 1, 2, 3, 4],
+        pool,
+        per_eval_s=100.0,
+        remaining_s=650.0,
+        games_per_eval=5,
+        gauntlet_baselines=2,
+    )
+    assert reserve_g == 300.0
+    assert len(kept_g) == 3
+    assert dropped_g == 2
+    # The gauntlet reserve costs at least one imp vs the parent-mode fit.
+    assert len(kept_g) < len(kept_parent)
+
+
+def _drive_eval_paced(
+    cli: ModuleType,
+    args: argparse.Namespace,
+    *,
+    pool: list[Improvement],
+    big: float = 600.0,
+) -> tuple[int, int, dict[str, Any], list[dict[str, Any]], str]:
+    """Drive run_loop with a clock whose value == (# fitness evals) * ``big``.
+
+    Ties wall-clock to fitness progress so budget-fit arithmetic is exact and
+    immune to incidental clock reads (the clock is a pure function of the eval
+    counter — extra reads never perturb it). Every imp scores 'close', which
+    keeps it active across generations without ever promoting (so stack-apply
+    and regression must never fire). Caller sets args.hours / args.budget_fit /
+    args.generations before calling.
+
+    Returns ``(rc, fitness_calls, state_dict, result_rows, runlog_text)``.
+    """
+    counter = {"evals": 0}
+
+    def clock() -> float:
+        return counter["evals"] * big
+
+    def fitness(parent: str, imp: Improvement, **_k: Any) -> FitnessResult:
+        counter["evals"] += 1
+        return _fitness(imp, bucket="close", parent=parent)
+
+    def refresh(*_a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return list(pool)
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=fitness,
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("bucket=close never promotes; stack-apply fired")
+        ),
+        run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("no promotion; regression must not fire")
+        ),
+        current_version_fn=lambda: "v0",
+        time_fn=clock,
+    )
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    rows = [
+        json.loads(line)
+        for line in args.results_path.read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    runlog = args.run_log.read_text(encoding="utf-8")
+    return rc, counter["evals"], state, rows, runlog
+
+
+def test_budget_fit_generation_one_is_noop(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Generation 1 has no observed per-eval timing yet → --budget-fit is a
+    no-op: the full pool dispatches and no budget_fit row is written."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    args = _build_args(tmp_path, pool_size=4, generations=1, hours=10.0)
+    args.budget_fit = True
+
+    rc, fitness_calls, state, rows, _runlog = _drive_eval_paced(
+        cli, args, pool=_make_pool(4)
+    )
+    assert rc == 0
+    assert state["status"] == "completed"
+    assert state["generations_completed"] == 1
+    # All 4 imps dispatched — nothing trimmed on the first generation.
+    assert fitness_calls == 4
+    assert not any(r.get("phase") == "budget_fit" for r in rows)
+
+
+def test_budget_fit_cli_passthrough_trims_and_emits_row(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Production caller: with --budget-fit ON and a budget that (from gen 2)
+    cannot cover the full active set, gen 2 is trimmed to the top-rank prefix,
+    a budget_fit audit row lands, and the generation completes end-to-end."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    # hours=1.3 → 4680s budget. Gen 1 burns 4 evals (evals*600 → 2400s).
+    # Gen-2 trim: remaining = 4680-2400 = 2280; reserve = 600;
+    # fit = floor((2280-600)/600) = 2 → drop 2 of 4.
+    args = _build_args(tmp_path, pool_size=4, generations=2, hours=1.3)
+    args.budget_fit = True
+
+    rc, fitness_calls, state, rows, _runlog = _drive_eval_paced(
+        cli, args, pool=_make_pool(4)
+    )
+    assert rc == 0
+    assert state["status"] == "completed"
+    assert state["generations_completed"] == 2
+    # Gen 1 = 4 evals (untrimmed), gen 2 = 2 evals (trimmed) → 6 total.
+    assert fitness_calls == 6
+
+    bf_rows = [r for r in rows if r.get("phase") == "budget_fit"]
+    assert len(bf_rows) == 1
+    row = bf_rows[0]
+    assert row["generation"] == 2  # never gen 1
+    assert row["dropped"] == 2
+    assert row["fit_count"] == 2
+    assert row["outcome"] == "budget-fit"
+    assert "trimmed 2 imp(s)" in row["reason"]
+
+
+def test_budget_fit_off_is_byte_identical_full_dispatch(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With --budget-fit OFF, the identical budget-constrained run dispatches
+    the FULL active set every generation and writes no budget_fit row."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    args = _build_args(tmp_path, pool_size=4, generations=2, hours=1.3)
+    # args.budget_fit deliberately left UNSET → getattr default False.
+
+    rc, fitness_calls, state, rows, _runlog = _drive_eval_paced(
+        cli, args, pool=_make_pool(4)
+    )
+    assert rc == 0
+    assert state["status"] == "completed"
+    assert state["generations_completed"] == 2
+    # Gen 1 = 4, gen 2 = full 4 (no trim) → 8 total, vs the ON run's 6.
+    assert fitness_calls == 8
+    assert not any(r.get("phase") == "budget_fit" for r in rows)
+
+
+def test_budget_fit_prevents_mid_fitness_strand(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The payoff: on a budget too small for the full pool, --budget-fit ON
+    trims gen 2 so it finishes cleanly (stop reason 'generations-reached'),
+    while OFF dispatches the full set and strands mid-fitness on wall-clock."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+
+    def _run(dir_name: str, budget_fit: bool) -> tuple[int, dict, list, str]:
+        d = tmp_path / dir_name
+        d.mkdir()
+        # hours=0.9 → 3240s. Gen 1 → 2400s elapsed. Gen-2 trim:
+        # remaining = 840; reserve = 600; fit = floor((840-600)/600)=0 → 1.
+        args = _build_args(d, pool_size=4, generations=2, hours=0.9)
+        if budget_fit:
+            args.budget_fit = True
+        rc, calls, state, rows, runlog = _drive_eval_paced(
+            cli, args, pool=_make_pool(4)
+        )
+        assert rc == 0
+        return calls, state, rows, runlog
+
+    on_calls, on_state, on_rows, on_log = _run("on", budget_fit=True)
+    off_calls, off_state, off_rows, off_log = _run("off", budget_fit=False)
+
+    # ON: gen 2 trimmed to 1 (dropped 3); the kept imp ran → 5 total evals.
+    # The run ended by the generation cap, NOT a mid-fitness wall-clock strand.
+    bf_on = [r for r in on_rows if r.get("phase") == "budget_fit"]
+    assert len(bf_on) == 1
+    assert bf_on[0]["generation"] == 2
+    assert bf_on[0]["dropped"] == 3
+    assert on_calls == 5
+    assert "Stop reason: generations-reached" in on_log
+
+    # OFF: no trim → gen 2 dispatched the full set and stranded on wall-clock
+    # (6 evals: 4 + 2 before the mid-fitness budget break).
+    assert not any(r.get("phase") == "budget_fit" for r in off_rows)
+    assert off_calls == 6
+    assert "Stop reason: wall-clock" in off_log
+
+
+def test_budget_fit_estimator_excludes_null_diff_and_crash_serial(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """EJ.6 poisoning guard (serial): a 0-game null-diff screen and a crash
+    must contribute NOTHING to the per-eval estimator — only real games-played
+    evals feed it. A future refactor moving either append above its `continue`
+    would drag per_eval_s down (under-trim → strand); this pins the invariant.
+
+    Proof: gen 1 runs one success (+600s on the clock), one null-diff screen
+    (0s), and one crash (0s). At the gen-2 trim, _budget_fit_active is called
+    with per_eval_s == the single success's 600s — NOT the 200s mean it would
+    be if the two 0-duration screens/crashes had leaked into the accumulator.
+    """
+    from orchestrator.evolve_dev_apply import DevApplyNullDiffError
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    # hours large → no wall-clock pressure; the trim still CALLS
+    # _budget_fit_active (the dropped>0 row-gate is downstream of the call).
+    args = _build_args(
+        tmp_path, pool_size=3, generations=2, hours=100.0, screen_null_diff=True
+    )
+    args.budget_fit = True
+    pool = _make_pool(3)  # idx0=rank1, idx1=rank2, idx2=rank3
+
+    clock = {"t": 0.0}
+    success_dt = 600.0
+
+    def time_fn() -> float:
+        return clock["t"]
+
+    def fitness(parent: str, imp: Improvement, **_k: Any) -> FitnessResult:
+        # Behavior keyed by rank so gen-2 re-runs stay consistent.
+        if imp.rank == 2:  # null-diff screen: 0 games, advances the clock 0s
+            raise DevApplyNullDiffError(
+                "no semantic .py change after 3 attempt(s)",
+                attempts=3,
+                ast_equivalent=False,
+            )
+        if imp.rank == 3:  # crash: 0 games, advances the clock 0s
+            raise RuntimeError("boom")
+        # rank 1 → a real games-played eval: advance the clock by success_dt so
+        # a correctly-recorded duration is a distinctive 600s.
+        clock["t"] += success_dt
+        return _fitness(imp, bucket="close", parent=parent)
+
+    def refresh(*_a: Any, **k: Any) -> list[Improvement]:
+        return [] if k.get("skip_mirror") else list(pool)
+
+    seen_per_eval: list[float] = []
+    real_budget_fit = cli._budget_fit_active
+
+    def spy(active: list[int], pool_arg: list[Improvement], **kw: Any) -> Any:
+        seen_per_eval.append(kw["per_eval_s"])
+        return real_budget_fit(active, pool_arg, **kw)
+
+    monkeypatch.setattr(cli, "_budget_fit_active", spy)
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=fitness,
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("bucket=close never promotes; stack-apply fired")
+        ),
+        run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("no promotion; regression must not fire")
+        ),
+        current_version_fn=lambda: "v0",
+        time_fn=time_fn,
+    )
+    assert rc == 0
+
+    rows = [
+        json.loads(line)
+        for line in args.results_path.read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    # The null-diff screen and the crash actually RAN in gen 1 (so they were
+    # candidates to poison the estimator)...
+    assert any(r.get("outcome") == "screen-null-diff" for r in rows)
+    assert any(r.get("outcome") == "crash" for r in rows)
+    # ...but the gen-2 trim saw per_eval_s == the single success duration,
+    # proving neither contributed a (0-duration) entry to the accumulator.
+    assert seen_per_eval == [success_dt]
+
+
+def test_skill_md_documents_all_six_ej_flags() -> None:
+    """The improve-bot-evolve SKILL.md ## Flags section lists all six EJ flags
+    with the pairing warning integrated (no duplicate warnings)."""
+    skill_md = (
+        _REPO_ROOT
+        / ".claude"
+        / "skills"
+        / "improve-bot-evolve"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    for flag in (
+        "--priors-exclude-promoted",
+        "--screen-null-diff",
+        "--regression-rule",
+        "--panel-floor",
+        "--refresh-dedup",
+        "--budget-fit",
+    ):
+        assert flag in skill_md, f"{flag} missing from SKILL.md"
+    # The EJ.3+EJ.4 pairing warning is present exactly once (reconciled, not
+    # duplicated) and no longer defers the table to a future step.
+    assert skill_md.count("Pairing warning (EJ.3 + EJ.4)") == 1
+    assert "The full flags table lands in EJ.6" not in skill_md

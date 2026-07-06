@@ -289,6 +289,7 @@ end-to-end instead of dying mid-fitness at L3542-3549 with stranded results.
 - **Produces:** `--budget-fit` flag + trim logic in `scripts/evolve.py`; `budget_fit` rows; SKILL.md Flags table update; tests
 - **Done when:** unit tests cover: trim to fitting prefix (rank order preserved); never trims below 1; generation-1 no-op; reserve accounts for regression + gauntlet; flag OFF → byte-identical dispatch. SKILL.md lists all six flags with defaults. Gates clean.
 - **Depends on:** EJ.1, EJ.2, EJ.3, EJ.4, EJ.5 (docs roll-up; also serializes the shared-file edits)
+- **Status:** DONE (2026-07-06)
 
 ### Step EJ.7: Flags-on smoke gate (real SC2)
 - **Problem:** Verify the six flags compose end-to-end on real infrastructure before an overnight soak. Register 2 frozen anchors (e.g. v10, v13) in `data/baselines.json` via the EL baselines CLI, then run one short flags-on evolve: `uv run python scripts/evolve.py --pool-size 3 --games-per-eval 3 --hours 0.75 --priors-exclude-promoted --screen-null-diff --regression-rule one-sided --panel-floor --refresh-dedup --budget-fit --fitness-mode both`. Inspect `data/evolve_results.jsonl` for the new row types where triggered, confirm no crash, no orphaned `bots/cand_*` dirs, and pointer integrity. Then run one 15-minute defaults-off smoke and confirm behavior matches a pre-EJ run (no new row types, no flag effects).

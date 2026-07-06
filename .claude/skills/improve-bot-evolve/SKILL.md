@@ -51,9 +51,22 @@ The outer phase shape (pre-flight → seed → loop → decision → report) is 
 | `--resume` | flag | off | Reload pool + per-item statuses from `--pool-path` instead of generating fresh. |
 | `--post-training-cycles` | int | `0` | On promoted runs, start the training daemon for exactly N cycles after the loop exits. |
 
-Budget math: pool=10, games-per-eval=5 → ~55 games per generation (50 fitness + 5 regression; stack-apply runs no SC2 games); with 4-hour budget and ~3-min games, roughly 1 generation per hour — ~15 min faster than the pre-2026-04-23 3-gate pipeline.
+### Phase-EJ noise-floor flags
 
-**Pairing warning (EJ.3 + EJ.4):** A production soak must NOT enable `--regression-rule one-sided` without also enabling `--panel-floor` AND registering frozen baselines (`--fitness-mode both` + a non-empty `data/baselines.json`). The one-sided rule relaxes the regression bar (it trades away regression-catch to stop destroying neutral promotions), so it can miss slow drift vs frozen anchors. `--panel-floor` is its mandatory drift backstop: a promoted version that wins 0 games vs ANY registered anchor is rolled back through the same revert path. If `--panel-floor` is armed but `--fitness-mode=parent` or no baselines are registered, it is INERT and evolve logs a startup WARNING. (The full flags table lands in EJ.6.)
+All six default OFF/`majority` → the default invocation is byte-identical to the pre-EJ pipeline. Enable per-run as needed.
+
+| Flag | Type | Default | Phase | Purpose |
+|------|------|---------|-------|---------|
+| `--priors-exclude-promoted` | flag | off | EJ.1 | Accumulate the titles of imps promoted (and regression-survived) THIS run and drop them from the priors block on subsequent pool refreshes — stops re-proposing already-baked-in work. |
+| `--screen-null-diff` | flag | off | EJ.2 | Mechanically screen a dev-apply that produces no semantic `.py` change (zero edits, or comment/whitespace/format-only edits that parse to the same AST) BEFORE it burns fitness games — routed to a no-retry-bump handler, not a crash. |
+| `--regression-rule` | str | `majority` | EJ.3 | Regression rollback gate. `majority` (byte-identical strict majority, `wins_new < games//2+1`) or `one-sided` (roll back ONLY on positive evidence of harm — posterior P(new parent truly worse) ≥ 0.85; keeps the neutral 2-3 at n=5). |
+| `--panel-floor` | flag | off | EJ.4 | Roll back a newly-promoted version that wins 0 games vs ANY registered frozen baseline (a gauntlet "sweep loss") through the same revert path as a regression failure. INERT with a startup WARNING when `--fitness-mode=parent` or no baselines are registered. Fail-open: a gauntlet crash never blocks a committed promotion. |
+| `--refresh-dedup` | flag | off | EJ.5 | At pool refresh, drop each fresh imp whose title exact-matches an in-run promoted title, is ≥ 0.85 similar to an existing pool imp, or duplicates an earlier survivor in the same batch — before it re-enters the pool and burns ~4-6 fitness games. Each drop writes a `pool_dedup` audit row. |
+| `--budget-fit` | flag | off | EJ.6 | Before each generation's fitness dispatch, trim the active set (top-RANK prefix) to the number of imps that complete fitness + a regression/gauntlet reserve inside the remaining `--hours` budget, so a budget-limited generation finishes end-to-end instead of stranding its un-scored tail at the mid-fitness break. Self-calibrating (no-op on gen 1 / `--hours 0`); never trims below 1; each trim writes a `budget_fit` audit row. |
+
+**Pairing warning (EJ.3 + EJ.4):** A production soak must NOT enable `--regression-rule one-sided` without also enabling `--panel-floor` AND registering frozen baselines (`--fitness-mode both` + a non-empty `data/baselines.json`). The one-sided rule relaxes the regression bar (it trades away regression-catch to stop destroying neutral promotions), so it can miss slow drift vs frozen anchors. `--panel-floor` is its mandatory drift backstop: a promoted version that wins 0 games vs ANY registered anchor is rolled back through the same revert path. If `--panel-floor` is armed but `--fitness-mode=parent` or no baselines are registered, it is INERT and evolve logs a startup WARNING.
+
+Budget math: pool=10, games-per-eval=5 → ~55 games per generation (50 fitness + 5 regression; stack-apply runs no SC2 games); with 4-hour budget and ~3-min games, roughly 1 generation per hour — ~15 min faster than the pre-2026-04-23 3-gate pipeline.
 
 ---
 

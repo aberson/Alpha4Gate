@@ -448,6 +448,27 @@ def build_parser() -> argparse.ArgumentParser:
             "re-called to top up."
         ),
     )
+    parser.add_argument(
+        "--budget-fit",
+        action="store_true",
+        help=(
+            "Budget-aware fitness fit (Phase EJ.6). Trims each generation's "
+            "fitness dispatch to what fits the remaining --hours budget. "
+            "Default OFF is byte-identical: a generation dispatches its FULL "
+            "active pool even when the remaining budget cannot cover it, so it "
+            "dies mid-fitness at the wall-clock break and strands the "
+            "un-scored tail of the pool. When ON, before each generation's "
+            "fitness dispatch the active set is trimmed (top-RANK prefix) to "
+            "the number of imps that actually complete — fitness for the kept "
+            "imps plus a reserve for one regression eval and (in "
+            "--fitness-mode {baseline,both}) the baseline gauntlet — inside "
+            "the remaining budget, so a trimmed generation finishes "
+            "end-to-end instead of stranding. Self-calibrating from observed "
+            "per-eval wall-clock: a no-op on generation 1 (before any timing "
+            "is known) and whenever --hours is 0 (no budget to fit); never "
+            "trims below 1 imp; each trim writes an auditable 'budget_fit' row."
+        ),
+    )
     return parser
 
 
@@ -982,6 +1003,49 @@ def _dedup_fresh_imps(
         )
 
     return survivors, drop_reasons
+
+
+def _budget_fit_active(
+    active_idxs: list[int],
+    pool: list[Improvement],
+    *,
+    per_eval_s: float,
+    remaining_s: float,
+    games_per_eval: int,
+    gauntlet_baselines: int,
+) -> tuple[list[int], int, float]:
+    """Phase EJ.6: trim ``active_idxs`` to the top-RANK prefix that finishes
+    inside ``remaining_s`` seconds of remaining wall-clock budget.
+
+    Pure + deterministic. Sizes a generation to what completes end-to-end
+    instead of stranding half the pool at the mid-fitness budget break:
+
+    * Each kept imp costs one fitness eval (~``per_eval_s`` seconds, the
+      running mean the caller observed).
+    * A reserve of one regression eval (~``per_eval_s``) is always held back.
+    * When a baseline gauntlet will run (``gauntlet_baselines > 0``), an extra
+      ``per_game_s * games_per_eval * gauntlet_baselines`` is reserved
+      (``games_per_eval`` games vs each registered anchor).
+
+    ``fit_count = floor((remaining_s - reserve_s) / per_eval_s)`` clamped to
+    ``[1, len(active_idxs)]`` — NEVER below 1 (a generation always runs its
+    single best imp) and never above the current active count. The pool is
+    NOT index-ordered once EJ.5 appends higher indexes, so the kept prefix is
+    chosen by ascending ``rank`` (rank 1 = best), not by index.
+
+    Returns ``(kept_idxs, dropped_count, reserve_s)`` — ``kept_idxs`` is the
+    rank-ascending prefix (best imps first); the caller re-sorts by index for
+    the actual dispatch order, so only the kept SET changes. The caller
+    guarantees ``per_eval_s > 0``.
+    """
+    per_game_s = per_eval_s / max(1, games_per_eval)
+    reserve_s = per_eval_s
+    if gauntlet_baselines > 0:
+        reserve_s += per_game_s * games_per_eval * gauntlet_baselines
+    raw_fit = int((remaining_s - reserve_s) // per_eval_s)
+    fit_count = max(1, min(len(active_idxs), raw_fit))
+    ranked = sorted(active_idxs, key=lambda i: pool[i].rank)
+    return ranked[:fit_count], len(active_idxs) - fit_count, reserve_s
 
 
 def append_crash_log(
@@ -2313,6 +2377,7 @@ def _run_fitness_phase_parallel(
     time_fn: Callable[[], float],
     start_monotonic: float,
     state_dir: Path,
+    eval_durations_seconds: list[float],
     popen_factory: Callable[..., Any] = subprocess.Popen,
     poll_interval_s: float = _PARALLEL_POLL_INTERVAL_S,
 ) -> tuple[dict[str, Any] | None, str | None]:
@@ -2871,6 +2936,15 @@ def _run_fitness_phase_parallel(
                     continue
 
                 # Success branch — mirror the serial loop's success body.
+                # Phase EJ.6: feed the run-scope budget-fit estimator with
+                # this real games-played eval's wall-clock. Null-diff screens
+                # (0 games) route through the crash-payload handler above and
+                # `continue` before here; crashes/malformed likewise — so only
+                # real fitness evals reach this append, matching the serial
+                # path (one accumulator, one source of truth).
+                eval_durations_seconds.append(
+                    time_fn() - dispatched.started_at
+                )
                 fitness_results[dispatched.idx] = result
                 _apply_fitness_outcome(
                     per_item_state, dispatched.idx, result
@@ -3664,6 +3738,14 @@ def run_loop(
     # range estimate of remaining wall-clock for the run.
     gen_durations_seconds: list[float] = []
 
+    # Phase EJ.6: run-scope per-eval wall-clock history — one float (seconds)
+    # appended for every real games-played fitness eval, from BOTH the serial
+    # and the parallel dispatch paths (one accumulator, one source of truth).
+    # Null-diff screens (0 games) and crashes are excluded so they can't poison
+    # the mean. --budget-fit reads its running mean to size each generation's
+    # fitness dispatch to the remaining budget; empty (generation 1) = no trim.
+    eval_durations_seconds: list[float] = []
+
     def _write_state(
         *,
         status: str,
@@ -3972,6 +4054,74 @@ def run_loop(
                 lineage_head,
             )
 
+        # --- Budget-fit trim (Phase EJ Step EJ.6) ---
+        # A generation that starts with insufficient remaining --hours budget
+        # otherwise dispatches its FULL active pool and dies mid-fitness at the
+        # _budget_exceeded break, stranding the un-scored tail. Behind
+        # --budget-fit, trim the active set (keeping the lowest-RANK imps — the
+        # pool is NOT index-ordered once EJ.5 appends higher indexes, so we sort
+        # by rank, not index) to what actually completes: fitness for the kept
+        # imps plus a reserve for one regression eval and (in baseline/both
+        # mode) the baseline gauntlet, inside the remaining budget. Self-
+        # calibrating: a no-op on generation 1 (eval_durations_seconds empty)
+        # and when --hours is 0 (no budget); NEVER trims below 1. Default OFF
+        # leaves active_idxs untouched → dispatch is byte-identical.
+        #
+        # Concurrency note: per_eval_s is per-worker wall-clock, and the trim
+        # models the kept imps as running SERIALLY. Under --concurrency C>1 the
+        # real fitness phase finishes ~C× faster, so the trim is CONSERVATIVE —
+        # it keeps up to ~C× fewer imps than the budget could actually afford.
+        # That errs safe (a trimmed generation never strands) but leaves budget
+        # unused at high concurrency; a future refinement could divide the
+        # fitness portion of the estimate by the effective worker count.
+        if (
+            getattr(args, "budget_fit", False)
+            and eval_durations_seconds
+            and args.hours > 0
+        ):
+            per_eval_s = sum(eval_durations_seconds) / len(
+                eval_durations_seconds
+            )
+            if per_eval_s > 0:
+                remaining_s = args.hours * 3600 - (time_fn() - start_monotonic)
+                kept_idxs, dropped, reserve_s = _budget_fit_active(
+                    active_idxs,
+                    pool,
+                    per_eval_s=per_eval_s,
+                    remaining_s=remaining_s,
+                    games_per_eval=args.games_per_eval,
+                    gauntlet_baselines=(
+                        len(_gauntlet_baselines)
+                        if fitness_mode in ("baseline", "both")
+                        else 0
+                    ),
+                )
+                if dropped > 0:
+                    active_idxs = kept_idxs
+                    # Phase name uses an underscore (like pool_dedup /
+                    # panel_floor); the multi-word OUTCOME is hyphenated;
+                    # outcome sits penultimate, right before reason — matching
+                    # the sibling inline-row idiom. No silent caps: the dropped
+                    # count is logged.
+                    append_phase_result(
+                        args.results_path,
+                        {
+                            "phase": "budget_fit",
+                            "generation": generation_index,
+                            "dropped": dropped,
+                            "fit_count": len(active_idxs),
+                            "remaining_s": round(remaining_s, 1),
+                            "per_eval_s": round(per_eval_s, 1),
+                            "outcome": "budget-fit",
+                            "reason": (
+                                f"trimmed {dropped} imp(s) to fit remaining "
+                                f"budget {remaining_s:.0f}s at "
+                                f"~{per_eval_s:.0f}s/eval "
+                                f"(reserve {reserve_s:.0f}s)"
+                            ),
+                        },
+                    )
+
         _log.info(
             "evolve: generation %d — %d active imps, parent=%s",
             generation_index,
@@ -4044,6 +4194,12 @@ def run_loop(
                         )
                     _current_round_writer(_p)
 
+                # Phase EJ.6: bracket the eval with the injectable clock so the
+                # budget-fit estimator learns real per-eval wall-clock. dt is
+                # only recorded on the success path below (a null-diff screen or
+                # a crash `continue`s before the append, so 0-game/failed evals
+                # never poison the mean).
+                _eval_t0 = time_fn()
                 try:
                     result = run_fitness_fn(
                         parent_current,
@@ -4113,6 +4269,11 @@ def run_loop(
                     )
                     continue
 
+                # Phase EJ.6: real games-played eval completed — record its
+                # wall-clock into the run-scope budget-fit estimator (same
+                # accumulator the parallel path feeds).
+                eval_durations_seconds.append(time_fn() - _eval_t0)
+
                 fitness_results[idx] = result
                 _apply_fitness_outcome(per_item_state, idx, result)
                 fitness_counts[result.bucket] += 1
@@ -4166,6 +4327,7 @@ def run_loop(
                 time_fn=time_fn,
                 start_monotonic=start_monotonic,
                 state_dir=args.results_path.parent,
+                eval_durations_seconds=eval_durations_seconds,
             )
             if parallel_snap is not None:
                 last_result_snap = parallel_snap

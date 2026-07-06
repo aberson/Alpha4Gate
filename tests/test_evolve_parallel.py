@@ -437,6 +437,7 @@ def _invoke_dispatcher(
         time_fn=time_fn,
         start_monotonic=0.0,
         state_dir=state_dir if state_dir is not None else args.results_path.parent,
+        eval_durations_seconds=[],
         popen_factory=factory,
         poll_interval_s=poll_interval_s,
     )
@@ -1307,6 +1308,7 @@ def test_parallel_success_writes_pool_state_and_run_state(
         time_fn=_clock,
         start_monotonic=0.0,
         state_dir=tmp_path,
+        eval_durations_seconds=[],
         popen_factory=factory,
         poll_interval_s=0.0,
     )
@@ -1749,6 +1751,7 @@ def test_worker_null_diff_second_consecutive_evicts(
         time_fn=_clock,
         start_monotonic=0.0,
         state_dir=args.results_path.parent,
+        eval_durations_seconds=[],
         popen_factory=factory,
         poll_interval_s=0.0,
     )
@@ -1756,6 +1759,126 @@ def test_worker_null_diff_second_consecutive_evicts(
     assert per_item_state[0].consecutive_null_diffs == 2
     assert per_item_state[0].status == cli._EVICTED
     assert per_item_state[0].retry_count == 0
+
+
+# ---------------------------------------------------------------------------
+# EJ.6: the parallel path feeds the SAME budget-fit estimator as the serial
+# path, with 0-game screens and crashes excluded (one source of truth).
+# ---------------------------------------------------------------------------
+
+
+def _run_parallel_one(
+    cli: ModuleType,
+    *,
+    args: argparse.Namespace,
+    pool: list[Improvement],
+    plan: _FakeWorkerPlan,
+    durations: list[float],
+    per_item_state: dict[int, Any] | None = None,
+) -> dict[str, int]:
+    """Dispatch a single fake worker and thread ``durations`` in so the test
+    can inspect what the EJ.6 estimator recorded. Returns fitness_counts."""
+    if per_item_state is None:
+        per_item_state = _make_per_item_state(cli, len(pool))
+    fitness_results: dict[int, Any] = {}
+    fitness_counts = {"pass": 0, "close": 0, "fail": 0, "crash": 0}
+    factory = _FakePopenFactory(cli, [plan])
+    clock = {"t": 0.0}
+
+    def _clock() -> float:
+        clock["t"] += 1.0
+        return clock["t"]
+
+    cli._run_fitness_phase_parallel(
+        active_idxs=list(range(len(pool))),
+        pool=pool,
+        per_item_state=per_item_state,
+        fitness_results=fitness_results,
+        fitness_counts=fitness_counts,
+        parent_current="v0",
+        parent_start="v0",
+        pool_generated_at=cli._now_iso(),
+        generation_index=1,
+        generations_completed=0,
+        generations_promoted=0,
+        args=args,
+        run_id="abc12345",
+        write_state_fn=lambda **k: None,
+        time_fn=_clock,
+        start_monotonic=0.0,
+        state_dir=args.results_path.parent,
+        eval_durations_seconds=durations,
+        popen_factory=factory,
+        poll_interval_s=0.0,
+    )
+    return fitness_counts
+
+
+def test_parallel_null_diff_does_not_feed_estimator(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """EJ.6 poisoning guard (parallel): a null-diff worker plays 0 games and
+    MUST NOT append to the shared budget-fit estimator — a leaked 0-duration
+    entry would drag per_eval_s down, under-trim, and reintroduce the strand."""
+    args = _build_args(tmp_path, concurrency=2, screen_null_diff=True)
+    pool = [_make_imp("imp-null", rank=1)]
+    payload = {
+        "crash": True,
+        "error_type": DevApplyNullDiffError.__name__,
+        "error_message": "no semantic .py change after 3 attempt(s)",
+        "traceback": "…",
+    }
+    durations: list[float] = []
+    _run_parallel_one(
+        cli,
+        args=args,
+        pool=pool,
+        plan=_FakeWorkerPlan(
+            returncode=1, write_result=False, crash_payload=payload
+        ),
+        durations=durations,
+    )
+    assert durations == []
+
+
+def test_parallel_crash_does_not_feed_estimator(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """EJ.6 poisoning guard (parallel): a crashed worker (nonzero exit, no
+    result) played no games and MUST NOT feed the budget-fit estimator."""
+    args = _build_args(tmp_path, concurrency=2)
+    pool = [_make_imp("imp-crash", rank=1)]
+    durations: list[float] = []
+    counts = _run_parallel_one(
+        cli,
+        args=args,
+        pool=pool,
+        plan=_FakeWorkerPlan(returncode=1, write_result=False),
+        durations=durations,
+    )
+    assert counts["crash"] == 1
+    assert durations == []
+
+
+def test_parallel_success_feeds_estimator_once(
+    cli: ModuleType, tmp_path: Path
+) -> None:
+    """EJ.6 (parallel): a real games-played success appends exactly one
+    positive per-eval duration to the shared estimator — the same accumulator
+    the serial path feeds (one source of truth, both paths converge)."""
+    args = _build_args(tmp_path, concurrency=2)
+    pool = [_make_imp("imp-pass", rank=1)]
+    durations: list[float] = []
+    counts = _run_parallel_one(
+        cli,
+        args=args,
+        pool=pool,
+        plan=_FakeWorkerPlan(bucket="pass"),
+        durations=durations,
+    )
+    assert counts["pass"] == 1
+    assert len(durations) == 1
+    assert durations[0] > 0.0
 
 
 # ---------------------------------------------------------------------------
