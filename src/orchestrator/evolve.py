@@ -61,7 +61,7 @@ import re
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -83,6 +83,7 @@ __all__ = [
     "RegressionResult",
     "apply_improvement",
     "generate_pool",
+    "normalize_prior_title",
     "run_baseline_gauntlet",
     "run_fitness_eval",
     "run_regression_eval",
@@ -1453,13 +1454,48 @@ def _rewrite_version_paths(text: str, parent: str) -> str:
     return _VERSION_PATH_RE.sub(f"bots/{parent}/", text)
 
 
-def _format_priors_block(parent: str, priors_path: Path) -> str:
+def normalize_prior_title(title: object) -> str:
+    """Canonical form for matching prior-improvement titles.
+
+    ONE source of truth for prior-title normalization: both the exclusion
+    filter in :func:`_format_priors_block` and
+    ``scripts/curate_evolve_favorites.py``'s ``--exclude-promoted`` pass
+    import this. Do NOT re-implement the normalization anywhere else — a
+    second copy would silently drift.
+
+    Lower-cases and collapses every run of non-alphanumeric characters to a
+    single space, so a title reformatted between runs (capitalization or
+    stray-punctuation drift) still matches the promoted-title record.
+
+    Never raises: ``None`` / non-``str`` input (e.g. a schema-drifted
+    favorite whose ``"title"`` is ``null``) coerces to ``""`` rather than
+    blowing up the exclusion filter's ``"Never raises"`` contract.
+    """
+    if not isinstance(title, str):
+        return ""
+    return re.sub(r"[^a-z0-9]+", " ", title.casefold()).strip()
+
+
+def _format_priors_block(
+    parent: str,
+    priors_path: Path,
+    exclude_titles: Collection[str] | None = None,
+) -> str:
     """Format curated favorites into a prompt section.
 
     Returns the block (with leading + trailing newlines) ready to drop
     into the ``{priors_block}`` placeholder, OR an empty string if the
     file is missing, malformed, or has no entries. Never raises — a
     bad priors file should not abort pool generation.
+
+    ``exclude_titles`` (default ``None`` → byte-identical to prior
+    behavior) is a collection of titles to drop from the rendered block.
+    Matching is normalized via :func:`normalize_prior_title` (case- and
+    punctuation-insensitive). The caller (scripts/evolve.py's
+    ``--priors-exclude-promoted``) passes titles already promoted in the
+    current run so verbatim re-proposals of baked-in work are suppressed.
+    This only trims what is rendered — it never affects the pool count
+    generate_pool returns, so it cannot re-enter the short-pool retry.
     """
     try:
         payload = json.loads(priors_path.read_text(encoding="utf-8"))
@@ -1475,17 +1511,32 @@ def _format_priors_block(parent: str, priors_path: Path) -> str:
     if not favorites:
         return ""
 
+    excluded_norm = (
+        {normalize_prior_title(t) for t in exclude_titles}
+        if exclude_titles
+        else set()
+    )
+    if excluded_norm:
+        favorites = [
+            fav
+            for fav in favorites
+            if normalize_prior_title(fav.get("title", "(untitled)"))
+            not in excluded_norm
+        ]
+        if not favorites:
+            return ""
+
     lines: list[str] = [
         "",
         "## Prior high-performers (reference, NOT mandatory)",
         "",
         (
             "These improvements have passed fitness against this parent or "
-            "an ancestor in past evolve runs. You may include them verbatim, "
-            "refine them, propose stronger alternatives, or set them aside "
-            "if you have better ideas. They are listed for context, not as "
-            "templates to copy. Path references have been rewritten to "
-            f"target bots/{parent}/."
+            "an ancestor in past evolve runs. Use them as reference only — "
+            "refine or supersede them; do NOT re-propose promoted work "
+            "verbatim, since verbatim re-proposals of already-promoted "
+            "improvements are no-ops that waste evaluation games. Path "
+            f"references have been rewritten to target bots/{parent}/."
         ),
         "",
     ]
@@ -1593,6 +1644,7 @@ def generate_pool(
     on_pool_gen_event: Callable[[dict[str, Any]], None] | None = None,
     skip_mirror: bool = False,
     prior_imps_path: Path | None = None,
+    exclude_titles: Collection[str] | None = None,
 ) -> list[Improvement]:
     """Generate a pool of improvements via mirror self-play + Claude advisor.
 
@@ -1624,6 +1676,13 @@ def generate_pool(
         Claude can refine them, propose alternatives, or set them aside.
         Path references inside each prior are rewritten to target the
         current parent. Missing or malformed file is logged and skipped.
+    exclude_titles:
+        Optional collection of improvement titles to drop from the priors
+        block (matched normalized, case/punctuation-insensitive). Used by
+        scripts/evolve.py's ``--priors-exclude-promoted`` to suppress
+        already-promoted work. Default ``None`` → no exclusion (the priors
+        block is byte-identical to the un-filtered render). Only trims the
+        rendered prompt; never changes the returned pool size.
     """
     if run_batch_fn is None:
         from orchestrator import selfplay
@@ -1691,7 +1750,7 @@ def generate_pool(
         )
 
     priors_block = (
-        _format_priors_block(parent, prior_imps_path)
+        _format_priors_block(parent, prior_imps_path, exclude_titles)
         if prior_imps_path is not None
         else ""
     )

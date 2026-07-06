@@ -17,8 +17,10 @@ from orchestrator.evolve import (
     FitnessResult,
     Improvement,
     RegressionResult,
+    _format_priors_block,
     apply_improvement,
     generate_pool,
+    normalize_prior_title,
     run_fitness_eval,
     run_regression_eval,
 )
@@ -2088,6 +2090,275 @@ class TestGeneratePool:
 
         assert len(pool) == 5
         assert "## Prior high-performers" not in claude.prompts[0]
+
+    def test_exclude_titles_drops_promoted_from_prompt(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``exclude_titles`` removes an already-promoted prior from the prompt.
+
+        Integration through generate_pool (the production caller of
+        _format_priors_block): the excluded title must be absent from the
+        actual Claude prompt, while a sibling prior survives.
+        """
+        self._setup(tmp_path, monkeypatch)
+        priors_file = tmp_path / "favorites.json"
+        priors_file.write_text(
+            json.dumps(
+                {
+                    "favorites": [
+                        {
+                            "title": "Splash-readiness",
+                            "type": "dev",
+                            "description": "",
+                            "principle_ids": ["§3"],
+                            "expected_impact": "",
+                            "concrete_change": "Warp HTs before engaging.",
+                            "files_touched": ["bots/v0/tactics.py"],
+                        },
+                        {
+                            "title": "Chrono Boost sequencing",
+                            "type": "dev",
+                            "description": "",
+                            "principle_ids": ["§7"],
+                            "expected_impact": "",
+                            "concrete_change": "Chrono the Nexus first.",
+                            "files_touched": ["bots/v0/economy.py"],
+                        },
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        claude = _ScriptedClaude([json.dumps(_well_formed_pool(5))])
+        batch = _BatchRecorder([(1, 1, 1)])
+
+        generate_pool(
+            "v0",
+            mirror_games=3,
+            pool_size=5,
+            run_batch_fn=batch,
+            claude_fn=claude,
+            prior_imps_path=priors_file,
+            # Normalized match (case/punctuation drift) still excludes.
+            exclude_titles={"splash readiness"},
+        )
+
+        prompt = claude.prompts[0]
+        assert "## Prior high-performers" in prompt
+        assert "Splash-readiness" not in prompt
+        assert "Chrono Boost sequencing" in prompt
+
+    def test_exclude_titles_never_shrinks_pool(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Excluding ALL priors trims only the block — pool size is untouched.
+
+        THE load-bearing invariant of Phase EJ: exclusion must never re-enter
+        generate_pool's short-pool retry/raise path (an unattended overnight
+        soak must not abort). Excluding every prior empties the priors block;
+        the returned pool must still be exactly ``pool_size`` and Claude must
+        be called exactly once (no top-up retry fired).
+        """
+        self._setup(tmp_path, monkeypatch)
+        priors_file = tmp_path / "favorites.json"
+        priors_file.write_text(
+            json.dumps(
+                {
+                    "favorites": [
+                        {
+                            "title": "Splash-readiness",
+                            "type": "dev",
+                            "description": "",
+                            "principle_ids": ["§3"],
+                            "expected_impact": "",
+                            "concrete_change": "Warp HTs before engaging.",
+                            "files_touched": ["bots/v0/tactics.py"],
+                        },
+                        {
+                            "title": "Chrono Boost sequencing",
+                            "type": "dev",
+                            "description": "",
+                            "principle_ids": ["§7"],
+                            "expected_impact": "",
+                            "concrete_change": "Chrono the Nexus first.",
+                            "files_touched": ["bots/v0/economy.py"],
+                        },
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        claude = _ScriptedClaude([json.dumps(_well_formed_pool(5))])
+        batch = _BatchRecorder([(1, 1, 1)])
+
+        pool = generate_pool(
+            "v0",
+            mirror_games=3,
+            pool_size=5,
+            run_batch_fn=batch,
+            claude_fn=claude,
+            prior_imps_path=priors_file,
+            exclude_titles={"Splash-readiness", "Chrono Boost sequencing"},
+        )
+
+        # Pool is full despite the priors block being fully excluded...
+        assert len(pool) == 5
+        # ...and the short-pool retry never fired.
+        assert claude.call_count == 1
+        # The rendered block is empty (no bare header), proving the exclusion
+        # touched the priors section, not the pool.
+        assert "## Prior high-performers" not in claude.prompts[0]
+
+
+# Reworded priors sentence (Phase EJ Step EJ.1, change (d)) — the ONE
+# deliberate default-visible change in Phase EJ. Captured here as the golden.
+_PRIORS_SENTENCE_V5 = (
+    "These improvements have passed fitness against this parent or "
+    "an ancestor in past evolve runs. Use them as reference only — "
+    "refine or supersede them; do NOT re-propose promoted work "
+    "verbatim, since verbatim re-proposals of already-promoted "
+    "improvements are no-ops that waste evaluation games. Path "
+    "references have been rewritten to target bots/v5/."
+)
+
+
+def _write_two_favorites(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "favorites": [
+                    {
+                        "title": "Splash-readiness",
+                        "type": "dev",
+                        "description": "",
+                        "principle_ids": ["§3", "§29"],
+                        "expected_impact": "",
+                        "concrete_change": (
+                            "Warp in High Templars before the main engagement."
+                        ),
+                        "files_touched": ["bots/v3/tactics.py"],
+                        "track_record": {
+                            "fitness_observations": [
+                                {"score": "4-1"},
+                                {"score": "3-2"},
+                            ],
+                        },
+                    },
+                    {
+                        "title": "Chrono Boost sequencing",
+                        "type": "dev",
+                        "description": "",
+                        "principle_ids": ["§7"],
+                        "expected_impact": "",
+                        "concrete_change": "Chrono the Nexus first.",
+                        "files_touched": ["bots/v3/economy.py"],
+                        "track_record": {
+                            "fitness_observations": [{"score": "5-0"}],
+                        },
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+class TestFormatPriorsBlock:
+    """Block-level tests for _format_priors_block exclusion + reworded copy."""
+
+    def test_none_exclude_matches_reworded_golden(self, tmp_path: Path) -> None:
+        """exclude_titles=None → byte-identical block, with the NEW wording.
+
+        The golden is captured with the anti-verbatim rewording deliberately
+        baked in (change (d)). The old "You may include them verbatim"
+        sentence must be gone.
+        """
+        priors_file = tmp_path / "favorites.json"
+        priors_file.write_text(
+            json.dumps(
+                {
+                    "favorites": [
+                        {
+                            "title": "Splash-readiness",
+                            "type": "dev",
+                            "description": "",
+                            "principle_ids": ["§3", "§29"],
+                            "expected_impact": "",
+                            "concrete_change": (
+                                "Warp in High Templars before the main "
+                                "engagement."
+                            ),
+                            "files_touched": ["bots/v3/tactics.py"],
+                            "track_record": {
+                                "fitness_observations": [
+                                    {"score": "4-1"},
+                                    {"score": "3-2"},
+                                ],
+                            },
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        block = _format_priors_block("v5", priors_file)
+
+        expected = "\n".join(
+            [
+                "",
+                "## Prior high-performers (reference, NOT mandatory)",
+                "",
+                _PRIORS_SENTENCE_V5,
+                "",
+                "### Splash-readiness",
+                "- principles: §3, §29",
+                "- track record: best 4/5 in 2 fitness observations",
+                "- files_touched: ['bots/v5/tactics.py']",
+                "- summary: Warp in High Templars before the main engagement.",
+                "",
+            ]
+        )
+        assert block == expected
+        assert "You may include them verbatim" not in block
+        assert "do NOT re-propose promoted work" in block
+
+    def test_exclude_titles_drops_matching_entry(self, tmp_path: Path) -> None:
+        priors_file = tmp_path / "favorites.json"
+        _write_two_favorites(priors_file)
+
+        block = _format_priors_block(
+            "v5", priors_file, exclude_titles={"Splash-readiness"}
+        )
+        assert "### Splash-readiness" not in block
+        assert "### Chrono Boost sequencing" in block
+
+    def test_exclude_titles_normalized_match(self, tmp_path: Path) -> None:
+        """Case- and punctuation-insensitive exclusion (via shared helper)."""
+        priors_file = tmp_path / "favorites.json"
+        _write_two_favorites(priors_file)
+
+        # Different case + punctuation than the stored "Splash-readiness".
+        block = _format_priors_block(
+            "v5", priors_file, exclude_titles={"  SPLASH READINESS!!  "}
+        )
+        assert normalize_prior_title("  SPLASH READINESS!!  ") == (
+            normalize_prior_title("Splash-readiness")
+        )
+        assert "### Splash-readiness" not in block
+        assert "### Chrono Boost sequencing" in block
+
+    def test_exclude_all_returns_empty(self, tmp_path: Path) -> None:
+        """Excluding every favorite yields an empty block (no bare header)."""
+        priors_file = tmp_path / "favorites.json"
+        _write_two_favorites(priors_file)
+
+        block = _format_priors_block(
+            "v5",
+            priors_file,
+            exclude_titles={"Splash-readiness", "Chrono Boost sequencing"},
+        )
+        assert block == ""
 
 
 class TestDefaultClaudeFn:

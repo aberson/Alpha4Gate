@@ -263,6 +263,18 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--priors-exclude-promoted",
+        action="store_true",
+        help=(
+            "Accumulate the titles of improvements promoted (and survived "
+            "regression) in THIS run and drop them from the priors block on "
+            "subsequent pool refreshes — prevents re-proposing work already "
+            "baked into the current parent (the documented Splash-readiness "
+            "leak). No effect unless a priors file is active. Default off "
+            "(the priors block is unchanged)."
+        ),
+    )
+    parser.add_argument(
         "--post-training-cycles",
         type=int,
         default=0,
@@ -3451,6 +3463,11 @@ def run_loop(
     # --- Generation loop ---
     generations_completed = 0
     generations_promoted = 0
+    # Titles of imps promoted (and survived regression) so far THIS run.
+    # Consumed only when --priors-exclude-promoted is set (see the pool
+    # refresh below); accumulated unconditionally — a local set with no
+    # observable effect otherwise, so the default path stays byte-identical.
+    promoted_titles_in_run: set[str] = set()
     generation_entries: list[dict[str, Any]] = []
     stop_reason = "pool-exhausted"
     last_result_snap: dict[str, Any] | None = None
@@ -4064,6 +4081,12 @@ def run_loop(
                 else:
                     regression_outcome_label = "pass"
                     generations_promoted += 1
+                    # This stack survived the regression gate — record its
+                    # titles so --priors-exclude-promoted can drop them from
+                    # later pool-refresh priors (no re-proposing baked-in work).
+                    promoted_titles_in_run.update(
+                        pool[idx].title for idx in promoted_imp_idxs
+                    )
 
             write_pool_state(
                 args.pool_path,
@@ -4115,6 +4138,18 @@ def run_loop(
                     fresh_kwargs["run_batch_fn"] = run_batch_fn
                 if priors_path is not None:
                     fresh_kwargs["prior_imps_path"] = priors_path
+                    # --priors-exclude-promoted: drop this run's promoted
+                    # titles from the refresh priors block. Accept-short —
+                    # this only trims the (soft) priors section, never the
+                    # requested pool_size, so generate_pool's short-pool
+                    # retry/raise path is untouched.
+                    if (
+                        getattr(args, "priors_exclude_promoted", False)
+                        and promoted_titles_in_run
+                    ):
+                        fresh_kwargs["exclude_titles"] = set(
+                            promoted_titles_in_run
+                        )
                 fresh_imps = generate_pool_fn(parent_current, **fresh_kwargs)
             except Exception as exc:
                 _log.warning(

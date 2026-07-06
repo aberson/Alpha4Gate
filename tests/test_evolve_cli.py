@@ -1092,6 +1092,116 @@ def test_pool_refresh_tops_up_to_pool_size(
 
 
 # ---------------------------------------------------------------------------
+# 9b. --priors-exclude-promoted wiring (Phase EJ Step EJ.1)
+# ---------------------------------------------------------------------------
+
+
+def _write_priors(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "favorites": [
+                    {
+                        "title": "Splash-readiness",
+                        "type": "dev",
+                        "description": "",
+                        "principle_ids": ["§3"],
+                        "expected_impact": "",
+                        "concrete_change": "Warp HTs before engaging.",
+                        "files_touched": ["bots/v0/tactics.py"],
+                    },
+                    {
+                        "title": "Chrono Boost sequencing",
+                        "type": "dev",
+                        "description": "",
+                        "principle_ids": ["§7"],
+                        "expected_impact": "",
+                        "concrete_change": "Chrono the Nexus first.",
+                        "files_touched": ["bots/v0/economy.py"],
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _drive_promote_then_refresh(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    exclude_flag: bool,
+) -> dict[str, Any]:
+    """Run one promote+survive generation; capture the refresh call's kwargs.
+
+    The initial pool holds a single dev imp titled "Splash-readiness". It
+    passes fitness, stack-applies to v1, and survives regression — so the
+    run's promoted-title set becomes {"Splash-readiness"}. This asserts the
+    PRODUCTION WIRING only: whether run_loop threads that promoted title
+    into the pool-refresh call as ``exclude_titles``. The rendered-prompt
+    effect is covered by TestFormatPriorsBlock in tests/test_evolve.py — not
+    re-tested here (the stub would only be re-testing the helper it calls).
+    """
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    priors_file = tmp_path / "favorites.json"
+    _write_priors(priors_file)
+
+    args = _build_args(tmp_path, pool_size=1, no_commit=True)
+    args.priors_path = priors_file
+    args.priors_exclude_promoted = exclude_flag
+
+    initial_pool = [_make_imp(title="Splash-readiness", rank=1, type_="dev")]
+    fitness = _ScriptedFitness(["pass"])
+    stack_apply = _ScriptedStackApply([(True, "v1")])
+    regression = _ScriptedRegression([False])  # not rolled back → survives
+
+    captured: dict[str, Any] = {}
+
+    def generate(parent: str, **kwargs: Any) -> list[Improvement]:
+        if kwargs.get("skip_mirror"):
+            captured["refresh_kwargs"] = kwargs
+            return []  # end the run on pool-exhaustion
+        return initial_pool
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=generate,
+        run_fitness_fn=fitness,
+        stack_apply_fn=stack_apply,
+        run_regression_fn=regression,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+    assert "refresh_kwargs" in captured, "pool refresh never fired"
+    return captured
+
+
+def test_priors_exclude_promoted_threads_title_to_refresh(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Flag ON: run_loop passes the in-run promoted title as exclude_titles."""
+    captured = _drive_promote_then_refresh(
+        cli, tmp_path, monkeypatch, exclude_flag=True
+    )
+    assert captured["refresh_kwargs"].get("exclude_titles") == {
+        "Splash-readiness"
+    }
+    # prior_imps_path is still threaded (exclusion trims the block, not priors).
+    assert captured["refresh_kwargs"].get("prior_imps_path") is not None
+
+
+def test_priors_exclude_promoted_off_omits_exclude_titles(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Default (flag OFF): no exclude_titles kwarg reaches the refresh call."""
+    captured = _drive_promote_then_refresh(
+        cli, tmp_path, monkeypatch, exclude_flag=False
+    )
+    assert "exclude_titles" not in captured["refresh_kwargs"]
+
+
+# ---------------------------------------------------------------------------
 # 10. Commit helper shape
 # ---------------------------------------------------------------------------
 
