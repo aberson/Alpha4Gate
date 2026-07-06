@@ -67,6 +67,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from orchestrator.contracts import SelfPlayRecord
+from orchestrator.gate_stats import one_sided_rollback
 from orchestrator.registry import (
     _repo_root,
     current_version,
@@ -685,6 +686,56 @@ def run_fitness_eval(
 # ---------------------------------------------------------------------------
 
 
+def _regression_stop_locked(
+    *,
+    rule: str,
+    wins_new: int,
+    wins_prior: int,
+    remaining: int,
+    majority_needed: int,
+) -> bool:
+    """Return True when the rollback/keep verdict can no longer change.
+
+    Early-stop is sound only when the final verdict is INVARIANT under every
+    possible completion of the *remaining* games — where each remaining game
+    may be a new-win, a prior-win, or a draw (draws keep ``decided`` low,
+    which matters for the one-sided rule's ``min_decided`` floor).
+
+    ``rule == "majority"`` — locked once either side reaches strict majority
+    (``majority_needed``). Byte-identical to the pre-EJ.3 early-stop
+    (``max(wins_new, wins_prior) >= majority_needed``); *remaining* is unused.
+
+    ``rule == "one-sided"`` — the verdict is a function of ``P(worse)`` (which
+    is monotone: falls with new-wins, rises with prior-wins) and of ``decided``
+    against ``min_decided`` (minimized by the all-draws completion). Because
+    the p-check and the decided-check are each separately extremal at a single
+    completion, the verdict is:
+
+    * locked to ROLLBACK iff the candidate's most-favorable completion (all
+      remaining → new-wins, ``wins_new + remaining`` vs ``wins_prior``) still
+      rolls back AND the all-draws completion (``wins_new`` vs ``wins_prior``,
+      which minimizes ``decided``) still rolls back. The former pins the
+      binding p-check; the latter pins the binding ``min_decided`` check.
+    * locked to KEEP iff the candidate's least-favorable completion (all
+      remaining → prior-wins, ``wins_new`` vs ``wins_prior + remaining``) still
+      keeps AND the all-draws completion still keeps. The former pins the
+      max-p / max-decided case; the latter is implied but included so the stop
+      stays conservative if the constants change.
+
+    When unsure whether a tighter rule is sound this deliberately prefers FEWER
+    early stops — correctness dominates the handful of games saved.
+    """
+    if rule == "majority":
+        return max(wins_new, wins_prior) >= majority_needed
+    # one-sided
+    all_draws_rollback, _ = one_sided_rollback(wins_new, wins_prior)
+    best_case_rollback, _ = one_sided_rollback(wins_new + remaining, wins_prior)
+    worst_case_rollback, _ = one_sided_rollback(wins_new, wins_prior + remaining)
+    rollback_locked = best_case_rollback and all_draws_rollback
+    keep_locked = (not worst_case_rollback) and (not all_draws_rollback)
+    return rollback_locked or keep_locked
+
+
 def run_regression_eval(
     new_parent: str,
     prior_parent: str,
@@ -695,11 +746,12 @@ def run_regression_eval(
     hard_timeout: float = 2700.0,
     run_batch_fn: Callable[..., list[SelfPlayRecord]] | None = None,
     on_event: Callable[[dict[str, Any]], None] | None = None,
+    rule: str = "majority",
 ) -> RegressionResult:
     """Play *new_parent* vs *prior_parent* for *games* games.
 
-    No snapshots — both versions are already on disk. On regression (new
-    parent fails the strict-majority gate), ``rolled_back=True`` is
+    No snapshots — both versions are already on disk. On regression, the new
+    parent fails the gate selected by *rule* and ``rolled_back=True`` is
     returned; the caller is responsible for BOTH the git revert of the
     promote commit AND restoring ``bots/current/current.txt`` to
     *prior_parent*. This primitive deliberately does NOT touch the
@@ -709,10 +761,30 @@ def run_regression_eval(
     revert (``--no-commit`` dev runs, or a revert-failure fallback) it
     must call ``_restore_pointer(prior_parent)`` explicitly.
 
+    *rule* selects the rollback gate (Phase EJ.3):
+
+    * ``"majority"`` (default, byte-identical to the historical behavior):
+      roll back when ``wins_new < games // 2 + 1`` (strict majority). Draws /
+      crashes count against the new parent — they shrink the decided count
+      while the bar stays fixed.
+    * ``"one-sided"``: roll back only on positive evidence of harm — when the
+      posterior probability the new parent is truly worse than a coin flip is
+      ``>= gate_stats.ROLLBACK_THRESHOLD`` (see :func:`one_sided_rollback`).
+      A near-empty sample (``< gate_stats.MIN_DECIDED`` decided) fails open.
+
+    The early-stop is DERIVED from *rule* (see :func:`_regression_stop_locked`)
+    so it only halts when the verdict is already invariant under every
+    completion of the remaining games.
+
     Progress events:
       - ``{"type": "regression_start", "new_parent", "prior_parent", "total"}``
       - ``{"type": "regression_game_end", "wins_new", "wins_prior", "games_played"}``
     """
+    if rule not in ("majority", "one-sided"):
+        raise ValueError(
+            f"unknown regression rule {rule!r}; "
+            f"expected 'majority' or 'one-sided'"
+        )
     if run_batch_fn is None:
         from orchestrator import selfplay
 
@@ -741,19 +813,30 @@ def run_regression_eval(
             },
         )
 
-    # Early-stop mirrors run_fitness_eval: once either side reaches strict
-    # majority, the rolled_back outcome is locked — saves ~2-3 games per
-    # regression. Wired unconditionally so the tally runs without on_event.
+    # Early-stop is DERIVED from the active rule: once the rollback/keep
+    # verdict is invariant under every completion of the remaining games it is
+    # locked and we halt — saving games. ``needed`` is the strict-majority bar
+    # (only consulted by rule="majority"). ``played`` counts ALL games
+    # including draws so ``remaining`` is correct for the one-sided floor.
+    # Wired unconditionally so the tally runs without on_event.
     needed = games // 2 + 1
     live = [0, 0]
+    played = [0]
     stop_event = threading.Event()
 
     def _on_game_end(record: SelfPlayRecord) -> None:
+        played[0] += 1
         if record.winner == new_parent:
             live[0] += 1
         elif record.winner == prior_parent:
             live[1] += 1
-        if max(live) >= needed:
+        if _regression_stop_locked(
+            rule=rule,
+            wins_new=live[0],
+            wins_prior=live[1],
+            remaining=games - played[0],
+            majority_needed=needed,
+        ):
             stop_event.set()
         if on_event is not None:
             _safe_emit(
@@ -780,21 +863,30 @@ def run_regression_eval(
         **batch_kwargs,
     )
     wins_new, wins_prior = _count_wins(record, new_parent, prior_parent)
-    rolled_back = wins_new < needed
-
-    if rolled_back:
-        # NOTE: deliberately NOT calling _restore_pointer here. The caller
-        # (scripts/evolve.py) must run ``git revert`` against a clean
-        # working tree; the revert commit restores current.txt via its
+    if rule == "majority":
+        rolled_back = wins_new < needed
+        # NOTE (rollback branch): deliberately NOT calling _restore_pointer
+        # here. The caller (scripts/evolve.py) must run ``git revert`` against
+        # a clean working tree; the revert commit restores current.txt via its
         # reverse diff. See the docstring for the full contract.
+        if rolled_back:
+            reason = (
+                f"regression rollback: new {new_parent} "
+                f"{wins_new}-{wins_prior} prior {prior_parent} "
+                f"(needed {needed}); caller must revert"
+            )
+        else:
+            reason = (
+                f"regression pass: new {new_parent} {wins_new}-{wins_prior} "
+                f"prior {prior_parent}"
+            )
+    else:  # one-sided
+        rolled_back, reason_detail = one_sided_rollback(wins_new, wins_prior)
+        verb = "rollback" if rolled_back else "pass"
+        tail = "; caller must revert" if rolled_back else ""
         reason = (
-            f"regression rollback: new {new_parent} {wins_new}-{wins_prior} "
-            f"prior {prior_parent} (needed {needed}); caller must revert"
-        )
-    else:
-        reason = (
-            f"regression pass: new {new_parent} {wins_new}-{wins_prior} "
-            f"prior {prior_parent}"
+            f"regression {verb}: new {new_parent} {wins_new}-{wins_prior} "
+            f"prior {prior_parent} [one-sided: {reason_detail}]{tail}"
         )
     _log.info("regression outcome: %s", reason)
     return RegressionResult(

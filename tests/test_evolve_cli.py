@@ -454,6 +454,7 @@ def test_default_flags(cli: ModuleType) -> None:
     assert args.post_training_cycles == 0
     assert args.backend_url == "http://localhost:8765"
     assert args.lineages == 1
+    assert args.regression_rule == "majority"
 
 
 # ---------------------------------------------------------------------------
@@ -680,6 +681,77 @@ def test_happy_path_stack_promote_then_regression_pass(
     statuses = [item["status"] for item in pool_state["pool"]]
     assert statuses.count("promoted") == 2
     assert statuses.count("evicted") == 1
+
+
+def _run_one_gen_capturing_regression(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    regression_rule: str | None,
+) -> _ScriptedRegression:
+    """Drive one promote+regression generation, returning the regression spy.
+
+    When *regression_rule* is None the ``regression_rule`` attribute is left
+    OFF the Namespace (mirrors an operator who never passed the flag), so the
+    production ``getattr(args, "regression_rule", "majority")`` default is
+    exercised end-to-end.
+    """
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    args = _build_args(tmp_path, pool_size=2, no_commit=True)
+    if regression_rule is not None:
+        args.regression_rule = regression_rule
+    pool = _make_pool(2)
+
+    fitness = _ScriptedFitness(["pass", "pass"])
+    stack_apply = _ScriptedStackApply([(True, "v1")])
+    regression = _ScriptedRegression([False])  # keep new
+
+    def current_version_fn() -> str:
+        return "v0"
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        return [] if k.get("skip_mirror") else pool
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=fitness,
+        stack_apply_fn=stack_apply,
+        run_regression_fn=regression,
+        current_version_fn=current_version_fn,
+    )
+    assert rc == 0
+    assert len(regression.calls) == 1
+    return regression
+
+
+def test_regression_rule_flag_threaded_to_run_regression(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Producer->consumer: --regression-rule reaches run_regression_eval.
+
+    A rename/typo in the getattr key or a dropped kwarg would silently pin the
+    gate to "majority" for an operator who asked for "one-sided"; this pins the
+    wiring through the production caller (run_loop). See
+    dev/.claude/rules/code-quality.md ("new component wired into production
+    needs a test through the production caller").
+    """
+    regression = _run_one_gen_capturing_regression(
+        cli, tmp_path, monkeypatch, regression_rule="one-sided"
+    )
+    assert regression.calls[0]["kwargs"].get("rule") == "one-sided"
+
+
+def test_regression_rule_defaults_to_majority_when_flag_absent(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Flag absent from the Namespace -> production getattr default 'majority'
+    is threaded through, keeping the historical gate byte-for-byte."""
+    regression = _run_one_gen_capturing_regression(
+        cli, tmp_path, monkeypatch, regression_rule=None
+    )
+    assert regression.calls[0]["kwargs"].get("rule") == "majority"
 
 
 def test_all_fitness_pass_imps_stacked_into_new_version(

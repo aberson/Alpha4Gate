@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+from collections.abc import Callable
+from itertools import product
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Literal, cast
@@ -24,6 +26,7 @@ from orchestrator.evolve import (
     run_fitness_eval,
     run_regression_eval,
 )
+from orchestrator.gate_stats import one_sided_rollback
 
 # ---------------------------------------------------------------------------
 # Shared fixtures / helpers
@@ -1061,6 +1064,257 @@ class TestRunRegressionEval:
         assert result.wins_new == 0
         assert result.wins_prior == 5
         assert len(result.record) == 5
+
+
+def _seq_batch(
+    sequence: list[str], *, respect_stop: bool
+) -> Callable[..., list[SelfPlayRecord]]:
+    """Build a ``run_batch_fn`` that plays a scripted outcome *sequence*.
+
+    Each element is ``"new"`` / ``"prior"`` / ``"draw"`` and ``len(sequence)``
+    must equal ``games``. When *respect_stop* is True the runner honours
+    ``stop_event`` (production early-stop semantics — the loop breaks before the
+    next game once the event is set); when False it always plays the full
+    sequence (models a run with early-stop disabled, i.e. the full-play tally).
+    """
+
+    def _fn(
+        p1: str,
+        p2: str,
+        games: int,
+        map_name: str,
+        **kwargs: Any,
+    ) -> list[SelfPlayRecord]:
+        assert len(sequence) == games
+        on_game_end = kwargs.get("on_game_end")
+        stop_event = kwargs.get("stop_event")
+        records: list[SelfPlayRecord] = []
+        for outcome in sequence:
+            if respect_stop and stop_event is not None and stop_event.is_set():
+                break
+            if outcome == "new":
+                winner: str | None = p1
+            elif outcome == "prior":
+                winner = p2
+            else:
+                winner = None
+            rec = _record(p1, p2, winner, f"g-{len(records)}")
+            records.append(rec)
+            if on_game_end is not None:
+                on_game_end(rec)
+        return records
+
+    return _fn
+
+
+class TestRegressionRuleOneSided:
+    """Phase EJ.3 — the ``rule`` param + derived, sound early-stop."""
+
+    def test_invalid_rule_raises(self) -> None:
+        with pytest.raises(ValueError, match="unknown regression rule"):
+            run_regression_eval(
+                new_parent="v1",
+                prior_parent="v0",
+                games=5,
+                run_batch_fn=_seq_batch(["draw"] * 5, respect_stop=False),
+                rule="bogus",
+            )
+
+    @pytest.mark.parametrize("games", [5, 9])
+    def test_majority_golden_table_byte_identical(self, games: int) -> None:
+        """rule="majority" decision + reason match the pre-EJ.3 behavior for
+        EVERY (wins_new, wins_prior) pair with wins_new + wins_prior <= games.
+        """
+        needed = games // 2 + 1
+        for wins_new in range(games + 1):
+            for wins_prior in range(games + 1 - wins_new):
+                draws = games - wins_new - wins_prior
+                seq = (
+                    ["new"] * wins_new
+                    + ["prior"] * wins_prior
+                    + ["draw"] * draws
+                )
+                result = run_regression_eval(
+                    new_parent="v1",
+                    prior_parent="v0",
+                    games=games,
+                    run_batch_fn=_seq_batch(seq, respect_stop=False),
+                    rule="majority",
+                )
+                expected_rolled_back = wins_new < needed
+                assert result.rolled_back is expected_rolled_back
+                assert result.wins_new == wins_new
+                assert result.wins_prior == wins_prior
+                if expected_rolled_back:
+                    expected_reason = (
+                        f"regression rollback: new v1 "
+                        f"{wins_new}-{wins_prior} prior v0 "
+                        f"(needed {needed}); caller must revert"
+                    )
+                else:
+                    expected_reason = (
+                        f"regression pass: new v1 {wins_new}-{wins_prior} "
+                        f"prior v0"
+                    )
+                assert result.reason == expected_reason
+
+    @pytest.mark.parametrize(
+        ("wins_new", "wins_prior", "expected_rollback"),
+        [
+            (0, 5, True),
+            (1, 4, True),
+            (2, 3, False),  # neutral — KEPT (majority would roll back)
+            (3, 2, False),
+            (5, 0, False),
+        ],
+    )
+    def test_one_sided_verdicts(
+        self, wins_new: int, wins_prior: int, expected_rollback: bool
+    ) -> None:
+        draws = 5 - wins_new - wins_prior
+        seq = (
+            ["new"] * wins_new + ["prior"] * wins_prior + ["draw"] * draws
+        )
+        result = run_regression_eval(
+            new_parent="v1",
+            prior_parent="v0",
+            games=5,
+            run_batch_fn=_seq_batch(seq, respect_stop=False),
+            rule="one-sided",
+        )
+        assert result.rolled_back is expected_rollback
+        assert "one-sided" in result.reason
+
+    def test_one_sided_fail_open_under_min_decided(self) -> None:
+        """A draw-heavy record with < MIN_DECIDED decided keeps (fail-open)."""
+        seq = ["new", "prior", "draw", "draw", "draw"]  # 1-1, 3 draws
+        result = run_regression_eval(
+            new_parent="v1",
+            prior_parent="v0",
+            games=5,
+            run_batch_fn=_seq_batch(seq, respect_stop=False),
+            rule="one-sided",
+        )
+        assert result.rolled_back is False
+        assert "fail-open" in result.reason
+
+    def test_majority_early_stop_fires_at_three_new_wins(self) -> None:
+        """Majority stops as soon as one side reaches strict majority (3)."""
+        seq = ["new", "new", "new", "prior", "prior"]
+        result = run_regression_eval(
+            new_parent="v1",
+            prior_parent="v0",
+            games=5,
+            run_batch_fn=_seq_batch(seq, respect_stop=True),
+            rule="majority",
+        )
+        assert len(result.record) == 3  # stopped after the 3rd new-win
+        assert result.rolled_back is False
+
+    def test_majority_early_stop_fires_at_three_prior_wins(self) -> None:
+        seq = ["prior", "prior", "prior", "new", "new"]
+        result = run_regression_eval(
+            new_parent="v1",
+            prior_parent="v0",
+            games=5,
+            run_batch_fn=_seq_batch(seq, respect_stop=True),
+            rule="majority",
+        )
+        assert len(result.record) == 3  # stopped after the 3rd prior-win
+        assert result.rolled_back is True
+
+    def test_one_sided_stop_point_differs_from_majority(self) -> None:
+        """Same 0-3-then-recover sequence: majority stops early at 3 and rolls
+        back; one-sided is NOT locked at 3 and plays on to keep the 2-3."""
+        seq = ["prior", "prior", "prior", "new", "new"]
+        majority = run_regression_eval(
+            new_parent="v1",
+            prior_parent="v0",
+            games=5,
+            run_batch_fn=_seq_batch(seq, respect_stop=True),
+            rule="majority",
+        )
+        assert len(majority.record) == 3
+        assert majority.rolled_back is True
+
+        one_sided = run_regression_eval(
+            new_parent="v1",
+            prior_parent="v0",
+            games=5,
+            run_batch_fn=_seq_batch(seq, respect_stop=True),
+            rule="one-sided",
+        )
+        # Not locked until every game is played (final 2-3 is a keep).
+        assert len(one_sided.record) == 5
+        assert one_sided.rolled_back is False
+
+    def test_one_sided_early_stop_fires_when_locked(self) -> None:
+        """0-0-0-0-then-prior at n=5: after 0-4 (rem=1) even a final new-win
+        (→1-4, P=0.891) still rolls back, so the verdict locks at game 4."""
+        seq = ["prior", "prior", "prior", "prior", "prior"]
+        result = run_regression_eval(
+            new_parent="v1",
+            prior_parent="v0",
+            games=5,
+            run_batch_fn=_seq_batch(seq, respect_stop=True),
+            rule="one-sided",
+        )
+        assert len(result.record) == 4  # locked rollback after game 4
+        assert result.rolled_back is True
+
+    @pytest.mark.parametrize("games", [5, 7])
+    def test_full_play_matches_direct_verdict(self, games: int) -> None:
+        """With early-stop disabled, run_regression_eval's verdict equals the
+        direct rule-decision on the full tally — validating the ground truth
+        used by the exhaustive soundness test below.
+        """
+        needed = games // 2 + 1
+        for seq_tuple in product(("new", "prior", "draw"), repeat=games):
+            seq = list(seq_tuple)
+            wins_new = seq.count("new")
+            wins_prior = seq.count("prior")
+            for rule in ("majority", "one-sided"):
+                if rule == "majority":
+                    expected = wins_new < needed
+                else:
+                    expected, _ = one_sided_rollback(wins_new, wins_prior)
+                result = run_regression_eval(
+                    new_parent="v1",
+                    prior_parent="v0",
+                    games=games,
+                    run_batch_fn=_seq_batch(seq, respect_stop=False),
+                    rule=rule,
+                )
+                assert result.rolled_back is expected, (rule, games, seq)
+
+    @pytest.mark.parametrize("rule", ["majority", "one-sided"])
+    @pytest.mark.parametrize("games", [5, 7, 9])
+    def test_early_stop_never_changes_verdict(
+        self, rule: str, games: int
+    ) -> None:
+        """EXHAUSTIVE soundness guarantee: for EVERY outcome sequence
+        (new/prior/draw) of length *games*, the early-stopped verdict equals
+        the full-play verdict. This is what proves the derived early-stop can
+        never flip a rollback/keep decision.
+        """
+        needed = games // 2 + 1
+        for seq_tuple in product(("new", "prior", "draw"), repeat=games):
+            seq = list(seq_tuple)
+            wins_new = seq.count("new")
+            wins_prior = seq.count("prior")
+            if rule == "majority":
+                expected = wins_new < needed
+            else:
+                expected, _ = one_sided_rollback(wins_new, wins_prior)
+            result = run_regression_eval(
+                new_parent="v1",
+                prior_parent="v0",
+                games=games,
+                run_batch_fn=_seq_batch(seq, respect_stop=True),
+                rule=rule,
+            )
+            assert result.rolled_back is expected, (rule, games, seq)
+
 
 # ---------------------------------------------------------------------------
 # generate_pool

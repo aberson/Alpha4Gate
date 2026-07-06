@@ -333,6 +333,23 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--regression-rule",
+        choices=("majority", "one-sided"),
+        default="majority",
+        help=(
+            "Regression rollback gate (Phase EJ.3). Default 'majority' is "
+            "byte-identical to the historical behavior: roll back a promotion "
+            "when the new parent fails strict majority (wins_new < "
+            "games//2+1), which destroys a truly-neutral promotion ~50%% of "
+            "the time at n=5 and counts draws/crashes against it. 'one-sided' "
+            "rolls back ONLY on positive evidence of harm — when the "
+            "posterior probability the new parent is truly worse than a coin "
+            "flip is >= 0.85 (fail-open below 4 decided games). At n=5 that "
+            "rolls back only 0-5 and 1-4; the neutral 2-3 is kept. Early-stop "
+            "is derived from the active rule and stays sound."
+        ),
+    )
+    parser.add_argument(
         "--fitness-mode",
         choices=("parent", "baseline", "both"),
         default="parent",
@@ -4264,6 +4281,7 @@ def run_loop(
                     hard_timeout=args.hard_timeout,
                     run_batch_fn=run_batch_fn,
                     on_event=_on_regression_event,
+                    rule=getattr(args, "regression_rule", "majority"),
                 )
             except Exception as exc:
                 tb = traceback.format_exc()
