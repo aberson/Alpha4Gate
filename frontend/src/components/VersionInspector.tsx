@@ -382,7 +382,11 @@ function flattenWeightDynamics(rows: WeightDynamicsRow[]): {
 }
 
 // Per-layer line colours, sourced from the brand theme
-// (color.chart.categorical, in order). Identity colours — mode-independent.
+// (color.chart.categorical, in order). These are series-identity colours and
+// are DELIBERATELY mode-invariant (no modes.dark.json override), so reading
+// the static light ``theme`` here — rather than the mode-aware ``useTheme()``
+// — is intentional and correct. Chart CHROME (which does flip) uses
+// ``useTheme()`` inside each panel instead.
 const LAYER_PALETTE: string[] = Object.values(theme.color.chart.categorical);
 
 function WeightDynamicsPanel({
@@ -392,7 +396,9 @@ function WeightDynamicsPanel({
 }) {
   const t = useTheme();
   const chrome = t.color.chart.chrome;
-  const dangerFg = theme.color.status.danger.fg;
+  // Mode-aware: read the error/danger colour from the active theme so it
+  // would flip if a future modes.dark.json gives it a dark variant.
+  const dangerFg = t.color.status.danger.fg;
   if (!weightDynamics || weightDynamics.length === 0) {
     return (
       <p
