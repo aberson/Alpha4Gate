@@ -21,6 +21,8 @@ import {
 import { StaleDataBanner } from "./StaleDataBanner";
 import { TimelineList, type TimelineFilter } from "./TimelineList";
 import { useVersions } from "../hooks/useVersions";
+import { theme } from "../../brand/dist/theme";
+import { useTheme } from "../theme/useBrandTheme";
 
 /**
  * VersionInspector — Step 6 of the Models-tab build plan.
@@ -164,6 +166,8 @@ function TrainingCurvePanel({
 }: {
   history: ReturnType<typeof useVersionDetail>["trainingHistory"];
 }) {
+  const t = useTheme();
+  const chrome = t.color.chart.chrome;
   const merged = mergeTrainingHistory(history);
   if (merged.length === 0) {
     return (
@@ -179,17 +183,20 @@ function TrainingCurvePanel({
     >
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={merged} margin={{ top: 10, right: 20, left: 0, bottom: 8 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-          <XAxis dataKey="ts" stroke="#888" tick={{ fontSize: 10 }} />
+          <CartesianGrid strokeDasharray="3 3" stroke={chrome.grid} />
+          <XAxis dataKey="ts" stroke={chrome.axis} tick={{ fontSize: 10 }} />
           <YAxis
             domain={[0, 1]}
-            stroke="#888"
+            stroke={chrome.axis}
             tick={{ fontSize: 10 }}
             tickFormatter={(v: number) => v.toFixed(1)}
           />
           <Tooltip
-            contentStyle={{ background: "#1a1a1a", border: "1px solid #333" }}
-            labelStyle={{ color: "#ccc" }}
+            contentStyle={{
+              background: chrome["tooltip-bg"],
+              border: `1px solid ${chrome.grid}`,
+            }}
+            labelStyle={{ color: chrome.label }}
             formatter={(v: unknown) =>
               typeof v === "number" ? v.toFixed(3) : String(v ?? "")
             }
@@ -198,7 +205,7 @@ function TrainingCurvePanel({
           <Line
             type="monotone"
             dataKey="rolling_overall"
-            stroke="#3182ce"
+            stroke={LAYER_PALETTE[0]}
             dot={false}
             isAnimationActive={false}
             name="rolling_overall"
@@ -206,7 +213,7 @@ function TrainingCurvePanel({
           <Line
             type="monotone"
             dataKey="rolling_50"
-            stroke="#38a169"
+            stroke={LAYER_PALETTE[1]}
             dot={false}
             isAnimationActive={false}
             name="rolling_50"
@@ -214,7 +221,7 @@ function TrainingCurvePanel({
           <Line
             type="monotone"
             dataKey="rolling_10"
-            stroke="#e53e3e"
+            stroke={LAYER_PALETTE[2]}
             dot={false}
             isAnimationActive={false}
             name="rolling_10"
@@ -249,6 +256,9 @@ function ActionsPanel({
   }));
   // Tweak height so each bar gets ~24px row.
   const height = Math.max(160, data.length * 24 + 40);
+  const t = useTheme();
+  const chrome = t.color.chart.chrome;
+  const barColor = LAYER_PALETTE[0];
   return (
     <div
       data-testid="inspector-actions-body"
@@ -260,22 +270,25 @@ function ActionsPanel({
           data={data}
           margin={{ top: 8, right: 20, left: 80, bottom: 8 }}
         >
-          <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-          <XAxis type="number" stroke="#888" tick={{ fontSize: 10 }} />
+          <CartesianGrid strokeDasharray="3 3" stroke={chrome.grid} />
+          <XAxis type="number" stroke={chrome.axis} tick={{ fontSize: 10 }} />
           <YAxis
             type="category"
             dataKey="label"
-            stroke="#888"
+            stroke={chrome.axis}
             tick={{ fontSize: 10 }}
             width={150}
           />
           <Tooltip
-            contentStyle={{ background: "#1a1a1a", border: "1px solid #333" }}
-            labelStyle={{ color: "#ccc" }}
+            contentStyle={{
+              background: chrome["tooltip-bg"],
+              border: `1px solid ${chrome.grid}`,
+            }}
+            labelStyle={{ color: chrome.label }}
           />
-          <Bar dataKey="count" fill="#3182ce" isAnimationActive={false}>
+          <Bar dataKey="count" fill={barColor} isAnimationActive={false}>
             {data.map((entry) => (
-              <Cell key={entry.label} fill="#3182ce" />
+              <Cell key={entry.label} fill={barColor} />
             ))}
           </Bar>
         </BarChart>
@@ -368,22 +381,18 @@ function flattenWeightDynamics(rows: WeightDynamicsRow[]): {
   return { data, layers };
 }
 
-const LAYER_PALETTE = [
-  "#3182ce",
-  "#38a169",
-  "#e53e3e",
-  "#805ad5",
-  "#ed8936",
-  "#319795",
-  "#d53f8c",
-  "#48bb78",
-];
+// Per-layer line colours, sourced from the brand theme
+// (color.chart.categorical, in order). Identity colours — mode-independent.
+const LAYER_PALETTE: string[] = Object.values(theme.color.chart.categorical);
 
 function WeightDynamicsPanel({
   weightDynamics,
 }: {
   weightDynamics: ReturnType<typeof useVersionDetail>["weightDynamics"];
 }) {
+  const t = useTheme();
+  const chrome = t.color.chart.chrome;
+  const dangerFg = theme.color.status.danger.fg;
   if (!weightDynamics || weightDynamics.length === 0) {
     return (
       <p
@@ -405,12 +414,15 @@ function WeightDynamicsPanel({
     >
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={{ top: 10, right: 20, left: 0, bottom: 8 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-          <XAxis dataKey="checkpoint" stroke="#888" tick={{ fontSize: 10 }} />
-          <YAxis stroke="#888" tick={{ fontSize: 10 }} />
+          <CartesianGrid strokeDasharray="3 3" stroke={chrome.grid} />
+          <XAxis dataKey="checkpoint" stroke={chrome.axis} tick={{ fontSize: 10 }} />
+          <YAxis stroke={chrome.axis} tick={{ fontSize: 10 }} />
           <Tooltip
-            contentStyle={{ background: "#1a1a1a", border: "1px solid #333" }}
-            labelStyle={{ color: "#ccc" }}
+            contentStyle={{
+              background: chrome["tooltip-bg"],
+              border: `1px solid ${chrome.grid}`,
+            }}
+            labelStyle={{ color: chrome.label }}
           />
           <Legend />
           {layers.map((layer, i) => (
@@ -439,18 +451,21 @@ function WeightDynamicsPanel({
         >
           <ResponsiveContainer width="100%" height="100%">
             <ScatterChart margin={{ top: 4, right: 20, left: 0, bottom: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+              <CartesianGrid strokeDasharray="3 3" stroke={chrome.grid} />
               <XAxis
                 dataKey="checkpoint"
                 type="category"
-                stroke="#888"
+                stroke={chrome.axis}
                 tick={{ fontSize: 10 }}
                 allowDuplicatedCategory={false}
               />
               <YAxis hide />
               <Tooltip
-                contentStyle={{ background: "#1a1a1a", border: "1px solid #333" }}
-                labelStyle={{ color: "#e53e3e" }}
+                contentStyle={{
+                  background: chrome["tooltip-bg"],
+                  border: `1px solid ${chrome.grid}`,
+                }}
+                labelStyle={{ color: dangerFg }}
                 formatter={(_v: unknown, _n: unknown, item: { payload?: { error?: string | null } }) => {
                   const err = item?.payload?.error ?? "(error)";
                   return [err, "error"];
@@ -463,14 +478,14 @@ function WeightDynamicsPanel({
                   y: 0,
                   error: r.error,
                 }))}
-                fill="#e53e3e"
+                fill={dangerFg}
                 isAnimationActive={false}
                 dataKey="y"
               >
                 {errorRows.map((r) => (
                   <Cell
                     key={r.checkpoint}
-                    fill="#e53e3e"
+                    fill={dangerFg}
                     data-testid={`inspector-weight-error-${r.checkpoint}`}
                   />
                 ))}
@@ -485,7 +500,7 @@ function WeightDynamicsPanel({
       {errorRows.length > 0 ? (
         <ul
           data-testid="inspector-weight-error-list"
-          style={{ marginTop: 8, color: "#e53e3e", fontSize: "0.85em" }}
+          style={{ marginTop: 8, color: dangerFg, fontSize: "0.85em" }}
         >
           {errorRows.map((r) => (
             <li

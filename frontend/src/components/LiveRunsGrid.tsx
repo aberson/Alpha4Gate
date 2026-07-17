@@ -6,6 +6,7 @@ import {
   formatRelativeTime,
   type RunRow,
 } from "../types/runs";
+import { theme } from "../../brand/dist/theme";
 
 /**
  * Live Runs grid — Step 5 of the Models-tab build plan.
@@ -39,15 +40,11 @@ import {
  * doesn't need to inject any state.
  */
 
-// Per-harness accent border colour. Mirrors the EvolutionTab phase
-// palette so the same harness reads visually consistent across tabs.
-// Falls back to a neutral grey for unknown harnesses.
-const HARNESS_ACCENT: Record<string, string> = {
-  "training-daemon": "#3498db",
-  advised: "#f1c40f",
-  evolve: "#16a085",
-  "self-play": "#9b59b6",
-};
+// Per-harness accent border colour, sourced from the brand theme
+// (color.harness). Mirrors the EvolutionTab phase palette so the same
+// harness reads visually consistent across tabs. Falls back to a neutral
+// grey for unknown harnesses.
+const HARNESS_ACCENT: Record<string, string> = { ...theme.color.harness };
 
 function harnessIcon(harness: string): string {
   return HARNESS_ICONS[harness] ?? "?";

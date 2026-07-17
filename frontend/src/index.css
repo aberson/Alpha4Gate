@@ -1,19 +1,29 @@
+/* on-brand pilot (Step 16): brand tokens are the source of truth. The
+ * legacy --text/--accent/... vars below are now thin aliases onto the
+ * generated token vars; dark-mode color flips are handled entirely by
+ * tokens.css (@media prefers-color-scheme: dark), so this file no longer
+ * duplicates the dark color values. Regenerate tokens with `onbrand build`.
+ * BOUNDED to the CSS layer + named palette constants + chart-chrome flip;
+ * the remaining inline-hex sweep across the other components is tracked in
+ * aberson/on-brand#23. */
+@import "../brand/dist/tokens.css";
+
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
+  --text: var(--color-semantic-text);
+  --text-h: var(--color-semantic-text-h);
+  --bg: var(--color-semantic-bg);
+  --border: var(--color-semantic-border);
+  --code-bg: var(--color-semantic-code-bg);
+  --accent: var(--color-semantic-accent);
+  --accent-bg: var(--color-semantic-accent-bg);
+  --accent-border: var(--color-semantic-accent-border);
+  --social-bg: var(--color-semantic-social-bg);
   --shadow:
     rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+  --sans: var(--font-sans);
+  --heading: var(--font-heading);
+  --mono: var(--font-mono);
 
   font: 18px/145% var(--sans);
   letter-spacing: 0.18px;
@@ -32,15 +42,8 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
+    /* Color vars now flip via brand/dist/tokens.css. Only the non-token
+     * shadow (pure black rgba, no brand hue) is overridden here. */
     --shadow:
       rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
   }

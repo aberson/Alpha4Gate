@@ -1,0 +1,34 @@
+{
+  "onbrandVersion": "0.1.0",
+  "schemaVersion": 1,
+  "sourceHash": "98fc2c8653847f7bd6de130fbba6d88b2c72b5e375def84584ae360d08cb11db",
+  "sources": [
+    {
+      "path": "tokens.json",
+      "sha256": "08b1768f9650774584f246a372a7ff074864efb0dc7f01955931fb903ea4ad73"
+    },
+    {
+      "path": "modes.dark.json",
+      "sha256": "fbfaadcfc12af80505191fd78c8fae58225d2413b93497852c3e9c2442dc013e"
+    }
+  ],
+  "emitters": [
+    "css",
+    "tw",
+    "ts",
+    "py",
+    "svg",
+    "components"
+  ],
+  "outputs": {
+    "components.css": "98fc2c8653847f7bd6de130fbba6d88b2c72b5e375def84584ae360d08cb11db",
+    "diagram-palette.json": "98fc2c8653847f7bd6de130fbba6d88b2c72b5e375def84584ae360d08cb11db",
+    "palette.svg": "98fc2c8653847f7bd6de130fbba6d88b2c72b5e375def84584ae360d08cb11db",
+    "theme.ts": "98fc2c8653847f7bd6de130fbba6d88b2c72b5e375def84584ae360d08cb11db",
+    "theme.tw.css": "98fc2c8653847f7bd6de130fbba6d88b2c72b5e375def84584ae360d08cb11db",
+    "tokens.css": "98fc2c8653847f7bd6de130fbba6d88b2c72b5e375def84584ae360d08cb11db",
+    "tokens.py": "98fc2c8653847f7bd6de130fbba6d88b2c72b5e375def84584ae360d08cb11db"
+  },
+  "llm": "none",
+  "timestamp": "2026-07-17T17:43:08.343Z"
+}
