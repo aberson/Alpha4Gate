@@ -77,8 +77,12 @@ frontend/build/
 
 # ruff
 .ruff_cache/
+
+# UI/UAT evidence dirs (agent-driven review/judge capture output, never committed)
 .ui-review-evidence/
 .ui-dashboard-evidence/
+# /judge-motion run artifacts (a4g-motion adapter) - append-only capture runs
+.judge-motion/
 
 # Raw capture files — only cropped/optimized GIFs should be committed in documentation/images/
 documentation/images/*.mp4

@@ -1,0 +1,72 @@
+{
+  "flow": "dashboard-critical",
+  "adapter": "a4g-motion",
+  "comment": "Alpha4Gate dashboard critical-transition flow for /judge-motion. Bring-up is OPERATOR-STARTED; the full run-book (start commands, readiness probes) lives in ../README.md 'Operator run-book', and invocation in ../SKILL.md 'How to invoke' - neither is restated here. Every selector, rubric range, and budgetMs value is grounded in frontend/backend source: provenance tables, the budgetMs <-> rubric <-> ambient-poll coupling table, and the spec-shaping constraints (one-trigger-click SPA, why no 'loading' selector arrays) all live in ../README.md.",
+  "transitions": [
+    {
+      "name": "tab-switch-models",
+      "url": "http://localhost:3000/",
+      "trigger": { "selector": "nav button:has-text(\"Models\")" },
+      "budgetMs": 300,
+      "rubric": {
+        "expectedDurationMs": [0, 250],
+        "easing": "none - instant conditional-render DOM swap; the app defines no tab-panel transition CSS (repo grep: only .alert-toast 0.25s, .improvements-row 0.12s hover, and inline progress-bar width transitions exist - none on tab containers)",
+        "loadingStateIntent": "no spinner/skeleton exists for tab switches; the Models header (version dropdown, harness chips, sub-view router) renders synchronously; the version dropdown may briefly show '(no versions)' until /api/versions resolves - expected, not a defect"
+      },
+      "readback": {
+        "kind": "http-get",
+        "handle": "http://localhost:8765/api/versions",
+        "note": "version names returned here must appear in the settled Models version dropdown ([data-testid=models-version-select])"
+      }
+    },
+    {
+      "name": "processes-scan-swap",
+      "url": "http://localhost:3000/",
+      "trigger": { "selector": "nav button:has-text(\"Processes\")" },
+      "budgetMs": 1800,
+      "rubric": {
+        "expectedDurationMs": [300, 12000],
+        "easing": "none - each panel swaps placeholder to content in one commit when its own API resolves; the Processes view is four independent fetch consumers (process table, resource gauges, WSL panel, alerts), so staggered section arrival is intended design, not pop-in jank",
+        "loadingStateIntent": "text placeholders ARE the loading state: 'Scanning...' (ProcessMonitor) and 'Loading...' (ResourceGauge); both should be visible while the live process scan runs and must not strand - a placeholder still visible at settle is a defect; no spinner/skeleton exists"
+      },
+      "readback": {
+        "kind": "http-get",
+        "handle": "http://localhost:8765/api/processes",
+        "note": "the settled 'Active Processes' table rows must be consistent with this response's processes[] (at minimum the backend-server row)"
+      }
+    },
+    {
+      "name": "connection-status-live-flip",
+      "url": "http://localhost:3000/",
+      "trigger": { "selector": "body" },
+      "budgetMs": 800,
+      "rubric": {
+        "expectedDurationMs": [0, 5500],
+        "easing": "none - instant text/color swap on the header indicator; the WSL badge appears with no entrance animation; no CSS transition is defined on .connection-status",
+        "loadingStateIntent": "the gray 'Connecting...' label IS the loading state; settled state must be the green 'Live' dot+label when the backend is up (a WSL substrate badge popping in alongside is expected on this machine); amber 'Stale' or red 'Disconnected' at settle is a defect",
+        "focusIntent": "unmanaged"
+      },
+      "readback": {
+        "kind": "http-get",
+        "handle": "http://localhost:8765/api/training/status",
+        "note": "a 200 here is the ground truth that the settled indicator must read 'Live'; timing caveat: the first status fetch fires on MOUNT (before the inert body-click trigger) and usually resolves pre-trigger (screencast starts pre-navigation, so the flip is on film either way) - reconcile qualitatively, do not fail on duration alone"
+      }
+    },
+    {
+      "name": "help-doc-swap",
+      "url": "http://localhost:3000/",
+      "trigger": { "selector": "nav button:has-text(\"Help\")" },
+      "budgetMs": 300,
+      "rubric": {
+        "expectedDurationMs": [0, 2000],
+        "easing": "none - one-commit react-markdown document render after a single localhost fetch of a static .md; no entrance animation",
+        "loadingStateIntent": "'Loading help...' text may appear briefly; settled state is the rendered operator-commands document (.help-tab); the full-height document appearing at once is intended (document render, not incremental pop-in); 'No help content available' at settle is a defect"
+      },
+      "readback": {
+        "kind": "http-get",
+        "handle": "http://localhost:8765/api/operator-commands",
+        "note": "the markdown body returned here is the content the settled .help-tab must render"
+      }
+    }
+  ]
+}
