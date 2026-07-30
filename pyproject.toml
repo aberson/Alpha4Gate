@@ -44,7 +44,11 @@ dev = [
     "jsonschema>=4.26.0",
 ]
 viewer = [
-    "pygame>=2.5",
+    # pygame-ce (community edition): drop-in `import pygame`, but ships prebuilt
+    # wheels for current CPython (incl. 3.14). Mainline `pygame` has no cp314 wheel,
+    # so `uv run --extra viewer` fell back to a source build that fails on 3.12+
+    # (distutils.msvccompiler was removed). See selfplay viewer (scripts/selfplay.py).
+    "pygame-ce>=2.5",
     "pywin32>=306",
     "psutil>=5.9",
 ]
