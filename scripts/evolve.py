@@ -145,13 +145,21 @@ _REFRESH_DEDUP_THRESHOLD = 0.85
 # returns None off the main thread instead of registering. Combined with
 # D-1's stop_event=None, that makes Ctrl+C the one stop gesture that can
 # ORPHAN SC2 children, while .claude/rules/bot-runtime.md forbids killing
-# them by hand. So the operator is told the safe gesture BEFORE the window
-# opens: closing it detaches and the run finishes headless.
+# them by hand. So the operator is told the safe gestures BEFORE the window
+# opens. EV.3: the two gestures are DIFFERENT and must not be conflated —
+# closing the viewer window only DETACHES the display (Decision D-1: the run
+# survives it deliberately), so the only gesture that STOPS the run is closing
+# the console window this process is attached to. The earlier wording ("to
+# stop this run, CLOSE THE VIEWER WINDOW ... the run detaches and continues
+# headless") told the operator to stop the run with a gesture that does not
+# stop it. Keep this string in agreement with scripts/launch-evolve.ps1's
+# header and the --viewer argparse help below.
 _VIEWER_CTRL_C_WARNING = (
-    "[evolve] WARNING: to stop this run, CLOSE THE VIEWER WINDOW — the run "
-    "detaches and continues headless. Do NOT press Ctrl+C: under --viewer the "
-    "evolution loop runs off the main thread, where burnysc2's SIGINT "
-    "kill-switch is never armed, so Ctrl+C can leave orphaned SC2 processes."
+    "[evolve] WARNING: do NOT press Ctrl+C — under --viewer the evolution "
+    "loop runs off the main thread, where burnysc2's SIGINT kill-switch is "
+    "never armed, so Ctrl+C can leave orphaned SC2 processes. Closing the "
+    "viewer window only DETACHES the display; the run continues headless. "
+    "To STOP the run, close this console window."
 )
 
 # Phase EV.2: how long main() sleeps between "still running headless"
@@ -503,8 +511,9 @@ def build_parser() -> argparse.ArgumentParser:
             "[viewer] extra (uv run --extra viewer ...); on any other "
             "platform, or without pygame installed, the flag degrades to a "
             "WARNING and the run continues headless. Requires "
-            "--concurrency 1. Stop a viewer run by CLOSING THE WINDOW (the "
-            "run detaches and continues headless); Ctrl+C under --viewer can "
+            "--concurrency 1. Closing the viewer window only DETACHES the "
+            "display and the run continues headless; to STOP the run, close "
+            "the console window. Do NOT press Ctrl+C under --viewer: it can "
             "orphan SC2 processes, because the evolution loop runs off the "
             "main thread where burnysc2's SIGINT kill-switch cannot arm. "
             "Default OFF (headless, byte-identical to a pre-EV run)."

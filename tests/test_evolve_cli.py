@@ -15,9 +15,11 @@ import difflib
 import importlib.util
 import json
 import logging
+import re
 import subprocess
 import sys
 import threading
+import tomllib
 from collections.abc import Callable
 from importlib.machinery import ModuleSpec
 from pathlib import Path
@@ -4281,6 +4283,120 @@ def test_skill_md_documents_all_six_ej_flags() -> None:
     assert "The full flags table lands in EJ.6" not in skill_md
 
 
+def test_skill_md_documents_the_viewer_flag() -> None:
+    """The improve-bot-evolve SKILL.md documents `--viewer` (Phase EV.3).
+
+    Same contract as the EJ flags above: a new evolve flag is not shipped
+    until the skill an operator actually invokes describes it. The extra
+    load-bearing facts here are the safety ones -- `--concurrency 1` is
+    mandatory, closing the container detaches rather than stops, and Ctrl+C
+    can orphan SC2 processes.
+    """
+    skill_md = (_REPO_ROOT / ".claude" / "skills" / "improve-bot-evolve" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    lines = skill_md.splitlines()
+    # (a) The frontmatter flag summary names it, so a reader who never scrolls
+    # to the table still knows the flag exists.
+    argument_lines = [line for line in lines if line.startswith("argument:")]
+    assert len(argument_lines) == 1, "expected exactly one frontmatter argument: line"
+    assert "--viewer" in argument_lines[0], "--viewer missing from the flag summary"
+    # (b) Exactly one `--viewer` row in the flags table -- the same exact-count
+    # guard the EJ test uses against a duplicated row -- and its DEFAULT CELL
+    # says off. Assert the split cell, never `"off" in row`: the word "off"
+    # also appears in ordinary row prose ("runs off the main thread"), so a
+    # substring check stays GREEN with the documented default flipped to ON.
+    viewer_rows = [line for line in lines if line.startswith("| `--viewer` |")]
+    assert len(viewer_rows) == 1, f"expected 1 --viewer table row, got {len(viewer_rows)}"
+    cells = [cell.strip() for cell in viewer_rows[0].split("|")]
+    assert cells[3].lower() == "off", f"--viewer default cell is {cells[3]!r}, expected 'off'"
+    # (c) The safety detail lives in a named prose block under the table --
+    # the file's established pattern for detail too long for a cell (cf.
+    # "Pairing warning (EJ.3 + EJ.4)"). Pin the facts there, not in the row.
+    assert skill_md.count("**Viewer note (`--viewer`):**") == 1
+    note = skill_md.split("**Viewer note (`--viewer`):**", 1)[1].split("\n### ", 1)[0]
+    for fragment in (
+        "Windows",  # platform restriction
+        "[viewer]",  # optional extra
+        "--concurrency 1",  # mutual-exclusion requirement
+        # "DETACHES", not "headless": "headless" occurs twice in the note, so
+        # deleting the whole detach-vs-stop sentence would leave this green.
+        "DETACHES",
+        "close the console window",  # the ONE gesture that actually stops a run
+        "Ctrl+C",  # orphaned-SC2 warning
+        "orphaned SC2",
+    ):
+        assert fragment in note, f"{fragment!r} missing from the Viewer note"
+    # (d) The mutual exclusion is ALSO named on the `--concurrency` row, so an
+    # operator reaching for `--concurrency 4` learns it there.
+    concurrency_rows = [line for line in lines if line.startswith("| `--concurrency` |")]
+    assert len(concurrency_rows) == 1, "expected exactly one --concurrency table row"
+    assert "--viewer" in concurrency_rows[0], (
+        "--concurrency row does not name the --viewer mutual exclusion"
+    )
+    # (e) EV.3 H-1: every stop_reason the skill advertises must be one the
+    # runner can actually emit. SKILL.md used to list `"dashboard-stop"`,
+    # which `scripts/evolve.py` never produces -- `bots/v0/api.py` writes
+    # data/evolve_run_control.json but nothing reads it -- so an operator was
+    # told about a stop path that does not exist. Producer/consumer check, not
+    # a keyword ban: prose ABOUT the gap is fine, an advertised value is not.
+    prefix = "`stop_reason` in the final run log:"
+    reason_lines = [line for line in lines if line.startswith(prefix)]
+    assert len(reason_lines) == 1, f"expected 1 stop_reason summary line, got {len(reason_lines)}"
+    documented = set(re.findall(r'`"([a-z-]+)"`', reason_lines[0]))
+    assert documented, f"no stop_reason values parsed from: {reason_lines[0]}"
+    evolve_src = (_REPO_ROOT / "scripts" / "evolve.py").read_text(encoding="utf-8")
+    for reason in sorted(documented):
+        assert f'"{reason}"' in evolve_src, (
+            f"SKILL.md documents stop_reason {reason!r}, which scripts/evolve.py never emits"
+        )
+
+
+def test_launch_evolve_ps1_pins_the_viewer_spawn_contract() -> None:
+    """`scripts/launch-evolve.ps1` is a deployment seam pytest cannot reach.
+
+    The plan's risk table notes a malformed spawn line "would surface at the
+    start of EV.5's four-hour window". These are machine-consumed CLI tokens,
+    not prose, so pinning them is contract rather than wording.
+    """
+    raw = (_REPO_ROOT / "scripts" / "launch-evolve.ps1").read_bytes()
+    # ASCII-only + no BOM. windows-shell.md: PowerShell 5.1 decodes a no-BOM
+    # .ps1 as cp1252, so ONE non-ASCII byte can corrupt string/brace parsing
+    # with no parse error -- a silent false green. Currently correct; pin it.
+    assert raw[:3] != b"\xef\xbb\xbf", "launch-evolve.ps1 gained a UTF-8 BOM"
+    assert max(raw) < 128, "launch-evolve.ps1 gained a non-ASCII byte"
+    text = raw.decode("ascii")
+    spawn_lines = [line for line in text.splitlines() if "$evolveCmd =" in line]
+    assert len(spawn_lines) == 1, f"expected 1 $evolveCmd assignment, got {len(spawn_lines)}"
+    spawn = spawn_lines[0]
+    # (a) The `--extra <name>` the launcher asks uv for must be a real key in
+    # pyproject's [project.optional-dependencies] -- a cross-file coupling
+    # with no other mechanical link. A rename there fails the launcher only at
+    # run time, in front of the operator.
+    extra_match = re.search(r"--extra (\S+)", spawn)
+    assert extra_match is not None, f"no --extra in the spawn line: {spawn}"
+    with (_REPO_ROOT / "pyproject.toml").open("rb") as handle:
+        pyproject = tomllib.load(handle)
+    declared = pyproject["project"]["optional-dependencies"]
+    assert extra_match.group(1) in declared, (
+        f"launcher asks for --extra {extra_match.group(1)!r}, "
+        f"which is not in [project.optional-dependencies] ({sorted(declared)})"
+    )
+    # (b) --viewer is still passed. Dropping it has ZERO dev-facing symptom
+    # while silently reverting the whole Phase EV deliverable.
+    assert "--viewer" in spawn, f"launcher no longer passes --viewer: {spawn}"
+    # (c) The double-run guard's WMI CommandLine token must still match the
+    # string actually spawned. Low probability, high consequence: a miss means
+    # two concurrent evolve runs both auto-committing [evo-auto] to master.
+    guard_lines = [line for line in text.splitlines() if "CommandLine LIKE" in line]
+    assert len(guard_lines) == 1, f"expected 1 CommandLine guard, got {len(guard_lines)}"
+    token_match = re.search(r"CommandLine LIKE '%([^%]+)%'", guard_lines[0])
+    assert token_match is not None, f"unparseable guard filter: {guard_lines[0]}"
+    assert token_match.group(1) in spawn, (
+        f"guard probes for {token_match.group(1)!r}, absent from the spawn line: {spawn}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Phase EV.1 — `--viewer` flag surface + graceful-degradation gate
 # ---------------------------------------------------------------------------
@@ -4521,8 +4637,11 @@ def test_main_viewer_with_degraded_gate_falls_through_to_headless(
 
     assert seen["kwargs"] == {}
     # No viewer means no viewer-safety noise on stderr either: the Ctrl+C
-    # warning is scoped to runs that actually open a window.
-    assert "CLOSE THE VIEWER WINDOW" not in capsys.readouterr().err
+    # warning is scoped to runs that actually open a window. Assert the whole
+    # banner rather than one phrase of it -- strictly stronger, and immune to
+    # the rewording EV.3 did (the old sentinel "CLOSE THE VIEWER WINDOW" no
+    # longer appears in the banner at all, so it would now pass vacuously).
+    assert cli._VIEWER_CTRL_C_WARNING not in capsys.readouterr().err
     # ...and the gate DID explain itself, so this is headless-by-gate, not
     # headless-because-nothing-ran.
     messages = [r.getMessage() for r in caplog.records]
@@ -4906,9 +5025,17 @@ def test_main_viewer_warns_about_ctrl_c_on_stderr_before_the_window_opens(
     assert _run_main_with_watchdog(cli, ["--viewer"]) == 0
 
     err = seen_before["err"]
-    assert "CLOSE THE VIEWER WINDOW" in err, err
+    # The whole banner, verbatim -- stronger than the previous single-phrase
+    # sentinel and independent of its wording.
+    assert cli._VIEWER_CTRL_C_WARNING in err, err
+    # The load-bearing facts, pinned separately so a future reword cannot drop
+    # one silently. EV.3: the banner must NOT present closing the viewer as a
+    # way to stop the run -- that only detaches -- so the stop gesture named
+    # here is the console window.
     assert "Ctrl+C" in err, err
     assert "orphaned SC2" in err, err
+    assert "DETACHES" in err, err
+    assert "close this console window" in err, err
 
 
 def test_main_viewer_close_detaches_and_run_continues_headless(

@@ -18,6 +18,7 @@ Single spine for the project. Status as of 2026-06-20. Each phase's narrative li
 | [phase-k-build-plan.md](documentation/plans/phase-k-build-plan.md) | K | Observable pool organisation - future |
 | [phase-q-build-plan.md](documentation/plans/phase-q-build-plan.md) | Q | harvest-engineer skill - investigation-blocked |
 | [evolve-judging-plan.md](documentation/plans/evolve-judging-plan.md) | EJ | Evolve judging noise-floor shortlist (EJ.1-EJ.8) - planned 2026-07-05 |
+| [evolve-viewer-plan.md](documentation/plans/evolve-viewer-plan.md) | EV | Themed viewer for evolution runs (`--viewer` + launcher opt-in). EV.1-EV.3 shipped 2026-08-10 (#291-#293); **EV.4 operator smoke (#294) + EV.5 observation soak (#295) operator-pending** |
 
 ### Archived sub-plans — shipped or cut (`documentation/archived/`)
 
