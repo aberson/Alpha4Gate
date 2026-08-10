@@ -16,7 +16,11 @@ Deferred deliberately during the 2026-07-29 launcher UAT — `run-evolution` shi
   evolution lives in two Claude Code **skills**:
   - `improve-bot-evolve` → has a real headless runner `scripts/evolve.py`
     (`uv run python scripts/evolve.py --hours 4`). That's why `run-evolution` was
-    easy to buttonize.
+    easy to buttonize. (2026-08-06 update: the verb now points at
+    `scripts/launch-evolve.ps1`, a wrapper that starts `scripts/evolve.py --hours 4`
+    in its own window — skipping the spawn if an evolve run is already active —
+    then opens the dashboard on the Evolution tab via `launch-a4g.ps1 -Tab evolution`
+    → `/?tab=evolution`.)
   - `improve-bot-advised` → **NO standalone runner script.** Claude itself drives the
     loop (delegating dev-type improvements to the `/improve-bot` sub-skill). It runs
     N games → reviews replays vs the guiding-principles doc → picks ONE improvement
@@ -49,12 +53,16 @@ That is heavier + riskier than `run-evolution` (`scripts/evolve.py`):
 2. **Or, minimal:** point the verb straight at
    `claude -p "/improve-bot-advised --hours 4"` and rely on ambient auth.
 3. Register it exactly like `run-evolution` (confirm-gated), in
-   `dev/.claude/observatory/registry.toml` under Alpha4Gate:
+   `dev/.claude/observatory/registry.toml` under Alpha4Gate — and follow
+   `run-evolution`'s wrapper convention: a `scripts/launch-improvement.ps1` that
+   starts the runner in its own window (with an already-running guard) and then
+   opens the dashboard on the right tab (`launch-a4g.ps1 -Tab advisor`), rather
+   than pointing the verb at the bare runner:
 
    ```toml
    [project.launch.run-improvement]
    verb = "run-improvement"
-   command = "uv run python scripts/improve.py --hours 4"   # or the claude -p form
+   command = "scripts/launch-improvement.ps1"   # wraps improve.py + dashboard open
    confirm = true
    ```
 

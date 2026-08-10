@@ -14,16 +14,31 @@ import { useAdvisedRun } from "./hooks/useAdvisedRun";
 import { useAlerts } from "./hooks/useAlerts";
 import "./App.css";
 
-type Tab =
-  | "advisor"
-  | "evolution"
-  | "models"
-  | "observable"
-  | "processes"
-  | "help";
+const TAB_NAMES = [
+  "advisor",
+  "evolution",
+  "models",
+  "observable",
+  "processes",
+  "help",
+] as const;
+
+type Tab = (typeof TAB_NAMES)[number];
+
+// Deep-link contract: /?tab=<name> opens that tab directly (used by
+// scripts/launch-a4g.ps1 -Tab and the dev-observatory run-evolution button).
+// Unknown or absent values fall back to the advisor tab.
+function initialTab(): Tab {
+  // Lowercased so hand-typed links (?tab=Evolution) still land on the tab.
+  const param =
+    new URLSearchParams(window.location.search).get("tab")?.toLowerCase() ?? "";
+  return (TAB_NAMES as readonly string[]).includes(param)
+    ? (param as Tab)
+    : "advisor";
+}
 
 function App() {
-  const [tab, setTab] = useState<Tab>("advisor");
+  const [tab, setTab] = useState<Tab>(initialTab);
   const { state: advisedState } = useAdvisedRun();
   const advisedActive = advisedState.data?.status === "running" || advisedState.data?.status === "paused";
   const {
