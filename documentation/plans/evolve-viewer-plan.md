@@ -1,6 +1,8 @@
 # Phase EV — Themed viewer for evolution runs
 
-**Track:** Observable. **Status:** Planned (authored 2026-08-09).
+**Track:** Observable. **Status:** EV.1–EV.3 shipped 2026-08-10 (#291–#293);
+EV.4 operator smoke (#294) + EV.5 observation soak (#295) operator-pending
+(authored 2026-08-09; build outcome at the end of this document).
 **Prerequisites:** Phase 3 (subprocess self-play runner + `src/selfplay_viewer/`),
 Phase 9 (evolve loop). No prerequisite on Phase L.
 
@@ -75,7 +77,8 @@ run `scripts/evolve.py` and write `data/evolve_*.json`. Four other soak steps
 are already pending and use the same state files and the same `bots/current`
 pointer: EJ.7 (#288), EJ.8 (#289), EL.7 (#279), and Phase 7 Step 6 (#280). Two
 concurrent runs race on state, both flip `bots/current`, and both auto-commit
-`[evo-auto]` to master. Only one evolve run at a time, machine-wide.
+`[evo-auto]` to whatever branch is checked out (here `master-plan/phase-ev`,
+not `master`). Only one evolve run at a time, machine-wide.
 
 ---
 
@@ -325,7 +328,7 @@ filename format, or shared constant. The only signature touched is
 `scripts/evolve.py::main()` (an entry point with one caller, `if __name__ ==
 "__main__"` at L5154) and `build_parser()` (additive flag only). The
 downstream-consumer grep required by
-[`.claude/rules/code-quality.md`](../../.claude/rules/code-quality.md) was run
+[`.claude/rules/code-quality.md`](../../../.claude/rules/code-quality.md) was run
 against `run_batch_fn` — the one value that crosses module boundaries — and is
 recorded in rows 1, 2 and 5 above.
 
@@ -636,7 +639,7 @@ a step DONE runs the FULL suite, per
 - **Issue:** #292
 - **Flags:** --reviewers deep --isolation worktree
 - **Produces:** `_EvolveViewerSession` + rewritten `main()` in `scripts/evolve.py`; wrapper tests in `tests/test_evolve_parallel.py`; `main()`-level integration test in `tests/test_evolve_cli.py`
-- **Done when:** full `uv run pytest` green, with new tests asserting: (1) **chaining** — the wrapper is called with a caller-supplied `on_game_end` and a caller-supplied `stop_event`; assert the caller's `on_game_end` still fires, the viewer's also fires, and the `stop_event` object reaching `run_batch` `is` the caller's (identity, not equality); (2) **no stop_event injection** — with no caller `stop_event`, the wrapper forwards `stop_event` absent/`None`; (3) **exception isolation** — a viewer callback that raises does not prevent the caller's callback from running and does not propagate (template: `tests/test_selfplay_callbacks.py:176`); (4) **latch** — after `close()`, the kwargs reaching `run_batch` are identical to the un-wrapped call; (5) **integration through the production caller** (required by [`code-quality.md`](../../.claude/rules/code-quality.md)) — drive `main(["--viewer", ...])` with a fake `SelfPlayViewer` whose `run_with_batch` invokes `batch_fn()` inline and a fake `run_batch`, and assert the fake viewer's `on_game_start`/`on_game_end` were reached end-to-end; (6) **detach-and-continue** — a fake viewer whose `run_with_batch` returns *before* `batch_fn` completes; assert `main()` still blocks until the loop finishes and returns `run_loop`'s real return code. Viewer-object tests use `pytest.importorskip("selfplay_viewer")` + construct + drain `_event_queue` (template: `tests/test_selfplay_callbacks.py:467`) — never the real-window path in `tests/test_container_integration.py`.
+- **Done when:** full `uv run pytest` green, with new tests asserting: (1) **chaining** — the wrapper is called with a caller-supplied `on_game_end` and a caller-supplied `stop_event`; assert the caller's `on_game_end` still fires, the viewer's also fires, and the `stop_event` object reaching `run_batch` `is` the caller's (identity, not equality); (2) **no stop_event injection** — with no caller `stop_event`, the wrapper forwards `stop_event` absent/`None`; (3) **exception isolation** — a viewer callback that raises does not prevent the caller's callback from running and does not propagate (template: `tests/test_selfplay_callbacks.py:176`); (4) **latch** — after `close()`, the kwargs reaching `run_batch` are identical to the un-wrapped call; (5) **integration through the production caller** (required by [`code-quality.md`](../../../.claude/rules/code-quality.md)) — drive `main(["--viewer", ...])` with a fake `SelfPlayViewer` whose `run_with_batch` invokes `batch_fn()` inline and a fake `run_batch`, and assert the fake viewer's `on_game_start`/`on_game_end` were reached end-to-end; (6) **detach-and-continue** — a fake viewer whose `run_with_batch` returns *before* `batch_fn` completes; assert `main()` still blocks until the loop finishes and returns `run_loop`'s real return code. Viewer-object tests use `pytest.importorskip("selfplay_viewer")` + construct + drain `_event_queue` (template: `tests/test_selfplay_callbacks.py:467`) — never the real-window path in `tests/test_container_integration.py`.
 - **Depends on:** EV.1
 - **Status:** DONE (2026-08-10)
 
@@ -646,24 +649,24 @@ a step DONE runs the FULL suite, per
 - **Issue:** #293
 - **Flags:** --reviewers code --isolation worktree
 - **Produces:** modified `scripts/launch-evolve.ps1`, `.claude/skills/improve-bot-evolve/SKILL.md`, `documentation/master_plan.md`, `CLAUDE.md`
-- **Done when:** `powershell -NoProfile -Command "& { . { $null = [ScriptBlock]::Create((Get-Content -Raw scripts/launch-evolve.ps1)) } }"` parses clean; the script is ASCII-only per [`.claude/rules/windows-shell.md`](../../.claude/rules/windows-shell.md) (no em-dashes — the file has no BOM); `grep -i "viewer" scripts/launch-evolve.ps1` shows both `--extra viewer` and `--viewer`; the already-running guard block is unchanged (verify with `git diff` showing only the `$evolveCmd` line plus header comments); SKILL.md flag table contains a `--viewer` row and the `--concurrency` row names the mutual exclusion; full `uv run pytest` still green.
+- **Done when:** `powershell -NoProfile -Command "& { . { $null = [ScriptBlock]::Create((Get-Content -Raw scripts/launch-evolve.ps1)) } }"` parses clean; the script is ASCII-only per [`.claude/rules/windows-shell.md`](../../../.claude/rules/windows-shell.md) (no em-dashes — the file has no BOM); `grep -i "viewer" scripts/launch-evolve.ps1` shows both `--extra viewer` and `--viewer`; the already-running guard block is unchanged (verify with `git diff` showing only the `$evolveCmd` line plus header comments); SKILL.md flag table contains a `--viewer` row and the `--concurrency` row names the mutual exclusion; full `uv run pytest` still green.
 - **Depends on:** EV.2
 - **Status:** DONE (2026-08-10)
 
 ### Step EV.4: Real-SC2 smoke gate
-- **Problem:** Prove the wiring works against real SC2 on Windows before any long run. On a Windows box with `uv sync --extra viewer` and SC2 installed, run a minimal evolve: `uv run --extra viewer python scripts/evolve.py --pool-size 2 --games-per-eval 3 --hours 0.5 --no-commit --viewer`. Confirm (a) the themed container opens with a background and stats bar; (b) during the fitness phase both SC2 clients reparent into the two panes and the overlay shows `cand_<hash>` vs the parent version; (c) the container idles gracefully (placeholders, no freeze) during the Claude pool-generation and stack-apply phases; (d) closing the container mid-run leaves the evolve process alive and the run continuing headlessly to its budget — verify via `data/evolve_results.jsonl` gaining rows *after* the window closed. Then run the same command **without** `--viewer` for 10 minutes and confirm behavior matches a pre-EV run (raw SC2 windows, identical row shapes in `evolve_results.jsonl`). Finally confirm `uv run python scripts/evolve.py --viewer --concurrency 2` exits immediately with the guidance message, and that on a machine without the extra (`uv run python ... --viewer`, no `--extra viewer`) the run starts headless with a WARNING rather than crashing. **(e) Exercise the operator acceptance condition end-to-end (§1).** This item is the phase's acceptance gate, not a spot-check. Launch from the dev-observatory `run-evolution` button itself if the control plane is up; otherwise run the identical command the registry holds, `.\scripts\launch-evolve.ps1` (bare — let it use its own `-Hours 4` default, exactly as the button invokes it). Confirm: (e1) a **real SC2 match renders inside the themed container** — not merely that the window opened; wait for it, because pool generation runs a Claude prompt before the first mirror-calibration game, so first paint can be several minutes out and a short `-Hours` override may end the run before a game ever starts; (e2) the dashboard opens on the Evolution tab and shows the run; (e3) the already-running-evolve guard fires on a second invocation instead of starting a competing run; (e4) closing the container leaves both the run and the dashboard alive. Stop the run once (e1)-(e4) are observed — the full four hours is EV.5's job, not this one.
+- **Problem:** Prove the wiring works against real SC2 on Windows before any long run. On a Windows box with `uv sync --extra viewer` and SC2 installed, run a minimal evolve: `uv run --extra viewer python scripts/evolve.py --pool-size 2 --games-per-eval 3 --hours 0.5 --no-commit --viewer`. Confirm (a) the themed container opens with a background and stats bar; (b) during the fitness phase both SC2 clients reparent into the two panes and the overlay shows `cand_<hash>` vs the parent version; (c) the container idles gracefully (placeholders, no freeze) during the Claude pool-generation and stack-apply phases; (d) closing the container mid-run leaves the evolve process alive and the run continuing headlessly to its budget — verify via `data/evolve_results.jsonl` gaining rows *after* the window closed. Then run the same command **without** `--viewer` for 10 minutes and confirm behavior matches a pre-EV run (raw SC2 windows, identical row shapes in `evolve_results.jsonl`). Finally confirm `uv run python scripts/evolve.py --viewer --concurrency 2` exits immediately with the guidance message, and that on a machine without the extra (`uv run python ... --viewer`, no `--extra viewer`) the run starts headless with a WARNING rather than crashing. **(e) Exercise the operator acceptance condition end-to-end (§1).** This item is the phase's acceptance gate, not a spot-check. Launch from the dev-observatory `run-evolution` button itself if the control plane is up; otherwise run the identical command the registry holds, `.\scripts\launch-evolve.ps1` (bare — let it use its own `-Hours 4` default, exactly as the button invokes it). Confirm: (e1) a **real SC2 match renders inside the themed container** — not merely that the window opened; wait for it, because pool generation runs a Claude prompt before the first mirror-calibration game, so first paint can be several minutes out and a short `-Hours` override may end the run before a game ever starts; (e2) the dashboard opens on the Evolution tab and shows the run; (e3) the already-running-evolve guard fires on a second invocation instead of starting a competing run; (e4) closing the container leaves both the run and the dashboard alive. **(e) is a real, un-flagged run.** The launcher passes no `--no-commit` (`$evolveCmd` at [`scripts/launch-evolve.ps1:72`](../../scripts/launch-evolve.ps1#L72) is `uv run --extra viewer python scripts/evolve.py --hours $Hours --viewer`), and its own header cautions that evolve "creates new bot versions, flips `bots/current`, and AUTO-COMMITS `[evo-auto]` promotions". So this run **can promote a new version and auto-commit `[evo-auto]` to whatever branch is checked out — here `master-plan/phase-ev`**, which §0 says cannot merge to `master` until `onbrand-pilot` lands. Expect that commit; do not "fix" it by adding `--no-commit`, because the whole point of (e) is to exercise the dev-observatory button exactly as the registry invokes it, with no arguments (D16, changed 2026-08-10). Stop the run once (e1)-(e4) are observed — the full four hours is EV.5's job, not this one. **Stop it by closing the evolve CONSOLE window; that is the only working stop gesture.** Closing the themed container only DETACHES the display and the run keeps going headless (D-1); the dashboard's Stop button is NOT wired to the runner (§8, no reader for `data/evolve_run_control.json`). And **never press Ctrl+C on a `--viewer` run**: the evolution loop runs off the main thread, so burnysc2's SIGINT kill-switch is never armed and Ctrl+C can leave ORPHANED SC2 processes that [`.claude/rules/bot-runtime.md`](../../.claude/rules/bot-runtime.md) forbids killing by hand. Authoritative wording: `scripts/launch-evolve.ps1` header ("HOW TO STOP THE RUN", L25-40) and `scripts/evolve.py::_VIEWER_CTRL_C_WARNING`.
 - **Type:** operator
 - **Issue:** #294
-- **Produces:** smoke evidence appended to the run log under `documentation/soak-test-runs/`; pass/fail verdict per checklist item (a)-(e) plus the three negative cases
+- **Produces:** smoke evidence appended to the run log under `documentation/soak-test-runs/`; pass/fail verdict per checklist item (a)-(e) plus the two negative cases (concurrency rejection, missing-extra degradation)
 - **Done when:** all five positive observations confirmed, **with (e1) — a real match visibly rendered in the container from the launcher — as the hard gate**; the defaults-off run shows zero behavior change; both rejection/degradation cases behave as specified; and verdicts are recorded. A failure here blocks EV.5. If (e1) does not happen, the phase has not met its acceptance condition regardless of how many unit tests pass.
 - **Depends on:** EV.3
 
 ### Step EV.5: Attended-then-detached observation run
-- **Problem:** Time-dependent failures in a pygame loop + daemon thread riding a multi-hour run are invisible to EV.4's 30 minutes (D-7). Launch a standard 4-hour run via the production launcher (`.\scripts\launch-evolve.ps1 -Hours 4`), watch the first generation attended, then close the container and let the remainder run detached. Afterwards compare against the most recent pre-EV soak on: generations completed, promotions, games per generation, and crash rows in `data/evolve_crashes.jsonl`. Specifically look for viewer-attributable divergence — a lower generation count, HWND-attach stalls (the 15s `GAME_START_HWND_TIMEOUT_SECONDS` blocks the pygame thread per game, [`container.py:94`](../../src/selfplay_viewer/container.py#L94)), unbounded process memory growth, or any evidence the post-close latch failed.
+- **Problem:** Time-dependent failures in a pygame loop + daemon thread riding a multi-hour run are invisible to EV.4's 30 minutes (D-7). Launch a standard 4-hour run via the production launcher (`.\scripts\launch-evolve.ps1 -Hours 4`), watch the first generation attended, then close the container and let the remainder run detached. **Same real-run caveat as EV.4 item (e):** the launcher passes no `--no-commit`, so this run may promote a new version and auto-commit `[evo-auto]` to the current branch (`master-plan/phase-ev`) — expected, not a defect (D16). If the run must be ended before its 4-hour budget, close the evolve CONSOLE window: closing the container only detaches, the dashboard Stop button is not wired, and Ctrl+C is forbidden under `--viewer` (full rationale in EV.4 item (e)). Afterwards compare against the most recent pre-EV soak on: generations completed, promotions, games per generation, and crash rows in `data/evolve_crashes.jsonl`. Specifically look for viewer-attributable divergence — a lower generation count, HWND-attach stalls (the 15s `GAME_START_HWND_TIMEOUT_SECONDS` blocks the pygame thread per game, [`container.py:94`](../../src/selfplay_viewer/container.py#L94)), unbounded process memory growth, or any evidence the post-close latch failed.
 - **Type:** wait
 - **Issue:** #295
 - **Produces:** observation report under `documentation/soak-test-runs/` with the survival verdict and, if a paired control was run, the throughput comparison
-- **Done when:** the 4-hour run completes; the run continued past the container close; and the report records a **survival verdict** — no crash, no dead run, no unbounded memory growth, no evidence the post-close latch failed. **Throughput is NOT claimed from an unpaired comparison.** Comparing against "the most recent pre-EV soak" confounds viewer overhead with a different bot version, a different pool, and different machine load; per [`.claude/rules/measurement-validity.md`](../../.claude/rules/measurement-validity.md) (match measurement scope to decision scope), that comparison cannot answer "did `--viewer` cost throughput". To claim throughput, run the paired control: 2 hours `--viewer` then 2 hours headless resumed from the same state in the same session, and compare those. Absent the paired control, record generations/promotions as **context, explicitly not a verdict**.
+- **Done when:** the 4-hour run completes; the run continued past the container close; and the report records a **survival verdict** — no crash, no dead run, no unbounded memory growth, no evidence the post-close latch failed. **Throughput is NOT claimed from an unpaired comparison.** Comparing against "the most recent pre-EV soak" confounds viewer overhead with a different bot version, a different pool, and different machine load; per [`.claude/rules/measurement-validity.md`](../../../.claude/rules/measurement-validity.md) (match measurement scope to decision scope), that comparison cannot answer "did `--viewer` cost throughput". To claim throughput, run the paired control: 2 hours `--viewer` then 2 hours headless resumed from the same state in the same session, and compare those. Absent the paired control, record generations/promotions as **context, explicitly not a verdict**.
 - **Depends on:** EV.4
 
 ---
@@ -678,7 +681,7 @@ a step DONE runs the FULL suite, per
 | Phase L refactors `src/selfplay_viewer/` to single-pane | Phase L's stated scope ("refactor `src/selfplay_viewer/` to single-pane", master plan L1207) would break evolve's 2-pane use | Advisory only — Phase L is Future/unscheduled. Recorded here so Phase L's plan inherits a second consumer. Evolve games are inherently 2-bot, so Phase L must keep a 2-pane mode or gate evolve's viewer behind it |
 | `scripts/selfplay.py::_viewer_enabled` lacks the pygame probe | Same latent crash this plan fixes for evolve still exists for `scripts/selfplay.py` on a Windows box without the extra | Out of scope (different flag, different default). Recorded as a follow-up; the fix is the same three-line `find_spec` probe |
 | Viewer appearance not configurable from evolve | Operators on 2560x1600 displays may want `layout="vertical"` | Deferred (§3). `SelfPlayViewer.__init__` already takes the parameters; adding `--viewer-layout` later is additive and needs no rework |
-| Dashboard Stop button is not wired to the runner | EV.3 forbids Ctrl+C under `--viewer`, so the documented stop gestures must all actually work — but `bots/v0/api.py:698-742` writes `data/evolve_run_control.json` and **no reader exists**: `rg "evolve_run_control\|stop_run\|pause_after_round"` over `scripts/` and `src/orchestrator/` returns zero hits, and `scripts/evolve.py` only ever emits `stop_reason` of `wall-clock`/`pool-exhausted`/`generations-reached`. An operator told to "use the dashboard's stop control" on a 4-hour run that auto-commits to `master` would get nothing | EV.3 made the documentation true instead of implementing the poll (out of scope for a launcher-opt-in step): `launch-evolve.ps1`, `SKILL.md`'s Viewer note, and both pre-existing SKILL.md stop sections now state that closing the console window is the only working stop gesture. **Follow-up (not scheduled):** teach the runner to read the control file at the generation boundary in `scripts/evolve.py`'s loop, next to the wall-clock and `--generations` checks, and add a `dashboard-stop` `stop_reason` |
+| Dashboard Stop button is not wired to the runner | EV.3 forbids Ctrl+C under `--viewer`, so the documented stop gestures must all actually work — but `bots/v0/api.py:698-742` writes `data/evolve_run_control.json` and **no reader exists**: `rg "evolve_run_control\|stop_run\|pause_after_round"` over `scripts/` and `src/orchestrator/` returns zero hits, and `scripts/evolve.py` only ever emits `stop_reason` of `wall-clock`/`pool-exhausted`/`generations-reached`. An operator told to "use the dashboard's stop control" on a 4-hour run that auto-commits to the checked-out branch would get nothing | EV.3 made the documentation true instead of implementing the poll (out of scope for a launcher-opt-in step): `launch-evolve.ps1`, `SKILL.md`'s Viewer note, and both pre-existing SKILL.md stop sections now state that closing the console window is the only working stop gesture. **Follow-up (not scheduled):** teach the runner to read the control file at the generation boundary in `scripts/evolve.py`'s loop, next to the wall-clock and `--generations` checks, and add a `dashboard-stop` `stop_reason` |
 | `--viewer` + `--resume` untested together | A resumed run takes a different pool-gen path (L3816) | Both EV.4 and EV.5 exercise fresh runs only. `--resume` skips pool generation, which is a viewer-*idle* phase, so risk is low; note it as an untested combination rather than expanding scope |
 | Windows-only feature, Linux CI | New code must import and test cleanly without pygame/pywin32 | Every new test collects without `--extra viewer`; viewer-object tests use `pytest.importorskip("selfplay_viewer")`; `_viewer_enabled` short-circuits on `sys.platform` before any viewer import |
 | Launcher is a deployment seam that unit tests cannot reach | A malformed `uv run --extra viewer python ...` line in `launch-evolve.ps1` is invisible to `pytest` and would surface at the start of EV.5's four-hour window | EV.4 checklist item (e) runs the real launcher for 15 minutes before EV.5 commits to a long run. Satisfies the substrate-smoke requirement for deployment-seam changes |
@@ -705,7 +708,7 @@ TTY-sniffing in this phase.
   identity pass-through, exception isolation, post-`close()` transparency.
 
 **Integration through the production caller** — mandated by
-[`code-quality.md`](../../.claude/rules/code-quality.md) ("New components require
+[`code-quality.md`](../../../.claude/rules/code-quality.md) ("New components require
 an integration test through the production caller"). EV.2's Done-when item (5)
 drives real `main()` with a fake `SelfPlayViewer` and a fake `run_batch`,
 asserting the viewer's callbacks are actually reached. A unit test of
@@ -730,15 +733,76 @@ mock-based unit tests cannot see.
   (`:48-53`). Tests that monkeypatch module globals on `evolve_cli` must undo them
   or use `monkeypatch.setattr`, or state will leak between tests.
 
-**End-to-end verification:** EV.4's checklist (a)-(e) plus the three negative
-cases (concurrency rejection, missing-extra degradation, non-Windows
-degradation). The load-bearing one is (d): rows appearing in
+**End-to-end verification:** EV.4's checklist (a)-(e) plus the two negative
+cases it specifies (concurrency rejection, missing-extra degradation).
+Non-Windows degradation is *not* one of them — it is proved by unit test only,
+and EV.4 has no WSL negative case (D17). The load-bearing one is (d): rows appearing in
 `data/evolve_results.jsonl` *after* the container was closed is the only direct
 proof that detach-and-continue-headless works.
 
 **Baseline:** `uv run pytest` collects **1990 / runs 1989** (1 deselected by
 `addopts = "-m 'not sc2'"`) at `HEAD` = `844ae57`. Every step's gate runs the
 full suite, not a subset.
+
+---
+
+## Phase EV — build outcome (EV.1–EV.3 shipped 2026-08-10)
+
+**Issues #291–#293 closed. 2022/2022 tests passing (1987 without the optional
+`[viewer]` extra). Zero type errors. Zero lint violations.** EV.4 (#294) and
+EV.5 (#295) remain operator-pending; they are the acceptance gate and the
+observation soak, not automated work.
+
+Built on `master-plan/phase-ev` at `fbd7363` → `5b65afb` → `59c8cfa`.
+**Still not mergeable to `master`** until `onbrand-pilot` lands — `master`
+carries mainline `pygame` (no cp314 wheel) and has no `scripts/launch-a4g.ps1`.
+
+### What was built
+
+- `--viewer` flag on `scripts/evolve.py`, default OFF; headless stays
+  byte-identical (no wrapper, no import, no thread on the default path).
+- `_viewer_enabled(args)` degradation gate — silent when the flag is absent,
+  WARNING + headless on non-Windows or when pygame is unavailable. Probes
+  `pygame`, not `selfplay_viewer` (which imports cleanly without the extra), and
+  is **total**: the `find_spec` call and the spec/loader inspection sit inside a
+  single `except Exception`, so no meta-path finder can abort a run.
+- `--viewer` + `--concurrency > 1` rejected at parse time in `main()` (D13),
+  gated behind `args.viewer` as the first conjunct so the pre-existing parallel
+  path is untouched.
+- `_EvolveViewerSession` — a `run_batch_fn` that CHAINS `on_game_start` /
+  `on_game_end` onto whatever the callee already passed and never reads, writes,
+  or forwards a `stop_event` of its own, so `run_fitness_eval` /
+  `run_regression_eval`'s `games // 2 + 1` early-stop survives by identity. A
+  `close()` latch makes post-close calls pass through unwrapped, bounding
+  `SelfPlayViewer._event_queue` growth on a detached run.
+- `main()` inverted via `_run_loop_with_viewer()`: the viewer owns the main
+  thread, `run_loop` runs on a daemon batch thread, and the main thread holds a
+  `done` event so closing the container DETACHES instead of cancelling (D-1).
+- `scripts/launch-evolve.ps1` opts in (`--extra viewer` + `--viewer`), keeping
+  its already-running-evolve guard and `launch-a4g.ps1 -Tab evolution`
+  delegation byte-identical.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `scripts/evolve.py` | `--viewer` flag, `_viewer_enabled`, `_EvolveViewerSession`, `_run_loop_with_viewer`, Ctrl+C safety banner |
+| `scripts/launch-evolve.ps1` | Spawn line opts into the extra + the flag; header rewritten with the stop-gesture and Ctrl+C rules |
+| `tests/test_evolve_cli.py` | Flag/gate/guard tests, `main()` integration + detach tests, launcher spawn-contract test, SKILL.md doc test |
+| `tests/test_evolve_parallel.py` | Wrapper chaining, `stop_event` identity, exception isolation, close latch |
+| `.claude/skills/improve-bot-evolve/SKILL.md` | `--viewer` row + Viewer note; `--concurrency` mutual-exclusion note; two pre-existing false stop-condition claims corrected |
+| `documentation/master_plan.md` | Phase EV added to the plan index |
+| `CLAUDE.md` | Stale `1799` test count corrected at three sites |
+
+### Fresh context notes for Phase EV
+
+| Issue | Detail |
+|---|---|
+| The §5 reference block in this plan was defective | It hangs forever if `run_with_batch` raises before the container starts its batch thread — `run_loop` is never called, yet `main()` blocks on the heartbeat printing "the evolution run CONTINUES headless". Shipped code deliberately deviates (a `started` event + a lock-guarded one-shot claim). The correction is annotated in §5; do not restore that block verbatim. |
+| Ctrl+C under `--viewer` can orphan SC2 | `run_loop` runs off the main thread, so burnysc2's SIGINT kill-switch (`sc2/sc2process.py`) is never armed — `src/orchestrator/selfplay.py` installs a process-global proxy that returns `None` off the main thread. Stop a viewer run by closing the CONSOLE window. Closing the viewer container only detaches. A real fix needs `selfplay.py`, read-only under D-3. |
+| The dashboard's Stop button does not stop a run | `bots/v0/api.py` writes `data/evolve_run_control.json`; no reader exists in `scripts/evolve.py` or `src/orchestrator/`. Recorded as a follow-up in §8. |
+| Test counts depend on an optional extra | 1987 passing without pygame (what CI runs — `uv sync --extra dev`), 2022 with `--extra viewer`. Never compare a worktree count to a main-project count. |
+| Fresh worktrees bind Python 3.12 | `requires-python = ">=3.12"` with no `.python-version`, while the project runs 3.14. Produces a false-red `test_current_pointer.py::test_dash_m_submodule_runs_via_alias`. Use `uv venv --python 3.14 && uv sync --extra dev`. |
 
 ---
 
@@ -779,7 +843,7 @@ in the request. **D** = I defaulted it; every D has an axis you can move.
 | D13 | D | The `--viewer`/`--concurrency` guard lives in `main()`, so `build_parser()` alone does not enforce it | accepted 2026-08-09 |
 | D14 | D | §0's four prerequisites stay prose rather than a `Type: operator` Step EV.0, so `/build-phase` does not enforce them | accepted 2026-08-09 |
 | D15 | D | EV.1 merges a flag that is inert until EV.2; mitigated by a "not yet wired" WARNING | accepted 2026-08-09 |
-| D16 | D | EV.4's smoke uses `--no-commit` and 3 games/eval, so no promotion happens under the viewer and the `games//2+1` early-stop never fires | accepted 2026-08-09 |
+| D16 | D | ~~EV.4's smoke uses `--no-commit` and 3 games/eval, so no promotion happens under the viewer and the `games//2+1` early-stop never fires~~ → **Corrected:** only EV.4's (a)-(d) command carries `--no-commit --games-per-eval 3`. EV.4 item (e) and EV.5 launch via `scripts/launch-evolve.ps1`, whose `$evolveCmd` (L72) is `... scripts/evolve.py --hours $Hours --viewer` — **no `--no-commit`, default games/eval**. Those runs are real: they can promote, flip `bots/current`, and auto-commit `[evo-auto]` to the current branch (`master-plan/phase-ev`). That is accepted, not fixed — (e) must invoke the button with no arguments (P6/§1). Two sub-claims were also wrong: `--no-commit` suppresses only the git commit (`commit_fn=None`, `evolve.py:4613`), the pointer flip still happens (`:4926-4939`); and at 3 games/eval `pass_threshold = 3//2+1 = 2`, so the early-stop **can** fire after game 2 | accepted 2026-08-09, **changed 2026-08-10** — EV.4(e)/EV.5 warnings added to §7 |
 | D17 | D | Non-Windows degradation is proved by unit test only; EV.4 has no WSL negative case | accepted 2026-08-09 |
 | D18 | D | No test pins the `run_batch_fn`-vs-parallel-dispatch branch collision that D1 makes unreachable | accepted 2026-08-09 |
 | D19 | D | New tests live in `test_evolve_cli.py` + `test_evolve_parallel.py`; the four files you named are used as pattern templates, not extended | accepted 2026-08-09 |

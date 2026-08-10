@@ -103,6 +103,6 @@ here because they operate on different things.
 2. **Key Interfaces** — public API, data flow
 3. **Implementation Notes** — internal details (marked "verify against code" — these can drift)
 
-**For the active plan:** See [alpha4gate-master-plan.md](../plans/alpha4gate-master-plan.md) for the current roadmap. Phases A, 0–5 complete. Phase 9 (improve-bot-evolve) operational and parallelized — v0→v10 via successive auto-promotions. Phase 8 (headless Linux training infrastructure) shipped end-to-end including the 8h soak (v4→v7, 2026-04-30). Phase N (win-prob heuristic + give-up) shipped. Evolve parallelization (4-way concurrency window + worker-slot recycling) shipped 2026-04-30. Next: Phase O scripted Hydra v1, Phase 7 (advised staleness), Tracks 7-10 capability research.
+**For the active plan:** See [master_plan.md](../master_plan.md) for the current roadmap. Phases A, 0–5 complete. Phase 9 (improve-bot-evolve) operational and parallelized — v0→v10 via successive auto-promotions. Phase 8 (headless Linux training infrastructure) shipped end-to-end including the 8h soak (v4→v7, 2026-04-30). Phase N (win-prob heuristic + give-up) shipped. Evolve parallelization (4-way concurrency window + worker-slot recycling) shipped 2026-04-30. Next: Phase O scripted Hydra v1, Phase 7 (advised staleness), Tracks 7-10 capability research.
 
 **For day-to-day operator commands:** See [operator-commands.md](operator-commands.md) — the cheat sheet for running the bot, launching evolve (Windows + WSL), watching tasks, debugging, and frequent recipes.

@@ -6,7 +6,7 @@ How to set up a working Alpha4Gate dev environment on WSL2 Ubuntu 22.04. This is
 
 ## Purpose & Design
 
-Phase 8 of the master plan moves training off Windows onto headless Linux for the per-instance memory savings (1.7×–2.9× vs Windows; see [phase 8 build plan](../plans/phase-8-build-plan.md)). The repo stays cross-platform — Windows and Linux developers share `/mnt/c/Users/abero/dev/Alpha4Gate` — but the runtime env (venv + SC2 install + env vars) is Linux-native.
+Phase 8 of the master plan moves training off Windows onto headless Linux for the per-instance memory savings (1.7×–2.9× vs Windows; see [phase 8 build plan](../archived/phase-8-build-plan.md)). The repo stays cross-platform — Windows and Linux developers share `/mnt/c/Users/abero/dev/Alpha4Gate` — but the runtime env (venv + SC2 install + env vars) is Linux-native.
 
 The "shared repo, per-OS venv" split exists because:
 
@@ -132,7 +132,7 @@ A consolidated list of foot-guns documented in memory and in the Spike 1 finding
 
 ## References
 
-- [Phase 8 build plan, Step 6](../plans/phase-8-build-plan.md) — the spec this page satisfies
+- [Phase 8 build plan, Step 6](../archived/phase-8-build-plan.md) — the spec this page satisfies
 - [Spike 1 soak run](../soak-test-runs/spike-1-hello-world-linux-sc2-20260425-2218.md) — first end-to-end Linux SC2 game; the source of every gotcha in the table above
 - [Headless Linux training investigation](../investigations/headless-linux-training-investigation.md) — why Phase 8 exists at all
 - [`scripts/step5_wsl_verify.sh`](../../scripts/step5_wsl_verify.sh) — reusable verify harness

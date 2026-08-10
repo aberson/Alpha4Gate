@@ -52,7 +52,7 @@ See [index.md](index.md) for the system diagram, [improve-bot-advised-architectu
 
 ## What's being worked on now?
 
-The active plan is [alpha4gate-master-plan.md](../plans/alpha4gate-master-plan.md). Phases A, 0–5, 8, 9, N all complete; the versioning + headless + evolve substrate is fully built and producing auto-promotions on a parallel runtime (v0→v10 today). Next up: Phase O scripted Hydra v1 (themed expert sub-policies + rule-based switcher), Phase 7 (advised-loop staleness detection), and the Tracks 7-10 capability research phases (mini-games, replay-stream-as-live viewer, knowledge distillation, harvest-engineer skill, Wilson/SPRT statistical robustness). Phase G (multi-race: Zerg then Terran) sits past Phase 6.
+The active plan is [master_plan.md](../master_plan.md). Phases A, 0–5, 8, 9, N all complete; the versioning + headless + evolve substrate is fully built and producing auto-promotions on a parallel runtime (v0→v10 today). Next up: Phase O scripted Hydra v1 (themed expert sub-policies + rule-based switcher), Phase 7 (advised-loop staleness detection), and the Tracks 7-10 capability research phases (mini-games, replay-stream-as-live viewer, knowledge distillation, harvest-engineer skill, Wilson/SPRT statistical robustness). Phase G (multi-race: Zerg then Terran) sits past Phase 6.
 
 ## How does the bot decide what to do?
 
@@ -136,7 +136,7 @@ The `/improve-bot-advised` loop treats SC2 as an opaque task: code + config go i
 2. Read [improve-bot-advised-architecture.md](improve-bot-advised-architecture.md) for the autonomous loop
 3. Read [architecture.md](architecture.md) for the SC2 bot layers
 4. Read the wiki page for the specific system you're touching
-5. Check [alpha4gate-master-plan.md](../plans/alpha4gate-master-plan.md) for the active roadmap
+5. Check [master_plan.md](../master_plan.md) for the active roadmap
 6. Read `CLAUDE.md` at the project root for commands and conventions
 
 ## What are the known limitations?

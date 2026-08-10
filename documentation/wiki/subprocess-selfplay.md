@@ -147,5 +147,5 @@ When a bot calls `await self.client.leave()` to surrender, the WebSocket can clo
 ## References
 
 - burnysc2 source: `.venv/Lib/site-packages/sc2/main.py` (`run_match`, `a_run_multiple_games`), `sc2/proxy.py`, `sc2/player.py` (`BotProcess`), `sc2/portconfig.py`.
-- Master plan: [documentation/plans/alpha4gate-master-plan.md](../plans/alpha4gate-master-plan.md) Phase 0.
+- Master plan: [documentation/master_plan.md](../master_plan.md) Phase 0.
 - Spike artifacts: `data/phase0_spike/spike_summary.json`, per-bot result JSON, stdout logs.

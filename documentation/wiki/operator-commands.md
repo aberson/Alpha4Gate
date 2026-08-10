@@ -60,10 +60,26 @@ detached-process incantation, but the minimal foreground call is:
 ```powershell
 PS> uv run python scripts/evolve.py --generations 0 --hours 8
 PS> uv run python scripts/evolve.py --concurrency 4 --generations 0 --hours 4   # parallel
+PS> uv run --extra viewer python scripts/evolve.py --generations 0 --hours 8 --viewer
 ```
 
 > `--generations 0` disables the per-run generation cap (default `1` is for
 > single-generation test runs). Pair it with `--hours N` for soaks.
+> `--viewer` (default OFF) renders the run's SC2 games inside the themed
+> container — see [§Evolve with the themed viewer](#evolve-with-the-themed-viewer)
+> for the platform gate and, importantly, the stop gestures.
+
+**Path B2 — one-click launcher (evolve + dashboard):**
+
+```powershell
+PS> .\scripts\launch-evolve.ps1 -Hours 8
+```
+
+Starts `scripts/evolve.py --viewer` in its own console window, then brings up
+the dashboard on the Evolution tab. This is the command behind the
+dev-observatory **run-evolution** button. See
+[§Evolve with the themed viewer](#evolve-with-the-themed-viewer) and
+[§One-click launchers](#one-click-launchers).
 
 **Path C — direct script, WSL/Linux (Phase 8):**
 
@@ -95,11 +111,13 @@ Drives one named favorite straight through stack-apply + regression. ~10 min
 cycle, real `[evo-auto]` commits. Use when stack-apply repeatedly fails and
 you want to isolate from fitness noise.
 
-**Watch it:** open the dashboard at <http://localhost:3000/evolution> (start
-the backend + frontend first per [§Running the bot](#running-the-bot-windows)),
-or tail the log per [§Evolve log tail](#evolve-log-tail-windows-runs).
+**Watch it:** open the dashboard at <http://localhost:3000/?tab=evolution>
+(start the backend + frontend first per
+[§Running the bot](#running-the-bot-windows), or just run
+`.\scripts\launch-a4g.ps1 -Tab evolution`), or tail the log per
+[§Evolve log tail](#evolve-log-tail-windows-runs).
 **Stop it:** see [§Killing a running task](#killing-a-running-task) — never
-kill `SC2_x64.exe` directly.
+kill `SC2_x64.exe` directly, and never Ctrl+C a `--viewer` run.
 
 ### 2. Improve-bot-advised — Claude advisor + linear improvement loop
 
@@ -137,23 +155,26 @@ Two-pane themed window with stats overlay; reparents the SC2 client windows
 into the panes. **Windows-only** (the viewer no-ops on Linux per
 `scripts/selfplay.py:_viewer_enabled`).
 
-**Pre-req: a Py3.12 venv with the `viewer` extras** (the main `.venv` is
-Py3.14 and has no pygame wheels — memory `feedback_py312_venv_recipe_for_soaks.md`):
+**Pre-req: the optional `viewer` extra on the main `.venv`.** Since `844ae57`
+the extra pulls `pygame-ce` (drop-in `import pygame`) instead of mainline
+`pygame`; pygame-ce ships cp314 wheels, so it installs straight onto the main
+Py3.14 `.venv` — no side venv, no `UV_PROJECT_ENVIRONMENT` juggling:
 
 ```powershell
-PS> $env:VIRTUAL_ENV=""; $env:UV_PROJECT_ENVIRONMENT=".venv-py312"
-PS> uv sync --python 3.12 --extra viewer
+PS> uv sync --extra viewer
 ```
 
-Once that's set up, all the commands below pick it up via the env vars (set
-them in each shell, or persist in your PowerShell profile).
+Then prefix each viewer command with `--extra viewer` (`uv run --extra viewer
+python ...`) — the same form `scripts/launch-evolve.ps1` uses. The old
+Py3.12 side-venv recipe (`.venv-py312`) is superseded; delete it if you built
+one, or it will drift from what the launchers actually run.
 
 **Path A — empty container only (no SC2, fastest smoke test):**
 
 ```powershell
-PS> uv run python -m selfplay_viewer.demo
-PS> uv run python -m selfplay_viewer.demo --background brazil --bar side --size small
-PS> uv run python -m selfplay_viewer.demo --attach-pids 1234,5678   # reparent two real Win32 windows
+PS> uv run --extra viewer python -m selfplay_viewer.demo
+PS> uv run --extra viewer python -m selfplay_viewer.demo --background brazil --bar side --size small
+PS> uv run --extra viewer python -m selfplay_viewer.demo --attach-pids 1234,5678   # reparent two real Win32 windows
 ```
 
 Two grey placeholder rectangles + the themed background. Useful for tweaking
@@ -162,9 +183,9 @@ layout / backgrounds without burning a 3-min SC2 game.
 **Path B — real self-play with the viewer attached (the actual demo):**
 
 ```powershell
-PS> uv run python scripts/selfplay.py --p1 v0 --p2 v0 --games 2 --map Simple64
-PS> uv run python scripts/selfplay.py --p1 v0 --p2 v7 --games 5 --layout vertical --background random
-PS> uv run python scripts/selfplay.py --sample pfsp --pool v0,v3,v4,v7 --games 10
+PS> uv run --extra viewer python scripts/selfplay.py --p1 v0 --p2 v0 --games 2 --map Simple64
+PS> uv run --extra viewer python scripts/selfplay.py --p1 v0 --p2 v7 --games 5 --layout vertical --background random
+PS> uv run --extra viewer python scripts/selfplay.py --sample pfsp --pool v0,v3,v4,v7 --games 10
 ```
 
 The viewer is on by default; pass `--no-viewer` for batch/CI runs that don't
@@ -175,15 +196,50 @@ need the window. Layout options: `--layout horizontal` (default) or `vertical`,
 **Path C — current pointer plays itself for a quick sanity demo:**
 
 ```powershell
-PS> uv run python scripts/selfplay.py --p1 (Get-Content bots\current\current.txt) `
+PS> uv run --extra viewer python scripts/selfplay.py --p1 (Get-Content bots\current\current.txt) `
        --p2 (Get-Content bots\current\current.txt) --games 1 --map Simple64
 ```
 
 Useful when you just want to see what `bots/current` looks like in motion.
 
+**Path D — an entire evolve run in the same container (Phase EV):** the same
+themed viewer now attaches to `scripts/evolve.py` via `--viewer`. Its stop
+gestures differ from the demo's — see
+[§Evolve with the themed viewer](#evolve-with-the-themed-viewer).
+
 ---
 
 ## Running the bot (Windows)
+
+### One-click launchers
+
+Two PowerShell launchers replace the manual multi-terminal bring-up below.
+Both reuse anything already listening instead of double-starting it, and both
+leave the servers running in their own windows when the launcher exits.
+
+```powershell
+PS> .\scripts\launch-a4g.ps1                      # backend :8765 + frontend :3000, opens the dashboard
+PS> .\scripts\launch-a4g.ps1 -Tab evolution       # ...and deep-links to a tab via /?tab=<name>
+PS> .\scripts\launch-evolve.ps1 -Hours 8          # evolve run (--viewer) + dashboard on the Evolution tab
+```
+
+- **`scripts/launch-a4g.ps1`** — starts the backend (`bots.current.runner
+  --serve` on :8765) and the frontend (Vite on :3000) in separate persistent
+  windows, waits for :3000 to answer, then opens the dashboard. `-Tab <name>`
+  appends the `/?tab=<name>` deep link; valid names are
+  `advisor` | `evolution` | `models` | `observable` | `processes` | `help`.
+  It does **not** start a game. (Distinct from `scripts/start-dev.sh`, which
+  is the `build-step --ui` capture harness and kills the backend when its
+  foreground exits.)
+- **`scripts/launch-evolve.ps1`** — the command behind the dev-observatory
+  **run-evolution** button. Starts `uv run --extra viewer python
+  scripts/evolve.py --hours <N> --viewer` in its own console window, then
+  delegates to `launch-a4g.ps1 -Tab evolution`. If a `python …evolve.py`
+  process is already running it skips the spawn and just opens the dashboard,
+  so two runs never race on `data/evolve_*.json`. `-Hours` defaults to 4.
+  **Read [§Evolve with the themed viewer](#evolve-with-the-themed-viewer)
+  before using it** — it auto-commits `[evo-auto]` promotions to master, and
+  its stop gesture is not the one you'd guess.
 
 ### Solo game vs SC2 built-in AI
 
@@ -246,6 +302,49 @@ PS> "PID: $($proc.Id)  log: $logfile"
 Detached; survives the launching window closing. Tail with
 `Get-Content $logfile -Wait -Tail 30`.
 
+### Evolve with the themed viewer
+
+`scripts/evolve.py --viewer` (Phase EV) renders the run's SC2 games inside the
+themed self-play container instead of raw, unmanaged SC2 windows. Same
+container as [§Demo viewer](#3-demo-viewer--watch-a-self-play-game-in-the-themed-pygame-container),
+now driven by the evolve loop.
+
+```powershell
+PS> uv run --extra viewer python scripts/evolve.py --generations 0 --hours 8 --viewer
+PS> .\scripts\launch-evolve.ps1 -Hours 8          # same thing + the dashboard
+```
+
+- **Default OFF.** Without `--viewer` the run is headless and byte-identical
+  to a pre-EV run.
+- **Windows + the `[viewer]` extra only.** Invoke through
+  `uv run --extra viewer` (see the pre-req in
+  [§Demo viewer](#3-demo-viewer--watch-a-self-play-game-in-the-themed-pygame-container)).
+  Off Windows, or with pygame not importable, the flag **degrades to a WARNING
+  and the run continues headless** — it never crashes the soak.
+- **Requires `--concurrency 1`.** `--viewer` with `--concurrency > 1` is
+  rejected at argparse time: parallel fitness games run in
+  `scripts/evolve_worker.py` subprocesses this process's viewer callbacks can
+  never render.
+
+#### Stop gestures — the two are NOT the same
+
+| Gesture | Effect |
+|---|---|
+| Close the **viewer container** | **DETACHES the display only.** The run keeps going headless to its `--hours` budget. Deliberate — dismissing the window must not cost hours of evolution. |
+| Close the **evolve console window** | **STOPS the run.** This is the only stop gesture. |
+| Dashboard **Stop** button | **Not wired to this runner.** It writes `data/evolve_run_control.json`, which nothing in `scripts/evolve.py` or `src/orchestrator/` reads, so the run ignores it. |
+
+**Never press Ctrl+C on a `--viewer` run.** Under `--viewer` the evolution loop
+runs off the main thread, so burnysc2's SIGINT kill-switch is never armed and
+Ctrl+C can leave **orphaned SC2 processes** behind — which
+`.claude/rules/bot-runtime.md` forbids cleaning up by killing `SC2_x64.exe` by
+hand. Close the console window instead. `scripts/evolve.py` prints this same
+warning to stderr at run start.
+
+The Evolution dashboard tab only *observes* the run (via the
+`data/evolve_*.json` state files the runner writes) — closing the dashboard
+does not stop anything either.
+
 ### Evolve — Linux soak (Phase 8 Step 11)
 
 **Two-step launch:** open interactive WSL shell, run nohup inside it.
@@ -282,7 +381,7 @@ Should show TWO lines: parent `uv run python scripts/evolve.py` and child
 
 `scripts/evolve.py` accepts `--concurrency N` (default `1`). At `N=1` the
 behaviour is byte-identical to the historical serial path (Decision D-1 in
-`documentation/plans/evolve-parallelization-plan.md`). At `N>1` the parent
+`documentation/archived/evolve-parallelization-plan.md`). At `N>1` the parent
 spawns N worker subprocesses that each run a fitness eval against the
 shared parent in parallel. Stack-apply + regression remain serial in the
 parent process; only the fitness fan-out parallelises.
@@ -342,7 +441,7 @@ $ echo "PID: $!"
 $ exit
 ```
 
-Open `http://localhost:3000/evolution` to watch the 4 cards populate
+Open `http://localhost:3000/?tab=evolution` to watch the 4 cards populate
 (one card per worker; parent process owns the run-state header).
 
 ### Operator quickstart — first 4-way parallel run
@@ -366,7 +465,9 @@ SC2_WSL_DETECT=0 nohup uv run --project . python scripts/evolve.py \
 exit  # detach the WSL shell; the nohup'd job survives
 ```
 
-Then open `http://localhost:3000/evolution` to watch the 4 cards populate.
+Then open `http://localhost:3000/?tab=evolution` to watch the 4 cards populate.
+(There is no router — the dashboard is a single page and `?tab=<name>` is the
+deep-link contract; an unknown or absent value falls back to the Advisor tab.)
 
 `--no-commit` is for the first shakeout — drop it once you're confident
 the pipeline is healthy and you want EVO_AUTO commits to land for real.
@@ -454,6 +555,13 @@ PS> wsl -d Ubuntu-22.04 bash -lc "ps -ef | grep evolve.py | grep -v grep"
 ---
 
 ## Killing a running task
+
+### Stop a `--viewer` evolve run
+
+Close the **evolve console window**. That is the only stop gesture — closing
+the themed viewer container merely detaches the display and the run continues
+headless. **Do not press Ctrl+C**: it can orphan SC2 processes. Full detail in
+[§Evolve with the themed viewer](#evolve-with-the-themed-viewer).
 
 ### Stop an evolve daemon (Windows)
 
@@ -654,8 +762,9 @@ Run `/help` inside Claude Code to see the canonical list.
 
 ## Where to find things
 
-- **Active plans:** `documentation/plans/` (alpha4gate-master-plan.md is the spine)
-- **Build docs:** `documentation/plans/phase-N-build-plan.md`
+- **Active plans:** `documentation/plans/` (`documentation/master_plan.md` is the spine)
+- **Build docs:** the per-phase `*-build-plan.md` files in
+  `documentation/plans/` (completed ones move to `documentation/archived/`)
 - **Soak records:** `documentation/soak-test-runs/`
 - **Wiki:** `documentation/wiki/index.md` — system diagram + deep-dive pages
 - **Investigations:** `documentation/investigations/` — pre-plan analysis

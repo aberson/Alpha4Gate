@@ -1,6 +1,6 @@
 # Alpha4Gate
 
-![Python](https://img.shields.io/badge/python-3.12-blue) [![linux-tests](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml/badge.svg?branch=master)](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml) ![pytest](https://img.shields.io/badge/pytest-1799%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-119%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
+![Python](https://img.shields.io/badge/python-3.12-blue) [![linux-tests](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml/badge.svg?branch=master)](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml) ![pytest](https://img.shields.io/badge/pytest-1987%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-119%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
 
 An AI agent that teaches itself to get better at a task with — zero human input.
 
@@ -189,7 +189,7 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 | Frontend | React + TypeScript + Vite | Live dashboard with game state streaming |
 | Deep learning | PyTorch + Stable Baselines 3 | PPO policy network for strategic decisions |
 | Training data | SQLite | Structured (s,a,r,s') transition storage |
-| Testing (Python) | pytest | 1448 unit tests, SC2 integration markers |
+| Testing (Python) | pytest | 2007 unit tests (2024 with the optional `[viewer]` extra), SC2 integration markers |
 | Testing (Frontend) | vitest + jsdom + @testing-library/react | 119 component / hook / lib tests |
 | Linting | ruff + mypy | Strict type checking, consistent style |
 

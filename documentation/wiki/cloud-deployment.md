@@ -253,7 +253,7 @@ not a blocker for normal use.
 
 ## See also
 
-- `documentation/plans/phase-8-build-plan.md` — the full Phase 8 plan,
+- `documentation/archived/phase-8-build-plan.md` — the full Phase 8 plan,
   including the SC2PATH resolver, Linux CI, and the conditional Step 12
   cloud dry-run.
 - `documentation/wiki/linux-dev-environment.md` — WSL2 dev setup
