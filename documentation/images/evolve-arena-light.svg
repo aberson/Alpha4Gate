@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 228" font-family="ui-monospace,'Cascadia Code','SF Mono',Consolas,'Roboto Mono',monospace" role="img" aria-label="One evolve generation, left to right: an improvement pool where Claude proposes ten ranked improvements, a fitness gate where each improvement plays the parent best of five, winners re-written onto a fresh snapshot by stack-apply, an evo-auto promote commit, then a regression gate where the new version plays the prior parent. Passing grows the lineage v0 to v1 to vN+1; losing triggers a git revert of the promotion. A log-only baseline gauntlet checks frozen anchors after promotion. Close losers retry up to three generations, and each generation ends with a pool top-up with title dedup.">
+  <defs>
+    <marker id="ar-light" markerWidth="9" markerHeight="9" refX="7.5" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#C0C9DA"/></marker>
+    <marker id="ar-s-light" markerWidth="10" markerHeight="10" refX="7.5" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#3355E0"/></marker>
+    <filter id="sh-light" x="-20%" y="-45%" width="140%" height="190%"><feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="rgba(20,26,40,.16)"/></filter>
+  </defs>
+  <style>
+    .bg{fill:#FFFFFF;stroke:#D4DBE8;stroke-width:1.5}
+    .lnk{fill:none;stroke:#C0C9DA;stroke-width:1.7}
+    .spine{fill:none;stroke:#3355E0;stroke-width:2.4}
+    .node rect{fill:#FFFFFF;stroke:#C0C9DA;stroke-width:1.4;filter:url(#sh-light)}
+    .pn{fill:#3355E0;font-size:13px;font-weight:600}
+    .ps{fill:#6E778C;font-size:10.5px}
+    .lbl{fill:#6E778C;font-size:11px;letter-spacing:.12em;font-weight:600}
+    .cap{fill:#6E778C;font-size:10.5px}
+  </style>
+  <rect class="bg" x="6" y="6" width="1108" height="216" rx="16"/>
+  <text class="lbl" x="24" y="28">ONE EVOLVE GENERATION</text>
+
+  <text class="cap" x="571" y="38">log-only vs frozen anchors</text>
+  <g class="node"><rect x="571" y="44" width="155" height="30" rx="10"/><text class="pn" x="585" y="64">gauntlet</text></g>
+  <path class="lnk" stroke-dasharray="4 4" marker-end="url(#ar-light)" d="M648,90 L648,76"/>
+
+  <g class="node"><rect x="752" y="44" width="155" height="30" rx="10"/><text class="pn" x="766" y="64">git revert</text></g>
+  <path class="lnk" marker-end="url(#ar-light)" d="M829,90 L829,76"/>
+  <text class="cap" x="915" y="64">beaten by vN</text>
+
+  <path class="spine" marker-end="url(#ar-s-light)" d="M183,114 L209,114"/>
+  <path class="spine" marker-end="url(#ar-s-light)" d="M364,114 L390,114"/>
+  <path class="spine" marker-end="url(#ar-s-light)" d="M545,114 L571,114"/>
+  <path class="spine" marker-end="url(#ar-s-light)" d="M726,114 L752,114"/>
+  <path class="spine" marker-end="url(#ar-s-light)" d="M907,114 L933,114"/>
+
+  <g class="node"><rect x="28" y="90" width="155" height="48" rx="10"/><text class="pn" x="42" y="112">improvement pool</text><text class="ps" x="42" y="129">claude proposes 10</text></g>
+  <g class="node"><rect x="209" y="90" width="155" height="48" rx="10"/><text class="pn" x="223" y="112">fitness gate</text><text class="ps" x="223" y="129">each imp ⚔ parent ×5</text></g>
+  <g class="node"><rect x="390" y="90" width="155" height="48" rx="10"/><text class="pn" x="404" y="112">stack-apply</text><text class="ps" x="404" y="129">winners re-written</text></g>
+  <g class="node"><rect x="571" y="90" width="155" height="48" rx="10"/><text class="pn" x="585" y="112">promote</text><text class="ps" x="585" y="129">[evo-auto] commit</text></g>
+  <g class="node"><rect x="752" y="90" width="155" height="48" rx="10"/><text class="pn" x="766" y="112">regression gate</text><text class="ps" x="766" y="129">vN+1 ⚔ vN · ×5</text></g>
+  <g class="node"><rect x="933" y="90" width="155" height="48" rx="10"/><text class="pn" x="947" y="112">lineage grows</text><text class="ps" x="947" y="129">v0 → v1 → … → vN+1</text></g>
+
+  <path class="lnk" marker-end="url(#ar-light)" d="M300,138 L300,172 L116,172 L116,138"/>
+  <text class="cap" x="130" y="166">close · retries ≤3</text>
+  <path class="lnk" marker-end="url(#ar-light)" d="M800,138 L800,200 L80,200 L80,138"/>
+  <text class="cap" x="340" y="194">next generation · pool top-up + title dedup</text>
+</svg>

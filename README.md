@@ -84,29 +84,14 @@ The loop runs unattended for hours. Each cycle: play N games, Claude reads the r
 
 ## The self-play arena
 
-```
-  The bot grows by ancestor chain — each step requires two head-to-head wins:
+A different kind of loop from the advised one — instead of validating one improvement at a time, the arena generates a pool of orthogonal candidates per generation and lets them compete. The bot grows by ancestor chain — v0 → v1 → v2 → … — and each link is one pass through this loop:
 
-         v0  →  v1  →  v2  →  v3  →  …
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="documentation/images/evolve-arena-dark.svg">
+  <img alt="One evolve generation, left to right: an improvement pool (Claude proposes 10 ranked improvements), a fitness gate where each improvement plays the parent best-of-5, winners re-written onto a fresh snapshot (stack-apply), an [evo-auto] promote commit, then a regression gate where the new version plays the prior parent — passing grows the lineage (v0 → v1 → … → vN+1), losing triggers a git revert of the promotion. A log-only baseline gauntlet checks frozen anchors after promotion. Close losers retry up to 3 generations; each generation ends with a pool top-up with title dedup." src="documentation/images/evolve-arena-light.svg">
+</picture>
 
-  Each generation plays out as a tournament in the SC2 sandbox:
-
-         Fitness round                          Regression round
-         ─────────────                          ────────────────
-     imp_1 ⚔ parent (g games)
-     imp_2 ⚔ parent (g games)    winners
-        ⋮                        stacked  ────►  vN+1 ⚔ vN (g games)
-     imp_k ⚔ parent (g games)    into vN+1             │
-                                                       ▼
-                                              majority wins?
-                                              ┌──────┴──────┐
-                                             yes           no
-                                          commit vN+1   git revert
-                                          (lineage      (lineage
-                                           grows)       unchanged)
-```
-
-A different kind of loop from the advised one — instead of validating one improvement at a time, the arena generates a pool of orthogonal candidates per generation and lets them compete. Claude proposes the pool; fitness winners get stacked into a new snapshot (with an import-check gate catching bad combinations); regression gates the promotion. Close-losers retry against the next parent; evicted imps get replaced. Every arrow in the lineage is a real auto-commit on master.
+What the diagram can't show: **stack-apply is a re-write, not a merge** — each fitness winner is re-implemented from its text description by a fresh sub-agent onto the new snapshot, in rank order, with a 30-second import check catching bad combinations; and **promotion commits before the regression gate** — the `[evo-auto]` commit lands first, and a regression loss (or a sweep loss against the frozen baseline panel, when armed) triggers a real `git revert`. Every arrow in the lineage is a commit on master; every rollback is a revert. Close-losers retry against the next parent; evicted imps get replaced at the generation-end pool refresh.
 
 **Read the mechanism:** [improve-bot-evolve SKILL.md](.claude/skills/improve-bot-evolve/SKILL.md) · [gate-reduction plan](documentation/plans/evolve-gate-reduction-plan.md)
 
