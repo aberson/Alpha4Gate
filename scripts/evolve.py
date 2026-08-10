@@ -51,6 +51,7 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 import traceback
 import uuid
@@ -137,14 +138,28 @@ _NULL_DIFF_EVICT_THRESHOLD = 2
 # duplicated literal.
 _REFRESH_DEDUP_THRESHOLD = 0.85
 
-# Phase EV.1 ships the --viewer flag surface only: the flag is accepted and
-# validated, but no viewer object is constructed until EV.2 wires the session
-# wrapper. An operator who tries the flag between the two merges is told,
-# rather than silently getting the old behavior. EV.2 deletes this constant
-# and its single use in main().
-_VIEWER_NOT_WIRED_WARNING = (
-    "evolve: --viewer accepted but not yet wired (lands in EV.2); running headless."
+# Phase EV.2 SAFETY: printed to stderr the moment a viewer run starts. Under
+# --viewer the evolution loop runs on the viewer's batch thread, where
+# burnysc2's SIGINT handler (sc2/sc2process.py -> KillSwitch.kill_all) is
+# never armed — src/orchestrator/selfplay.py's process-global signal proxy
+# returns None off the main thread instead of registering. Combined with
+# D-1's stop_event=None, that makes Ctrl+C the one stop gesture that can
+# ORPHAN SC2 children, while .claude/rules/bot-runtime.md forbids killing
+# them by hand. So the operator is told the safe gesture BEFORE the window
+# opens: closing it detaches and the run finishes headless.
+_VIEWER_CTRL_C_WARNING = (
+    "[evolve] WARNING: to stop this run, CLOSE THE VIEWER WINDOW — the run "
+    "detaches and continues headless. Do NOT press Ctrl+C: under --viewer the "
+    "evolution loop runs off the main thread, where burnysc2's SIGINT "
+    "kill-switch is never armed, so Ctrl+C can leave orphaned SC2 processes."
 )
+
+# Phase EV.2: how long main() sleeps between "still running headless"
+# heartbeats after the operator closed the viewer window. Kept as a module
+# constant (not a literal) so tests can shrink it without a 60s wall-clock
+# wait — a detached tail can run for hours and a silent console is
+# indistinguishable from a hung one.
+_VIEWER_DETACHED_HEARTBEAT_S = 60.0
 
 
 # ---------------------------------------------------------------------------
@@ -488,8 +503,11 @@ def build_parser() -> argparse.ArgumentParser:
             "[viewer] extra (uv run --extra viewer ...); on any other "
             "platform, or without pygame installed, the flag degrades to a "
             "WARNING and the run continues headless. Requires "
-            "--concurrency 1. Default OFF (headless, byte-identical to a "
-            "pre-EV run)."
+            "--concurrency 1. Stop a viewer run by CLOSING THE WINDOW (the "
+            "run detaches and continues headless); Ctrl+C under --viewer can "
+            "orphan SC2 processes, because the evolution loop runs off the "
+            "main thread where burnysc2's SIGINT kill-switch cannot arm. "
+            "Default OFF (headless, byte-identical to a pre-EV run)."
         ),
     )
     return parser
@@ -554,6 +572,117 @@ def _viewer_enabled(args: argparse.Namespace) -> bool:
         )
         return False
     return True
+
+
+class _EvolveViewerSession:
+    """Phase EV.2: owns the ``run_batch_fn`` wrapper and the close latch.
+
+    :meth:`run_batch_fn` is the callable injected into
+    ``run_loop(run_batch_fn=...)``. It matches
+    :func:`orchestrator.selfplay.run_batch`'s signature and forwards to it,
+    adding exactly one thing: the viewer's ``on_game_start`` /
+    ``on_game_end`` shims, **chained after** whatever callbacks the caller
+    already supplied.
+
+    Chaining rather than replacing is load-bearing, not stylistic.
+    ``run_fitness_eval`` and ``run_regression_eval``
+    (``src/orchestrator/evolve.py``) build their OWN ``on_game_end`` (the
+    live win tally) and ``stop_event`` (the ``games // 2 + 1`` early-stop
+    that saves 2-3 games per evaluation) and pass both in ``batch_kwargs``.
+    A wrapper that overwrote either kwarg would silently destroy the tally
+    or the early-stop. Hence:
+
+    * the caller's callback runs FIRST, then the viewer's;
+    * each invocation sits in its own ``try/except`` so neither side can
+      break the other or abort the batch (Decision D-4);
+    * ``stop_event`` is never read, written, or synthesized here — the
+      caller's event passes through by identity, untouched.
+
+    The close latch exists because ``on_game_start``/``on_game_end`` are
+    enqueue-only shims onto ``SelfPlayViewer._event_queue``, and nobody
+    drains that queue once the pygame loop has exited. Without the latch a
+    multi-hour post-close run would accumulate one ``SelfPlayRecord`` per
+    game in a queue that is never read. After :meth:`close`, the wrapper is
+    a byte-identical passthrough to ``selfplay.run_batch``.
+    """
+
+    def __init__(self, viewer: Any) -> None:
+        self._viewer = viewer
+        # Plain bool, not an Event: it is set once on the main thread
+        # immediately after run_with_batch returns, and only ever read from
+        # the batch thread. A stale read costs one extra enqueue, never
+        # correctness.
+        self._closed = False
+
+    def close(self) -> None:
+        """Latch the session closed (called once, on the main thread)."""
+        self._closed = True
+
+    def _chain_on_game_start(self, caller_cb: Callable[..., None] | None) -> Callable[..., None]:
+        """Return an ``on_game_start`` that calls *caller_cb* then the viewer."""
+
+        def _wrapped(
+            game_index: int,
+            total: int,
+            p1_pid: int,
+            p2_pid: int,
+            p1_label: str,
+            p2_label: str,
+        ) -> None:
+            if caller_cb is not None:
+                try:
+                    caller_cb(game_index, total, p1_pid, p2_pid, p1_label, p2_label)
+                except Exception:
+                    _log.warning("evolve: on_game_start callback failed", exc_info=True)
+            if self._closed:
+                return
+            try:
+                self._viewer.on_game_start(game_index, total, p1_pid, p2_pid, p1_label, p2_label)
+            except Exception:
+                _log.warning("evolve: viewer on_game_start failed", exc_info=True)
+
+        return _wrapped
+
+    def _chain_on_game_end(self, caller_cb: Callable[..., None] | None) -> Callable[..., None]:
+        """Return an ``on_game_end`` that calls *caller_cb* then the viewer."""
+
+        def _wrapped(record: SelfPlayRecord) -> None:
+            if caller_cb is not None:
+                try:
+                    caller_cb(record)
+                except Exception:
+                    _log.warning("evolve: on_game_end callback failed", exc_info=True)
+            if self._closed:
+                return
+            try:
+                self._viewer.on_game_end(record)
+            except Exception:
+                _log.warning("evolve: viewer on_game_end failed", exc_info=True)
+
+        return _wrapped
+
+    def run_batch_fn(
+        self,
+        p1: str,
+        p2: str,
+        games: int,
+        map_name: str = "Simple64",
+        **kwargs: Any,
+    ) -> list[SelfPlayRecord]:
+        """``run_batch`` with the viewer's callbacks chained in."""
+        # Deferred import — mirrors _make_parallel_run_batch_fn so non-evolve
+        # importers of this module don't pay selfplay's burnysc2 cost.
+        from orchestrator import selfplay
+
+        if self._closed:
+            return selfplay.run_batch(p1, p2, games, map_name, **kwargs)
+
+        chained = dict(kwargs)
+        chained["on_game_start"] = self._chain_on_game_start(kwargs.get("on_game_start"))
+        chained["on_game_end"] = self._chain_on_game_end(kwargs.get("on_game_end"))
+        # NOTE: `stop_event` is deliberately absent from this dict. Whatever
+        # the caller passed (or didn't) rides along in `chained` untouched.
+        return selfplay.run_batch(p1, p2, games, map_name, **chained)
 
 
 # ---------------------------------------------------------------------------
@@ -5245,10 +5374,167 @@ def main(argv: list[str] | None = None) -> int:
             "--concurrency 1, or drop --viewer."
         )
 
-    if _viewer_enabled(args):
-        _log.warning(_VIEWER_NOT_WIRED_WARNING)
+    if not _viewer_enabled(args):
+        return run_loop(args)
 
-    return run_loop(args)
+    return _run_loop_with_viewer(args)
+
+
+def _run_loop_with_viewer(args: argparse.Namespace) -> int:
+    """Phase EV.2: run the evolve loop with the themed viewer attached.
+
+    Control is inverted relative to the headless path: ``SelfPlayViewer``
+    owns the MAIN thread (Win32 HWND manipulation is not thread-safe, and
+    ``container._ensure_main_thread`` enforces it), so ``run_loop`` runs on
+    the viewer's daemon batch thread.
+
+    Closing the window DETACHES; it does not cancel the run (Decision D-1) —
+    an operator glancing at an overnight evolve and hitting Escape should
+    lose the window, not four hours of evolution. Two things implement that:
+    ``run_with_batch`` is given ``stop_event=None``, and this function then
+    blocks the main thread on ``done`` until ``run_loop`` returns. The latter
+    is not optional: the batch thread is a daemon, so it would die the
+    instant main() returned.
+
+    Any viewer failure — construction, or a main loop that dies before it
+    ever starts the batch — logs a WARNING and REALLY falls through to a
+    headless ``run_loop(args)``. A viewer exception ends the viewer, never
+    the run (Decision D-5). A single atomic claim guarantees ``run_loop``
+    executes exactly once across the two paths.
+    """
+    try:
+        from selfplay_viewer import SelfPlayViewer
+
+        viewer = SelfPlayViewer()  # D-6: stock defaults, no new flags
+    except Exception:
+        _log.warning("evolve: viewer unavailable; continuing headless", exc_info=True)
+        return run_loop(args)
+
+    session = _EvolveViewerSession(viewer)
+    done = threading.Event()
+    started = threading.Event()
+    rc_box: list[int] = []
+    exc_box: list[BaseException] = []
+    claim_lock = threading.Lock()
+    claimed = False
+
+    def _claim_run_loop() -> bool:
+        """Award the ONE permitted ``run_loop`` execution to one thread.
+
+        Both the batch thread and the headless fall-through below want to
+        run the loop, and exactly one of them may. Reading a plain flag
+        would race (the viewer can raise microseconds after starting the
+        thread); the lock makes the hand-off atomic, so ``run_loop`` runs
+        exactly once no matter how the two interleave.
+        """
+        nonlocal claimed
+        with claim_lock:
+            if claimed:
+                return False
+            claimed = True
+            return True
+
+    def _batch() -> None:
+        started.set()
+        if not _claim_run_loop():
+            return  # the main thread already fell back to headless
+        try:
+            rc_box.append(run_loop(args, run_batch_fn=session.run_batch_fn))
+        except SystemExit as exc:
+            # Handled separately from Exception on purpose: a bare
+            # `except BaseException` would swallow SystemExit here and
+            # re-raise it on the main thread after the wait, changing both
+            # the exit code and the traceback shape versus the headless
+            # `return run_loop(args)`. The mapping below reproduces
+            # CPython's own sys.exit semantics so the exit code matches
+            # headless for every shape: None -> 0 (a bare sys.exit() is a
+            # CLEAN stop, not a failure), int -> itself, anything else ->
+            # printed to stderr and 1.
+            code = exc.code
+            if code is None:
+                rc_box.append(0)
+            elif isinstance(code, int):
+                rc_box.append(code)
+            else:
+                print(code, file=sys.stderr, flush=True)
+                rc_box.append(1)
+        except Exception as exc:  # re-raised on the main thread below
+            exc_box.append(exc)
+        except BaseException as exc:  # re-raised on the main thread below
+            # Anything left (KeyboardInterrupt, a bare BaseException from a
+            # library) must NOT be left to the container's own capture: on
+            # the detach path run_with_batch has already returned and its
+            # exception box is never read, so the failure would vanish and
+            # main() would report a bland rc=1. Route it through exc_box
+            # like every other failure.
+            exc_box.append(exc)
+        finally:
+            done.set()
+
+    # SAFETY (see _VIEWER_CTRL_C_WARNING): the operator gets told, on stderr,
+    # how to stop this run without orphaning SC2 — before the window opens and
+    # swallows the console. Documentation alone is not a control
+    # (.claude/rules/security.md); this is the closest thing to one that fits
+    # inside D-3's read-only boundary, since arming the real kill-switch would
+    # mean editing src/orchestrator/selfplay.py.
+    print(_VIEWER_CTRL_C_WARNING, file=sys.stderr, flush=True)
+
+    try:
+        # HAZARD, mechanism (out of scope for EV.2 — a fix means editing
+        # files D-3 marks read-only): running run_loop off the main thread
+        # leaves burnysc2's SC2 kill-switch unarmed. sc2/sc2process.py does
+        # signal.signal(SIGINT, KillSwitch.kill_all) at process start, and
+        # src/orchestrator/selfplay.py installs a process-global proxy over
+        # sc2process.signal that returns None instead of registering when
+        # called off the main thread. With stop_event=None (D-1) Ctrl+C is
+        # the operator's only stop channel, so under --viewer a Ctrl+C can
+        # ORPHAN SC2 children that a headless run would have reaped — and
+        # .claude/rules/bot-runtime.md forbids killing them by hand.
+        viewer.run_with_batch(_batch, stop_event=None)
+    except Exception:
+        _log.warning("evolve: viewer failed; evolve continues headless", exc_info=True)
+    finally:
+        session.close()
+
+    if not started.is_set() and _claim_run_loop():
+        # The viewer never got as far as running the batch: run_with_batch
+        # can raise BEFORE it starts the batch thread (import pygame,
+        # _resolve_background_path, pygame.init, display.set_mode,
+        # _load_background all precede batch_thread.start(), and none of
+        # them are predictable from _viewer_enabled's find_spec probe). The
+        # WARNING above says "continues headless" — this is the line that
+        # makes that true. Without it `done` is never set and the heartbeat
+        # loop below spins forever, reassuring the operator while running
+        # zero generations.
+        _log.warning("evolve: viewer never started the batch; running headless.")
+        return run_loop(args)
+
+    if not done.is_set():
+        # STDERR, not the logger: container.py prints its misleading
+        # "orphaned SC2 processes may remain" warning to stderr on the
+        # stop_event=None join path, so the correction must land on the SAME
+        # stream — log routing or level filters could otherwise show the
+        # scare and hide the fix. Acting on that scare means killing SC2,
+        # which .claude/rules/bot-runtime.md forbids.
+        print(
+            "[evolve] viewer closed; the evolution run CONTINUES headless. "
+            "Any preceding [selfplay_viewer] orphaned-SC2 warning does not apply.",
+            file=sys.stderr,
+            flush=True,
+        )
+    # Heartbeat rather than a bare done.wait(): a detached tail can run for
+    # hours, and a silent console is indistinguishable from a hung one. The
+    # periodic wake also keeps KeyboardInterrupt promptly deliverable on the
+    # main thread.
+    wait_started = time.monotonic()
+    while not done.wait(_VIEWER_DETACHED_HEARTBEAT_S):
+        _log.info(
+            "evolve: still running headless (viewer closed); %.0f min elapsed",
+            (time.monotonic() - wait_started) / 60.0,
+        )
+    if exc_box:
+        raise exc_box[0]
+    return rc_box[0] if rc_box else 1
 
 
 if __name__ == "__main__":

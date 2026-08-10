@@ -444,6 +444,25 @@ def main(argv: list[str] | None = None) -> int:
     return rc_box[0] if rc_box else 1
 ```
 
+> **Correction (2026-08-10, found during the EV.2 build by `/review-deep`).** The
+> block above has a defect: if `viewer.run_with_batch` raises **before** the
+> container reaches `batch_thread.start()` ([`container.py:588`](../../src/selfplay_viewer/container.py#L588)),
+> `_batch` never runs, so `done` is never set and `run_loop` is **never called** —
+> yet control still falls into `while not done.wait(60.0)` and blocks the process
+> forever, after printing "the evolution run CONTINUES headless" and then logging
+> that same false claim every 60 s. The pre-start window is real and is not
+> predictable from `_viewer_enabled`'s `find_spec` probe: `import pygame`
+> (`container.py:558`), `_resolve_background_path` (`:560`), `pygame.init()`
+> (`:580`), `pygame.display.set_mode()` (`:583`), `_load_background` (`:586`) all
+> precede the thread start, so a headless/RDP desktop hits it. Four review lenses
+> found it independently and three reproduced it by execution.
+>
+> **The shipped code deliberately deviates from this block:** `_batch` sets a
+> `started` event as its first statement, and after the `try/except/finally`
+> around `run_with_batch` an unset `started` means `return run_loop(args)` — the
+> genuine fall-through to headless that D-5 promises. Do not "restore" the block
+> above verbatim.
+
 The `done` wait on the main thread is what makes detach-and-continue-headless
 work: `run_loop`'s thread is a **daemon**
 ([`container.py:577`](../../src/selfplay_viewer/container.py#L577)), so it dies
@@ -619,6 +638,7 @@ a step DONE runs the FULL suite, per
 - **Produces:** `_EvolveViewerSession` + rewritten `main()` in `scripts/evolve.py`; wrapper tests in `tests/test_evolve_parallel.py`; `main()`-level integration test in `tests/test_evolve_cli.py`
 - **Done when:** full `uv run pytest` green, with new tests asserting: (1) **chaining** — the wrapper is called with a caller-supplied `on_game_end` and a caller-supplied `stop_event`; assert the caller's `on_game_end` still fires, the viewer's also fires, and the `stop_event` object reaching `run_batch` `is` the caller's (identity, not equality); (2) **no stop_event injection** — with no caller `stop_event`, the wrapper forwards `stop_event` absent/`None`; (3) **exception isolation** — a viewer callback that raises does not prevent the caller's callback from running and does not propagate (template: `tests/test_selfplay_callbacks.py:176`); (4) **latch** — after `close()`, the kwargs reaching `run_batch` are identical to the un-wrapped call; (5) **integration through the production caller** (required by [`code-quality.md`](../../.claude/rules/code-quality.md)) — drive `main(["--viewer", ...])` with a fake `SelfPlayViewer` whose `run_with_batch` invokes `batch_fn()` inline and a fake `run_batch`, and assert the fake viewer's `on_game_start`/`on_game_end` were reached end-to-end; (6) **detach-and-continue** — a fake viewer whose `run_with_batch` returns *before* `batch_fn` completes; assert `main()` still blocks until the loop finishes and returns `run_loop`'s real return code. Viewer-object tests use `pytest.importorskip("selfplay_viewer")` + construct + drain `_event_queue` (template: `tests/test_selfplay_callbacks.py:467`) — never the real-window path in `tests/test_container_integration.py`.
 - **Depends on:** EV.1
+- **Status:** DONE (2026-08-10)
 
 ### Step EV.3: Launcher opt-in + documentation
 - **Problem:** Change `scripts/launch-evolve.ps1` line 51 from `uv run python scripts/evolve.py --hours $Hours` to `uv run --extra viewer python scripts/evolve.py --hours $Hours --viewer`, preserving the already-running-evolve guard (L40-49) and the `launch-a4g.ps1 -Tab evolution` delegation (L57) exactly. Update the script's header comment to say the run renders in the themed container and that closing the container does not stop the run. Document `--viewer` in `.claude/skills/improve-bot-evolve/SKILL.md` (flag summary line 5 + flag table), including the `--concurrency 1` requirement as a note on the existing `--concurrency` row. Add a Phase EV entry to `documentation/master_plan.md`'s plan index. Correct the stale test count in `CLAUDE.md` (1799 → the post-EV.2 collected count).

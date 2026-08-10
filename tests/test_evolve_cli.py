@@ -17,6 +17,7 @@ import json
 import logging
 import subprocess
 import sys
+import threading
 from collections.abc import Callable
 from importlib.machinery import ModuleSpec
 from pathlib import Path
@@ -4490,31 +4491,41 @@ def test_main_viewer_with_concurrency_gt_1_exits_with_guidance(
     assert "evolve_worker.py" in err
 
 
-def test_main_viewer_with_degraded_gate_is_silent_about_wiring(
+def test_main_viewer_with_degraded_gate_falls_through_to_headless(
     cli: ModuleType,
     caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """--concurrency 1 passes the guard, and a FALSE gate says nothing.
+    """--concurrency 1 passes the guard, and a FALSE gate runs plain headless.
 
     The interesting case: ``--viewer`` IS set but ``_viewer_enabled``
-    returns False (no Windows / no pygame). ``main()`` must gate the "not
-    yet wired" WARNING on the *gate*, not on the flag — a negative
-    assertion on the log stream, because "byte-identical headless" is a
-    promise about what the operator SEES, and the call-shape identity
-    assertions cannot observe a stray warning. Weakening the guard to
-    ``if args.viewer:`` or ``if True:`` turns this red.
+    returns False (no Windows / no pygame). ``main()`` must gate the whole
+    EV.2 inversion on the *gate*, not on the flag — no viewer object, no
+    batch thread, and above all no ``run_batch_fn`` seam injected, so the
+    ``elif concurrency_int > 1`` mirror-dispatcher branch stays reachable.
+    Weakening the guard to ``if args.viewer:`` turns this red.
     """
     monkeypatch.setattr(sys, "platform", "linux")  # forces headless degrade
-    monkeypatch.setattr(cli, "run_loop", lambda args, **k: 0)
+
+    seen: dict[str, Any] = {}
+
+    def _fake_run_loop(args: argparse.Namespace, **kwargs: Any) -> int:
+        seen["kwargs"] = kwargs
+        return 0
+
+    monkeypatch.setattr(cli, "run_loop", _fake_run_loop)
 
     with caplog.at_level(logging.WARNING, logger="evolve"):
         assert cli.main(["--viewer", "--concurrency", "1"]) == 0
 
+    assert seen["kwargs"] == {}
+    # No viewer means no viewer-safety noise on stderr either: the Ctrl+C
+    # warning is scoped to runs that actually open a window.
+    assert "CLOSE THE VIEWER WINDOW" not in capsys.readouterr().err
+    # ...and the gate DID explain itself, so this is headless-by-gate, not
+    # headless-because-nothing-ran.
     messages = [r.getMessage() for r in caplog.records]
-    assert not any("not yet wired" in m for m in messages), messages
-    # ...but the gate DID explain itself, so this is silence-by-gate, not
-    # silence-because-nothing-ran.
     assert any("Windows-only" in m for m in messages), messages
 
 
@@ -4567,39 +4578,579 @@ def test_main_without_viewer_reaches_run_loop_unchanged(
     assert seen["args"].viewer is False
     assert seen["args"].concurrency == expected_concurrency
     messages = [r.getMessage() for r in caplog.records]
-    assert not any("not yet wired" in m for m in messages), messages
     assert not any("--viewer" in m for m in messages), messages
 
 
-def test_main_with_viewer_enabled_still_runs_headless_and_warns(
+# ---------------------------------------------------------------------------
+# Phase EV.2 — viewer inversion in `main()`
+# ---------------------------------------------------------------------------
+#
+# The viewer is faked, never constructed: a real ``SelfPlayViewer`` would
+# demand pygame plus a Windows message pump, and neither exists on CI. The
+# fakes stand in at the exact production seam ``main()`` reaches for
+# (``selfplay_viewer.SelfPlayViewer``), so the wiring under test is real even
+# though the window is not.
+
+
+class _RecordingViewer:
+    """Base fake: records the two enqueue-only callbacks the wrapper chains.
+
+    Subclasses supply ``run_with_batch``, which is the only axis that
+    matters at ``main()`` level (inline / threaded / detaching / failing).
+    The real ``on_game_start`` call shape is contract-tested against the
+    actual ``SelfPlayViewer`` in
+    ``tests/test_evolve_parallel.py::test_viewer_session_feeds_the_real_viewer_event_queue``.
+    """
+
+    instances: list[Any] = []
+
+    def __init__(self) -> None:
+        self.starts: list[tuple[Any, ...]] = []
+        self.ends: list[Any] = []
+        self.stop_event_arg: Any = "<never called>"
+        type(self).instances.append(self)
+
+    def on_game_start(
+        self,
+        game_index: int,
+        total: int,
+        p1_pid: int,
+        p2_pid: int,
+        p1_label: str,
+        p2_label: str,
+    ) -> None:
+        self.starts.append((game_index, total, p1_pid, p2_pid, p1_label, p2_label))
+
+    def on_game_end(self, result: Any) -> None:
+        self.ends.append(result)
+
+
+class _FakeInlineViewer(_RecordingViewer):
+    """``run_with_batch`` runs the batch inline, then returns.
+
+    Models the happy path: the operator leaves the window open until the
+    evolve run finishes on its own.
+    """
+
+    instances: list[Any] = []
+
+    def run_with_batch(self, batch_fn: Callable[[], Any], *, stop_event: Any = None) -> Any:
+        self.stop_event_arg = stop_event
+        return batch_fn()
+
+
+class _FakeThreadedViewer(_RecordingViewer):
+    """``run_with_batch`` runs the batch on a worker thread and joins it.
+
+    Same completion semantics as ``_FakeInlineViewer``, but ``run_loop``
+    genuinely executes OFF the main thread — which is what production does,
+    and the only way to see failures that would otherwise be swallowed by
+    the batch thread instead of reaching ``main()``.
+    """
+
+    instances: list[Any] = []
+
+    def run_with_batch(self, batch_fn: Callable[[], Any], *, stop_event: Any = None) -> Any:
+        self.stop_event_arg = stop_event
+        thread = threading.Thread(target=batch_fn, daemon=True)
+        thread.start()
+        thread.join(10.0)
+        return None
+
+
+class _FakePostStartFailureViewer(_RecordingViewer):
+    """``run_with_batch`` starts the batch and THEN dies.
+
+    The window that matters most in production and the one every other fake
+    misses: ``container.run_with_batch`` runs its entire pygame frame loop
+    *after* ``batch_thread.start()``, so a viewer can fail with a live,
+    multi-hour ``run_loop`` still enqueueing behind it. Only
+    ``finally: session.close()`` latches the session on this path — without
+    it, ``_event_queue`` grows unbounded with nobody draining it.
+    """
+
+    instances: list[Any] = []
+
+    def run_with_batch(self, batch_fn: Callable[[], Any], *, stop_event: Any = None) -> Any:
+        self.stop_event_arg = stop_event
+        thread = threading.Thread(target=batch_fn, daemon=True)
+        thread.start()
+        thread.join(10.0)
+        raise RuntimeError("pygame frame loop died after the batch started")
+
+
+def _arrange_viewer_available(
+    cli: ModuleType, monkeypatch: pytest.MonkeyPatch, viewer_cls: type
+) -> None:
+    """Make ``_viewer_enabled`` True and hand ``main()`` a fake viewer class.
+
+    Also shrinks the detached-tail heartbeat. Every viewer-path test blocks
+    on ``done.wait(_VIEWER_DETACHED_HEARTBEAT_S)`` in ``main()``, so at the
+    production 60s a regression that leaves ``done`` unset would park the
+    whole suite instead of failing — which is precisely how the
+    "run_with_batch raised before the batch thread started" hang stayed
+    invisible. A tiny interval also makes the heartbeat body observable at
+    all, and is the reason the constant exists.
+    """
+    import selfplay_viewer
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    _arrange_pygame_available(monkeypatch)
+    monkeypatch.setattr(selfplay_viewer, "SelfPlayViewer", viewer_cls)
+    monkeypatch.setattr(cli, "_VIEWER_DETACHED_HEARTBEAT_S", 0.01)
+    if hasattr(viewer_cls, "instances"):
+        monkeypatch.setattr(viewer_cls, "instances", [])
+
+
+def _run_main_with_watchdog(cli: ModuleType, argv: list[str], *, timeout_s: float = 15.0) -> int:
+    """Call ``cli.main(argv)`` on a worker thread, failing if it never returns.
+
+    ``main()``'s viewer path can only fail two ways: an assertion, or an
+    infinite park in the heartbeat loop. Tests that could hit the second
+    must not hang the suite — the hang IS the regression, so it has to
+    surface as a red assertion.
+    """
+    box: dict[str, Any] = {}
+
+    def _call() -> None:
+        try:
+            box["rc"] = cli.main(argv)
+        except BaseException as exc:  # surfaced on the calling thread below
+            box["exc"] = exc
+
+    thread = threading.Thread(target=_call, daemon=True)
+    thread.start()
+    thread.join(timeout_s)
+    assert not thread.is_alive(), (
+        f"main({argv}) never returned within {timeout_s}s — it hung instead of "
+        "falling back to a headless run"
+    )
+    if "exc" in box:
+        raise box["exc"]
+    return cast(int, box["rc"])
+
+
+def test_main_viewer_reaches_viewer_callbacks_end_to_end(
+    cli: ModuleType,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Integration through the production caller: ``main(["--viewer"])``.
+
+    Drives the whole EV.2 chain — gate -> viewer construction -> session ->
+    ``run_loop(run_batch_fn=...)`` -> ``selfplay.run_batch`` -> the viewer's
+    own ``on_game_start`` / ``on_game_end``. Unit tests of
+    ``_EvolveViewerSession`` alone cannot see a silent wiring failure (e.g.
+    ``main()`` forgetting to pass ``run_batch_fn``); this test can.
+    """
+    _arrange_viewer_available(cli, monkeypatch, _FakeInlineViewer)
+
+    record = _rec("cand_x", "v13", "cand_x")
+    seen: dict[str, Any] = {}
+
+    from orchestrator import selfplay
+
+    def fake_run_batch(
+        p1: str, p2: str, games: int, map_name: str = "Simple64", **kwargs: Any
+    ) -> list[SelfPlayRecord]:
+        seen["batch_kwargs"] = kwargs
+        kwargs["on_game_start"](1, games, 111, 222, p1, p2)
+        kwargs["on_game_end"](record)
+        return [record]
+
+    monkeypatch.setattr(selfplay, "run_batch", fake_run_batch)
+
+    caller_ends: list[Any] = []
+    caller_stop = threading.Event()
+
+    def _fake_run_loop(args: argparse.Namespace, **kwargs: Any) -> int:
+        # Stand in for run_fitness_eval: bring your own on_game_end tally
+        # and your own early-stop event, exactly as the real callee does.
+        run_batch_fn = kwargs["run_batch_fn"]
+        run_batch_fn(
+            "cand_x",
+            "v13",
+            5,
+            "Simple64",
+            on_game_end=caller_ends.append,
+            stop_event=caller_stop,
+        )
+        return 7
+
+    monkeypatch.setattr(cli, "run_loop", _fake_run_loop)
+
+    assert _run_main_with_watchdog(cli, ["--viewer"]) == 7
+
+    assert len(_FakeInlineViewer.instances) == 1
+    viewer = _FakeInlineViewer.instances[0]
+    # The viewer really was reached, through the production entry point.
+    assert viewer.starts == [(1, 5, 111, 222, "cand_x", "v13")]
+    assert viewer.ends == [record]
+    # ...without displacing the callee's own tally or early-stop.
+    assert caller_ends == [record]
+    assert seen["batch_kwargs"]["stop_event"] is caller_stop
+    # D-1: the run's stop_event is NEVER handed to the viewer's teardown.
+    assert viewer.stop_event_arg is None
+    # A run that finished with the window still open must not print the
+    # detach counter-message.
+    assert "CONTINUES headless" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "viewer_cls",
+    [
+        pytest.param(_FakeInlineViewer, id="viewer-completes-normally"),
+        pytest.param(_FakePostStartFailureViewer, id="viewer-dies-after-batch-start"),
+    ],
+)
+def test_main_closes_the_viewer_session_through_the_production_caller(
+    cli: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    viewer_cls: type,
+) -> None:
+    """The production ``finally: session.close()`` must be observable.
+
+    Done-when #4's unit test closes the session itself, so deleting the
+    production call changed nothing anywhere — textbook silent wiring
+    (``.claude/rules/code-quality.md``). Here the latch is only ever closed
+    by ``main()``: the test grabs the exact ``run_batch_fn`` ``main()``
+    injected, and re-drives it AFTER ``main()`` returned. A live session
+    would still chain (adding an ``on_game_start`` key and enqueueing onto
+    a queue nobody drains); a closed one is a byte-identical passthrough.
+
+    Both parameters matter, and the second is the one that pins ``finally``
+    specifically: a viewer that dies AFTER starting the batch is the real
+    production shape (``container.run_with_batch``'s whole pygame frame loop
+    runs post-start), and it is the only path where moving ``close()`` onto
+    the success path inside the ``try`` would silently leak.
+    """
+    _arrange_viewer_available(cli, monkeypatch, viewer_cls)
+
+    record = _rec("cand_x", "v13", "cand_x")
+    seen: dict[str, Any] = {}
+
+    from orchestrator import selfplay
+
+    def fake_run_batch(
+        p1: str, p2: str, games: int, map_name: str = "Simple64", **kwargs: Any
+    ) -> list[SelfPlayRecord]:
+        seen["batch_kwargs"] = kwargs
+        start_cb = kwargs.get("on_game_start")
+        if start_cb is not None:
+            start_cb(1, games, 111, 222, p1, p2)
+        kwargs["on_game_end"](record)
+        return [record]
+
+    monkeypatch.setattr(selfplay, "run_batch", fake_run_batch)
+
+    injected: dict[str, Any] = {}
+
+    def _fake_run_loop(args: argparse.Namespace, **kwargs: Any) -> int:
+        injected["run_batch_fn"] = kwargs["run_batch_fn"]
+        return 7
+
+    monkeypatch.setattr(cli, "run_loop", _fake_run_loop)
+
+    # A viewer that dies after the batch started must not take the run with
+    # it: main() still returns run_loop's real code either way (D-5).
+    assert _run_main_with_watchdog(cli, ["--viewer"]) == 7
+
+    viewer = viewer_cls.instances[0]  # type: ignore[attr-defined]
+    assert viewer.starts == [] and viewer.ends == []  # nothing yet
+
+    def caller_on_end(result: Any) -> None:
+        return None
+
+    # Post-run: drive the wrapper main() built, exactly as a still-running
+    # evolve loop would after the operator closed the window.
+    injected["run_batch_fn"]("cand_x", "v13", 1, "Simple64", on_game_end=caller_on_end)
+
+    assert "on_game_start" not in seen["batch_kwargs"]
+    assert seen["batch_kwargs"]["on_game_end"] is caller_on_end
+    assert viewer.starts == []
+    assert viewer.ends == []
+
+
+def test_main_viewer_warns_about_ctrl_c_on_stderr_before_the_window_opens(
+    cli: ModuleType,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Ctrl+C / orphaned-SC2 hazard needs an operator-facing surface.
+
+    Under ``--viewer`` the evolution loop runs off the main thread, where
+    burnysc2's ``signal.signal(SIGINT, KillSwitch.kill_all)`` is never armed
+    (``src/orchestrator/selfplay.py`` installs a process-global proxy that
+    returns ``None`` off-main-thread), and D-1's ``stop_event=None`` makes
+    Ctrl+C the operator's only stop gesture. So Ctrl+C is exactly the wrong
+    reflex, and ``.claude/rules/bot-runtime.md`` forbids cleaning up the
+    orphans by hand.
+
+    The warning must reach **stderr** (same stream as the container's own
+    messages, immune to log routing) and must land BEFORE ``run_with_batch``
+    takes over the console — which is what the mid-run capture pins.
+    """
+    seen_before: dict[str, str] = {}
+
+    class _CaptureThenRunViewer(_RecordingViewer):
+        instances: list[Any] = []
+
+        def run_with_batch(self, batch_fn: Callable[[], Any], *, stop_event: Any = None) -> Any:
+            # Everything on stderr so far was printed BEFORE the window.
+            seen_before["err"] = capsys.readouterr().err
+            return batch_fn()
+
+    _arrange_viewer_available(cli, monkeypatch, _CaptureThenRunViewer)
+    monkeypatch.setattr(cli, "run_loop", lambda args, **k: 0)
+
+    assert _run_main_with_watchdog(cli, ["--viewer"]) == 0
+
+    err = seen_before["err"]
+    assert "CLOSE THE VIEWER WINDOW" in err, err
+    assert "Ctrl+C" in err, err
+    assert "orphaned SC2" in err, err
+
+
+def test_main_viewer_close_detaches_and_run_continues_headless(
+    cli: ModuleType,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Closing the window detaches; ``main()`` waits for the real run.
+
+    ``run_loop`` executes on the viewer's DAEMON batch thread, so a
+    ``main()`` that returned when ``run_with_batch`` returned would kill a
+    multi-hour evolution the instant the operator hit Escape. The ordering
+    assertion pins the sequence: viewer returns first, the loop finishes
+    later, and ``main()`` still hands back ``run_loop``'s real return code
+    (a hardcoded 0 or a lost ``rc_box`` would return 1 here).
+
+    Interleaving is signal-driven, never timed: the fake viewer returns only
+    once the batch is provably inside ``run_loop``, and the batch returns
+    only once it has seen a heartbeat log record — which also proves the
+    heartbeat body actually executes on a detached tail, and that the
+    counter-message reached **stderr**, the same stream as ``container.py``'s
+    misleading orphaned-SC2 warning.
+    """
+    order: list[str] = []
+    entered = threading.Event()
+    heartbeat_seen = threading.Event()
+
+    class _HeartbeatWatcher(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            if "still running headless" in record.getMessage():
+                heartbeat_seen.set()
+
+    class _FakeDetachingViewer(_RecordingViewer):
+        instances: list[Any] = []
+
+        def run_with_batch(self, batch_fn: Callable[[], Any], *, stop_event: Any = None) -> Any:
+            self.stop_event_arg = stop_event
+            thread = threading.Thread(target=batch_fn, daemon=True)
+            thread.start()
+            entered.wait(10.0)  # the batch is provably in run_loop
+            order.append("viewer-returned")
+            return None
+
+    _arrange_viewer_available(cli, monkeypatch, _FakeDetachingViewer)
+
+    saw: dict[str, bool] = {}
+
+    def _fake_run_loop(args: argparse.Namespace, **kwargs: Any) -> int:
+        entered.set()
+        # Return only once main() has reached its detached-tail heartbeat,
+        # i.e. well past the point where a broken main() could have returned.
+        saw["heartbeat"] = heartbeat_seen.wait(10.0)
+        order.append("loop-finished")
+        return 7
+
+    monkeypatch.setattr(cli, "run_loop", _fake_run_loop)
+
+    evolve_logger = logging.getLogger("evolve")
+    watcher = _HeartbeatWatcher()
+    evolve_logger.addHandler(watcher)
+    try:
+        with caplog.at_level(logging.INFO, logger="evolve"):
+            rc = _run_main_with_watchdog(cli, ["--viewer"])
+    finally:
+        evolve_logger.removeHandler(watcher)
+
+    assert rc == 7
+    assert order == ["viewer-returned", "loop-finished"]
+    assert saw["heartbeat"] is True, "main() never logged a detached-tail heartbeat"
+    err = capsys.readouterr().err
+    assert "CONTINUES headless" in err
+    assert "orphaned-SC2 warning does not apply" in err
+
+
+def test_main_viewer_construction_failure_falls_back_to_headless(
     cli: ModuleType,
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """EV.1 wires no viewer object.
+    """D-5: a viewer exception ends the viewer, never the run."""
 
-    Even on the fully-supported path (win32 + importable pygame) main()
-    falls through to the SAME ``run_loop(args)`` call with no injected
-    seams, and tells the operator the flag is not yet wired.
-    """
-    monkeypatch.setattr(sys, "platform", "win32")
-    _arrange_pygame_available(monkeypatch)
+    class _ExplodingViewer:
+        def __init__(self) -> None:
+            raise RuntimeError("no display available")
+
+    _arrange_viewer_available(cli, monkeypatch, _ExplodingViewer)
 
     seen: dict[str, Any] = {}
 
     def _fake_run_loop(args: argparse.Namespace, **kwargs: Any) -> int:
-        seen["args"] = args
         seen["kwargs"] = kwargs
-        return 0
+        return 7
 
     monkeypatch.setattr(cli, "run_loop", _fake_run_loop)
 
     with caplog.at_level(logging.WARNING, logger="evolve"):
-        assert cli.main(["--viewer"]) == 0
+        assert _run_main_with_watchdog(cli, ["--viewer"]) == 7
 
-    assert seen["kwargs"] == {}
-    assert seen["args"].viewer is True
+    assert seen["kwargs"] == {}  # headless, byte-identical call shape
     warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
-    assert any("not yet wired" in m for m in warnings), warnings
-    assert any("EV.2" in m for m in warnings), warnings
     assert any("headless" in m for m in warnings), warnings
+
+
+@pytest.mark.parametrize(
+    "arrange_failure",
+    [
+        pytest.param("raise", id="run_with_batch-raises-pre-start"),
+        pytest.param("return", id="run_with_batch-returns-without-starting"),
+    ],
+)
+def test_main_viewer_that_never_starts_the_batch_really_runs_headless(
+    cli: ModuleType,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    arrange_failure: str,
+) -> None:
+    """``run_with_batch`` dying before ``batch_thread.start()`` must not hang.
+
+    ``container.run_with_batch`` has a real pre-start exception window —
+    ``import pygame``, ``_resolve_background_path`` (KeyError),
+    ``pygame.init()``, ``display.set_mode()`` (pygame.error),
+    ``_load_background`` — all of which run BEFORE the batch thread starts
+    and none of which ``_viewer_enabled``'s ``find_spec`` probe can predict
+    (a headless/RDP desktop hits them for real).
+
+    Logging "continues headless" is not continuing headless: with no batch
+    thread, ``done`` is never set, and ``main()`` parks in the heartbeat
+    loop forever — printing "the evolution run CONTINUES headless" and then
+    a reassuring heartbeat every interval while running ZERO generations.
+    The watchdog turns that hang into a red assertion.
+    """
+
+    class _NeverStartsViewer(_RecordingViewer):
+        instances: list[Any] = []
+
+        def run_with_batch(self, batch_fn: Callable[[], Any], *, stop_event: Any = None) -> Any:
+            self.stop_event_arg = stop_event
+            if arrange_failure == "raise":
+                raise RuntimeError("pygame.display.set_mode failed")
+            return None  # returned without ever invoking batch_fn
+
+    _arrange_viewer_available(cli, monkeypatch, _NeverStartsViewer)
+
+    calls: list[dict[str, Any]] = []
+
+    def _fake_run_loop(args: argparse.Namespace, **kwargs: Any) -> int:
+        calls.append(kwargs)
+        return 7
+
+    monkeypatch.setattr(cli, "run_loop", _fake_run_loop)
+
+    with caplog.at_level(logging.WARNING, logger="evolve"):
+        rc = _run_main_with_watchdog(cli, ["--viewer"])
+
+    assert rc == 7
+    # Exactly ONE run_loop execution, and a plain headless one (no seam).
+    assert calls == [{}]
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("headless" in m for m in warnings), warnings
+
+
+def test_main_viewer_reraises_run_loop_exception_on_the_main_thread(
+    cli: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A crashed evolve must still crash — traceback and all.
+
+    Headless, a ``run_loop`` exception propagates out of ``main()``. Under
+    the viewer it is caught on the batch thread, so ``main()`` has to
+    re-raise it; dropping that turns an overnight crash into a silent
+    ``return 1`` with the cause swallowed.
+    """
+    _arrange_viewer_available(cli, monkeypatch, _FakeInlineViewer)
+
+    def _boom(args: argparse.Namespace, **kwargs: Any) -> int:
+        raise RuntimeError("evolve exploded mid-generation")
+
+    monkeypatch.setattr(cli, "run_loop", _boom)
+
+    with pytest.raises(RuntimeError, match="evolve exploded mid-generation"):
+        _run_main_with_watchdog(cli, ["--viewer"])
+
+
+def test_main_viewer_reraises_base_exception_from_the_batch_thread(
+    cli: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-``Exception`` ``BaseException``s must not vanish on the batch thread.
+
+    ``run_loop`` runs on the viewer's thread, so anything outside the
+    ``SystemExit`` / ``Exception`` pair would escape into the container's
+    own capture — which nobody reads on the detach path — and ``main()``
+    would report a bland ``rc=1`` with no cause. The threaded fake is
+    load-bearing: with an inline viewer the exception would propagate by
+    accident and hide the defect.
+    """
+
+    class _Detonation(BaseException):
+        pass
+
+    _arrange_viewer_available(cli, monkeypatch, _FakeThreadedViewer)
+
+    def _boom(args: argparse.Namespace, **kwargs: Any) -> int:
+        raise _Detonation("hard stop")
+
+    monkeypatch.setattr(cli, "run_loop", _boom)
+
+    with pytest.raises(_Detonation):
+        _run_main_with_watchdog(cli, ["--viewer"])
+
+
+@pytest.mark.parametrize(
+    ("code", "expected_rc", "expected_stderr"),
+    [
+        pytest.param(None, 0, "", id="bare-sys-exit-is-a-clean-stop"),
+        pytest.param(3, 3, "", id="int-code-passes-through"),
+        pytest.param("fatal: pool empty", 1, "fatal: pool empty", id="message-code"),
+    ],
+)
+def test_main_viewer_maps_system_exit_like_cpython(
+    cli: ModuleType,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    code: Any,
+    expected_rc: int,
+    expected_stderr: str,
+) -> None:
+    """``SystemExit`` off the batch thread must exit like it does headless.
+
+    Headless, ``sys.exit(main())`` hands the ``SystemExit`` to CPython,
+    which maps ``None`` -> 0, ``int`` -> itself, and anything else -> print
+    to stderr + 1. Collapsing all three to 1 would turn a clean stop into a
+    false failure and silently eat the operator's message.
+    """
+    _arrange_viewer_available(cli, monkeypatch, _FakeInlineViewer)
+
+    def _exiting(args: argparse.Namespace, **kwargs: Any) -> int:
+        raise SystemExit(code)
+
+    monkeypatch.setattr(cli, "run_loop", _exiting)
+
+    assert _run_main_with_watchdog(cli, ["--viewer"]) == expected_rc
+    if expected_stderr:
+        assert expected_stderr in capsys.readouterr().err

@@ -42,6 +42,13 @@ Coverage map (see plan §7 Step 3 done-when):
   ``--run-id <hex>`` matching the parent's run_id.
 * ``test_temp_files_cleaned_up`` — imp_json + result files unlinked
   after dispatch (success and crash paths).
+
+Phase EV.2 adds the ``_EvolveViewerSession`` wrapper tests as siblings of
+``test_make_parallel_run_batch_fn_*``: both build a ``run_batch_fn`` seam
+directly and assert what reaches ``selfplay.run_batch``. The viewer wrapper's
+contract is chain-never-replace (``on_game_start`` / ``on_game_end``) plus
+hands-off (``stop_event`` passes through by identity), so every assertion
+there is about the kwargs dict the engine actually receives.
 """
 
 from __future__ import annotations
@@ -53,6 +60,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
@@ -2239,3 +2247,334 @@ def test_make_parallel_run_batch_fn_passthrough_when_concurrency_1(
     wrapper("v7", "v7", 3, "Simple64")
     assert diverted == []
     assert len(passed_through) == 1
+
+
+# ---------------------------------------------------------------------------
+# Phase EV.2 — `_EvolveViewerSession` run_batch_fn wrapper
+# ---------------------------------------------------------------------------
+#
+# No pygame here, and no real ``SelfPlayViewer``: the wrapper only needs an
+# object with ``on_game_start`` / ``on_game_end``, which is exactly the
+# enqueue-only surface the real viewer exposes. That keeps these tests
+# collectable and green on Linux CI without the ``[viewer]`` extra.
+
+
+class _FakeViewer:
+    """Records the viewer-side callbacks the wrapper is supposed to chain."""
+
+    def __init__(
+        self,
+        *,
+        log: list[str] | None = None,
+        raise_on_start: bool = False,
+        raise_on_end: bool = False,
+    ) -> None:
+        self.starts: list[tuple[Any, ...]] = []
+        self.ends: list[Any] = []
+        self.log = log if log is not None else []
+        self._raise_on_start = raise_on_start
+        self._raise_on_end = raise_on_end
+
+    def on_game_start(
+        self,
+        game_index: int,
+        total: int,
+        p1_pid: int,
+        p2_pid: int,
+        p1_label: str,
+        p2_label: str,
+    ) -> None:
+        self.log.append("viewer-start")
+        if self._raise_on_start:
+            raise RuntimeError("viewer start blew up")
+        self.starts.append((game_index, total, p1_pid, p2_pid, p1_label, p2_label))
+
+    def on_game_end(self, result: Any) -> None:
+        self.log.append("viewer-end")
+        if self._raise_on_end:
+            raise RuntimeError("viewer end blew up")
+        self.ends.append(result)
+
+
+def _install_callback_firing_run_batch(
+    monkeypatch: pytest.MonkeyPatch, seen: dict[str, Any]
+) -> SelfPlayRecord:
+    """Stub ``selfplay.run_batch`` so it drives both callbacks like the engine.
+
+    Records the kwargs it was handed in *seen* and returns the one synthetic
+    :class:`SelfPlayRecord` it fed to ``on_game_end``.
+    """
+    from orchestrator import selfplay
+
+    record = _make_record("cand_x", "v13", "cand_x")
+
+    def fake_run_batch(
+        p1: str,
+        p2: str,
+        games: int,
+        map_name: str = "Simple64",
+        **kwargs: Any,
+    ) -> list[SelfPlayRecord]:
+        seen["args"] = (p1, p2, games, map_name)
+        seen["kwargs"] = kwargs
+        start_cb = kwargs.get("on_game_start")
+        if start_cb is not None:
+            start_cb(1, games, 111, 222, "cand_x", "v13")
+        end_cb = kwargs.get("on_game_end")
+        if end_cb is not None:
+            end_cb(record)
+        return [record]
+
+    monkeypatch.setattr(selfplay, "run_batch", fake_run_batch)
+    return record
+
+
+def test_viewer_session_chains_callbacks_and_keeps_caller_stop_event(
+    cli: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Caller callbacks survive, viewer callbacks fire, stop_event is untouched.
+
+    This is the regression that matters most: ``run_fitness_eval`` builds its
+    OWN ``on_game_end`` (the live win tally) and ``stop_event`` (the
+    ``games // 2 + 1`` early-stop) and passes both in ``batch_kwargs``. A
+    wrapper that overwrote either would silently kill the tally or the
+    early-stop. The ``is`` assertion on ``stop_event`` is deliberate —
+    equality would pass for a fresh Event the wrapper synthesized, which is
+    precisely the bug.
+    """
+    order: list[str] = []
+    seen: dict[str, Any] = {}
+    record = _install_callback_firing_run_batch(monkeypatch, seen)
+
+    viewer = _FakeViewer(log=order)
+    session = cli._EvolveViewerSession(viewer)
+
+    caller_ends: list[Any] = []
+    caller_starts: list[Any] = []
+    caller_stop = threading.Event()
+
+    def caller_on_start(*a: Any) -> None:
+        order.append("caller-start")
+        caller_starts.append(a)
+
+    def caller_on_end(result: Any) -> None:
+        order.append("caller-end")
+        caller_ends.append(result)
+
+    out = session.run_batch_fn(
+        "cand_x",
+        "v13",
+        5,
+        "Simple64",
+        game_time_limit=1800,
+        hard_timeout=2700.0,
+        on_game_start=caller_on_start,
+        on_game_end=caller_on_end,
+        stop_event=caller_stop,
+    )
+
+    assert out == [record]
+    # Caller's callbacks still ran, and ran FIRST.
+    assert caller_ends == [record]
+    assert len(caller_starts) == 1
+    assert order == ["caller-start", "viewer-start", "caller-end", "viewer-end"]
+    # Viewer's ran too — this is the whole point of the wrapper.
+    assert viewer.ends == [record]
+    assert viewer.starts == [(1, 5, 111, 222, "cand_x", "v13")]
+    # stop_event reached run_batch as the SAME object the caller passed.
+    assert seen["kwargs"]["stop_event"] is caller_stop
+    # Positional args and unrelated kwargs are forwarded verbatim.
+    assert seen["args"] == ("cand_x", "v13", 5, "Simple64")
+    assert seen["kwargs"]["game_time_limit"] == 1800
+    assert seen["kwargs"]["hard_timeout"] == 2700.0
+
+
+def test_viewer_session_never_injects_a_stop_event(
+    cli: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no caller ``stop_event``, the wrapper must not invent one.
+
+    ``run_baseline_gauntlet`` passes no ``stop_event`` at all. A wrapper that
+    synthesized one (e.g. to cancel on viewer close) would hand ``run_batch``
+    a cancellation channel the caller never asked for — the exact opposite of
+    Decision D-1's detach-don't-cancel contract.
+    """
+    seen: dict[str, Any] = {}
+    _install_callback_firing_run_batch(monkeypatch, seen)
+
+    session = cli._EvolveViewerSession(_FakeViewer())
+    session.run_batch_fn("cand_x", "v13", 3, "Simple64")
+
+    assert seen["kwargs"].get("stop_event") is None
+
+
+def test_viewer_session_isolates_callback_exceptions_both_ways(
+    cli: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A raising callback on either side cannot break the other or the batch.
+
+    Decision D-4: every chained invocation sits in its own try/except, so a
+    viewer defect ends the viewer, never the evolution run — and a caller
+    tally bug cannot blind the viewer either.
+    """
+    seen: dict[str, Any] = {}
+    record = _install_callback_firing_run_batch(monkeypatch, seen)
+
+    viewer = _FakeViewer(raise_on_end=True)
+    session = cli._EvolveViewerSession(viewer)
+
+    caller_starts: list[Any] = []
+    caller_ends: list[Any] = []
+
+    def caller_on_start(*_a: Any) -> None:
+        caller_starts.append(_a)
+        raise RuntimeError("caller start blew up")
+
+    def caller_on_end(result: Any) -> None:
+        caller_ends.append(result)
+
+    # No exception escapes, despite BOTH a raising caller start callback and
+    # a raising viewer end callback.
+    out = session.run_batch_fn(
+        "cand_x",
+        "v13",
+        3,
+        "Simple64",
+        on_game_start=caller_on_start,
+        on_game_end=caller_on_end,
+    )
+
+    assert out == [record]
+    assert len(caller_starts) == 1  # caller's raiser ran
+    assert viewer.starts == [(1, 3, 111, 222, "cand_x", "v13")]  # viewer still reached
+    assert caller_ends == [record]  # caller's end ran before the viewer's raiser
+    assert viewer.ends == []  # viewer's end raised, and that was contained
+
+
+def test_viewer_session_close_latch_restores_unwrapped_call(
+    cli: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After ``close()`` the kwargs reaching ``run_batch`` are the caller's own.
+
+    The latch is what stops a multi-hour post-close tail from piling one
+    ``SelfPlayRecord`` per game onto ``SelfPlayViewer._event_queue``, which
+    nobody drains once the pygame loop has exited. Identity assertions, not
+    behavioural ones: the caller's callback object itself must arrive, and no
+    ``on_game_start`` key may be added.
+    """
+    seen: dict[str, Any] = {}
+    _install_callback_firing_run_batch(monkeypatch, seen)
+
+    viewer = _FakeViewer()
+    session = cli._EvolveViewerSession(viewer)
+    session.close()
+
+    caller_stop = threading.Event()
+    caller_ends: list[Any] = []
+
+    def caller_on_end(result: Any) -> None:
+        caller_ends.append(result)
+
+    session.run_batch_fn(
+        "cand_x",
+        "v13",
+        3,
+        "Simple64",
+        on_game_end=caller_on_end,
+        stop_event=caller_stop,
+    )
+
+    kwargs = seen["kwargs"]
+    assert kwargs["on_game_end"] is caller_on_end
+    assert "on_game_start" not in kwargs
+    assert kwargs["stop_event"] is caller_stop
+    assert len(caller_ends) == 1
+    # Nothing was enqueued on the viewer after the latch closed.
+    assert viewer.starts == []
+    assert viewer.ends == []
+
+
+def test_viewer_session_close_mid_batch_stops_enqueueing_immediately(
+    cli: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The IN-FLIGHT half of the latch: the operator closes at game 2 of 5.
+
+    The sibling test above closes BEFORE a call and exercises the early
+    return in ``run_batch_fn``. This one closes DURING a batch, which is the
+    case that actually happens: ``close()`` runs on the main thread the
+    instant ``run_with_batch`` returns, while a fitness eval is still
+    playing games on the batch thread. Only the per-callback ``_closed``
+    check can stop those enqueues, and nothing drains
+    ``SelfPlayViewer._event_queue`` once the pygame loop has exited.
+
+    The caller's own tally must keep running to the last game regardless —
+    that is ``run_fitness_eval``'s win count, not a display concern.
+    """
+    rec1 = _make_record("cand_x", "v13", "cand_x")
+    rec2 = _make_record("cand_x", "v13", "v13")
+    viewer = _FakeViewer()
+    session = cli._EvolveViewerSession(viewer)
+
+    from orchestrator import selfplay
+
+    def fake_run_batch(
+        p1: str,
+        p2: str,
+        games: int,
+        map_name: str = "Simple64",
+        **kwargs: Any,
+    ) -> list[SelfPlayRecord]:
+        kwargs["on_game_start"](1, games, 111, 222, p1, p2)
+        kwargs["on_game_end"](rec1)
+        session.close()  # <- operator closes the window between games
+        kwargs["on_game_start"](2, games, 333, 444, p1, p2)
+        kwargs["on_game_end"](rec2)
+        return [rec1, rec2]
+
+    monkeypatch.setattr(selfplay, "run_batch", fake_run_batch)
+
+    caller_ends: list[Any] = []
+    session.run_batch_fn("cand_x", "v13", 5, "Simple64", on_game_end=caller_ends.append)
+
+    assert caller_ends == [rec1, rec2]  # caller's tally never stops
+    assert viewer.ends == [rec1]  # viewer stopped at the close
+    assert len(viewer.starts) == 1
+
+
+def test_viewer_session_feeds_the_real_viewer_event_queue(
+    cli: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Contract test against the REAL ``SelfPlayViewer``, not a hand-made fake.
+
+    Every other test here fakes the viewer, which means they pin the call
+    shape this wrapper *assumes* rather than the one ``container.py``
+    actually implements — producer-consumer drift (e.g. someone adding a
+    7th ``on_game_start`` parameter) would sail straight through them. This
+    test closes that gap by driving the real enqueue-only callbacks and
+    draining ``_event_queue``.
+
+    ``importorskip`` because the extra is optional; the viewer object itself
+    needs no pygame (``container.py`` imports it lazily inside methods), and
+    no window is ever opened — that is the ``tests/test_container_integration``
+    real-window path, which must never run here.
+    """
+    pytest.importorskip("selfplay_viewer", reason="selfplay_viewer import guard")
+    from selfplay_viewer import SelfPlayViewer
+
+    viewer = SelfPlayViewer()
+    seen: dict[str, Any] = {}
+    record = _install_callback_firing_run_batch(monkeypatch, seen)
+
+    session = cli._EvolveViewerSession(viewer)
+    session.run_batch_fn("cand_x", "v13", 5, "Simple64")
+
+    event_type, payload = viewer._event_queue.get_nowait()
+    assert event_type == "game_start"
+    assert payload == (1, 5, 111, 222, "cand_x", "v13")
+
+    event_type, payload = viewer._event_queue.get_nowait()
+    assert event_type == "game_end"
+    assert payload == (record,)
+
+    # Drained: the wrapper enqueued exactly these two events and no more.
+    assert viewer._event_queue.empty()
