@@ -608,6 +608,7 @@ a step DONE runs the FULL suite, per
 - **Produces:** `--viewer` flag in `build_parser`; `_viewer_enabled()` in `scripts/evolve.py`; mutual-exclusion check in `main()`; tests in `tests/test_evolve_cli.py`
 - **Done when:** `uv run pytest` full suite green at or above the 1990-collected baseline, with new tests asserting: (1) `cli.build_parser().parse_args([]).viewer is False` and `parse_args(["--viewer"]).viewer is True` (template: `tests/test_evolve_cli.py:2927`), plus a `viewer` line added to `test_default_flags` at `:445`; (2) `_viewer_enabled` returns False and logs a WARNING for each of non-win32 and absent-pygame, simulated with the `sys.meta_path` / `find_spec` stub pattern at `tests/test_selfplay_cli.py:202-209`; (3) `main(["--viewer", "--concurrency", "2"])` raises `SystemExit` with the guidance text; (4) an identity assertion that `main([])` reaches `run_loop` with `run_batch_fn` still `None` (template: `tests/test_evolve_worker.py:733`). The suite must collect cleanly **without** `--extra viewer` installed.
 - **Depends on:** none
+- **Status:** DONE (2026-08-10)
 
 <!-- autofix-applied: 2026-08-09 -->
 ### Step EV.2: Viewer session wrapper + `main()` inversion

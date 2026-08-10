@@ -17,6 +17,8 @@ import json
 import logging
 import subprocess
 import sys
+from collections.abc import Callable
+from importlib.machinery import ModuleSpec
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
@@ -436,6 +438,7 @@ def test_help_exits_zero(cli: ModuleType, capsys: pytest.CaptureFixture[str]) ->
     assert "--pool-size" in out
     assert "--games-per-eval" in out
     assert "--hours" in out
+    assert "--viewer" in out
     # Removed flags must not re-appear.
     assert "--ab-games" not in out
     assert "--gate-games" not in out
@@ -457,6 +460,7 @@ def test_default_flags(cli: ModuleType) -> None:
     assert args.backend_url == "http://localhost:8765"
     assert args.lineages == 1
     assert args.regression_rule == "majority"
+    assert args.viewer is False
 
 
 # ---------------------------------------------------------------------------
@@ -4274,3 +4278,328 @@ def test_skill_md_documents_all_six_ej_flags() -> None:
     # duplicated) and no longer defers the table to a future step.
     assert skill_md.count("Pairing warning (EJ.3 + EJ.4)") == 1
     assert "The full flags table lands in EJ.6" not in skill_md
+
+
+# ---------------------------------------------------------------------------
+# Phase EV.1 — `--viewer` flag surface + graceful-degradation gate
+# ---------------------------------------------------------------------------
+#
+# Every probe here manipulates the REAL import machinery (``sys.meta_path`` /
+# ``sys.modules``) rather than stubbing ``importlib.util.find_spec``, so the
+# tests exercise the same code path a real missing/broken ``[viewer]`` extra
+# takes. They are also deterministic on a box that DOES have pygame installed.
+
+
+class _PygameFinder:
+    """``sys.meta_path`` finder that scripts the answer for ``pygame``.
+
+    ``outcome`` is either an exception instance to raise or the spec object
+    (possibly ``None``) to return. Every other module name returns ``None``
+    so the real finders behind us keep working.
+    """
+
+    outcome: object = None
+
+    @classmethod
+    def find_spec(cls, name: str, *args: object, **kwargs: object) -> Any:
+        if name != "pygame" and not name.startswith("pygame."):
+            return None
+        if isinstance(cls.outcome, BaseException):
+            raise cls.outcome
+        return cls.outcome
+
+
+def _install_pygame_finder(monkeypatch: pytest.MonkeyPatch, outcome: object) -> None:
+    """Front-load a ``_PygameFinder`` subclass scripted with ``outcome``."""
+    finder = type("_ScriptedPygameFinder", (_PygameFinder,), {"outcome": outcome})
+    monkeypatch.delitem(sys.modules, "pygame", raising=False)
+    monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
+
+
+def _arrange_import_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A finder that refuses the name — broken or shadowed install."""
+    _install_pygame_finder(monkeypatch, ImportError("simulated missing extra"))
+
+
+def _arrange_value_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``pygame`` cached in ``sys.modules`` with ``__spec__`` set to ``None``.
+
+    ``importlib.util.find_spec`` raises ``ValueError`` for this — real
+    behaviour of this interpreter, not a stub.
+    """
+    monkeypatch.setitem(sys.modules, "pygame", ModuleType("pygame"))
+
+
+def _arrange_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No finder can resolve the name at all — ``find_spec`` returns None."""
+    monkeypatch.delitem(sys.modules, "pygame", raising=False)
+    monkeypatch.setattr(sys, "meta_path", [_PygameFinder])
+
+
+def _arrange_namespace_package(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A bare ``pygame/`` directory resolving as a namespace package.
+
+    ``find_spec`` succeeds but the spec carries ``loader is None``: "found"
+    yet not importable. Treating that as available would hand EV.2 a pygame
+    it cannot import.
+    """
+    _install_pygame_finder(monkeypatch, ModuleSpec("pygame", None))
+
+
+def _arrange_unexpected_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A finder raising OUTSIDE the import-exception hierarchy.
+
+    ``sys.meta_path`` is open to third parties (this venv already carries
+    setuptools' ``DistutilsMetaFinder`` and six's ``_Finder``) and none of
+    them are bound to any exception contract. The gate is total: it must
+    still degrade, not propagate.
+    """
+    _install_pygame_finder(monkeypatch, RuntimeError("hostile third-party finder"))
+
+
+def _arrange_raising_loader_attr(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A spec object whose ``loader`` attribute itself raises.
+
+    Pins that the spec INSPECTION is inside the same guard as the probe
+    call — reading ``.loader`` outside the ``try`` reopens the same hole.
+    """
+
+    class _HostileSpec:
+        name = "pygame"
+
+        @property
+        def loader(self) -> Any:
+            raise AttributeError("exotic spec has no usable loader")
+
+    _install_pygame_finder(monkeypatch, _HostileSpec())
+
+
+def _arrange_pygame_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pretend a real, importable pygame is installed (loader-bearing spec)."""
+    _install_pygame_finder(monkeypatch, ModuleSpec("pygame", object(), origin="stub"))
+
+
+def test_viewer_flag_parses_when_passed(cli: ModuleType) -> None:
+    """--viewer parses to args.viewer.
+
+    The default-off half lives in ``test_default_flags``, this file's
+    declared owner of flag defaults.
+    """
+    assert cli.build_parser().parse_args(["--viewer"]).viewer is True
+
+
+def test_viewer_enabled_false_and_silent_by_default(
+    cli: ModuleType, caplog: pytest.LogCaptureFixture
+) -> None:
+    """No --viewer: False, and SILENT (the default path warns about nothing)."""
+    args = cli.build_parser().parse_args([])
+    with caplog.at_level(logging.DEBUG, logger="evolve"):
+        assert cli._viewer_enabled(args) is False
+    assert [r.getMessage() for r in caplog.records] == []
+
+
+def test_viewer_enabled_false_with_warning_on_non_win32(
+    cli: ModuleType,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-Windows: False plus a WARNING naming the platform as the reason."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    args = cli.build_parser().parse_args(["--viewer"])
+
+    with caplog.at_level(logging.WARNING, logger="evolve"):
+        assert cli._viewer_enabled(args) is False
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("Windows-only" in m for m in warnings), warnings
+    assert any("headless" in m for m in warnings), warnings
+
+
+@pytest.mark.parametrize(
+    "arrange",
+    [
+        pytest.param(_arrange_import_error, id="find_spec-raises-ImportError"),
+        pytest.param(_arrange_value_error, id="find_spec-raises-ValueError"),
+        pytest.param(_arrange_not_found, id="find_spec-returns-None"),
+        pytest.param(_arrange_namespace_package, id="spec-has-no-loader"),
+        pytest.param(_arrange_unexpected_exception, id="find_spec-raises-RuntimeError"),
+        pytest.param(_arrange_raising_loader_attr, id="spec-loader-attr-raises"),
+    ],
+)
+def test_viewer_enabled_degrades_when_pygame_not_importable(
+    cli: ModuleType,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    arrange: Callable[[pytest.MonkeyPatch], None],
+) -> None:
+    """``_viewer_enabled`` is TOTAL: no probe failure may propagate.
+
+    The gate's contract is *degrade and keep running*, so every way the
+    import machinery can misbehave — a raised ImportError, ValueError, or
+    anything else a third-party ``sys.meta_path`` finder invents, a missing
+    spec, an unloadable spec, or a spec that raises on inspection — must
+    come back as False + a WARNING. A traceback out of here would kill a
+    multi-hour evolve at second zero.
+    """
+    monkeypatch.setattr(sys, "platform", "win32")
+    arrange(monkeypatch)
+    args = cli.build_parser().parse_args(["--viewer"])
+
+    with caplog.at_level(logging.WARNING, logger="evolve"):
+        assert cli._viewer_enabled(args) is False
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("pygame is not importable" in m for m in warnings), warnings
+    assert any("headless" in m for m in warnings), warnings
+
+
+def test_viewer_enabled_true_on_win32_with_pygame(
+    cli: ModuleType,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows + an importable pygame: True, and nothing is warned about."""
+    monkeypatch.setattr(sys, "platform", "win32")
+    _arrange_pygame_available(monkeypatch)
+    args = cli.build_parser().parse_args(["--viewer"])
+
+    with caplog.at_level(logging.WARNING, logger="evolve"):
+        assert cli._viewer_enabled(args) is True
+
+    assert [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING] == []
+
+
+def test_main_viewer_with_concurrency_gt_1_exits_with_guidance(
+    cli: ModuleType,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """main(["--viewer", "--concurrency", "2"]) exits before any run_loop work."""
+
+    def _explode(*a: Any, **k: Any) -> int:
+        raise AssertionError("run_loop must not be reached")
+
+    monkeypatch.setattr(cli, "run_loop", _explode)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["--viewer", "--concurrency", "2"])
+
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "--viewer requires --concurrency 1" in err
+    assert "evolve_worker.py" in err
+
+
+def test_main_viewer_with_degraded_gate_is_silent_about_wiring(
+    cli: ModuleType,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--concurrency 1 passes the guard, and a FALSE gate says nothing.
+
+    The interesting case: ``--viewer`` IS set but ``_viewer_enabled``
+    returns False (no Windows / no pygame). ``main()`` must gate the "not
+    yet wired" WARNING on the *gate*, not on the flag — a negative
+    assertion on the log stream, because "byte-identical headless" is a
+    promise about what the operator SEES, and the call-shape identity
+    assertions cannot observe a stray warning. Weakening the guard to
+    ``if args.viewer:`` or ``if True:`` turns this red.
+    """
+    monkeypatch.setattr(sys, "platform", "linux")  # forces headless degrade
+    monkeypatch.setattr(cli, "run_loop", lambda args, **k: 0)
+
+    with caplog.at_level(logging.WARNING, logger="evolve"):
+        assert cli.main(["--viewer", "--concurrency", "1"]) == 0
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert not any("not yet wired" in m for m in messages), messages
+    # ...but the gate DID explain itself, so this is silence-by-gate, not
+    # silence-because-nothing-ran.
+    assert any("Windows-only" in m for m in messages), messages
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected_concurrency"),
+    [
+        pytest.param([], 1, id="default"),
+        pytest.param(["--concurrency", "2"], 2, id="parallel"),
+    ],
+)
+def test_main_without_viewer_reaches_run_loop_unchanged(
+    cli: ModuleType,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    argv: list[str],
+    expected_concurrency: int,
+) -> None:
+    """Every no-``--viewer`` path is byte-identical to pre-EV, in three senses.
+
+    * **Call shape** — ``run_loop`` is reached with NO injected seams
+      (``kwargs == {}``), so its own ``run_batch_fn=None`` default stands
+      and the ``elif concurrency_int > 1`` mirror-dispatcher branch stays
+      reachable.
+    * **Return value** — ``main()`` returns what ``run_loop`` returned,
+      pinned with a distinctive non-zero code. Asserting ``== 0`` against a
+      fake that returns 0 cannot tell a passthrough from a hardcoded
+      constant, and EV.2's declared job is to wrap this exact call and map
+      ``SystemExit`` into the return code.
+    * **Observable log stream** — a plain headless run gains no EV-era
+      warning; "byte-identical" is a promise about what the operator sees.
+
+    The ``parallel`` case additionally pins that the EV.1 mutual-exclusion
+    guard does NOT fire on the pre-existing ``--concurrency N>1`` path: drop
+    the ``args.viewer and`` conjunct and every production parallel evolve
+    run dies at startup.
+    """
+    seen: dict[str, Any] = {}
+
+    def _fake_run_loop(args: argparse.Namespace, **kwargs: Any) -> int:
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return 7
+
+    monkeypatch.setattr(cli, "run_loop", _fake_run_loop)
+
+    with caplog.at_level(logging.WARNING, logger="evolve"):
+        assert cli.main(argv) == 7
+
+    assert seen["kwargs"] == {}
+    assert seen["args"].viewer is False
+    assert seen["args"].concurrency == expected_concurrency
+    messages = [r.getMessage() for r in caplog.records]
+    assert not any("not yet wired" in m for m in messages), messages
+    assert not any("--viewer" in m for m in messages), messages
+
+
+def test_main_with_viewer_enabled_still_runs_headless_and_warns(
+    cli: ModuleType,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """EV.1 wires no viewer object.
+
+    Even on the fully-supported path (win32 + importable pygame) main()
+    falls through to the SAME ``run_loop(args)`` call with no injected
+    seams, and tells the operator the flag is not yet wired.
+    """
+    monkeypatch.setattr(sys, "platform", "win32")
+    _arrange_pygame_available(monkeypatch)
+
+    seen: dict[str, Any] = {}
+
+    def _fake_run_loop(args: argparse.Namespace, **kwargs: Any) -> int:
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return 0
+
+    monkeypatch.setattr(cli, "run_loop", _fake_run_loop)
+
+    with caplog.at_level(logging.WARNING, logger="evolve"):
+        assert cli.main(["--viewer"]) == 0
+
+    assert seen["kwargs"] == {}
+    assert seen["args"].viewer is True
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("not yet wired" in m for m in warnings), warnings
+    assert any("EV.2" in m for m in warnings), warnings
+    assert any("headless" in m for m in warnings), warnings

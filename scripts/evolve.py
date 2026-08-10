@@ -43,6 +43,7 @@ import argparse
 import dataclasses
 import difflib
 import functools
+import importlib.util
 import json
 import logging
 import os
@@ -135,6 +136,15 @@ _NULL_DIFF_EVICT_THRESHOLD = 2
 # source of truth — the helper AND its tests read this constant, never a
 # duplicated literal.
 _REFRESH_DEDUP_THRESHOLD = 0.85
+
+# Phase EV.1 ships the --viewer flag surface only: the flag is accepted and
+# validated, but no viewer object is constructed until EV.2 wires the session
+# wrapper. An operator who tries the flag between the two merges is told,
+# rather than silently getting the old behavior. EV.2 deletes this constant
+# and its single use in main().
+_VIEWER_NOT_WIRED_WARNING = (
+    "evolve: --viewer accepted but not yet wired (lands in EV.2); running headless."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -469,7 +479,81 @@ def build_parser() -> argparse.ArgumentParser:
             "trims below 1 imp; each trim writes an auditable 'budget_fit' row."
         ),
     )
+    parser.add_argument(
+        "--viewer",
+        action="store_true",
+        help=(
+            "Render this run's SC2 games inside the themed self-play viewer "
+            "container (Phase EV). Windows-only and requires the optional "
+            "[viewer] extra (uv run --extra viewer ...); on any other "
+            "platform, or without pygame installed, the flag degrades to a "
+            "WARNING and the run continues headless. Requires "
+            "--concurrency 1. Default OFF (headless, byte-identical to a "
+            "pre-EV run)."
+        ),
+    )
     return parser
+
+
+def _viewer_enabled(args: argparse.Namespace) -> bool:
+    """Return True iff the themed self-play viewer should be driven.
+
+    Graceful-degradation gate modeled on ``scripts/selfplay.py``'s
+    ``_viewer_enabled``. Returns False *silently* when ``--viewer`` was not
+    passed (the default path — nothing to warn about), and False with a
+    WARNING naming the reason when the platform or the optional ``[viewer]``
+    extra cannot support it.
+
+    The availability probe targets ``pygame``, **not** ``selfplay_viewer``:
+    ``src/selfplay_viewer/container.py`` imports pygame lazily inside its
+    methods precisely so ``import selfplay_viewer`` succeeds without the
+    extra, which makes it a useless probe.
+
+    **This function is total: no input, environment, or third-party
+    ``sys.meta_path`` finder may make it raise.** Its whole contract is
+    *degrade and keep running*, so a probe failure may never abort a
+    multi-hour evolve run with a traceback at second zero. That is why the
+    entire probe — the ``find_spec`` call AND the spec/loader inspection —
+    sits inside one ``except Exception``: anything that goes wrong means
+    "pygame is not usable", which is exactly the headless answer.
+    ``KeyboardInterrupt`` and ``SystemExit`` derive from ``BaseException``
+    and still propagate. Shapes seen in the wild, all folded into that one
+    branch:
+
+    * ``find_spec`` raising ``ImportError`` — a broken/shadowed install, or a
+      finder that refuses the name;
+    * ``find_spec`` raising ``ValueError`` — ``pygame`` already in
+      ``sys.modules`` with ``__spec__`` set to ``None``;
+    * ``find_spec`` raising anything else — this venv already carries
+      third-party finders (setuptools' ``DistutilsMetaFinder``, six's
+      ``_Finder``) and they are not bound to any exception contract;
+    * a ``None`` spec — nothing found;
+    * a spec whose ``loader`` is ``None`` (a bare ``pygame/`` directory
+      resolving as a namespace package: "found" but not importable) or whose
+      ``loader`` attribute itself raises.
+    """
+    if not getattr(args, "viewer", False):
+        return False
+    if sys.platform != "win32":
+        _log.warning(
+            "evolve: --viewer ignored: the themed viewer is Windows-only "
+            "(sys.platform=%s); running headless.",
+            sys.platform,
+        )
+        return False
+    try:
+        spec = importlib.util.find_spec("pygame")
+        importable = spec is not None and spec.loader is not None
+    except Exception:
+        importable = False
+    if not importable:
+        _log.warning(
+            "evolve: --viewer ignored: pygame is not importable (the optional "
+            "[viewer] extra). Re-run with: uv run --extra viewer python "
+            "scripts/evolve.py ... ; running headless."
+        )
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -5147,6 +5231,22 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    # Decision D13: the --viewer/--concurrency mutual exclusion lives HERE,
+    # not in build_parser(), so build_parser() stays a pure flag declaration
+    # (callers that only want the flag surface do not inherit the rule).
+    if args.viewer and int(getattr(args, "concurrency", 1) or 1) > 1:
+        parser.error(
+            "--viewer requires --concurrency 1. At --concurrency > 1 the "
+            "fitness phase dispatches games to scripts/evolve_worker.py "
+            "subprocesses, whose games this process's viewer callbacks can "
+            "never render, and injecting a viewer wrapper would silently "
+            "disable the parallel mirror dispatcher. Re-run with "
+            "--concurrency 1, or drop --viewer."
+        )
+
+    if _viewer_enabled(args):
+        _log.warning(_VIEWER_NOT_WIRED_WARNING)
 
     return run_loop(args)
 
