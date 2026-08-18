@@ -164,19 +164,21 @@ SQLite at `bots/v0/data/training.db`. Two tables:
 
 ### `transitions` — one row per environment step (every 22 game ticks)
 
-- 17 base game-state features (see `BASE_GAME_FEATURE_DIM` in `features.py`)
+- 40 base game-state features (see `_DB_STATE_FEATURE_COUNT` in `features.py`)
 - `action INTEGER` — one of 6 strategic states (0=OPENING through 5=FORTIFY)
 - `reward REAL` — shaped reward for this step
-- 17 next_state features (nullable for terminal steps)
+- 40 next_state features (nullable for terminal steps)
 - `done INTEGER` — 1 if terminal
 
 Indexes on `game_id`, `action`, `result`, `model_version`.
 
-Note: the PPO feature vector is actually **24 dimensions** (`FEATURE_DIM = 24`) — 17 base + 7 advisor features (6 binary advisor-command-action indicators + 1 advisor urgency). Only the 17 base features are stored in the DB; advisor features are ephemeral context at inference time.
+Note: the PPO feature vector is **55 dimensions** in the live v13 tree (`FEATURE_DIM = 55`) — 40 scalar game-state + an 8-slot build-order one-hot + 7 advisor features (6 binary advisor-command-action indicators + 1 advisor urgency). The frozen v0 tree is 47 (40 + 7). Only the 40 scalar features are stored in the DB (`_DB_STATE_FEATURE_COUNT`); the build-order and advisor blocks are ephemeral context at inference time.
 
 ---
 
-## Feature Vector (24 dimensions)
+## Feature Vector (historical 24-dim layout)
+
+> **Stale table.** The rows below describe the pre-Phase-B 24-dim vector. Indices 0–16 still match, but the advisor block has since moved to the end of the vector (48–54 in v13). `_FEATURE_SPEC` in `features.py` is the source of truth.
 
 Normalized to [0, 1] by dividing by per-feature max values.
 
@@ -247,7 +249,7 @@ Since reward logging is now always-on, `analyze_rewards.py` always has data to r
 |---|---|
 | `bots/v0/learning/rewards.py` | `RewardCalculator`, `RewardRule`, derived fields |
 | `bots/v0/learning/database.py` | `TrainingDB`, schema, queries |
-| `bots/v0/learning/features.py` | `encode` / `decode`, `FEATURE_DIM=24`, `BASE_GAME_FEATURE_DIM=17` |
+| `bots/v0/learning/features.py` | `encode` / `decode`, `FEATURE_DIM=47`, `BASE_GAME_FEATURE_DIM=40` |
 | `bots/v0/learning/evaluator.py` | `ModelEvaluator`, `EvalResult`, `ComparisonResult`, job system |
 | `bots/v0/learning/reward_aggregator.py` | Per-rule trend aggregation for Reward Trends tab |
 | `bots/v0/batch_runner.py` | `GameRecord`, `StatsAggregates`, `compute_aggregates` |

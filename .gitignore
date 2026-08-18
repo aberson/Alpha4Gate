@@ -91,3 +91,10 @@ documentation/images/*.mov
 # plan-expedite resume state (transient, session-local)
 .plan-expedite-state
 .plan-expedite-state.*
+
+# Agent scratch from /build-step and /build-phase runs (reports, prewrap checks).
+# Not gitignored historically, which put 6 scratch files one `git add -A` away
+# from being committed. Never intended for version control.
+.build-step/
+.claude/task-state/.checkpoint-nudge-stamp
+.claude/task-state/handoff-prompt.md

@@ -1,6 +1,6 @@
 # Alpha4Gate
 
-![Python](https://img.shields.io/badge/python-3.12-blue) [![linux-tests](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml/badge.svg?branch=master)](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml) ![pytest](https://img.shields.io/badge/pytest-1987%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-119%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
+![Python](https://img.shields.io/badge/python-3.12-blue) [![linux-tests](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml/badge.svg?branch=master)](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml) ![pytest](https://img.shields.io/badge/pytest-2007%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-228%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
 
 An AI agent that teaches itself to get better at a task with — zero human input.
 
@@ -175,7 +175,7 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 | Deep learning | PyTorch + Stable Baselines 3 | PPO policy network for strategic decisions |
 | Training data | SQLite | Structured (s,a,r,s') transition storage |
 | Testing (Python) | pytest | 2007 unit tests (2024 with the optional `[viewer]` extra), SC2 integration markers |
-| Testing (Frontend) | vitest + jsdom + @testing-library/react | 119 component / hook / lib tests |
+| Testing (Frontend) | vitest + jsdom + @testing-library/react | 234 component / hook / lib tests (228 passing, 6 skipped) |
 | Linting | ruff + mypy | Strict type checking, consistent style |
 
 </details>
@@ -301,7 +301,7 @@ bash scripts/start-dev.sh
 ### Testing
 
 ```bash
-uv run pytest              # 1448 unit tests (no SC2 needed)
+uv run pytest              # 2007 unit tests (no SC2 needed; 2024 with --extra viewer)
 uv run pytest -m sc2       # SC2 integration tests (SC2 must be running)
 uv run ruff check .        # Lint
 uv run mypy src bots --strict  # Type check
@@ -325,7 +325,7 @@ Alpha4Gate/
 ├── bots/v1..v10/            # Promoted snapshots — each a self-contained stack with its own data/
 ├── bots/current/            # Thin pointer package (MetaPathFinder → active version, v10 today)
 ├── src/orchestrator/        # Version registry, snapshots, self-play, Elo ladder, evolve
-├── tests/                   # 1448 unit tests across 88 files (+ SC2 integration markers)
+├── tests/                   # 2007 unit tests across 113 files (+ SC2 integration markers)
 ├── frontend/                # React + TypeScript dashboard (Vite, 6 tabs)
 ├── scripts/                 # Live test, training analysis, evolve runner, sandbox hook
 ├── documentation/wiki/      # Project wiki (start with index.md)

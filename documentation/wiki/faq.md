@@ -56,13 +56,14 @@ The active plan is [master_plan.md](../master_plan.md). Phases A, 0–5, 8, 9, N
 
 ## How does the bot decide what to do?
 
-Six layers ([architecture.md](architecture.md)):
+Seven layers ([architecture.md](architecture.md)):
 1. Claude Advisor (optional, mid-game)
 2. Neural Engine (PPO, optional override)
 3. Decision Engine (state machine — OPENING/EXPAND/ATTACK/DEFEND/LATE_GAME/FORTIFY)
 4. Commands (human/AI text commands → actions)
 5. Tactics (macro, fortification, build backlog)
-6. Coherence + Micro (army grouping, per-unit combat)
+6. Coherence (`army_coherence.py` — army staging, grouping, engage/retreat)
+7. Micro (`micro.py` — per-unit combat, kiting, focus fire)
 
 ## How does training work?
 
@@ -124,11 +125,11 @@ The `/improve-bot-advised` loop treats SC2 as an opaque task: code + config go i
 | Frontend | React + TypeScript + Vite |
 | Deep learning | PyTorch, Stable Baselines 3 (PPO), recurrent PPO + custom KL variants |
 | Training data | SQLite |
-| Testing | pytest (1448 unit tests), ruff, mypy strict |
+| Testing | pytest (2007 unit tests), ruff, mypy strict |
 
 ## How many tests are there?
 
-1448 unit tests across 88 test files plus 119 frontend vitest tests. Zero type errors, zero lint violations. SC2 integration tests are separate (`pytest -m sc2`) and require a running SC2 client. See [testing.md](testing.md).
+2007 unit tests across 113 test files plus 234 frontend vitest tests. Zero type errors, zero lint violations. SC2 integration tests are separate (`pytest -m sc2`) and require a running SC2 client. See [testing.md](testing.md).
 
 ## Where do I start if I want to work on this?
 

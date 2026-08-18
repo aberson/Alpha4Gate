@@ -69,7 +69,7 @@ here because they operate on different things.
 | [improve-bot-advised architecture](improve-bot-advised-architecture.md) | Outer loop — PLAY / THINK / FIX / TEST / COMMIT / TRAIN, with SC2 as an opaque task |
 | [Monitoring & Observability](monitoring.md) | What's visible at each phase, the state-file single source of truth, 7 alert rules |
 | [Training Pipeline](training-pipeline.md) | Inner loop — PPO, imitation pre-training, LSTM, KL-to-rules, curriculum, `TrainingDaemon` |
-| [Evaluation Pipeline](evaluation-pipeline.md) | Win rates, reward rules (63 active), `ModelEvaluator` (deterministic inference-only eval) |
+| [Evaluation Pipeline](evaluation-pipeline.md) | Win rates, reward rules (63 total, 58 active in v13), `ModelEvaluator` (deterministic inference-only eval) |
 | [Promotion History](promotions.md) | `PromotionManager` + `RollbackMonitor` — live gate, auto-updated log |
 
 ### The Task (SC2 bot internals)
@@ -90,7 +90,7 @@ here because they operate on different things.
 | [Frontend Dashboard](frontend.md) | 10 tabs, React components, WebSocket protocol, poll cadences |
 | [Models Tab](models-tab.md) | Lineage, Live Runs, Inspector, Compare, Forensics — five questions answered, weight-dynamics + recovery procedures |
 | [Domain Coupling](domain-coupling.md) | What's SC2-specific vs domain-agnostic |
-| [Testing](testing.md) | 1020 unit tests, SC2 integration tests, coverage map |
+| [Testing](testing.md) | 2007 unit tests, SC2 integration tests, coverage map |
 | [Linux Dev Environment](linux-dev-environment.md) | WSL Ubuntu 22.04 setup — venv on ext4, env vars, gotchas |
 
 ---

@@ -602,7 +602,7 @@ PS> uv run pytest tests/test_evolve.py -q                # one file
 PS> uv run pytest tests/test_evolve.py::TestX -q         # one class
 PS> uv run ruff check .
 PS> uv run mypy src bots --strict                        # 292 source files
-PS> cd frontend; npm run test                            # 143 vitest
+PS> cd frontend; npm run test                            # 234 vitest
 PS> cd frontend; npm run lint
 ```
 

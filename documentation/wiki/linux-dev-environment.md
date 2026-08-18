@@ -100,7 +100,7 @@ These three commands are the Phase 8 Step 6 done-when. All must succeed against 
 
 ```bash
 cd /mnt/c/Users/abero/dev/Alpha4Gate
-uv run pytest --collect-only 2>&1 | tail -3   # pytest can find dev deps + collect ~1327 tests
+uv run pytest --collect-only 2>&1 | tail -3   # pytest can find dev deps + collect ~2007 tests
 uv run mypy src bots --strict 2>&1 | tail -3  # 178 files, no issues
 uv run ruff check .                            # All checks passed
 ```

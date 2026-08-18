@@ -145,7 +145,7 @@ The cleanest boundary. Trainer, SB3, evaluator, promotion gate, rollback monitor
 
 ### 2. Feature spec (features.py)
 
-`FEATURE_DIM=24` (= 17 base + 7 advisor) and `_FEATURE_SPEC` define what the model sees. Features 10–16 are SC2/Protoss-specific.
+`FEATURE_DIM=55` in the live v13 tree (= 48 base + 7 advisor; v0 is 47 = 40 + 7) and `_FEATURE_SPEC` define what the model sees. The own-unit-type histogram and the enemy threat-class block are SC2/Protoss-specific.
 
 **To swap:** Change `_FEATURE_SPEC` list and the two dim constants. The encode/decode functions and PPO policy adapt automatically; the database would need a schema migration.
 

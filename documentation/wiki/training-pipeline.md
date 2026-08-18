@@ -572,8 +572,8 @@ to `bots/v0/data/` (tracked via the `.gitignore` negation on `hyperparams.json`)
 | `STEPS_PER_ACTION` | 22 game ticks | environment.py |
 | `MAX_GAME_TIME_SECONDS` | 900.0 (15 min) | environment.py |
 | `DEFAULT_DISK_LIMIT_GB` | 200.0 | trainer.py |
-| `FEATURE_DIM` | 24 (17 base + 7 advisor) | features.py |
-| `BASE_GAME_FEATURE_DIM` | 17 | features.py |
+| `FEATURE_DIM` | 55 in v13 (48 base + 7 advisor); 47 in v0 (40 + 7) | features.py |
+| `BASE_GAME_FEATURE_DIM` | 48 in v13; 40 in v0 | features.py |
 | Default `win_rate_threshold` | 0.8 | trainer.py |
 | Default `max_epochs` (imitation) | 100 | imitation.py |
 | Default `agreement_threshold` | 0.95 | imitation.py |

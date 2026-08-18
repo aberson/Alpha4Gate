@@ -2,7 +2,7 @@
 
 What's tested, how to run it, and what's not covered.
 
-> **At a glance:** 1448 unit tests across 88 files, collected in ~12s. Heavy mocking of SC2 BotAI via MagicMock/AsyncMock — no SC2 client needed for unit tests. Integration tests require a running SC2 client and are marked `@pytest.mark.sc2`. No `conftest.py` — fixtures are inline. The suite covers the full autonomous loop (daemon, promotion, rollback, evaluator, advised-run bridge) plus the evolve substrate (orchestrator, pool, fitness/regression gates, evolve worker, sandbox hook) and the Phase 8 Linux substrate (SC2PATH resolver). Frontend has its own 119-test vitest suite — see [frontend.md](frontend.md).
+> **At a glance:** 2007 unit tests across 113 files (2024 with the optional `[viewer]` extra), collected in ~13s. Heavy mocking of SC2 BotAI via MagicMock/AsyncMock — no SC2 client needed for unit tests. Integration tests require a running SC2 client and are marked `@pytest.mark.sc2`. No `conftest.py` — fixtures are inline. The suite covers the full autonomous loop (daemon, promotion, rollback, evaluator, advised-run bridge) plus the evolve substrate (orchestrator, pool, fitness/regression gates, evolve worker, sandbox hook) and the Phase 8 Linux substrate (SC2PATH resolver). Frontend has its own 234-test vitest suite — see [frontend.md](frontend.md).
 
 ## Purpose & Design
 
@@ -65,7 +65,7 @@ cd frontend && npm test          # Frontend tests (vitest)
 | test_checkpoints.py | Checkpoint save/load/prune/promote |
 | test_database.py | TrainingDB (SQLite) |
 | test_database_threadsafety.py | DB thread-safety guards |
-| test_features.py | Feature encoding (24-dim vector) |
+| test_features.py | Feature encoding (47-dim v0 / 55-dim v13) |
 | test_neural_engine.py | NeuralDecisionEngine inference |
 | test_rules_policy.py | Rule-based policy reference (for KL targets) |
 | test_ppo_kl.py | PPO-with-KL-to-rules variant |
@@ -120,7 +120,7 @@ Plus `pyproject.toml` config for pytest, mypy, ruff.
 
 **Linting:** ruff with rules E, F, I, UP, B. Line length 100.
 
-**Frontend tests:** vitest (~126 tests). Run via `cd frontend && npm test`.
+**Frontend tests:** vitest (234 tests). Run via `cd frontend && npm test`.
 
 | File | Purpose |
 |------|---------|

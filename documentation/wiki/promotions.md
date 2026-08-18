@@ -36,7 +36,7 @@ See [training-pipeline.md](training-pipeline.md) for where this sits in the inne
                             (pruned eventually by checkpoint pruner)
 
  Every decision appends one entry to bots/<active>/data/promotion_history.json
- (resolved via bots/current/current.txt; bots/v10/ today)
+ (resolved via bots/current/current.txt; bots/v13/ today)
 ```
 
 And separately, on every daemon cycle:

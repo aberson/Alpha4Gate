@@ -2,7 +2,7 @@
 
 How the layers fit together — inside THE TASK.
 
-> **At a glance:** Six layers (Claude Advisor → Neural Engine → Strategy → Commands →
+> **At a glance:** Seven layers (Claude Advisor → Neural Engine → Strategy → Commands →
 > Tactics → Coherence → Micro) orchestrated by `bot.py.on_step()` in a 14-step pipeline.
 > Three command modes. Neural model can override rule-based strategy. Game state flows
 > up (observer → logger → WebSocket → dashboard) while decisions flow down (strategy →
