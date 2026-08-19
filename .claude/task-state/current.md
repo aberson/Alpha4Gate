@@ -1,9 +1,9 @@
 # Current Task State
 
 **Task:** Phase EV (evolve `--viewer`) — themed viewer for evolution runs, `documentation/plans/evolve-viewer-plan.md`
-**Status:** IN_PROGRESS — EV.1–EV.3 DONE and pushed. `/build-phase --resume EV.4` ran 2026-08-10 and halted at EV.5 (wait step, halt class #4). EV.4 is now Manual UAT **M1**. Session wrapped 2026-08-18 after a `/repo-update` doc-reconciliation pass (`978ee4f`, issue #297); branch pushed, 0 ahead. Phase EV itself is UNCHANGED — no code shipped 2026-08-18; M1 is still the acceptance gate and is still operator-only.
-**Session SHA:** 978ee4f
-**Last written:** 2026-08-18T23:37:13Z
+**Status:** IN_PROGRESS — EV.1–EV.3 DONE and pushed. `/build-phase --resume EV.4` ran 2026-08-10 and halted at EV.5 (wait step, halt class #4). EV.4 is now Manual UAT **M1**. Session wrapped 2026-08-19 after a `/repo-wrap` → `/repo-update` doc-only close-out (nothing to commit — origin was already at HEAD; memory + observatory refreshed). Phase EV itself is UNCHANGED — no code shipped since `59c8cfa`; M1 is still the acceptance gate and is still operator-only. A SECOND thread is OPEN: the evolve-restructure planning conversation (see Parked).
+**Session SHA:** 7e08491
+**Last written:** 2026-08-19T18:31:19Z
 **Branch:** `master-plan/phase-ev` (NOT mergeable to `master` until `onbrand-pilot` lands — `master` lacks pygame-ce and `launch-a4g.ps1`)
 
 ## Next Action
@@ -43,6 +43,8 @@ registry invokes it.
 
 ## Completed
 
+- [7e08491] `/repo-wrap` (Rail A, OWNED) → `/repo-update` 2026-08-19, doc-only close-out at unchanged HEAD: tree clean, origin already at `7e08491`, so nothing committed or pushed. Memory updated (Phase EV entry re-anchored `afb19d5`→`7e08491`; NEW `project_evolve_restructure_thread_2026_08.md` for the open evolve-restructure planning thread; MEMORY.md index refreshed). Observatory synced — wrote 5 obs tasks to `dev.code-workspace` IN THE PROJECT ROOT, untracked (see Parked). Drift checks skipped as redundant (full reconciliation was `978ee4f`; zero code changes since). No posterity issue (doc-only), no tour. Branch 17 ahead / 1 behind local `master`; merge still blocked on `onbrand-pilot`.
+
 - [978ee4f] `/repo-update` (doc-only; no Phase EV code touched): reconciled current-state docs against source — 34 stale facts across `CLAUDE.md`, `README.md` and 10 wiki pages. Pointer v4→**v13**; wiki `FEATURE_DIM=24`/`BASE=17` → v13 **55/48**, v0 **47/40**, DB stores **40**; test counts reconciled to one convention; "Six layers" → seven (no `tactics.py`); Phases **EL** and **EJ** added to Current state (both shipped, both previously absent). `.gitignore` gained `.build-step/` + 2 task-state scratch entries. Issue #297 opened+closed. Gates: ruff clean, mypy clean 866 files, 2024 selected, frontend 234.
 
 - [fbd7363] EV.1 `--viewer` flag + degradation gate + concurrency guard: PASS iter 3/3 + polish. `_viewer_enabled` probes `pygame` (not `selfplay_viewer`, which imports fine without the extra) and is total — the whole probe sits in one `try/except Exception`, so no meta-path finder can abort a run. Guard lives in `main()` (D13), gated behind `args.viewer` so the parallel path is byte-identical. 1990 → 2005 collected.
@@ -54,9 +56,12 @@ registry invokes it.
 ## WIP
 
 **Current:** Nothing in flight. All agent-completable work in Phase EV is done; the phase is
-blocked on operator observation.
+blocked on operator observation (M1). The evolve-restructure planning thread is blocked on the
+operator finishing their truncated idea (ii).
 
-**Approach:** Hand off to the operator for M1 (EV.4's smoke gate).
+**Approach:** Hand off to the operator for M1 (EV.4's smoke gate). Resume the restructure thread
+when idea (ii) arrives — full state in `docs/seeds/evolve-restructure-operator-notes.md` and
+memory `project_evolve_restructure_thread_2026_08.md`.
 
 ## Critical Gotchas
 
@@ -72,6 +77,17 @@ blocked on operator observation.
 
 ## Parked
 
+- **Evolve-restructure planning thread OPEN** (started 2026-08-06): verified pipeline map
+  ("11 steps vs. reality", file:line-anchored) + operator ideas live in
+  `docs/seeds/evolve-restructure-operator-notes.md` (committed); README § self-play arena now
+  renders it as `documentation/images/evolve-arena-{light,dark}.svg`. Next: operator finishes
+  the truncated idea (ii) ("Use a SC2 version of the 'judge…") → adversarial-review rounds →
+  `/plan-feature`. Memory: `project_evolve_restructure_thread_2026_08.md`.
+- **`dev.code-workspace` in the PROJECT root is untracked and of uncertain provenance** —
+  `observatory sync` run 2026-08-19 from inside Alpha4Gate wrote "5 obs task(s)" to
+  `C:\Users\abero\dev\Alpha4Gate\dev.code-workspace` rather than the dev root's workspace file
+  (possibly cwd-derived target resolution in dev-observatory). Decide: gitignore it, commit it,
+  or fix the sync target. Left untracked deliberately.
 - **Wiki drift that `/repo-update` must NOT auto-fix** (issue #296): stale dashboard/component
   tables in `documentation/wiki/monitoring.md` (a 10-tab table naming 13 components absent from
   disk), `frontend.md` (nonexistent `ImprovementsTab.tsx` x5; tab list disagrees with `App.tsx`),
