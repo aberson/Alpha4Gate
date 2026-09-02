@@ -2,44 +2,45 @@
 
 ## Plan index
 
-Single spine for the project. Status as of 2026-06-20. Each phase's narrative lives in the sections below; deep build detail lives in the linked sub-plan docs. Sub-plans that are fully shipped or cut are archived; sub-plans with work remaining stay under `documentation/plans/` and are linked here.
+Single spine for the project. Status as of 2026-09-02. Each phase's narrative lives in the sections below; deep build detail lives in the linked sub-plan docs. Sub-plans that are fully shipped or cut are archived; sub-plans with work remaining stay under `documentation/plans/` and are linked here.
 
 ### Active sub-plans — work remaining (`documentation/plans/`)
 
 | Sub-plan | Phase | Status / remaining work |
 |---|---|---|
-| [phase-d-build-plan.md](documentation/plans/phase-d-build-plan.md) | D | Automated build COMPLETE (incl. snapshot-counts follow-up); **M1/M2 operator validation pending** |
-| [evolution-lines-plan.md](documentation/plans/evolution-lines-plan.md) | EL | EL.1-EL.5 shipped 2026-06-20; **EL.6 smoke + EL.7 soak operator-pending** |
-| [phase-6-build-plan.md](documentation/plans/phase-6-build-plan.md) | 6 | Self-play-driven improvement loop - planned |
-| [phase-7-build-plan.md](documentation/plans/phase-7-build-plan.md) | 7 | Steps 1-5 SHIPPED 2026-06-20 (#180-184 closed): staleness signal + `soak` improvement type; **Step 6 operator soak (#280) pending** |
-| [phase-e-build-plan.md](documentation/plans/phase-e-build-plan.md) | E | Autoregressive action head - planned |
-| [phase-g-build-plan.md](documentation/plans/phase-g-build-plan.md) | G | Multi-race support - future |
-| [phase-h-build-plan.md](documentation/plans/phase-h-build-plan.md) | H | Mini-game substrate - investigation-blocked |
-| [phase-k-build-plan.md](documentation/plans/phase-k-build-plan.md) | K | Observable pool organisation - future |
-| [phase-q-build-plan.md](documentation/plans/phase-q-build-plan.md) | Q | harvest-engineer skill - investigation-blocked |
-| [evolve-judging-plan.md](documentation/plans/evolve-judging-plan.md) | EJ | Evolve judging noise-floor shortlist (EJ.1-EJ.8) - planned 2026-07-05 |
-| [evolve-viewer-plan.md](documentation/plans/evolve-viewer-plan.md) | EV | Themed viewer for evolution runs (`--viewer` + launcher opt-in). EV.1-EV.3 shipped 2026-08-10 (#291-#293); **EV.4 operator smoke (#294) + EV.5 observation soak (#295) operator-pending** |
+| [phase-d-build-plan.md](plans/phase-d-build-plan.md) | D | Automated build COMPLETE (incl. snapshot-counts follow-up); **M1/M2 operator validation pending** |
+| [evolution-lines-plan.md](plans/evolution-lines-plan.md) | EL | EL.1-EL.6 shipped 2026-06-20 (#273-#278 closed; EL.6 real-SC2 smoke PASS); **EL.7 soak (#279) operator-pending** |
+| [phase-6-build-plan.md](plans/phase-6-build-plan.md) | 6 | Self-play-driven improvement loop - planned |
+| [phase-7-build-plan.md](plans/phase-7-build-plan.md) | 7 | Steps 1-5 SHIPPED 2026-06-20 (#180-184 closed): staleness signal + `soak` improvement type; **Step 6 operator soak (#280) pending** |
+| [phase-e-build-plan.md](plans/phase-e-build-plan.md) | E | Autoregressive action head - planned |
+| [phase-g-build-plan.md](plans/phase-g-build-plan.md) | G | Multi-race support - future |
+| [phase-h-build-plan.md](plans/phase-h-build-plan.md) | H | Mini-game substrate - investigation-blocked |
+| [phase-k-build-plan.md](plans/phase-k-build-plan.md) | K | Observable pool organisation - future |
+| [phase-q-build-plan.md](plans/phase-q-build-plan.md) | Q | harvest-engineer skill - investigation-blocked |
+| [evolve-judging-plan.md](plans/evolve-judging-plan.md) | EJ | EJ.1-EJ.6 shipped 2026-07-06 (#282-#287 closed); all six flags default OFF (bare invocation byte-identical); **EJ.7 smoke (#288) + EJ.8 soak (#289) operator-pending** |
+| [evolve-evidence-layer-plan.md](plans/evolve-evidence-layer-plan.md) | EI | Evolve evidence layer (EI.1-EI.14) - **planned 2026-09-02**, awaiting `/plan-review` + `/plan-wrap`; build blocked by the toolkit freeze. Output of the operator's evolve-restructure thread |
+| [evolve-viewer-plan.md](plans/evolve-viewer-plan.md) | EV | Themed viewer for evolution runs (`--viewer` + launcher opt-in). EV.1-EV.3 shipped 2026-08-10 (#291-#293) on branch `master-plan/phase-ev`; **EV.4 operator smoke (#294, now Manual UAT M1) + EV.5 observation soak (#295) operator-pending** |
 
 ### Archived sub-plans — shipped or cut (`documentation/archived/`)
 
 | Sub-plan | Outcome |
 |---|---|
-| [phase-1-build-plan.md](documentation/archived/phase-1-build-plan.md) | Phase 1 COMPLETE - bots/v0 migration |
-| [phase-2-build-plan.md](documentation/archived/phase-2-build-plan.md) | Phase 2 COMPLETE - registry + snapshot tool |
-| [phase-3-build-plan.md](documentation/archived/phase-3-build-plan.md) | Phase 3 COMPLETE - subprocess self-play runner |
-| [phase-4-build-plan.md](documentation/archived/phase-4-build-plan.md) | Phase 4 COMPLETE - Elo ladder + cross-version promotion |
-| [phase-5-build-plan.md](documentation/archived/phase-5-build-plan.md) | Phase 5 COMPLETE - sandbox enforcement + skill integration |
-| [phase-8-build-plan.md](documentation/archived/phase-8-build-plan.md) | Phase 8 COMPLETE - headless Linux training substrate |
-| [phase-9-build-plan.md](documentation/archived/phase-9-build-plan.md) | Phase 9 OPERATIONAL - improve-bot-evolve loop |
-| [phase-b-build-plan.md](documentation/archived/phase-b-build-plan.md) | Phase B COMPLETE - unit-type histogram observation |
-| [phase-n-build-plan.md](documentation/archived/phase-n-build-plan.md) | Phase N COMPLETE - win-probability + give-up |
-| [phase-d-snapshot-counts-plan.md](documentation/archived/phase-d-snapshot-counts-plan.md) | Phase D follow-up COMPLETE - 5 GameSnapshot count fields (#271) |
-| [dashboard-refactor-plan.md](documentation/archived/dashboard-refactor-plan.md) | COMPLETE - 6-tab dashboard refactor |
-| [models-tab-plan.md](documentation/archived/models-tab-plan.md) | COMPLETE - Models dashboard tab |
-| [evolve-parallelization-plan.md](documentation/archived/evolve-parallelization-plan.md) | COMPLETE - parallel evolve workers |
-| [evolve-gate-reduction-plan.md](documentation/archived/evolve-gate-reduction-plan.md) | COMPLETE - Phase 9 Step 10 gate reduction |
-| [evolve-parallelization-iter3-prompt.md](documentation/archived/evolve-parallelization-iter3-prompt.md) | OBSOLETE - iter-3 prompt superseded |
-| [phase-f-build-plan.md](documentation/archived/phase-f-build-plan.md) | CUT - removed from master plan (2026-05-19 trim) |
+| [phase-1-build-plan.md](archived/phase-1-build-plan.md) | Phase 1 COMPLETE - bots/v0 migration |
+| [phase-2-build-plan.md](archived/phase-2-build-plan.md) | Phase 2 COMPLETE - registry + snapshot tool |
+| [phase-3-build-plan.md](archived/phase-3-build-plan.md) | Phase 3 COMPLETE - subprocess self-play runner |
+| [phase-4-build-plan.md](archived/phase-4-build-plan.md) | Phase 4 COMPLETE - Elo ladder + cross-version promotion |
+| [phase-5-build-plan.md](archived/phase-5-build-plan.md) | Phase 5 COMPLETE - sandbox enforcement + skill integration |
+| [phase-8-build-plan.md](archived/phase-8-build-plan.md) | Phase 8 COMPLETE - headless Linux training substrate |
+| [phase-9-build-plan.md](archived/phase-9-build-plan.md) | Phase 9 OPERATIONAL - improve-bot-evolve loop |
+| [phase-b-build-plan.md](archived/phase-b-build-plan.md) | Phase B COMPLETE - unit-type histogram observation |
+| [phase-n-build-plan.md](archived/phase-n-build-plan.md) | Phase N COMPLETE - win-probability + give-up |
+| [phase-d-snapshot-counts-plan.md](archived/phase-d-snapshot-counts-plan.md) | Phase D follow-up COMPLETE - 5 GameSnapshot count fields (#271) |
+| [dashboard-refactor-plan.md](archived/dashboard-refactor-plan.md) | COMPLETE - 6-tab dashboard refactor |
+| [models-tab-plan.md](archived/models-tab-plan.md) | COMPLETE - Models dashboard tab |
+| [evolve-parallelization-plan.md](archived/evolve-parallelization-plan.md) | COMPLETE - parallel evolve workers |
+| [evolve-gate-reduction-plan.md](archived/evolve-gate-reduction-plan.md) | COMPLETE - Phase 9 Step 10 gate reduction |
+| [evolve-parallelization-iter3-prompt.md](archived/evolve-parallelization-iter3-prompt.md) | OBSOLETE - iter-3 prompt superseded |
+| [phase-f-build-plan.md](archived/phase-f-build-plan.md) | CUT - removed from master plan (2026-05-19 trim) |
 
 Phases A and 0 (completed 2026-04-15/16) and earlier pre-master-plan work are documented inline below and under `documentation/archived/`.
 
@@ -168,6 +169,13 @@ of ~1-5s lag.
 |------|-----------|
 | **`v0_pretrain`** | Imitation-pretrained PPO checkpoint at `<version>/data/checkpoints/v0_pretrain.zip`. Behavior-cloned from rule-based decisions in `<version>/data/training.db`. Per-version, not shared. |
 | **KL-to-rules** | Auxiliary loss from the `feat/lstm-kl-imitation` PR. After each PPO gradient step, `kl_rules_coef * CE(policy_logits, rule_engine_action)` is applied. Disabled at `kl_rules_coef=0.0`. |
+| **Lineage** | An independent ancestor chain inside one evolve run (Phase EL). `--lineages N` advances N of them in parallel instead of a single `vN → vN+1` spine. Heads are held in memory only — `write_lineages` has no production caller. |
+| **Frozen baseline** | A previously-promoted version registered in `data/baselines.json` (via `scripts/baseline.py`) and replayed as a fixed opponent. Absent registry → `--fitness-mode` `baseline` or `both` silently degrades to `parent`. |
+| **Fingerprint** | A version's behavioural signature. The v1 fingerprint **is** its per-baseline win-rate vector, so it costs nothing beyond the gauntlet that produced it. |
+| **Extinction** | Culling a lineage that is both strictly less fit than a sibling and within `--diversity-threshold` of it. Requires `lineages > --population-cap`; at `lineages <= cap` the manager keeps all. |
+| **Posterior rollback bar** | Phase EJ's replacement for strict-majority regression: roll back only when P(worse) ≥ 0.85 under a uniform Beta(1,1) posterior over ≥ 4 decided games. Fails **open** below that. |
+| **Panel floor** | Phase EJ's sweep-loss backstop — a promotion that loses every game against every frozen baseline is rolled back regardless of the posterior. Inert without a populated baselines registry. |
+| **Detach (viewer)** | Closing the Phase EV themed container stops the *display*, not the run. The evolve process keeps going headless. Stopping the run means closing its console window. |
 | **Padding trick** | When a version's obs width grows, DB rows stored at the old width are zero-padded to match. Within-version only. |
 | **`_FEATURE_SPEC`** | Tuple list in `<version>/learning/features.py` defining obs slots. Single source of truth within a version. |
 | **`_compute_next_state`** | Rule-engine method in `<version>/decision_engine.py` mapping `GameSnapshot` → `StrategicState`. KL-to-rules teacher. |
@@ -241,13 +249,13 @@ Per phase:
 ```
 Track 1 — Validation   [Phase A]    on current src/alpha4gate/                                  ✅
 Track 2 — Versioning   [0–5]        subprocess spike → bots/v0/ → registry → self-play → ladder → sandbox  ✅
-Track 5 — Operational  [8, 9, 6, 7]  Phase 8 (Linux training substrate) ✅ Steps 1-11 shipped; Phase 9 (improve-bot-evolve) operational
+Track 5 — Operational  [8, 9, 6, 7]  Phase 8 (Linux training substrate) ✅ Steps 1-10 shipped, Step 11 closed ceremonially; Phase 9 (improve-bot-evolve) operational
 Track 3 — Capability   [B, D, E]    per-version improvements inside bots/current/**             after Phase 9
 Track 6 — Multi-race   [G]          post-Phase-6 operational; Zerg then Terran via per-race bots/<race>_v0/ stacks
 Track 7 — Directed Practice  [H, I, J]   mini-games substrate → custom Protoss maps → role decision; investigation-blocked
-Track 8 — Observable         [K, L, M]   pool metadata → replay-stream-as-live viewer → NL-prompt seed selector
-Track 9 — Capability research [N ✅, O, P, Q]  win-prob+give-up → scripted Hydra v1 → distillation → harvest-engineer skill
-Track 10 — Statistical robust [R, S+]   Wilson CIs + SPRT (R) → backlog of further primitives
+Track 8 — Observable         [K, L, M, EV ✅]  pool metadata → replay-stream-as-live viewer → NL-prompt seed selector; EV (themed evolve viewer) shipped 2026-08-10, operator gates pending
+Track 9 — Capability research [N ✅, O, P, Q, EL ✅]  win-prob+give-up → scripted Hydra v1 → distillation → harvest-engineer skill; EL (evolution lines) shipped 2026-06-20, EL.7 soak pending
+Track 10 — Statistical robust [EJ ✅, EI, R, S+]  EJ (evolve judging noise-floor) shipped 2026-07-06 — one-sided Beta(1,1) posterior, NOT SPRT (rejected 2026-07-05); R re-scoped to Wilson-CI reporting → backlog of further primitives
 ```
 
 **Track 5 priority (2026-04-19 reorder):** Phase 9 (improve-bot-evolve)
@@ -271,7 +279,7 @@ Phase A ✅ → Phase 0 ✅ → Phase 1 ✅ → Phase 2 ✅ → Phase 3 ✅ → 
                                                                           ┌───────────────────────┐
                                                                           │  Phase 9 ✅           │  ← OPERATIONAL
                                                                           │  improve-bot-evolve   │
-                                                                          │  Steps 1–9 shipped    │
+                                                                          │  Steps 1–10 shipped   │
                                                                           │  #154–#161            │
                                                                           └──────────┬────────────┘
                                                                                      │
@@ -279,7 +287,8 @@ Phase A ✅ → Phase 0 ✅ → Phase 1 ✅ → Phase 2 ✅ → Phase 3 ✅ → 
                 ▼                                 ▼                                  ▼
           Phase 8 ✅ (headless Linux              Phase 7 (advised staleness)    Phase B / D / E (capabilities,
           substrate; parallel substrate;          standalone, operational         driven by Phase 9 loop;
-          Steps 1-11 shipped — substrate         improvement)                    individual phase order
+          Steps 1-10 shipped; Step 11
+          closed ceremonially 2026-05-19 — substrate         improvement)                    individual phase order
           de-facto validated by v4→v13                                           determined by what shows up
           via May 2026 evolve soaks)                                             in evolve runs)
                                                                                      │
@@ -299,6 +308,17 @@ Tracks 7 / 8 / 9 / 10 (added 2026-04-27, append to Phase 9 ✅ root):
                           Track 7 (Directed)         Track 8 (Observable)    Track 9 (Research)    Track 10 (Stats)
                           Phase H → I → J            Phase K → L → M         N ✅ → P / Q parallel  Phase R → S+
                                                                              O scripted v1 anytime
+
+Evolve-substrate phases (added 2026-09-02; all three improve the Phase 9 loop itself):
+                                                                          Phase 9 ✅
+                                                                                     │
+                              ┌──────────────────────────┬─────────────────────────┬───────────────┐
+                              ▼                          ▼                         ▼                ▼
+                    Phase EL ✅ (lines)        Phase EJ ✅ (judging)      Phase EV ✅ (viewer)   Phase EI (evidence)
+                    lineages + baselines       posterior rollback bar    themed container       per-game traces +
+                    + fingerprint + extinct.   + null-diff + panel floor  for evolve games      patch capture +
+                    EL.7 soak #279 pending     EJ.7 #288 / EJ.8 #289      M1 #294 / EV.5 #295   stack levers
+                                                                          pending               PLANNED, not built
 ```
 
 Phase 9 is independent of B/D/E/6/7. Phase 7 is independent of 6/9. Once
@@ -591,6 +611,11 @@ before the Phase B Validation gate.
 
 ## Phase D — Build-order z-statistic (reward refactor)
 
+**Status: automated build COMPLETE** (2026-05-20, incl. the snapshot-counts
+follow-up #271); **M1/M2 operator validation pending (#170 / #171).** The
+feature flag `use_build_order_reward` is still **off** by default — M1 is the
+gate that flips it.
+
 **Track:** Capability. **Prerequisites:** Phase 5. B and D are orthogonal.
 
 > **Build detail lives in
@@ -748,6 +773,11 @@ check).
 ---
 
 ## Phase 7 — Advised loop stale-policy detection
+
+**Status: Steps 1–5 SHIPPED** (2026-06-20; issues #180–#184 closed) —
+`src/orchestrator/staleness.py` plus a staleness-gated `soak` improvement type
+in `/improve-bot-advised`. **Step 6 end-to-end validation soak (#280)
+operator-pending.**
 
 **Track:** Operational. **Prerequisites:** Phase 5 (sandbox + skill integration).
 Independent of B/D/E/6 — ships standalone.
@@ -970,7 +1000,7 @@ directories accumulated during runs are safe to `rm -rf`.
 ### Post-Step-10 enhancement — gate reduction (2026-04-23)
 
 Build plan:
-[documentation/archived/evolve-gate-reduction-plan.md](documentation/archived/evolve-gate-reduction-plan.md).
+[documentation/archived/evolve-gate-reduction-plan.md](archived/evolve-gate-reduction-plan.md).
 
 Collapses the evolve pipeline from **3 gates** (fitness + composition +
 regression) to **2 gates** (fitness + regression), with the
@@ -1002,10 +1032,232 @@ gen 1's "OPENING state timeout escape hatch" (9-0 fitness), and
 gen 2's "Reduce re-scout interval + Observers" (resurrected from gen-1
 fitness-close; 5-3 fitness, 5-4 regression — the resurrection mechanic
 earned its keep). See
-[documentation/soak-test-runs/evolve-20260423-2052.md](../soak-test-runs/evolve-20260423-2052.md)
+[documentation/soak-test-runs/evolve-20260423-2052.md](soak-test-runs/evolve-20260423-2052.md)
 for the full report. Next follow-up: PFSP-lineage regression gate
 (regression currently tests only the immediate prior parent; PFSP would
 sample a distribution of ancestors weighted by strength).
+
+---
+
+## Phase EL — Evolution lines (parallel lineages + frozen-baseline gauntlet) ✅
+
+**Track:** Capability research (Track 9 / evolve substrate). **Status:** EL.1–EL.6
+COMPLETE (2026-06-20); **EL.7 multi-hour soak (#279) operator-pending.**
+**Prerequisites:** Phase 9 (the evolve loop this phase branches).
+
+> **Build detail lives in [`documentation/plans/evolution-lines-plan.md`](plans/evolution-lines-plan.md).
+> Read it before starting work on this phase.**
+
+**Shipped 2026-06-20** (commits `2675c43..e418146` plus the EL.6 smoke at `acd147f`;
+issues #273–#278 closed):
+
+- `src/orchestrator/lineages.py` — parallel lineages, so one run can advance several
+  independent ancestor chains instead of a single `vN → vN+1` spine.
+- `src/orchestrator/baselines.py` + `scripts/baseline.py` — a registry of frozen previous
+  versions, and a fitness gauntlet that plays a candidate against them.
+- `src/orchestrator/fingerprint.py` — a behavioural diversity fingerprint. The v1
+  fingerprint of a version **is** its per-baseline win-rate vector, so it is a free
+  by-product of the gauntlet rather than a second measurement.
+- `src/orchestrator/population.py` — diversity-driven extinction: cull a lineage that is
+  both strictly less fit and behaviourally close to a sibling.
+- Dashboard surfacing for lineages and extinction events.
+
+**Goal:** Stop the evolve loop from collapsing onto one ancestor chain, and give it a way
+to notice that a "winning" candidate only beats its own parent.
+
+### Scope summary
+
+`--lineages N` (default 1), `--fitness-mode parent|baseline|both` (default `parent`),
+`--population-cap N` (default 0 = off), `--diversity-threshold` (default 0.15). All
+defaults are byte-identical to pre-EL behaviour.
+
+### Validation
+
+EL.6 real-SC2 smoke PASSED 2026-06-20 (~31 min; both lineages scheduled, gauntlet ran for
+two candidates, fingerprints persisted, regression correctly rolled one back, zero orphan
+SC2 processes). Record:
+[`documentation/soak-test-runs/evolution-lines-smoke-20260620.md`](soak-test-runs/evolution-lines-smoke-20260620.md).
+
+### Known gaps (carried, not fixed by this phase)
+
+- **Lineage state is never persisted.** `write_lineages` (`src/orchestrator/lineages.py`)
+  has zero production callers, so lineage heads and extinction events live only in process
+  memory. A resumed run re-branches from stale heads and extinct lineages revive. Queued
+  for the evolve operational-hardening plan.
+- **The gauntlet is inert without a registry.** `data/baselines.json` does not exist in a
+  fresh checkout, and `--fitness-mode baseline|both` silently degrades to `parent` when it
+  is empty or absent. Register anchors with `scripts/baseline.py` before any gate that
+  depends on the gauntlet.
+- **`--lineages N` does not create N lineages, and nothing creates them.** The flag only
+  *engages* multi-lineage scheduling; the lineage set comes from `data/lineages.json`, which is
+  absent and has no writer. With no registry, `scripts/evolve.py:3744-3751` returns a single
+  implicit `main` lineage for any value of the flag. There is no runtime path that adds one
+  (`repopulate` is always empty and the runner never reads it). Do not confuse the absent
+  `data/lineages.json` with `data/lineage.json` (singular), the version DAG that does exist.
+- **Extinction therefore cannot fire on a default checkout.** Even with a registry, the
+  population manager keeps all when `len(lineages) <= cap`, and a cull additionally needs
+  dominance plus a fingerprint distance under `--diversity-threshold`. **EL.7 (#279) is
+  unrunnable as its plan specifies it** — see
+  [`operator-gate-runbook.md`](operator-gate-runbook.md) for the two honest paths.
+
+### Gate
+
+EL.7: at least two generations per lineage, a non-trivial diversity matrix, and extinction
+either exercised or documented as not-triggered-by-design.
+
+---
+
+## Phase EJ — Evolve judging noise floor ✅
+
+**Track:** Statistical robustness (Track 10 / evolve substrate). **Status:** EJ.1–EJ.6
+COMPLETE (2026-07-06); **EJ.7 flags-on smoke (#288) + EJ.8 overnight A/B soak (#289)
+operator-pending.** **Prerequisites:** Phase 9 (the gates this phase re-scores), Phase EL
+(the gauntlet the panel floor rides on).
+
+> **Build detail lives in [`documentation/plans/evolve-judging-plan.md`](plans/evolve-judging-plan.md).
+> Read it before starting work on this phase.**
+
+**Shipped 2026-07-06** (commits `a87930b..2c8190f`; issues #282–#287 closed):
+
+- **EJ.1** promoted-title exclusion from the proposer's priors block, so the pool stops
+  re-proposing improvements that already landed.
+- **EJ.2** a mechanical AST null-diff screen that evicts a candidate whose applied patch
+  changes no behaviour, before it costs any SC2 games.
+- **EJ.3** a one-sided posterior rollback bar (`src/orchestrator/gate_stats.py`): uniform
+  Beta(1,1), roll back only at P(worse) ≥ 0.85 over ≥ 4 decided games, exact binomial-tail
+  identity, no scipy, and **fails open** below the decision threshold.
+- **EJ.4** a frozen-baseline panel floor — a sweep-loss backstop that gives the relaxed
+  posterior bar something to catch degenerate promotions with.
+- **EJ.5** refresh-time proposal dedup. **EJ.6** budget-aware fit.
+
+**Goal:** The regression gate's default rule is a strict majority of five games
+(`games//2+1`). Against a *truly neutral* change that rule rolls back about half the time,
+and raising `--games-per-eval` tightens the estimate without moving the null. EJ replaces
+the decision rule rather than buying more games.
+
+### Scope summary
+
+Six flags — `--priors-exclude-promoted`, `--screen-null-diff`, `--regression-rule one-sided`,
+`--panel-floor`, `--refresh-dedup`, `--budget-fit`. **All six default OFF**; a bare
+`scripts/evolve.py` invocation is byte-identical to pre-EJ behaviour. Choosing a blessed
+default profile is deliberately left to EJ.8.
+
+### Relationship to Phase R
+
+SPRT was **rejected** for this project by the 2026-07-05 evolve-judging investigation
+([`evolve-judging-alternatives.md`](investigations/evolve-judging-alternatives.md)):
+indifference-zone log-likelihood-ratio drift kills the modest ~0.6 true win rates evolve
+produces, at roughly 3× the game cost of the one-sided posterior rule. EJ ships the
+posterior bar instead. Phase R is re-scoped to Wilson-CI *reporting*.
+
+### Gate
+
+EJ.7 smoke green, then EJ.8's A/B table filled from `evolve_results.jsonl`. A negative
+result is a valid outcome and simply blocks flipping the defaults.
+
+### Known gap
+
+`--panel-floor` is inert without a populated `data/baselines.json` (the same registry gap
+Phase EL carries) — the floor needs the gauntlet to have teeth.
+
+---
+
+## Phase EV — Themed viewer for evolution runs ✅
+
+**Track:** Observable (Track 8). **Status:** EV.1–EV.3 COMPLETE (2026-08-10) on branch
+`master-plan/phase-ev`; **EV.4 real-SC2 smoke (#294, now Manual UAT M1) + EV.5 observation
+soak (#295) operator-pending.** **Prerequisites:** Phase 9, and the existing themed
+container in `src/selfplay_viewer/` (see the Auxiliary "Self-play viewer" note below).
+
+> **Build detail lives in [`documentation/plans/evolve-viewer-plan.md`](plans/evolve-viewer-plan.md).
+> Read it before starting work on this phase. Its `## Manual UAT` section carries the
+> runnable M1 checklist.**
+
+**Shipped 2026-08-10** (commits `fbd7363` → `5b65afb` → `59c8cfa`; issues #291–#293 closed;
+suite 1990 → 2024 collected):
+
+- **EV.1** an opt-in `--viewer` flag on `scripts/evolve.py`, a total degradation probe
+  (non-Windows or absent `pygame` → WARNING and headless), and a `--concurrency 1`
+  mutual-exclusion guard.
+- **EV.2** `_EvolveViewerSession` plus a `main()` inversion that runs the viewer on the
+  main thread and the evolution loop on a batch thread, so closing the container
+  **detaches** instead of cancelling.
+- **EV.3** launcher opt-in — `scripts/launch-evolve.ps1`, the script behind the
+  dev-observatory `run-evolution` button, now spawns the run with the viewer.
+
+**Goal:** Make an evolution run watchable in the same themed container self-play already
+uses, without changing headless behaviour. Default stays off and byte-identical.
+
+### Operator safety (load-bearing, not incidental)
+
+- Closing the viewer container only **detaches**; the run continues headless.
+- To **stop** a run, close the evolve **console** window.
+- **Never Ctrl+C a `--viewer` run** — the loop runs off the main thread, so burnysc2's
+  SIGINT kill-switch is never armed and Ctrl+C can orphan SC2 processes.
+- The dashboard's Stop button is **not wired** to the runner: the API writes
+  `data/evolve_run_control.json` and nothing on the runner side reads it.
+
+### Merge status
+
+The branch is a content superset of `master` and already contains `onbrand-pilot`, so
+landing it is one merge. It is **not** on `master` yet; see
+[`branch-landing-phase-ev.md`](branch-landing-phase-ev.md) for the ordering and the
+accept-or-wait decision on M1.
+
+### Gate
+
+M1 item **(e1)** is the acceptance condition: a real SC2 match visibly rendered inside the
+themed container, launched from the dev-observatory button. Unit tests do not substitute
+for it.
+
+### Known gap
+
+`scripts/launch-evolve.ps1` omits `--generations`, which defaults to **1**, so a
+button-launched "4-hour" run stops after one generation. This does not block M1 (which only
+needs a visible match) but it invalidates EV.5 as written. See
+[`operator-gate-runbook.md`](operator-gate-runbook.md) for the pre-flight decision.
+
+---
+
+## Open planning thread — evolve restructure (produced Phase EI)
+
+**Status:** adversarial rounds 1 and 2 complete (2026-09-02) and converged — the adjudicator's
+finding is that round 3 is unnecessary. The idea-(ii)-independent core became
+**[Phase EI](plans/evolve-evidence-layer-plan.md)**. The thread itself stays open on **one**
+operator answer (idea (ii)), which Phase EI does not depend on.
+
+The operator opened this thread 2026-08-06 to restructure the Phase 9 loop itself. Plan of
+record: iterate understanding → operator suggestions → adversarial-reviewer rounds →
+`/plan-feature`.
+
+- **Operator's own notes + the verified pipeline map:**
+  [`docs/seeds/evolve-restructure-operator-notes.md`](../docs/seeds/evolve-restructure-operator-notes.md)
+  (file:line anchored; re-verified 2026-09-02). Rendered in the README as
+  `documentation/images/evolve-arena-{light,dark}.svg`.
+- **Round-1 record** (30-row decisions table, three fault lines, the idea-(ii) decision card):
+  [`investigations/evolve-restructure-round1.md`](investigations/evolve-restructure-round1.md)
+  — superseded on 19 citations and 4 conclusions; read its banner first.
+- **Round-2 adjudication**, authoritative where the two disagree, and the source of Phase EI's
+  scope: [`investigations/evolve-restructure-round2.md`](investigations/evolve-restructure-round2.md).
+
+**The finding that matters to every other phase:** the evolve path records almost nothing
+about the games it plays. Per-game persistence is nine fields and no gameplay
+(`src/orchestrator/contracts.py:121-137`); the rich telemetry format exists but is never
+attached in self-play (`bots/v13/__main__.py:276` builds the bot with no logger); the single
+per-seat console log is truncated by the next game (`src/orchestrator/selfplay.py:292`); no
+replay is saved; and the fitness-winning candidate is deleted before anything reads it. Any
+future phase that wants to reason about *how* the bot played — Phase H's mini-game scorecards,
+Phase L's exhibition viewer, Phase R's statistics — inherits that gap.
+
+**Round 2's decisive finding:** gate 1 selects improvement *texts*, not code — 100% of the time,
+at every stack size. Two commits build the same version from the same parent and the same
+improvement text and produce materially different bots. The games that justify a promotion score
+a candidate that is then deleted, and a second independent authoring is what ships.
+
+**Blocked on:** the operator's improvement idea (ii) arrived truncated at "Use a SC2 version of
+the 'judge". Round 1 turned it into a six-option decision card; the thread needs one letter,
+not an essay. See the seed doc. **Phase EI is not blocked by it** — three of the six readings
+need exactly the evidence Phase EI builds.
 
 ---
 
@@ -1065,7 +1317,7 @@ unaffected.
 
 **Track:** Directed Practice. **Status:** Investigation-blocked.
 **Prerequisites:** Phase 5;
-[mini-game-role-investigation.md](../investigations/mini-game-role-investigation.md)
+[mini-game-role-investigation.md](investigations/mini-game-role-investigation.md)
 must conclude before scope finalises.
 
 > **Build detail TBD.** Build plan stub at
@@ -1288,7 +1540,7 @@ in over more promoted versions.
 
 **Track:** Capability research. **Status:** ✅ COMPLETE 2026-04-27. Investigation
 already done — see
-[win-probability-forecast-investigation.md](../investigations/win-probability-forecast-investigation.md).
+[win-probability-forecast-investigation.md](investigations/win-probability-forecast-investigation.md).
 **Prerequisites:** Phase 5.
 
 **Shipped 2026-04-27** (commits `2f71f88`, `6ee238b`, `04d3e04`, `be12a02`,
@@ -1421,7 +1673,7 @@ their own `bots/<expert>_vN/` versions, no harm done.
 
 **Track:** Capability research. **Status:** Investigation-blocked.
 **Prerequisites:** Phase 5;
-[knowledge-distillation-pretraining-investigation.md](../investigations/knowledge-distillation-pretraining-investigation.md)
+[knowledge-distillation-pretraining-investigation.md](investigations/knowledge-distillation-pretraining-investigation.md)
 must conclude.
 
 **Goal:** Replace or augment the rule-engine-derived `v0_pretrain`
@@ -1448,7 +1700,7 @@ Phase P; document the path to data partnership.
 
 **Track:** Capability research. **Status:** Investigation-blocked.
 **Prerequisites:** Phase 5;
-[harvest-engineer-skill-scope-investigation.md](../investigations/harvest-engineer-skill-scope-investigation.md)
+[harvest-engineer-skill-scope-investigation.md](investigations/harvest-engineer-skill-scope-investigation.md)
 must conclude.
 
 > **Build detail at
@@ -1500,7 +1752,7 @@ panel floor instead; re-scope Phase R after EJ (Wilson-CI reporting
 remains valid backlog).
 **Prerequisites:** Phase 9 (gates exist), Phase 8 (throughput unlocks
 matter);
-[soak-volume-statistical-robustness-investigation.md](../investigations/soak-volume-statistical-robustness-investigation.md)
+[soak-volume-statistical-robustness-investigation.md](investigations/soak-volume-statistical-robustness-investigation.md)
 must conclude.
 
 **Goal:** Replace raw-count gate thresholds with Wilson 95% lower
@@ -1543,7 +1795,8 @@ Revert gate-threshold contract; primitives stay as helpers, unused.
 ### Phase S+ backlog
 
 Build-order entropy metric, time-to-win distribution, per-difficulty
-WR breakdowns at high `n`, Bayesian gates with beta priors. Each is
+WR breakdowns at high `n`, Bayesian gates with **informative** beta priors
+(the uniform Beta(1,1) case shipped in Phase EJ). Each is
 its own future phase, scoped by investigation §6 backlog.
 
 ---
@@ -1571,6 +1824,9 @@ explicitly out of scope.
 | 7 | 1 d build | 1 d build + 1 overnight validation | 3 d (heuristic tuning) |
 | 8 | ✅ shipped 2026-05-19 | ✅ shipped 2026-05-19 | n/a |
 | 9 | 3 d code (steps 1–6) | 3–5 d code + 1 h smoke + overnight soak | 1 w (dev-apply sub-agent edge cases) |
+| EL | ✅ shipped 2026-06-20 (EL.1–EL.6) | ✅ | remaining: EL.7 soak, 6 h operator |
+| EJ | ✅ shipped 2026-07-06 (EJ.1–EJ.6) | ✅ | remaining: EJ.7 smoke 45 min + EJ.8 soak 4 h operator |
+| EV | ✅ shipped 2026-08-10 (EV.1–EV.3) | ✅ | remaining: M1 smoke ~1.5 h + EV.5 soak 4 h operator |
 | H | 2 d | 3 d | 1 w (PySC2 integration friction) |
 | I | 1 d/map | 1.5 d/map | 3 d/map (SC2 editor learning curve) |
 | J | 1 d | 2 d | 1 w (gate tuning is noisy) |
@@ -1587,6 +1843,7 @@ explicitly out of scope.
 | **Total** | **~6 w** | **~9–10 w** | **~15 w** |
 | **+ G (multi-race)** | +6 w | +8–10 w | +14 w |
 | **+ Tracks 7-10 (H/I/J + K/L/M + N/O/P/Q + R)** | +3 w | +6–8 w | +14 w |
+| **+ Evolve substrate (EL + EJ + EV)** | ✅ code shipped | ✅ | ~16 h of serialized operator soaks remain — see `operator-gate-runbook.md` |
 
 ## What's NOT in this plan (deliberately)
 
@@ -1623,8 +1880,12 @@ explicitly out of scope.
   instead. See Phase L "Why not `disable_fog=True`?" subsection.
 - **Cron-driven proactive harvest-engineer.** Reactive (Mode A + B)
   ships in Phase Q; cron is deferred until reactive proves out.
-- **Bayesian gates with informative priors.** Phase R uses Wilson +
-  SPRT (frequentist); Bayesian sits in the Phase S+ backlog.
+- **Bayesian gates with informative priors.** *(Entry predates Phase EJ;
+  corrected 2026-09-02.)* SPRT was rejected 2026-07-05 and **Phase EJ shipped
+  a uniform Beta(1,1) one-sided posterior rollback bar** — so a Bayesian gate
+  is no longer deferred. What stays out of plan is specifically an
+  **informative** prior; the shipped rule is deliberately uninformative, and
+  Phase R is re-scoped to Wilson-CI reporting.
 - **Mini-games as a PPO reward shape integrated into rated games.**
   The "reward role" from the mini-game investigation, if recommended,
   applies to *curriculum pretraining* only. Rated full-SC2 game
@@ -1654,8 +1915,10 @@ Full detail in `documentation/archived/always-up-plan.md`.
 
 ## Tracking
 
-Once Phase A merges, convert each subsequent phase into a GitHub issue
-via `/repo-sync`. Milestone: `alpha4gate-master-plan`. Use issue threads
+Each phase is converted into GitHub issues via `/repo-sync` before its build
+starts. (Originally written as "once Phase A merges"; Phase A merged
+2026-04-15 and the convention has held since — the EL/EJ/EV step issues
+#273–#295 are the most recent examples.) Milestone: `alpha4gate-master-plan`. Use issue threads
 for interrupt-resume context.
 
 Umbrella issue #105 (versioning big-box) and subprocess-spike issue #106
@@ -1684,7 +1947,7 @@ can be built in any order and don't block numbered phases.
   but kept SKILL.md cleanup out of scope to keep the diff tight. Fix is
   a one-PR mechanical replacement to `bots.current.runner` (the
   MetaPathFinder alias that auto-tracks future evolve promotions).
-  See [`skill-md-runner-references-investigation.md`](../investigations/skill-md-runner-references-investigation.md)
+  See [`skill-md-runner-references-investigation.md`](investigations/skill-md-runner-references-investigation.md)
   for affected lines, fix recipe, and verification checklist.
 
 ### Self-play viewer — moved to Track 8 (Observable Stack)
@@ -1698,22 +1961,95 @@ unbuildable on this stack. The replacement (Phase L v1) uses
 match's `.SC2Replay` file with ~1-5s lag. Bots still play with fog,
 exhibits are faithful to rated play. See Phase L for the full scope.
 
+**Update 2026-08-10:** the *container* half of the viewer shipped and now has a
+second consumer. `src/selfplay_viewer/` — the themed two-pane container that
+hosts two real SC2 clients — renders **evolution** runs as of Phase EV
+(`scripts/evolve.py --viewer`). That is orthogonal to the blocked observer
+design above: EV hosts the two clients the game already spawns rather than
+adding a third. Phase L must therefore keep a two-pane mode; its stated scope
+(“refactor `src/selfplay_viewer/` to single-pane”) would break evolve's use.
+
 Archived prior plans:
-- [`documentation/archived/selfplay-viewer-observer-plan.md`](../archived/selfplay-viewer-observer-plan.md)
+- [`documentation/archived/selfplay-viewer-observer-plan.md`](archived/selfplay-viewer-observer-plan.md)
   (the observer-based design, blocked at the 2-client cap on 2026-04-24).
-- [`documentation/archived/selfplay-viewer-2-screen-plan.md`](../archived/selfplay-viewer-2-screen-plan.md)
+- [`documentation/archived/selfplay-viewer-2-screen-plan.md`](archived/selfplay-viewer-2-screen-plan.md)
   (the original 2-pane fog-of-war reparenting design, superseded
   2026-04-24).
 
 Investigations that informed the current direction:
-[`observer-player-viewer-investigation.md`](../investigations/observer-player-viewer-investigation.md),
-[`observer-restriction-workarounds-investigation.md`](../investigations/observer-restriction-workarounds-investigation.md).
+[`observer-player-viewer-investigation.md`](investigations/observer-player-viewer-investigation.md),
+[`observer-restriction-workarounds-investigation.md`](investigations/observer-restriction-workarounds-investigation.md).
 
 ---
 
 ## Plan history
 
 Append-only — do not edit prior entries.
+
+- *2026-09-02* — **Spine reconciliation: three shipped phases folded in, link
+  layer repaired.** The plan index had drifted 2.5 months. (1) **Phases EL, EJ and
+  EV gained narrative sections.** All three shipped between 2026-06-20 and
+  2026-08-10 and existed only as index rows; they are evolve-substrate phases
+  (they improve the Phase 9 loop rather than the bot), so they sit as one block
+  after Phase 9, and the Decision graph gained a matching stanza. (2) **Three
+  stale index rows corrected:** EL said "EL.6 smoke operator-pending" (EL.6
+  passed 2026-06-20, #278 closed), EJ said "planned 2026-07-05" (EJ.1–EJ.6 shipped
+  2026-07-06, #282–#287 closed), and EV now records that EV.4 was reclassified as
+  Manual UAT M1. (3) **Track structure extended** — EV into Track 8, EL into
+  Track 9, EJ into Track 10, and Track 10's line no longer advertises SPRT as its
+  content. (4) **Two contradictions with Phase R's own 2026-07-05 supersession
+  note resolved:** "What's NOT in this plan" claimed Bayesian gates were deferred
+  and the S+ backlog listed them as future, both written before EJ shipped a
+  uniform Beta(1,1) posterior. Corrected to say what is actually still out of
+  plan (*informative* priors). (5) **Phases D and 7 gained the Status lines every
+  other shipped phase carries.** (6) **39 of 40 relative links were broken** —
+  28 used a `documentation/…` base that resolves to `documentation/documentation/…`
+  and 11 used `../` that escapes the folder. All now resolve. (7) Glossary gained
+  seven EL/EJ/EV terms; Time budget gained three rows; the Tracking section's
+  future-tense instruction about Phase A (merged 2026-04-15) was rewritten; the
+  Auxiliary self-play-viewer note now records that Phase EV gave the container a
+  second consumer, which constrains Phase L's single-pane refactor. No phase was
+  added, cut, re-scoped or re-ordered — this entry is reconciliation only.
+
+- *2026-08-10* — **Phase EV shipped (EV.1–EV.3), EV.4 reclassified to Manual UAT
+  M1.** An opt-in `--viewer` flag renders an evolution run's SC2 games inside the
+  existing themed container, and `scripts/launch-evolve.ps1` (the dev-observatory
+  `run-evolution` button) opts in. Default stays headless and byte-identical.
+  `/build-phase --resume EV.4` classified EV.4 as pure observation and deferred it
+  to the phase-end Manual UAT bundle as **M1**, then halted at EV.5 (`Type: wait`)
+  per the build-phase halt contract. Work lives on branch `master-plan/phase-ev`,
+  which is not yet merged to `master`. Issues #291–#293 closed; #294 (M1) and #295
+  (EV.5) remain operator-pending.
+
+- *2026-07-06* — **Phase EJ shipped (EJ.1–EJ.6).** Six evolve judging noise-floor
+  changes: promoted-title priors exclusion, a mechanical AST null-diff screen, a
+  one-sided Beta(1,1) posterior rollback bar, a frozen-baseline panel floor,
+  refresh-time proposal dedup, and budget-aware fit. All six flags default OFF, so
+  a bare invocation is byte-identical. Rationale: the default strict-majority rule
+  (`games//2+1`) rolls back a truly-neutral promotion about half the time at odd
+  n, and buying more games tightens the estimate without moving the null. Issues
+  #282–#287 closed; EJ.7 (#288) and EJ.8 (#289) remain operator-pending. This
+  supersedes Phase R's SPRT plan — see the 2026-07-05 entry below.
+
+- *2026-07-05* — **SPRT rejected; Phase R partially superseded.** The
+  evolve-judging investigation found that indifference-zone log-likelihood-ratio
+  drift kills the modest ~0.6 true win rates evolve produces, at roughly 3× the
+  game cost of a one-sided posterior rule. Phase R keeps Wilson-CI reporting as
+  valid backlog and loses its SPRT half. Recorded in Phase R's status note at the
+  time; the "What's NOT in this plan" and S+ backlog entries that contradicted it
+  were not corrected until 2026-09-02.
+
+- *2026-06-20* — **Phase EL shipped (EL.1–EL.6) and Phase 7 shipped (Steps 1–5).**
+  EL added parallel lineages, a frozen-baseline opponent registry and fitness
+  gauntlet, a behavioural diversity fingerprint (the v1 fingerprint *is* the
+  per-baseline win-rate vector), and diversity-driven extinction, plus dashboard
+  surfacing. Defaults byte-identical (`--lineages 1`, `--fitness-mode parent`,
+  `--population-cap 0`). EL.6 real-SC2 smoke PASSED. Issues #273–#278 closed; EL.7
+  (#279) remains. Phase 7 added `src/orchestrator/staleness.py` and a
+  staleness-gated `soak` improvement type in `/improve-bot-advised`; issues
+  #180–#184 closed, Step 6 (#280) remains. Known gap carried from EL and not fixed
+  since: `write_lineages` has zero production callers, so lineage heads and
+  extinctions are in-memory only.
 
 - *2026-05-19* — **Plan trim: 5 cuts.** (1) **Phase 8 Step 11 closed.**
   The dedicated 8h Linux evolve soak was kept as a "MANDATORY observation"

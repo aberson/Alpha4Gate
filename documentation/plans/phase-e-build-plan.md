@@ -1,6 +1,6 @@
 # Phase E Build Plan — Autoregressive action head
 
-**Parent plan:** [alpha4gate-master-plan.md](alpha4gate-master-plan.md) — Phase E
+**Parent plan:** [master_plan.md](../master_plan.md) — Phase E
 **Track:** Capability
 **Prerequisites:** Phase 5. Ideally Phase B done first (more interesting ATTACK decisions to differentiate).
 **Effort estimate:** ~1 week.

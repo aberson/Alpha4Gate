@@ -1,6 +1,6 @@
 # Phase 6 Build Plan — Self-play-driven improvement loop
 
-**Parent plan:** [alpha4gate-master-plan.md](alpha4gate-master-plan.md) — Phase 6
+**Parent plan:** [master_plan.md](../master_plan.md) — Phase 6
 **Track:** Operational
 **Prerequisites:** Phase 5 + at least one of {B, D, E} promoted (so there's a non-trivial starting point).
 **Effort estimate:** 2h to wire the skill flags; open-ended soak thereafter.

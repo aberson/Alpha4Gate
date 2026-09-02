@@ -1,6 +1,6 @@
 # Phase G Build Plan — Multi-race support (Zerg, then Terran)
 
-**Parent plan:** [alpha4gate-master-plan.md](alpha4gate-master-plan.md) — Phase G
+**Parent plan:** [master_plan.md](../master_plan.md) — Phase G
 **Track:** Capability (Multi-race)
 **Status:** Future. **Prerequisites:** Phase 6 operational (the autonomous loop works end-to-end for Protoss first).
 **Effort estimate:** ~7–10 weeks total across G.1–G.4.

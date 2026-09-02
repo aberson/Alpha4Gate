@@ -140,7 +140,7 @@ table entry.
 
 ## 11. Cross-references
 
-- Master plan Phase Q pointer: `documentation/plans/alpha4gate-master-plan.md`
+- Master plan Phase Q pointer: `documentation/master_plan.md`
 - Investigation: `documentation/investigations/harvest-engineer-skill-scope-investigation.md`
 - Sibling skill: `.claude/skills/improve-bot-advised/SKILL.md`
 - Sibling skill: `.claude/skills/improve-bot-evolve/SKILL.md`

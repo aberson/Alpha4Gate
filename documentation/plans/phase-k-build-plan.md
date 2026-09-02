@@ -211,7 +211,7 @@ Manifest fields stay (backwards-compat default `[]` was always there).
 
 ## 12. Cross-references
 
-- Master plan Phase K pointer: `documentation/plans/alpha4gate-master-plan.md`
+- Master plan Phase K pointer: `documentation/master_plan.md`
 - Phase L (viewer) — depends on this phase
 - Phase M (NL-prompt selector) — depends on this phase + Phase L
 - Existing Ladder tab: `frontend/src/components/dashboard/LadderTab.tsx`

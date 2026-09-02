@@ -105,7 +105,7 @@ DB migration (training.db drop column). PySC2 dep stays in
 
 ## 11. Cross-references
 
-- Master plan Phase H pointer: `documentation/plans/alpha4gate-master-plan.md`
+- Master plan Phase H pointer: `documentation/master_plan.md`
 - Investigation: `documentation/investigations/mini-game-role-investigation.md`
 - Phase I (custom maps): blocked on this phase
 - Phase J (role wiring): blocked on this phase + investigation

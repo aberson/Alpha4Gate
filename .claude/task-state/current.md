@@ -1,47 +1,52 @@
 # Current Task State
 
-**Task:** Phase EV (evolve `--viewer`) — themed viewer for evolution runs, `documentation/plans/evolve-viewer-plan.md`
-**Status:** IN_PROGRESS — EV.1–EV.3 DONE and pushed. `/build-phase --resume EV.4` ran 2026-08-10 and halted at EV.5 (wait step, halt class #4). EV.4 is now Manual UAT **M1**. Session wrapped 2026-08-19 after a `/repo-wrap` → `/repo-update` doc-only close-out (nothing to commit — origin was already at HEAD; memory + observatory refreshed). Phase EV itself is UNCHANGED — no code shipped since `59c8cfa`; M1 is still the acceptance gate and is still operator-only. A SECOND thread is OPEN: the evolve-restructure planning conversation (see Parked).
-**Session SHA:** 7e08491
-**Last written:** 2026-08-19T18:31:19Z
-**Branch:** `master-plan/phase-ev` (NOT mergeable to `master` until `onbrand-pilot` lands — `master` lacks pygame-ce and `launch-a4g.ps1`)
+**Task:** Lane B (Alpha4Gate flagship refinement) of `dev/.claude/task-state/no-build-activities-runlist-2026-09-02.md`, items 1-4. Planning and doc work only — the build toolkit is frozen (`dev/.claude/task-state/freeze.json`).
+**Status:** Lane B items 1-4 COMPLETE 2026-09-02. Phase EV itself is UNCHANGED — no code shipped since `59c8cfa`; M1 is still the acceptance gate and still operator-only. The evolve-restructure thread has CONVERGED (rounds 1 and 2 done, round 3 declared unnecessary) and produced a new reviewed plan, **Phase EI**.
+**Session SHA:** 0ac8caf (working tree has uncommitted Lane B doc work)
+**Last written:** 2026-09-02
+**Branch:** `master-plan/phase-ev`. The "not mergeable until onbrand-pilot lands" blocker is DISSOLVED — the branch already contains onbrand-pilot, so landing is one merge. See `documentation/branch-landing-phase-ev.md`.
 
 ## Next Action
 
-Run **M1** — the EV.4 real-SC2 smoke gate, now written out as a copy-paste checklist in
-`documentation/plans/evolve-viewer-plan.md` § Manual UAT (blocks ordered cheapest-first;
-per-check expected-outcome table). It is the phase's acceptance gate and it is not
-agent-completable — it needs the operator running the real SC2 stack on Windows.
+**Uncommitted Lane B work is on disk** (11 files). Commit it path-scoped, then decide two things:
 
-The hard criterion is item **(e1)**: a **real SC2 match visibly rendered inside the themed
-container, launched from the dev-observatory `run-evolution` button** (or the identical bare
-`.\scripts\launch-evolve.ps1`). Wait for it — pool generation runs a Claude prompt before the
-first mirror-calibration game, so first paint can be several minutes out. If (e1) does not
-happen, Phase EV has not met its definition of done regardless of unit tests.
+1. **Run M1** — still the EV.4 acceptance gate, still operator-only. It is now gate 2 of 8 in
+   `documentation/operator-gate-runbook.md`, which orders every pending operator gate cheapest-first
+   and leads with three defects that would each make a gate look successful while proving nothing.
+2. **Answer one letter** to unblock the evolve-restructure thread — the operator's truncated idea (ii)
+   is now a six-option decision card in `docs/seeds/evolve-restructure-operator-notes.md`. Phase EI
+   does NOT depend on the answer.
 
-After M1 passes, EV.5 (#295, `Type: wait`) is the 4-hour observation run.
-**READ THE `--generations` GOTCHA BELOW FIRST** — the launcher command on the next line stops
-after ONE generation. For a real 4-hour soak use
-`uv run --extra viewer python scripts/evolve.py --generations 0 --hours 4 --viewer` instead.
-Original (truncating) form:
-`.\scripts\launch-evolve.ps1 -Hours 4` — watch generation 1 attended, then close the container
-and let it run detached. Claims **survival only**; throughput needs a paired 2h/2h control (D12).
-`/build-phase` will not resume for it — mark EV.5 done in the plan by hand when the run completes.
-
-Serialize against the other pending evolve soaks (EJ.7 #288, EJ.8 #289, EL.7 #279,
-Phase 7 Step 6 #280) — one evolve run at a time, machine-wide.
-
-**Operator safety:** stop a `--viewer` run by closing the **console** window. Closing the viewer
-container only DETACHES it (the run continues headless). **Never Ctrl+C a `--viewer` run** — the
-loop runs off the main thread, so burnysc2's SIGINT kill-switch is never armed and Ctrl+C can
-orphan SC2 processes. The dashboard's Stop button is **not wired** to the runner.
-
-**M1/EV.5 are real runs.** The launcher passes no `--no-commit`, so either can promote a version,
-flip `bots/current`, and auto-commit `[evo-auto]` to `master-plan/phase-ev`. Expected per D16 —
-do not "fix" it by adding `--no-commit`, because the point is to exercise the button as the
-registry invokes it.
+Optionally `/repo-sync` the new Phase EI plan to mint its 14 issues. Not urgent: the build toolkit is
+frozen, so nothing can be built from it yet.
 
 ## Completed
+
+- **2026-09-02 — Lane B items 1-4 (this session, ~60 agents / ~5.5M subagent tokens, 0 errors).**
+  - **Item 1, master-plan spine reconciliation.** 39 of 40 relative links in `master_plan.md` were
+    broken (28 used a `documentation/` prefix that doubles; 11 used `../` that escapes the folder);
+    all now resolve. The same dead parent link sat in 7 of 11 sub-plans, not just phase-6. Added
+    narrative sections for Phases EL, EJ and EV (none existed), extended Track structure, Decision
+    graph, Glossary and Time budget, corrected 3 stale index rows, resolved 2 contradictions with
+    Phase R's own supersession note, gave Phases D and 7 the Status lines every other shipped phase
+    has, and added 5 plan-history entries covering everything since 2026-05-19.
+  - **Item 2, evolve-restructure thread → Phase EI.** Two adversarial rounds (23 agents). Round 2's
+    finding: **gate 1 selects improvement TEXTS, not code, 100% of the time** — commits `f2eb564`
+    and `ce8545f` build the same version from the same parent and the same improvement text and
+    produce different bots. Round 3 declared unnecessary. Produced
+    `documentation/plans/evolve-evidence-layer-plan.md` (Phase EI, 14 steps), plus round-1 and
+    round-2 records under `documentation/investigations/`. plan-review found 7 Blockers (all fixed);
+    plan-wrap returned READY WITH GAPS, 0 Blockers, and all 7 gaps are closed.
+  - **Item 3, operator-gate runbook.** `documentation/operator-gate-runbook.md` — 8 gates,
+    cheapest-first, ~28-30 h serialized. Leads with three confirmed defects: the launcher's missing
+    generation cap, an absent baselines registry that makes two gates test nothing, and the fact
+    that `--lineages N` does not create N lineages, which makes EL.7 unrunnable as its plan
+    specifies it.
+  - **Item 4, branch landing note.** `documentation/branch-landing-phase-ev.md` — the stated blocker
+    is already satisfied by containment, a read-only merge-tree predicts zero conflicts, and CI has
+    never run on any of the 18 commits because both workflows gate on pushes to master only.
+  - An independent verification pass over the runbook and landing note caught 2 wrong commands
+    (one work-destroying), 2 wrong anchors and 3 wrong numbers; all corrected.
 
 - [7e08491] `/repo-wrap` (Rail A, OWNED) → `/repo-update` 2026-08-19, doc-only close-out at unchanged HEAD: tree clean, origin already at `7e08491`, so nothing committed or pushed. Memory updated (Phase EV entry re-anchored `afb19d5`→`7e08491`; NEW `project_evolve_restructure_thread_2026_08.md` for the open evolve-restructure planning thread; MEMORY.md index refreshed). Observatory synced — wrote 5 obs tasks to `dev.code-workspace` IN THE PROJECT ROOT, untracked (see Parked). Drift checks skipped as redundant (full reconciliation was `978ee4f`; zero code changes since). No posterity issue (doc-only), no tour. Branch 17 ahead / 1 behind local `master`; merge still blocked on `onbrand-pilot`.
 

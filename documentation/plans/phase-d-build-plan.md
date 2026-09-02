@@ -1,6 +1,6 @@
 # Phase D Build Plan — Build-order z-statistic (reward refactor)
 
-**Parent plan:** [alpha4gate-master-plan.md](alpha4gate-master-plan.md) — Phase D
+**Parent plan:** [master_plan.md](../master_plan.md) — Phase D
 **Track:** Capability
 **Prerequisites:** Phase 5. B and D are orthogonal — D can run before, after, or in parallel with B.
 **Effort estimate:** ~3 days total. Automated section (D.1–D.6) ~1 day code. Manual section (M1–M2) ~2 days wall-clock.
