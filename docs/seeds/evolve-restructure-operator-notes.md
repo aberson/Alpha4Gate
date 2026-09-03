@@ -159,9 +159,29 @@ of the round-1 recommended scope, so the plan is being built in the right order 
 `.claude/rules/measurement-validity.md` § score the production artifact. Any judge here is
 **advisory**, never a gate, unless the operator explicitly retires that rail.
 
+## Operator answer — 2026-09-02: **A** (vision judge on the game)
+
+Verbatim intent: *"(ii) Use a SC2 version of the 'judge-motion'. The idea being if the model
+could see a few frames of motion, it would be able to pick up bad behaviors (e.g.
+stutter-stepping where the agent seems to move the units nowhere even though it's clearly doing
+some action)."*
+
+On A's blocker (no frame capture; the viewer reparents SC2's HWND, pixels never in a pygame
+surface), the operator proposes: **capture via Playwright screenshots — e.g. a ~5-second burst
+at minute 5 and minute 10** — rather than reading pygame surfaces.
+
+Coordinator note folding that in: the burst should target the **React dashboard's game view**,
+which renders the same game over the network — that makes this judge-motion's *native* pattern
+(Playwright screencast of a web UI, slow-motion filmstrip, chip-timestamped frames) rather than
+a new capture stack. Consequences per this card's own rows: the plan gains the **mandatory
+Step 0** (attach the per-seat telemetry sink — already first in the recommended scope), the
+judge is **advisory, never a gate** (SKILL.md:574 rail + measurement-validity stand), and
+calibration needs a frozen stutter-step fixture pair (known-good vs known-degenerate) before
+any real verdict — same discipline as judge-motion's smooth/janky anchors.
+
 ## Where the thread goes next
 
-1. **Operator answers the one letter above.** That is the only hard blocker left on idea (ii).
+1. ~~Operator answers the one letter above.~~ **ANSWERED: A** (2026-09-02, recorded above).
    Round 2 answered two of round 1's other operator questions by measurement and withdrew them.
 2. `/plan-feature` on the idea-(ii)-independent core (round 2 section 4), which is a prerequisite
    for three of the six readings anyway. Round 3 is **not** needed — the adjudicator's finding is
