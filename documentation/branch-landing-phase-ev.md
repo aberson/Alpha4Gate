@@ -114,12 +114,12 @@ EV, the on-brand frontend work and doc reconciliation, and unpicking them buys n
 
 ## Execution
 
-Run in: any PowerShell @ `c:\Users\abero\dev\Alpha4Gate` · nothing here is automated
+Run in: any PowerShell @ `$env:USERPROFILE\dev\Alpha4Gate` · nothing here is automated
 
 ### Step 1 — confirm the state has not moved
 
 ```powershell
-cd c:\Users\abero\dev\Alpha4Gate
+cd $env:USERPROFILE\dev\Alpha4Gate
 git fetch origin
 git status --short
 git log --oneline -1 master-plan/phase-ev

@@ -213,7 +213,7 @@ cp ~/StarCraftII/Maps/Melee/Simple64.SC2Map ~/StarCraftII/Maps/
 ln -s ~/StarCraftII/Maps ~/StarCraftII/maps
 # Quick libc sanity check — if this lists "not found" libs, halt the spike (libc/libstdc++ mismatch):
 ldd ~/StarCraftII/Versions/Base*/SC2_x64 | grep -E "not found" && echo HALT
-cd /mnt/c/Users/abero/dev/Alpha4Gate
+cd /mnt/c/Users/x/dev/Alpha4Gate
 uv sync                         # Creates ~/venv-alpha4gate-linux (~4.8 GB, ~2 min on warm cache)
 uv run python -m bots.v0 --role solo --map Simple64 --difficulty 1 --decision-mode rules --no-claude --game-time-limit 600
 ```
@@ -344,7 +344,7 @@ The check-in is informal — no separate done-when item, just the operator's sta
 **Operator commands (in WSL):**
 
 ```bash
-cd /mnt/c/Users/abero/dev/Alpha4Gate
+cd /mnt/c/Users/x/dev/Alpha4Gate
 SC2PATH=~/StarCraftII \
 SC2_WSL_DETECT=0 \
 UV_PROJECT_ENVIRONMENT=$HOME/venv-alpha4gate-linux \

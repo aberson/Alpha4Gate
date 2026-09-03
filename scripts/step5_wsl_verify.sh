@@ -4,7 +4,7 @@
 # per feedback_wsl_bash_lc_heredoc_fragile.md.
 set -e
 
-cd /mnt/c/Users/abero/dev/Alpha4Gate
+cd "$(dirname "$(readlink -f "$0")")/.." || { echo "FATAL: cannot locate the Alpha4Gate repo root from $0" >&2; exit 1; }
 
 echo "=== Linux pytest (Step 5 specific) ==="
 uv run pytest tests/test_sc2path_fallback.py -v
@@ -18,4 +18,4 @@ uv run mypy src bots --strict 2>&1 | tail -3
 echo "=== Linux paths.py round-trip (env unset) ==="
 unset SC2PATH
 uv run python -c 'from orchestrator.paths import resolve_sc2_path; print("native-linux fallback:", resolve_sc2_path())'
-SC2PATH=/home/abero/StarCraftII uv run python -c 'from orchestrator.paths import resolve_sc2_path; print("env override:", resolve_sc2_path())'
+SC2PATH="$HOME/StarCraftII" uv run python -c 'from orchestrator.paths import resolve_sc2_path; print("env override:", resolve_sc2_path())'

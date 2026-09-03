@@ -90,7 +90,7 @@ memory `project_evolve_restructure_thread_2026_08.md`.
   `/plan-feature`. Memory: `project_evolve_restructure_thread_2026_08.md`.
 - **`dev.code-workspace` in the PROJECT root is untracked and of uncertain provenance** —
   `observatory sync` run 2026-08-19 from inside Alpha4Gate wrote "5 obs task(s)" to
-  `C:\Users\abero\dev\Alpha4Gate\dev.code-workspace` rather than the dev root's workspace file
+  `$env:USERPROFILE\dev\Alpha4Gate\dev.code-workspace` rather than the dev root's workspace file
   (possibly cwd-derived target resolution in dev-observatory). Decide: gitignore it, commit it,
   or fix the sync target. Left untracked deliberately.
 - **Wiki drift that `/repo-update` must NOT auto-fix** (issue #296): stale dashboard/component

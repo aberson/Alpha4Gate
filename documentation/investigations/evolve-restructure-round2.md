@@ -39,7 +39,7 @@ behind a flag and keeps the phase's zero-added-games claim honest.
 
 ---
 
-**Role:** final synthesizer. Ten arguments (5 propositions × defender/refuter) closed against the round‑1 record. Every file:line below was re‑checked in this session against `c:/Users/abero/dev/Alpha4Gate` @ `master-plan/phase-ev`; anchors I could not confirm are marked UNVERIFIED.
+**Role:** final synthesizer. Ten arguments (5 propositions × defender/refuter) closed against the round‑1 record. Every file:line below was re‑checked in this session against `$env:USERPROFILE/dev/Alpha4Gate` @ `master-plan/phase-ev`; anchors I could not confirm are marked UNVERIFIED.
 
 ---
 
@@ -183,7 +183,7 @@ Everything below was re-checked this session. ✅ = I verified it personally.
 
 **One round‑2 correction that is itself wrong — do not apply it.** The P3 defender claims `SelfPlayRecord`'s "decorator is at `contracts.py:118` and the nine fields run `:127-135`." ✅ Actual: decorator `:120`, `class` `:121`, fields `:129-137`. **Round‑1's original `:121-137` is correct.**
 
-**One task-prompt correction:** `Alpha4Gate/.claude/rules/measurement-validity.md` and `.../code-quality.md` **do not exist**. Alpha4Gate's rules dir holds only `bot-runtime.md`, `evolve.md`, `frontend-ui.md`, `wsl-evolve.md`. Both rules are workspace-level: `C:/Users/abero/dev/.claude/rules/`, long form at `C:/Users/abero/dev/.claude/references/measurement-validity.md`.
+**One task-prompt correction:** `Alpha4Gate/.claude/rules/measurement-validity.md` and `.../code-quality.md` **do not exist**. Alpha4Gate's rules dir holds only `bot-runtime.md`, `evolve.md`, `frontend-ui.md`, `wsl-evolve.md`. Both rules are workspace-level: `$env:USERPROFILE/dev/.claude/rules/`, long form at `$env:USERPROFILE/dev/.claude/references/measurement-validity.md`.
 
 ---
 

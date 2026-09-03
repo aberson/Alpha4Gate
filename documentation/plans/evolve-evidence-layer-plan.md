@@ -503,7 +503,7 @@ developing against since 2026-08-10. If the branch has landed by build time (see
   and decide the lineage-registry path, because `--lineages N` does not create N lineages):
 
   ```powershell
-  cd c:\Users\abero\dev\Alpha4Gate
+  cd $env:USERPROFILE\dev\Alpha4Gate
   git branch --show-current          # expect master-plan/phase-ev
   git diff --staged --stat           # MUST be empty - evo-auto commits sweep the whole index
   uv run python scripts/evolve.py --lineages 4 --population-cap 3 --hours 6 --generations 0 --fitness-mode both --trace-capture --capture-patch --stack-static-gate observe

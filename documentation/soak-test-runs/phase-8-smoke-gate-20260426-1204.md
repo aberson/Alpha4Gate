@@ -54,7 +54,7 @@ Phase 8 Step 7 done-when is satisfied via the production happy-path (Path B). St
 
 ```bash
 wsl -d Ubuntu-22.04 -- bash -lc '
-  cd /mnt/c/Users/abero/dev/Alpha4Gate && \
+  cd /mnt/c/Users/x/dev/Alpha4Gate && \
   unset SC2PATH && \
   printenv SC2_WSL_DETECT && \
   uv run python -m bots.v0 --role solo --map Simple64 --difficulty 1 \
@@ -78,7 +78,7 @@ Root cause traced in Findings #1.
 
 ```bash
 wsl -d Ubuntu-22.04 -- bash -lc '
-  cd /mnt/c/Users/abero/dev/Alpha4Gate && \
+  cd /mnt/c/Users/x/dev/Alpha4Gate && \
   printenv SC2PATH SC2_WSL_DETECT && \
   time uv run python -m bots.v0 --role solo --map Simple64 --difficulty 1 \
     --decision-mode rules --no-claude --no-reward-log --game-time-limit 600
@@ -101,7 +101,7 @@ real    0m55.399s
 
 ```bash
 wsl -d Ubuntu-22.04 -- bash -lc '
-  cd /mnt/c/Users/abero/dev/Alpha4Gate && \
+  cd /mnt/c/Users/x/dev/Alpha4Gate && \
   uv run python -c "
 import sqlite3
 con = sqlite3.connect(\"bots/v2/data/training.db\")

@@ -2,8 +2,8 @@
 
 Plan: [documentation/plans/models-tab-plan.md](../plans/models-tab-plan.md) §7 Step 12.
 Step type: **wait** (wall-clock observation; no code changes).
-Issue: [#265](https://github.com/aberobison/Alpha4Gate/issues/265).
-Operator: aberobison.
+Issue: [#265](https://github.com/aberson/Alpha4Gate/issues/265).
+Operator: aberson.
 
 ## Done-when (from plan §7 Step 12)
 

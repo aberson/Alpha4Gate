@@ -85,7 +85,7 @@ Consequences, all confirmed in source:
 **Fix, once, before the first gate that needs it** (usage verified at `scripts/baseline.py:7-9`):
 
 ```powershell
-cd c:\Users\abero\dev\Alpha4Gate
+cd $env:USERPROFILE\dev\Alpha4Gate
 uv run python scripts/baseline.py add v10 v10 --note "frozen anchor"
 uv run python scripts/baseline.py add v13 v13 --note "frozen anchor"
 uv run python scripts/baseline.py list
@@ -187,7 +187,7 @@ launch (the guard is process-based). Note it and move on.
 ### Pre-flight, run before every single gate
 
 ```powershell
-cd c:\Users\abero\dev\Alpha4Gate
+cd $env:USERPROFILE\dev\Alpha4Gate
 git branch --show-current
 git diff --staged --stat
 Get-Process python -ErrorAction SilentlyContinue | Select-Object Id, StartTime
@@ -422,7 +422,7 @@ uv run python -m orchestrator.staleness v13
 **The plan's second command does not exist.** It reads `uv run improve-bot-advised --self-improve-code --hours 8`,
 but `pyproject.toml` has no `[project.scripts]` table, so there is no such console script. It is
 a **Claude Code skill**, not a shell command. In a Claude Code session at
-`c:\Users\abero\dev\Alpha4Gate`, type:
+`$env:USERPROFILE\dev\Alpha4Gate`, type:
 
 ```
 /improve-bot-advised --self-improve-code --hours 8

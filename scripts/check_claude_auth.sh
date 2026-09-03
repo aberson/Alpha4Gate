@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-shot diagnostic for the WSL claude CLI auth setup.
-# Run via: wsl -d Ubuntu-22.04 -- bash -l /mnt/c/Users/abero/dev/Alpha4Gate/scripts/check_claude_auth.sh
+# Run via: wsl -d Ubuntu-22.04 -- bash -l /mnt/c/Users/x/dev/Alpha4Gate/scripts/check_claude_auth.sh
 set -u
 echo "=== ~/.profile last 6 lines ==="
 tail -6 ~/.profile

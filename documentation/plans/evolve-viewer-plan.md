@@ -865,7 +865,7 @@ in the request. **D** = I defaulted it; every D has an axis you can move.
 - **Issue:** #294
 - **Commands to run:**
 
-  Run in: this window (or any PowerShell) @ `c:\Users\abero\dev\Alpha4Gate` · SC2 installed, Windows.
+  Run in: this window (or any PowerShell) @ `$env:USERPROFILE\dev\Alpha4Gate` · SC2 installed, Windows.
   Blocks are ordered cheapest-first so a broken build surfaces in seconds rather than 30 minutes.
   Run them one at a time and observe each before moving on.
 
@@ -874,7 +874,7 @@ in the request. **D** = I defaulted it; every D has an axis you can move.
   the same state files and the same `bots/current` pointer.
 
   ```powershell
-  cd c:\Users\abero\dev\Alpha4Gate
+  cd $env:USERPROFILE\dev\Alpha4Gate
   git branch --show-current          # must print master-plan/phase-ev
   Get-Process python -ErrorAction SilentlyContinue | Select-Object Id, StartTime
   Get-Process SC2_x64 -ErrorAction SilentlyContinue | Select-Object Id, StartTime

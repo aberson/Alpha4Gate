@@ -68,7 +68,7 @@ cp ~/StarCraftII/Maps/Melee/Simple64.SC2Map ~/StarCraftII/Maps/       # bundled 
 ln -s ~/StarCraftII/Maps ~/StarCraftII/maps                           # SC2 looks up lowercase `maps/`
 
 # Python env:
-cd /mnt/c/Users/abero/dev/Alpha4Gate
+cd /mnt/c/Users/x/dev/Alpha4Gate
 uv sync                                                               # 1m 41s, 4.8 GB
 
 # Hello-world game:
@@ -110,7 +110,7 @@ Three RSS-sampling attempts via the inline `ps -o rss= -C SC2_x64` watcher patte
 The proper full-sweep measurement (peak RSS over a full game; per-process averages over several games; `ps -p <pid> -o rss=` recipe instead of `ps -C`) is **deferred to Spike 3**, which already has "per-process resident RAM measured" as a done-when criterion. Spike 1's lower-bound single-sample is sufficient to confirm the Linux unlock is real and in the right direction.
 
 ```
-22:45:??  PID=11176  RSS=882956 kB  CMD=/home/abero/StarCraftII/Versions/Base75689/SC2_x64 -listen 127.0.0.1 -port 37873 ...
+22:45:??  PID=11176  RSS=882956 kB  CMD=/home/x/StarCraftII/Versions/Base75689/SC2_x64 -listen 127.0.0.1 -port 37873 ...
 ```
 
 ## Next session

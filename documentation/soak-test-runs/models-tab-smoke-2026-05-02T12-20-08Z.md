@@ -3,7 +3,7 @@
 Plan: documentation/plans/models-tab-plan.md §7 Step 11.
 
 - Backend: http://localhost:8766
-- Repo root (data dir source): /c/Users/abero/dev/Alpha4Gate
+- Repo root (data dir source): /c/Users/x/dev/Alpha4Gate
 - Version under test: v3
 - Recent game id (auto-picked from training.db): 83ffe7faf71f
 

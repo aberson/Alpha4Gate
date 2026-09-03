@@ -75,10 +75,10 @@ All games drew (`winner=null`) — same `game_time_limit=300` ceiling as Spike 2
 The plan-doc inline shell loop was promoted to `scripts/spike3_launch.sh` (now part of this commit) for two reasons: (1) the `wsl bash -lc 'multi-line script'` pattern is fragile per `feedback_wsl_bash_lc_heredoc_fragile.md`; (2) the launcher needed an inline RSS sampler to coexist with the 4 selfplay processes and emit timestamped per-second samples to `/tmp/spike3_rss.csv`. The launcher is reusable for the Step 11 long soak.
 
 ```bash
-wsl -d Ubuntu-22.04 -- bash -lc 'bash /mnt/c/Users/abero/dev/Alpha4Gate/scripts/spike3_launch.sh'
+wsl -d Ubuntu-22.04 -- bash -lc 'bash /mnt/c/Users/x/dev/Alpha4Gate/scripts/spike3_launch.sh'
 ```
 
-Then analysis via `bash /mnt/c/Users/abero/dev/Alpha4Gate/scripts/spike3_analyze.sh` against `/tmp/spike3_rss.csv`.
+Then analysis via `bash /mnt/c/Users/x/dev/Alpha4Gate/scripts/spike3_analyze.sh` against `/tmp/spike3_rss.csv`.
 
 ## Findings (3 plan-doc / tooling deviations from this spike)
 

@@ -2,11 +2,11 @@
 
 How to set up a working Alpha4Gate dev environment on WSL2 Ubuntu 22.04. This is the platform validated by Phase 8 Spikes 1–3 and used by the Phase 8 headless training infrastructure.
 
-> **At a glance:** Repo lives on `/mnt/c/Users/abero/dev/Alpha4Gate` (shared with the Windows host). The Python venv MUST live on ext4 (`~/venv-alpha4gate-linux`) — `uv sync` crashes on `/mnt/c`. Three env vars in `~/.profile` (not `~/.bashrc`): `UV_PROJECT_ENVIRONMENT`, `SC2PATH`, `SC2_WSL_DETECT=0`. Install dev tools with `uv sync --extra dev`. Verify with `pytest --collect-only`, `mypy --strict`, `ruff check`.
+> **At a glance:** Repo lives on `/mnt/c/Users/x/dev/Alpha4Gate` (shared with the Windows host). The Python venv MUST live on ext4 (`~/venv-alpha4gate-linux`) — `uv sync` crashes on `/mnt/c`. Three env vars in `~/.profile` (not `~/.bashrc`): `UV_PROJECT_ENVIRONMENT`, `SC2PATH`, `SC2_WSL_DETECT=0`. Install dev tools with `uv sync --extra dev`. Verify with `pytest --collect-only`, `mypy --strict`, `ruff check`.
 
 ## Purpose & Design
 
-Phase 8 of the master plan moves training off Windows onto headless Linux for the per-instance memory savings (1.7×–2.9× vs Windows; see [phase 8 build plan](../archived/phase-8-build-plan.md)). The repo stays cross-platform — Windows and Linux developers share `/mnt/c/Users/abero/dev/Alpha4Gate` — but the runtime env (venv + SC2 install + env vars) is Linux-native.
+Phase 8 of the master plan moves training off Windows onto headless Linux for the per-instance memory savings (1.7×–2.9× vs Windows; see [phase 8 build plan](../archived/phase-8-build-plan.md)). The repo stays cross-platform — Windows and Linux developers share `/mnt/c/Users/x/dev/Alpha4Gate` — but the runtime env (venv + SC2 install + env vars) is Linux-native.
 
 The "shared repo, per-OS venv" split exists because:
 
@@ -62,14 +62,14 @@ source ~/.profile
 printenv UV_PROJECT_ENVIRONMENT SC2PATH SC2_WSL_DETECT
 ```
 
-> **Why `~/.profile`, not `~/.bashrc`:** Ubuntu's stock `.bashrc` returns early for non-interactive shells (`case $- in *i*) ;; *) return;; esac`), so vars exported there are invisible to `wsl -d ... -- bash -lc '...'` calls. `~/.profile` runs for every login shell. (See [`feedback_wsl_bashrc_interactive_guard.md`](../../C:/Users/abero/.claude/projects/c--Users-abero-dev-Alpha4Gate/memory/feedback_wsl_bashrc_interactive_guard.md) for the original incident.)
+> **Why `~/.profile`, not `~/.bashrc`:** Ubuntu's stock `.bashrc` returns early for non-interactive shells (`case $- in *i*) ;; *) return;; esac`), so vars exported there are invisible to `wsl -d ... -- bash -lc '...'` calls. `~/.profile` runs for every login shell. (See [`feedback_wsl_bashrc_interactive_guard.md`](../../$env:USERPROFILE/.claude/projects/c--Users-x-dev-Alpha4Gate/memory/feedback_wsl_bashrc_interactive_guard.md) for the original incident.)
 >
 > **Why `SC2_WSL_DETECT=0`:** burnysc2's `sc2.paths.platform_detect` calls `wsl.detect()` from a Linux Python interpreter, sees `/proc/version` contains "microsoft", and silently flips to WSL2 mode — which then runs the **Windows** SC2 binary at `/mnt/c/.../Support64/SC2_x64.exe` via `powershell.exe`. We want pure-Linux mode (the binary at `~/StarCraftII/Versions/Base*/SC2_x64`). The `SC2_WSL_DETECT` env var is a documented opt-out in burnysc2's `sc2/wsl.py`.
 
 ### 5. Sync the venv with dev dependencies
 
 ```bash
-cd /mnt/c/Users/abero/dev/Alpha4Gate
+cd /mnt/c/Users/x/dev/Alpha4Gate
 uv sync --extra dev
 ```
 
@@ -99,13 +99,13 @@ git config --global --get user.name   # confirm non-empty
 These three commands are the Phase 8 Step 6 done-when. All must succeed against the freshly-synced WSL venv:
 
 ```bash
-cd /mnt/c/Users/abero/dev/Alpha4Gate
+cd /mnt/c/Users/x/dev/Alpha4Gate
 uv run pytest --collect-only 2>&1 | tail -3   # pytest can find dev deps + collect ~2007 tests
 uv run mypy src bots --strict 2>&1 | tail -3  # 178 files, no issues
 uv run ruff check .                            # All checks passed
 ```
 
-For a more aggressive verification (full test run + paths.py round-trip), run [`scripts/step5_wsl_verify.sh`](../../scripts/step5_wsl_verify.sh) — it's reusable, sourced from a file (per [`feedback_wsl_bash_lc_heredoc_fragile.md`](../../C:/Users/abero/.claude/projects/c--Users-abero-dev-Alpha4Gate/memory/feedback_wsl_bash_lc_heredoc_fragile.md)), and exits non-zero on any failure.
+For a more aggressive verification (full test run + paths.py round-trip), run [`scripts/step5_wsl_verify.sh`](../../scripts/step5_wsl_verify.sh) — it's reusable, sourced from a file (per [`feedback_wsl_bash_lc_heredoc_fragile.md`](../../$env:USERPROFILE/.claude/projects/c--Users-x-dev-Alpha4Gate/memory/feedback_wsl_bash_lc_heredoc_fragile.md)), and exits non-zero on any failure.
 
 ## Gotchas
 

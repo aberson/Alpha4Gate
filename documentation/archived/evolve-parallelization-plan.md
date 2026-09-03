@@ -375,7 +375,7 @@ Spike 3 (`scripts/spike3_launch.sh`) already validated this exact topology: 4 se
 
   # 3. Launch parallel evolve from inside Ubuntu-22.04 WSL (interactive, NOT one-shot):
   wsl -d Ubuntu-22.04
-  cd /mnt/c/Users/abero/dev/Alpha4Gate
+  cd /mnt/c/Users/x/dev/Alpha4Gate
   SC2_WSL_DETECT=0 nohup uv run --project . python scripts/evolve.py \
     --concurrency 4 --hours 4 --no-commit \
     > logs/evolve-parallel-$(date +%Y%m%d-%H%M).log 2>&1 &
@@ -402,7 +402,7 @@ Spike 3 (`scripts/spike3_launch.sh`) already validated this exact topology: 4 se
   # only exists in the 22.04 distro):
   wsl -d Ubuntu-22.04
 
-  cd /mnt/c/Users/abero/dev/Alpha4Gate
+  cd /mnt/c/Users/x/dev/Alpha4Gate
   # SC2_WSL_DETECT=0 forces burnysc2 to use ~/StarCraftII (Linux SC2)
   # instead of auto-detecting and falling through to the Windows binary.
   SC2_WSL_DETECT=0 uv run --project . python scripts/evolve.py \
@@ -431,7 +431,7 @@ Spike 3 (`scripts/spike3_launch.sh`) already validated this exact topology: 4 se
 
   ```bash
   wsl -d Ubuntu-22.04
-  cd /mnt/c/Users/abero/dev/Alpha4Gate
+  cd /mnt/c/Users/x/dev/Alpha4Gate
 
   # PREREQ: if running with --commit, verify WSL git identity is set
   # for THIS distro. Without it, every evolve commit returns 128 and

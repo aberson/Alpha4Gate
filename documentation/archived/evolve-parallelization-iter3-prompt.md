@@ -2,7 +2,7 @@
 
 > **OBSOLETE 2026-05-03.** Fixes 3.1, 3.2, 3.3 shipped in `d2a1e85`. Fix 3.4 was diagnostic-only by this prompt's own §3.4 deferral (root-cause investigation deferred). Steps 8 + 9 of the parallelization plan are CLOSED empirical-pass via the May 1-2 real soaks (production progressed v7 → v12). See `documentation/plans/evolve-parallelization-plan.md` Steps 8 + 9 status lines and issues #248 / #249 for the closeout. Do not act on the instructions below — they are kept for historical context only.
 
-You are Claude Code on Alpha4Gate (`c:\Users\abero\dev\Alpha4Gate`). Master at HEAD has the
+You are Claude Code on Alpha4Gate (`$env:USERPROFILE\dev\Alpha4Gate`). Master at HEAD has the
 evolve-parallelization plan Steps 1-7 merged. Step 8 (operator smoke gate) ran on
 2026-04-30 ~22:00 PT, BLOCKED on 4 defects — 1 was fixed mid-session, 3 deferred to this
 iter-3 pass.
@@ -201,7 +201,7 @@ edge may not bite as hard.
 1. Operator opens 3 terminals:
    - PowerShell: `uv run python -m bots.current.runner --serve`
    - PowerShell: `cd frontend; npm run dev`
-   - WSL: `wsl -d Ubuntu-22.04`, `cd /mnt/c/Users/abero/dev/Alpha4Gate`
+   - WSL: `wsl -d Ubuntu-22.04`, `cd /mnt/c/Users/x/dev/Alpha4Gate`
 2. WSL: `SC2_WSL_DETECT=0 uv run --project . python scripts/evolve.py --concurrency 2 --pool-size 2 --hours 0 --games-per-eval 1 --no-commit`
 3. Watch dashboard at `http://localhost:3000/evolution` — expect mirror_games → claude_prompt → fitness phase with 2-card grid (`[W0]` + `[W1]` badges).
 4. Each worker now actually runs `spawn_dev_subagent` (real Claude API call, ~1-3 min each)
@@ -217,7 +217,7 @@ If clean: Step 8 PASS. If still BLOCKED: report findings + iterate.
 ## Context to load on session start
 
 ```bash
-cd c:\Users\abero\dev\Alpha4Gate
+cd $env:USERPROFILE\dev\Alpha4Gate
 git log --oneline -8                          # confirm 91f4316 at top
 gh issue view 248                             # the BLOCKED comment
 uv run pytest -q | tail -3                    # baseline (~1411+20)

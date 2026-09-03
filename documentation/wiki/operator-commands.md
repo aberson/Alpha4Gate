@@ -7,15 +7,15 @@ links into build docs, plan docs, and per-skill SKILL.md files.
 **Conventions in this doc:**
 - Lines starting `PS>` are PowerShell on Windows.
 - Lines starting `$` are bash inside WSL or a Linux container.
-- All paths assume the repo is at `C:\Users\abero\dev\Alpha4Gate` (Windows
-  view) / `/mnt/c/Users/abero/dev/Alpha4Gate` (WSL view).
+- All paths assume the repo is at `$env:USERPROFILE\dev\Alpha4Gate` (Windows
+  view) / `/mnt/c/Users/x/dev/Alpha4Gate` (WSL view).
 
 ---
 
 ## Quick orientation
 
 ```powershell
-PS> Set-Location C:\Users\abero\dev\Alpha4Gate
+PS> Set-Location $env:USERPROFILE\dev\Alpha4Gate
 PS> git status                                 # tree clean?
 PS> git log --oneline -5                       # recent activity
 PS> Get-Content data\evolve_run_state.json     # is an evolve run going?
@@ -90,7 +90,7 @@ silently fails — memory `feedback_wsl_bash_lc_background_fails.md`):
 PS> wsl -d Ubuntu-22.04
 ```
 ```bash
-$ cd /mnt/c/Users/abero/dev/Alpha4Gate
+$ cd /mnt/c/Users/x/dev/Alpha4Gate
 $ EVO_AUTO=1 nohup uv run python scripts/evolve.py \
       --concurrency 4 --hours 4 --pool-size 12 \
       > logs/evolve-parallel-$(date +%Y%m%d-%H%M).log 2>&1 &
@@ -287,12 +287,12 @@ PS> uv run python scripts/selfplay.py --p1 v0 --p2 v0 --games 2 --map Simple64
 ### Evolve — Windows soak (canonical)
 
 ```powershell
-PS> Set-Location C:\Users\abero\dev\Alpha4Gate
+PS> Set-Location $env:USERPROFILE\dev\Alpha4Gate
 PS> $ts = Get-Date -Format 'yyyyMMdd-HHmm'
 PS> $logfile = "logs\evolve-$ts.log"
-PS> $proc = Start-Process -FilePath "C:\Users\abero\.local\bin\uv.exe" `
+PS> $proc = Start-Process -FilePath "$env:USERPROFILE\.local\bin\uv.exe" `
        -ArgumentList "run","python","scripts/evolve.py","--generations","0","--hours","8" `
-       -WorkingDirectory "C:\Users\abero\dev\Alpha4Gate" `
+       -WorkingDirectory "$env:USERPROFILE\dev\Alpha4Gate" `
        -RedirectStandardOutput $logfile `
        -RedirectStandardError "$logfile.err" `
        -PassThru -WindowStyle Hidden
@@ -356,7 +356,7 @@ PS> wsl -d Ubuntu-22.04                         # drops you into bash
 ```
 
 ```bash
-$ cd /mnt/c/Users/abero/dev/Alpha4Gate
+$ cd /mnt/c/Users/x/dev/Alpha4Gate
 $ SC2PATH=$HOME/StarCraftII \
   SC2_WSL_DETECT=0 \
   UV_PROJECT_ENVIRONMENT=$HOME/venv-alpha4gate-linux \
@@ -429,7 +429,7 @@ PS> wsl -d Ubuntu-22.04                         # drops you into bash
 ```
 
 ```bash
-$ cd /mnt/c/Users/abero/dev/Alpha4Gate
+$ cd /mnt/c/Users/x/dev/Alpha4Gate
 $ SC2PATH=$HOME/StarCraftII \
   SC2_WSL_DETECT=0 \
   UV_PROJECT_ENVIRONMENT=$HOME/venv-alpha4gate-linux \
@@ -458,7 +458,7 @@ cd frontend && npm run dev
 
 # 3. Launch parallel evolve from inside Ubuntu-22.04 WSL (interactive, NOT one-shot):
 wsl -d Ubuntu-22.04
-cd /mnt/c/Users/abero/dev/Alpha4Gate
+cd /mnt/c/Users/x/dev/Alpha4Gate
 SC2_WSL_DETECT=0 nohup uv run --project . python scripts/evolve.py \
   --concurrency 4 --hours 4 --no-commit \
   > logs/evolve-parallel-$(date +%Y%m%d-%H%M).log 2>&1 &
@@ -509,7 +509,7 @@ PS> uv run python scripts/ladder.py --eval-only           # cross-version games 
 ### Evolve run state (from anywhere)
 
 ```powershell
-PS> Get-Content C:\Users\abero\dev\Alpha4Gate\data\evolve_run_state.json
+PS> Get-Content $env:USERPROFILE\dev\Alpha4Gate\data\evolve_run_state.json
 ```
 
 Fields to read:
@@ -529,7 +529,7 @@ PS> Get-Content (Get-ChildItem logs\evolve-*.log | Sort-Object LastWriteTime -De
 ### Evolve log tail (Linux runs)
 
 ```powershell
-PS> wsl -d Ubuntu-22.04 bash -lc "tail -f \$(ls -t /mnt/c/Users/abero/dev/Alpha4Gate/logs/evolve-linux-*.log | head -1)"
+PS> wsl -d Ubuntu-22.04 bash -lc "tail -f \$(ls -t /mnt/c/Users/x/dev/Alpha4Gate/logs/evolve-linux-*.log | head -1)"
 ```
 
 ### Find new evolve commits
@@ -689,11 +689,11 @@ auto-detects WSL2 and tries to launch the Windows SC2 binary).
 ### See current memory entries
 
 ```
-[just ask Claude to read C:/Users/abero/.claude/projects/c--Users-abero-dev-Alpha4Gate/memory/MEMORY.md]
+[just ask Claude to read $env:USERPROFILE/.claude/projects/c--Users-x-dev-Alpha4Gate/memory/MEMORY.md]
 ```
 
 The MEMORY.md index lives at:
-`C:\Users\abero\.claude\projects\c--Users-abero-dev-Alpha4Gate\memory\MEMORY.md`
+`$env:USERPROFILE\.claude\projects\c--Users-x-dev-Alpha4Gate\memory\MEMORY.md`
 
 ### Pre-stage hygiene before EVO_AUTO commits
 
@@ -771,7 +771,7 @@ Run `/help` inside Claude Code to see the canonical list.
 - **Per-version state:** `bots/v<N>/data/` (training.db, checkpoints, reward_rules.json)
 - **Cross-version state:** `data/` (evolve state, snapshots, ladder)
 - **Logs:** `logs/` (gitignored)
-- **Memory:** `C:\Users\abero\.claude\projects\c--Users-abero-dev-Alpha4Gate\memory\`
+- **Memory:** `$env:USERPROFILE\.claude\projects\c--Users-x-dev-Alpha4Gate\memory\`
 
 ---
 

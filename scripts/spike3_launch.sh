@@ -5,7 +5,7 @@
 # summary to stdout. Bounded by `wait` on the 4 selfplay PIDs.
 
 set -u
-cd /mnt/c/Users/abero/dev/Alpha4Gate
+cd "$(dirname "$(readlink -f "$0")")/.." || { echo "FATAL: cannot locate the Alpha4Gate repo root from $0" >&2; exit 1; }
 
 RSS_LOG=/tmp/spike3_rss.csv
 echo "ts,pid_count,total_rss_kb,peak_per_proc_kb" > "$RSS_LOG"

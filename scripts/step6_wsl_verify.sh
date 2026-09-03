@@ -4,7 +4,7 @@
 # feedback_wsl_bash_lc_heredoc_fragile.md. Reusable for future contributors.
 set -e
 
-cd /mnt/c/Users/abero/dev/Alpha4Gate
+cd "$(dirname "$(readlink -f "$0")")/.." || { echo "FATAL: cannot locate the Alpha4Gate repo root from $0" >&2; exit 1; }
 
 echo "=== distro VERSION_ID ==="
 grep VERSION_ID /etc/os-release

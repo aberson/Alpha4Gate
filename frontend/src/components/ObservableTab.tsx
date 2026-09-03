@@ -25,7 +25,7 @@ import { StaleDataBanner } from "./StaleDataBanner";
  */
 
 const WIKI_LINK_HREF =
-  "https://github.com/aberobison/Alpha4Gate/blob/master/documentation/wiki/models-tab.md";
+  "https://github.com/aberson/Alpha4Gate/blob/master/documentation/wiki/models-tab.md";
 
 export function ObservableTab() {
   const { versions, isStale, lastSuccess } = useVersions();

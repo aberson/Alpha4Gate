@@ -46,7 +46,7 @@
 ## Operator command actually executed
 
 ```bash
-wsl -d Ubuntu-22.04 -- bash -lc 'cd /mnt/c/Users/abero/dev/Alpha4Gate && \
+wsl -d Ubuntu-22.04 -- bash -lc 'cd /mnt/c/Users/x/dev/Alpha4Gate && \
   uv run python scripts/selfplay.py --p1 v0 --p2 v0 --games 2 --map Simple64'
 ```
 

@@ -118,7 +118,7 @@ that level. **Treat the "4–6 concurrent" figure as inferred.**
 The master plan's Phase 9 (`improve-bot-evolve`) was redesigned
 2026-04-21 to do a sibling-tournament evolutionary loop. The validated
 soak from 2026-04-24 (
-[`project_evolve_2gate_validated.md`](../../C:/Users/abero/.claude/projects/c--Users-abero-dev-Alpha4Gate/memory/project_evolve_2gate_validated.md)
+[`project_evolve_2gate_validated.md`](../../$env:USERPROFILE/.claude/projects/c--Users-x-dev-Alpha4Gate/memory/project_evolve_2gate_validated.md)
 in user memory) produced 2 net promotions in 7h 15m. The bottleneck
 in that loop is exactly the "wall-clock per gating game" — a
 fitness/regression eval eats real-time, and the eval is gated by SC2
