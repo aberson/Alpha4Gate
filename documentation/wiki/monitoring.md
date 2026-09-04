@@ -71,7 +71,7 @@ Each loop phase has a primary dashboard tab, a persistent evidence file, and cha
 ### Phase overview
 
 > Note: the dashboard was refactored on 2026-04-29 from 12 tabs down to 6
-> (Advisor, Evolution, Improvements, Processes, Alerts, Help). The
+> (Advisor, Evolution, Models, Observable, Processes, Help). The
 > per-phase mapping below uses those 6 tabs plus the persistent on-disk
 > evidence files — game state and decision logs are now tracked via the
 > JSONL files + Processes tab rather than dedicated Live/Stats/Decisions/
@@ -85,8 +85,8 @@ Each loop phase has a primary dashboard tab, a persistent evidence file, and cha
 | **THINK** | Advisor (`current_improvement`) | `data/decision_audit.json`, skill-scoped prompt in log | "## Iteration N Summary — selected improvement" |
 | **FIX** | Advisor | `data/reward_rules.pre-advised-<RUN_TS>.json` backup, feature branch | "applying change: <title>" |
 | **TEST** | Advisor (validation row) | validation games in `training.db` | `=== ITER N VALIDATION START/COMPLETE ===` |
-| **COMMIT** | Improvements | `data/improvement_log.json`, git master, GitHub issue | `improve-bot-advised: <title> (iteration N)` commit |
-| **TRAIN** | Improvements | `bots/<active>/data/promotion_history.json`, `bots/<active>/data/checkpoints/manifest.json` | "daemon cycle N complete" |
+| **COMMIT** | Models (Lineage timeline mode) | `data/improvement_log.json`, git master, GitHub issue | `improve-bot-advised: <title> (iteration N)` commit |
+| **TRAIN** | Models (Lineage timeline mode) | `bots/<active>/data/promotion_history.json`, `bots/<active>/data/checkpoints/manifest.json` | "daemon cycle N complete" |
 | **EVOLVE** (parallel substrate) | Evolution | `data/evolve_run_state.json`, `data/evolve_pool.json`, `data/evolve_results.jsonl` | `[evo-auto] generation N promoted stack (K imps)` |
 
 ### THE TASK — "is the game actually running?"
@@ -113,7 +113,7 @@ N games ──> training.db (games + transitions)
          └─> decision_audit.json (live mode only)
 ```
 
-- **`bots/<active>/data/training.db`** — per-difficulty W/L and per-game reward timeline (`/api/games/{id}`); the dashboard surfaces this only in aggregate via the Improvements tab post-refactor.
+- **`bots/<active>/data/training.db`** — per-difficulty W/L and per-game reward timeline (`/api/games/{id}`); the dashboard surfaces this only in aggregate via the Models tab's Lineage timeline post-refactor.
 - **`data/decision_audit.json`** — state transitions and advisor suggestions captured during live-mode PLAY.
 - **Run log** — every batch writes `=== ITERATION N BATCH START/COMPLETE ===` bookends with per-game results between them.
 

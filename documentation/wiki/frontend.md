@@ -3,8 +3,8 @@
 React SPA for autonomous-loop transparency: advised runs, evolve generations,
 unified improvements timeline, system health, and alert triage.
 
-> **At a glance:** 6-tab SPA (Advisor, Evolution, Improvements, Processes,
-> Alerts, Help) built with React + TypeScript + Vite. Live state via REST
+> **At a glance:** 6-tab SPA (Advisor, Evolution, Models, Observable,
+> Processes, Help) built with React + TypeScript + Vite. Live state via REST
 > polling (3–10s, with exceptions below); the in-app alert engine runs
 > client-side over the polled snapshots. All frontend code is domain-agnostic
 > — it renders whatever JSON the backend sends. Unit tests run under
@@ -26,9 +26,9 @@ consolidated into a single `ImprovementsTab` with a source filter.
 |-----|-------------|-------------|---------|---|
 | **Advisor** | AdvisedControlPanel | `/api/advised/state` + `/api/advised/control` | 3s / 10s poll + on-demand | All advised-loop phases |
 | **Evolution** | EvolutionTab | `/api/evolve/state` + `/api/evolve/control` + `/api/evolve/current-round` + `/api/evolve/pool` + `/api/evolve/results` | Polled (per-endpoint) + on-demand | Self-play arena |
-| **Improvements** | ImprovementsTab | `/api/improvements/unified` (advised + evolve) | Refresh-on-demand | COMMIT (both loops) |
-| **Processes** | ProcessMonitor + ResourceGauge + WslProcessesPanel | `/api/processes` + `/api/system/*` (separate router) | 5s poll | Cross-cutting (liveness) |
-| **Alerts** | AlertsPanel (+ AlertToast overlay) | `useAlerts` hook (derives from polled training/advised endpoints) | 5s poll | Cross-cutting |
+| **Models** | ModelsTab (LineageView / LiveRunsGrid / VersionInspector / CompareView / ForensicsView) | `/api/improvements/unified` (advised + evolve) via Lineage timeline mode | Refresh-on-demand | COMMIT (both loops) |
+| **Observable** | ObservableTab | Exhibition / replay-stream surface (Phase L placeholder) | On-demand | — |
+| **Processes** | ProcessMonitor + ResourceGauge + WslProcessesPanel + AlertsPanel | `/api/processes` + `/api/system/*` (separate router); alerts via the `useAlerts` hook | 5s poll | Cross-cutting (liveness + alerts) |
 | **Help** | HelpTab | `/api/operator-commands` (reads `documentation/wiki/operator-commands.md` from disk) | One-time fetch | — |
 
 The Advisor tab is the single source of truth for advised-loop state — it
@@ -157,7 +157,13 @@ as `*.test.tsx` / `*.test.ts`. Run with `npm test -- --run` or `npm run test:run
 | `frontend/src/App.tsx` | 6-tab routing + top-level alert overlay + ConnectionStatus |
 | `frontend/src/components/AdvisedControlPanel.tsx` | Advisor tab: live status, loop controls, hints, reward injection |
 | `frontend/src/components/EvolutionTab.tsx` | Evolution tab: pool + current round + results feed |
-| `frontend/src/components/ImprovementsTab.tsx` | Unified advised + evolve improvements timeline |
+| `frontend/src/components/ModelsTab.tsx` | Models tab shell: lineage, live runs, version inspector, compare, forensics |
+| `frontend/src/components/ObservableTab.tsx` | Observable tab: exhibition / replay-stream surface |
+| `frontend/src/components/LineageView.tsx` | Lineage timeline (absorbs the former Improvements timeline) |
+| `frontend/src/components/LiveRunsGrid.tsx` | Grid of in-flight runs |
+| `frontend/src/components/VersionInspector.tsx` | Per-version detail inspector |
+| `frontend/src/components/CompareView.tsx` | Side-by-side version comparison |
+| `frontend/src/components/ForensicsView.tsx` | Post-hoc run forensics |
 | `frontend/src/components/ProcessMonitor.tsx` | Live process inventory and health |
 | `frontend/src/components/ResourceGauge.tsx` | Host CPU/memory/disk gauges |
 | `frontend/src/components/WslProcessesPanel.tsx` | WSL-side process inventory |

@@ -89,15 +89,16 @@ Four mechanisms at different timescales ([evaluation-pipeline.md](evaluation-pip
 
 ## What can I see in the dashboard?
 
-Six tabs after the 2026-04-29 refactor ([frontend.md](frontend.md)):
+Six tabs after the 2026-04-29 refactor — Models and Observable replaced Improvements and Alerts in a
+later pass ([frontend.md](frontend.md)):
 
 | Tab | What it shows |
 |---|---|
 | Advisor | `/improve-bot-advised` phase, iteration, loop controls, strategic-hint injection |
 | Evolution | `/improve-bot-evolve` live generation: fitness pool, stack-apply, regression, generation outcomes |
-| Improvements | Unified timeline of advised + evolve improvements with source filter |
-| Processes | Live process inventory, port bindings, state-file contents, WSL processes |
-| Alerts | Severity-filtered alerts (client-side rules over the polled snapshot) |
+| Models | Lineage timeline (absorbs the old unified improvements feed), live runs, version inspector, compare, forensics |
+| Observable | Exhibition / replay-stream surface (Phase L placeholder) |
+| Processes | Live process inventory, port bindings, state-file contents, WSL processes, and the severity-filtered alerts panel |
 | Help | Renders `documentation/wiki/operator-commands.md` from disk |
 
 ## How does Claude fit in?

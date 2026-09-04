@@ -36,8 +36,8 @@ here because they operate on different things.
                    │   Transparency Dashboard      │
                    │                               │
                    │  6 tabs: Advisor, Evolution,  │
-                   │  Improvements, Processes,     │
-                   │  Alerts, Help                 │
+                   │  Models, Observable,          │
+                   │  Processes, Help              │
                    │  (refactored 2026-04-29 from  │
                    │   the original 12-tab layout) │
                    └───────────────────────────────┘
@@ -87,7 +87,7 @@ here because they operate on different things.
 
 | Page | Description |
 |------|-------------|
-| [Frontend Dashboard](frontend.md) | 10 tabs, React components, WebSocket protocol, poll cadences |
+| [Frontend Dashboard](frontend.md) | 6 tabs, React components, WebSocket protocol, poll cadences |
 | [Models Tab](models-tab.md) | Lineage, Live Runs, Inspector, Compare, Forensics — five questions answered, weight-dynamics + recovery procedures |
 | [Domain Coupling](domain-coupling.md) | What's SC2-specific vs domain-agnostic |
 | [Testing](testing.md) | 2007 unit tests, SC2 integration tests, coverage map |
