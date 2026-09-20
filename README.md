@@ -49,7 +49,7 @@ Most self-improving ML systems need a human in the loop for reward design, tunin
 
 The architecture is task-agnostic — SC2 is the test case because it gives fast, machine-readable outcomes.
 
-**Deep dives:** [Wiki](documentation/wiki/index.md) · [Active plan](documentation/plans/alpha4gate-master-plan.md)
+**Deep dives:** [Wiki](documentation/wiki/index.md) · [Active plan](documentation/master_plan.md)
 
 ---
 
@@ -155,7 +155,7 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 - **Three promotions in one night, on Linux -** First end-to-end successful headless evolve. v4 → v5 → v6 → v7 in one 8-hour unattended soak 
 - **Parallelizing the arena -** Evolve now runs four candidates in parallel per generation (concurrency window + worker-slot recycling). Steps 1-7 plus iter-3 hardening shipped 2026-04-30; subsequent generations took the lineage to **v10**.
 - **Now -** Self-play evolution is producing auto-promotions unattended on a parallel substrate that scales beyond a single Windows desktop. Claude proposes orthogonal improvements, the arena filters, master advances. The platform from the earlier phases now has a working growth engine on top of it — and it runs anywhere Linux + SC2 will run.
-- **Next -** Phase O scripted Hydra v1 (themed expert sub-policies with a rule-based switcher), then multi-race support: Zerg first, then Terran. Each race gets its own bot lineage competing on the Elo ladder.
+- **Next -** Phase EH is planned and ready for issue sync: ten scoped hardening steps close the evolve population-persistence, dashboard-control, launcher-cap, and single-run safety seams. The build toolkit remains frozen; Phase EV's M1 operator observation is still the next live acceptance gate.
 
 ---
 
@@ -329,7 +329,7 @@ Alpha4Gate/
 ├── frontend/                # React + TypeScript dashboard (Vite, 6 tabs)
 ├── scripts/                 # Live test, training analysis, evolve runner, sandbox hook
 ├── documentation/wiki/      # Project wiki (start with index.md)
-├── documentation/plans/     # Active plans (alpha4gate-master-plan.md)
+├── documentation/plans/     # Active sub-plans (see documentation/master_plan.md)
 ├── documentation/archived/  # Completed plans
 ├── bots/<v>/data/           # Per-version state: training.db, checkpoints/, reward_rules.json
 ├── data/                    # Cross-version state: ladder, evolve runs, advised state (gitignored)
@@ -379,7 +379,7 @@ The bot follows a build order during the opening, then transitions to dynamic de
 ---
 
 **Wiki:** [documentation/wiki/index.md](documentation/wiki/index.md) — system diagram + page map
-**Active plan:** [documentation/plans/alpha4gate-master-plan.md](documentation/plans/alpha4gate-master-plan.md)
+**Active plan:** [documentation/master_plan.md](documentation/master_plan.md)
 
 ---
 
@@ -395,4 +395,3 @@ Special thanks to my friends for their support:
 Also thanks to all the creators and companies who made the mountain of tools this is built on (and anyone else I forgot).
 
 </details>
-

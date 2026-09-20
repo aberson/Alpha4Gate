@@ -561,7 +561,7 @@ lands if the frontend step stops the checkbox promising).
 ## Next steps
 
 `/plan-redline`'s P/D pass is **done** — recorded in the Decision Inventory above; re-run it only if scope
-changes again. Next: `/plan-wrap`, then `/repo-sync` to mint issues, which back-fills the 10 bare
+changes again. `/plan-wrap` passed 2026-09-19. Next: `/repo-sync` to mint issues, which back-fills the 10 bare
 `**Issue:** #` fields. Issue numbering starts from **#303** (#302 is P-7's sibling issue, filed 2026-09-04) — verified that none of these
 defects has an existing issue (the nearest, #74, is the *training* daemon stop surface: different API,
 different runner).
