@@ -1,27 +1,24 @@
 # Current Task State
 
 **Task:** Lane B (Alpha4Gate flagship refinement) of `dev/.claude/task-state/no-build-activities-runlist-2026-09-02.md`, items 1-4. Planning and doc work only — the build toolkit is frozen (`dev/.claude/task-state/freeze.json`).
-**Status:** Lane B items 1-4 COMPLETE 2026-09-02. Phase EV itself is UNCHANGED — no code shipped since `59c8cfa`; M1 is still the acceptance gate and still operator-only. The evolve-restructure thread has CONVERGED (rounds 1 and 2 done, round 3 declared unnecessary) and produced a new reviewed plan, **Phase EI**.
-**Session SHA:** 0ac8caf (working tree has uncommitted Lane B doc work)
-**Last written:** 2026-09-02
+**Status:** BLOCKED on operator input. Lane B items 1-4 remain complete; Phase EV itself is unchanged — M1 is still the acceptance gate and operator-only. The evolve-restructure thread has converged and produced reviewed plans for Phase EI and Phase EH; both are ready for issue sync, but the build toolkit remains frozen.
+**Session SHA:** b543765
+**Last written:** 2026-09-20T05:41:56Z
 **Branch:** `master-plan/phase-ev`. The "not mergeable until onbrand-pilot lands" blocker is DISSOLVED — the branch already contains onbrand-pilot, so landing is one merge. See `documentation/branch-landing-phase-ev.md`.
 
 ## Next Action
 
-**Uncommitted Lane B work is on disk** (11 files). Commit it path-scoped, then decide two things:
-
-1. **Run M1** — still the EV.4 acceptance gate, still operator-only. It is now gate 2 of 8 in
-   `documentation/operator-gate-runbook.md`, which orders every pending operator gate cheapest-first
-   and leads with three defects that would each make a gate look successful while proving nothing.
-2. **Answer one letter** to unblock the evolve-restructure thread — the operator's truncated idea (ii)
-   is now a six-option decision card in `docs/seeds/evolve-restructure-operator-notes.md`. Phase EI
-   does NOT depend on the answer.
-
-Optionally `/repo-sync` the new Phase EI plan to mint its 14 issues. Not urgent: the build toolkit is
-frozen, so nothing can be built from it yet.
+Operator: run M1 (EV.4) as Gate 2 in `documentation/operator-gate-runbook.md`, then answer the one-letter
+decision card in `docs/seeds/evolve-restructure-operator-notes.md`. After those operator actions, decide
+whether to run `/repo-sync` for the wrap-ready Phase EI and Phase EH plans; no build may start while the
+toolkit freeze remains in force.
 
 ## Completed
 
+- [b543765] `/repo-update` Phase EH plan readiness: repaired README active-plan links, recorded the clean
+  plan-wrap result in the EH plan and master index, refreshed `CLAUDE.md`, collected 2,026 selected / 2,027
+  total tests with one deselection, and pushed all six pending documentation commits to
+  `origin/master-plan/phase-ev`.
 - **2026-09-02 — Lane B items 1-4 (this session, ~60 agents / ~5.5M subagent tokens, 0 errors).**
   - **Item 1, master-plan spine reconciliation.** 39 of 40 relative links in `master_plan.md` were
     broken (28 used a `documentation/` prefix that doubles; 11 used `../` that escapes the folder);
@@ -61,8 +58,8 @@ frozen, so nothing can be built from it yet.
 ## WIP
 
 **Current:** Nothing in flight. All agent-completable work in Phase EV is done; the phase is
-blocked on operator observation (M1). The evolve-restructure planning thread is blocked on the
-operator finishing their truncated idea (ii).
+blocked on operator observation (M1). The evolve-restructure planning thread still awaits the
+operator's one-letter decision; Phase EI and Phase EH are ready for optional issue sync.
 
 **Approach:** Hand off to the operator for M1 (EV.4's smoke gate). Resume the restructure thread
 when idea (ii) arrives — full state in `docs/seeds/evolve-restructure-operator-notes.md` and
@@ -72,6 +69,7 @@ memory `project_evolve_restructure_thread_2026_08.md`.
 
 - **Fresh worktrees bind Python 3.12** (`requires-python = ">=3.12"`, no `.python-version`) while the project runs 3.14 — produces a false-red `test_current_pointer.py::test_dash_m_submodule_runs_via_alias`. Always `uv venv --python 3.14 && uv sync --extra dev`.
 - **Test count depends on the optional extra**: 2007 selected without pygame, 2024 with it (17 pygame-gated tests), across **113 test files**. Never compare a worktree count to a main-project count. The dev `.venv` currently HAS the viewer deps installed, so a bare `uv run pytest` reports 2024, not 2007 — 2007 is the deps-absent case (e.g. Linux CI, where `pywin32` cannot install).
+- **Current collection evidence supersedes the earlier baseline:** `uv run --extra viewer pytest --collect-only -q` on 2026-09-20 reported 2,026 selected / 2,027 collected with one deselection. Re-measure before changing published passing-test counts.
 - **Never run mutation-testing review agents concurrently in one worktree** — they corrupt each other and produce phantom flaky-test findings.
 - A piped count over a binary that is not on PATH reads as 0, identical to clean — use `uv run <tool>`, never bare `ruff`/`pytest` in the Bash tool.
 - Two `dev/` worktrees are STALE (tips 9 and 6 weeks old): `worktree_skill-iterate-review-dev-gauntlet-1780807852`, `worktree_switchboard-endpoint-launcher`. Not this session's; left alone.
