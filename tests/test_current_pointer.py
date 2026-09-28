@@ -97,6 +97,19 @@ def test_dash_m_submodule_runs_via_alias() -> None:
     assert "--serve" in result.stdout or "--batch" in result.stdout
 
 
+def test_runpy_alias_preserves_source_location() -> None:
+    """Executing an alias exposes its real source path, including on Python 3.14."""
+    result = _run_python(
+        "import runpy; from pathlib import Path; "
+        "import bots.current; "
+        "expected = Path(bots.current.__file__).with_name('runner.py'); "
+        "namespace = runpy.run_module('bots.current.runner', alter_sys=True); "
+        "assert namespace['__file__'] is not None, 'alias execution lost __file__'; "
+        "assert Path(namespace['__file__']).samefile(expected)"
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+
+
 def test_help_delegates_to_bots_v0() -> None:
     """``python -m bots.current --help`` exits 0 and prints the v0 argparse."""
     result = subprocess.run(
