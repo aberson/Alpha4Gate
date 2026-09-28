@@ -1,20 +1,18 @@
 # Current Task State
 
-**Task:** Lane B (Alpha4Gate flagship refinement) of `dev/.claude/task-state/no-build-activities-runlist-2026-09-02.md`, items 1-4. Planning and doc work only — the build toolkit is frozen (`dev/.claude/task-state/freeze.json`).
-**Status:** BLOCKED on operator input. Lane B items 1-4 remain complete; Phase EV itself is unchanged — M1 is still the acceptance gate and operator-only. The evolve-restructure thread has converged and produced reviewed plans for Phase EI and Phase EH; both are ready for issue sync, but the build toolkit remains frozen.
-**Session SHA:** b543765
-**Last written:** 2026-09-20T05:41:56Z
+**Task:** Repair Python 3.12 CI baseline, selected after user-pm by the user's instruction to pick the best build option and start.
+**Status:** COMPLETE — CI repair independently diagnosed, implemented and reviewed in iteration 1/10; original repro and all final gates pass. Draft PR #303 is green and remains unmerged. Lane B planning remains complete; EV M1 and the live-game gates remain pending. The old toolkit-freeze blocker is obsolete (workspace freeze file absent; lift recorded in skill-mesh's September descope decision). The operator's idea-(ii) answer A was already recorded 2026-09-02.
+**Session SHA:** c6a7ec3
+**Last written:** 2026-09-28
 **Branch:** `master-plan/phase-ev`. The "not mergeable until onbrand-pilot lands" blocker is DISSOLVED — the branch already contains onbrand-pilot, so landing is one merge. See `documentation/branch-landing-phase-ev.md`.
 
 ## Next Action
 
-Operator: run M1 (EV.4) as Gate 2 in `documentation/operator-gate-runbook.md`, then answer the one-letter
-decision card in `docs/seeds/evolve-restructure-operator-notes.md`. After those operator actions, decide
-whether to run `/repo-sync` for the wrap-ready Phase EI and Phase EH plans; no build may start while the
-toolkit freeze remains in force.
+Review/land focused master PR #303 (green hosted CI), then resume EH issue sync/build before the affected long-run gates. A small, verified harness cleanup is available first: replace whole-bots-tree copies in the three bad-pointer test cases with the minimal 3-file fixture described below. Do not re-ask the already answered idea-(ii) decision.
 
 ## Completed
 
+- [c6a7ec3] 2026-09-28 user-debug/build-step CI repair: preserve target module origin and has_location in the current-bot alias. Original Windows/Linux Python 3.12 CLI failure is gone; new source-file regression demonstrated RED before fixing. Five isolated review lenses, no blocking findings; PASS iteration 1/10. Final main-project Python 3.14 suite: 2025 passed / 2 skipped / 1 deselected; frontend 228 passed / 6 skipped; ruff clean; strict mypy clean (866 files). Worktree Python 3.12 suite: 2024 passed / 3 skipped / 1 deselected. Hosted master-based Ubuntu/Python 3.12: 1953 passed / 22 skipped / 1 deselected, lint/typecheck green. Draft PR https://github.com/aberson/Alpha4Gate/pull/303 carries only the two-file fix as f6a71a5; no master merge performed. Evidence logs/reviews: `.build-step/py312-alias/` (local, ignored). Temporary worktrees removed, pre-existing workspace file restored, old unrelated stash untouched. Corrected the old memory calling this supported-runtime defect a false red.
 - [b543765] `/repo-update` Phase EH plan readiness: repaired README active-plan links, recorded the clean
   plan-wrap result in the EH plan and master index, refreshed `CLAUDE.md`, collected 2,026 selected / 2,027
   total tests with one deselection, and pushed all six pending documentation commits to
@@ -57,16 +55,19 @@ toolkit freeze remains in force.
 
 ## WIP
 
-**Current:** Nothing in flight. All agent-completable work in Phase EV is done; the phase is
-blocked on operator observation (M1). The evolve-restructure planning thread still awaits the
-operator's one-letter decision; Phase EI and Phase EH are ready for optional issue sync.
+**Current:** Python 3.12 CI repair committed as c6a7ec3; focused master PR #303 at f6a71a5 has green hosted CI. Temporary worktrees removed and pre-run workspace file restored. Phase EV's code remains complete with M1 pending; Phase EI and Phase EH await issue sync. Earlier freeze/decision blockers in historical entries below are superseded by this checkpoint.
 
-**Approach:** Hand off to the operator for M1 (EV.4's smoke gate). Resume the restructure thread
-when idea (ii) arrives — full state in `docs/seeds/evolve-restructure-operator-notes.md` and
-memory `project_evolve_restructure_thread_2026_08.md`.
+**Approach:** COMPLETE, build-step iteration 1/10. Original reproduction command: `.venv/Scripts/python.exe -m pytest tests/test_current_pointer.py::test_dash_m_submodule_runs_via_alias -q` changed from 1 failed to 1 passed on Python 3.12. Full main-project final rerun: 2025 passed / 2 skipped / 1 deselected in 351.03s, exit 0. The first post-merge run caught two absolute home paths in this session's checkpoint; corrected before rerunning the privacy guard (2 passed) and full suite. No source-code changes were needed after review.
+
+- Root cause: `bots/current/__init__.py:120` builds alias specs without an origin; Python 3.12 `runpy.py:197` assigns that origin to argv[0], then `argparse.py:1795` calls basename(None). Independently confirmed HIGH confidence; reproduces on Windows and WSL Ubuntu Python 3.12.13, direct versioned CLI passes. Fresh-context conversation challenge v2 passed calibrated control and both sibling comparisons; read-only diagnosis arm made no source changes.
+- Fix design (user authorized start): preserve target source-location metadata in alias specs; touch only `bots/current/__init__.py` and `tests/test_current_pointer.py`; retain import identity and >=3.12 support. Existing CLI test plus runpy file-metadata regression must go red before fix and green after, including 3.14 where argparse masks the symptom.
+- Dead end: treating Python 3.12 as a wrong environment hides a supported-runtime defect; pyproject.toml explicitly supports >=3.12 and Linux CI runs 3.12. Python 3.14 argparse uses __main__.__spec__.name and masks the missing origin.
+- Branch preparation: merging origin/master into the isolated repair worktree exposed an add/add conflict in the seed notes, contrary to the old branch-landing note. Preserved the feature branch's later September decisions; resulting merge has no content delta from d0487eb.
 
 ## Critical Gotchas
 
+- Harness cleanup discovered 2026-09-28: three invalid/empty-pointer cases in `tests/test_current_pointer.py` copy the ENTIRE local bots tree. This checkout contains 75,565 files / 3,218,307,636 bytes, including per-version `.mypy_cache` and runtime data; the post-merge suite spends minutes copying them. A read-only production-source probe reproduced all three expected ImportErrors with only 3 files / 8,165 bytes in about 0.3 seconds per case (`bots/__init__.py`, `bots/current/__init__.py`, `current.txt`; no src tree needed). Evidence: `.build-step/py312-alias/minimal-fixture-probe.json`. Isolate this fixture in a separate follow-up; do not delete operator data or weaken the invalid-pointer behavior checks.
+- CI repair review result: no blocking findings across five isolated lenses. Test-quality noted optional has_location assertion (low); style's claim that 3.14 was untested is refuted by the parent's actual 9-passing 3.14 run. Source hashes unchanged across review. Worktree cleanup completed; pre-run `dev.code-workspace` stash restored. Two-file fix committed as c6a7ec3 on working branch; master-only cherry-pick f6a71a5 is draft PR #303, hosted CI PASS.
 - **Fresh worktrees bind Python 3.12** (`requires-python = ">=3.12"`, no `.python-version`) while the project runs 3.14 — produces a false-red `test_current_pointer.py::test_dash_m_submodule_runs_via_alias`. Always `uv venv --python 3.14 && uv sync --extra dev`.
 - **Test count depends on the optional extra**: 2007 selected without pygame, 2024 with it (17 pygame-gated tests), across **113 test files**. Never compare a worktree count to a main-project count. The dev `.venv` currently HAS the viewer deps installed, so a bare `uv run pytest` reports 2024, not 2007 — 2007 is the deps-absent case (e.g. Linux CI, where `pywin32` cannot install).
 - **Current collection evidence supersedes the earlier baseline:** `uv run --extra viewer pytest --collect-only -q` on 2026-09-20 reported 2,026 selected / 2,027 collected with one deselection. Re-measure before changing published passing-test counts.
