@@ -12,6 +12,7 @@ real interpreter asks once at startup, so a subprocess is the honest fixture.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -153,25 +154,33 @@ def test_current_txt_points_to_registered_version() -> None:
     assert current in registry.list_versions()
 
 
-def test_invalid_version_in_current_txt_raises(tmp_path: Path) -> None:
-    """Pointing ``current.txt`` at a non-existent version raises ImportError.
+@pytest.fixture
+def bad_pointer_sandbox(tmp_path: Path) -> Path:
+    """Copy real package sources for failures before any target-version import.
 
-    We can't safely mutate the committed ``bots/current/current.txt`` from a
-    test, so we copy the whole project-relevant tree (bots/ + src/) into a
-    tmpdir, overwrite the pointer to a bogus value, and import from there in
-    a subprocess with ``PYTHONPATH`` redirected. Asserting on the exact error
-    class (``ImportError``) and a substring of the message guards against
-    future regressions that silently downgrade to ``ModuleNotFoundError`` or
-    swallow the bad-pointer value.
+    These negative imports stop in ``_read_version``, so they need neither a
+    version tree nor orchestrator sources, caches, or runtime data.
     """
     repo_root = Path(__file__).resolve().parent.parent
     sandbox = tmp_path / "sandbox"
-    sandbox.mkdir()
-    # Copy just what we need: the bots/ tree (so bots.v0 still resolves when
-    # referenced by name) and the src/ tree (for bots.v0/orchestrator
-    # packages that ``bots.v0.__init__`` might transitively import).
-    shutil.copytree(repo_root / "bots", sandbox / "bots")
-    shutil.copytree(repo_root / "src", sandbox / "src")
+    (sandbox / "bots" / "current").mkdir(parents=True)
+    for relative in (Path("bots/__init__.py"), Path("bots/current/__init__.py")):
+        shutil.copyfile(repo_root / relative, sandbox / relative)
+    return sandbox
+
+
+def test_invalid_version_in_current_txt_raises(bad_pointer_sandbox: Path) -> None:
+    """Pointing ``current.txt`` at a non-existent version raises ImportError.
+
+    We can't safely mutate the committed ``bots/current/current.txt`` from a
+    test, so we write a bogus pointer beside the minimal package sources and
+    import from there in a subprocess with ``PYTHONPATH`` redirected.
+    Asserting on the exact error class (``ImportError``) and a substring of
+    the message guards against
+    future regressions that silently downgrade to ``ModuleNotFoundError`` or
+    swallow the bad-pointer value.
+    """
+    sandbox = bad_pointer_sandbox
     (sandbox / "bots" / "current" / "current.txt").write_text(
         "v-does-not-exist\n", encoding="utf-8"
     )
@@ -180,8 +189,8 @@ def test_invalid_version_in_current_txt_raises(tmp_path: Path) -> None:
     # real ones. Capture both the exit code and stderr so the assertion can be
     # specific about the failure surface.
     env = {
-        **__import__("os").environ,
-        "PYTHONPATH": f"{sandbox}{__import__('os').pathsep}{sandbox / 'src'}",
+        **os.environ,
+        "PYTHONPATH": str(sandbox),
     }
     result = subprocess.run(
         [sys.executable, "-c", "import bots.current"],
@@ -207,27 +216,23 @@ def test_invalid_version_in_current_txt_raises(tmp_path: Path) -> None:
     ],
 )
 def test_empty_current_txt_raises(
-    tmp_path: Path, bad_content: str, expected_substring: str
+    bad_pointer_sandbox: Path, bad_content: str, expected_substring: str
 ) -> None:
     """Blank / whitespace-only ``current.txt`` surfaces as ``ImportError``.
 
-    Uses the same sandbox trick as the invalid-version test. We keep this
+    Uses the same minimal sandbox as the invalid-version test. We keep this
     split out (rather than lumping it into the invalid-version test) because
     the two failure surfaces have different messages, and an operator
     debugging a broken pointer needs that distinction.
     """
-    repo_root = Path(__file__).resolve().parent.parent
-    sandbox = tmp_path / "sandbox"
-    sandbox.mkdir()
-    shutil.copytree(repo_root / "bots", sandbox / "bots")
-    shutil.copytree(repo_root / "src", sandbox / "src")
+    sandbox = bad_pointer_sandbox
     (sandbox / "bots" / "current" / "current.txt").write_text(
         bad_content, encoding="utf-8"
     )
 
     env = {
-        **__import__("os").environ,
-        "PYTHONPATH": f"{sandbox}{__import__('os').pathsep}{sandbox / 'src'}",
+        **os.environ,
+        "PYTHONPATH": str(sandbox),
     }
     result = subprocess.run(
         [sys.executable, "-c", "import bots.current"],
