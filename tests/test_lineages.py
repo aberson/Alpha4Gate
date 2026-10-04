@@ -9,6 +9,7 @@ at a tmp tree so no test touches the real ``data/`` dir.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -231,3 +232,63 @@ def test_default_lineages_path_under_repo_data(
 ) -> None:
     monkeypatch.setattr(lineages, "_repo_root", lambda: tmp_path)
     assert default_lineages_path() == tmp_path / "data" / "lineages.json"
+
+
+def test_atomic_write_scratch_file_is_per_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ``.tmp`` scratch name carries the writer's pid.
+
+    Two concurrent ``scripts/lineage.py`` invocations used to share one
+    ``<path>.tmp``: the second writer overwrote the first's scratch, the
+    first's ``replace`` consumed it, and the second's ``replace`` raised an
+    unretried ``FileNotFoundError`` — so one process reported success for an
+    entry that never landed. The pid in the name is what makes that
+    impossible, and this test exists so "restore consistency with
+    ``baselines``/``fingerprint``" cannot silently undo it.
+    """
+    seen: list[str] = []
+    real_replace = Path.replace
+
+    def _spy(self: Path, target: str | os.PathLike[str]) -> Path:
+        seen.append(self.name)
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", _spy)
+    path = tmp_path / "lineages.json"
+    write_lineages(path, {"main": _make_lineage("main", "v13")})
+
+    assert len(seen) == 1
+    # The property under test is collision-freedom, not the exact spelling:
+    # any name distinct from the shared ``<path>.tmp`` the sibling copies
+    # use keeps two concurrent writers off each other's scratch. Pinning
+    # the literal would fail a refactor that preserved the property.
+    assert seen[0] != f"{path.name}.tmp"
+    assert load_lineages(path)["main"].head_version == "v13"
+    # The scratch file is consumed by the replace, not left behind.
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_atomic_write_cleans_scratch_when_replace_never_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``replace`` that never succeeds leaves no scratch file behind.
+
+    The retry-backoff covers a ``--serve`` handle that clears within ~1.5s;
+    one that never clears propagates ``PermissionError``. Without the
+    ``finally`` cleanup the scratch survived that path, and per-pid naming
+    turned the leak from a single reusable ``<path>.tmp`` into one
+    accumulating file per invocation under ``data/``.
+    """
+    monkeypatch.setattr(lineages.time, "sleep", lambda _delay: None)
+
+    def _always_busy(self: Path, target: str | os.PathLike[str]) -> Path:
+        raise PermissionError(13, "in use")
+
+    monkeypatch.setattr(Path, "replace", _always_busy)
+    path = tmp_path / "lineages.json"
+    with pytest.raises(PermissionError):
+        write_lineages(path, {"main": _make_lineage("main", "v13")})
+
+    assert list(tmp_path.glob("*.tmp")) == []
+    assert not path.exists()

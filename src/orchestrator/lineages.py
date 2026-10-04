@@ -39,6 +39,8 @@ Public surface
   mirror :class:`orchestrator.evolve.Improvement`).
 - :func:`load_lineages` — read the registry from disk.
 - :func:`write_lineages` — atomically persist the registry.
+- :func:`register_lineage` — add/update one entry, validating the
+  ``lineage_id`` slug and the ``head_version`` before any write.
 - :func:`load_or_default_lineages` — read the registry, falling back to a
   single implicit ``main`` lineage when absent/empty.
 - :func:`next_lineage` — deterministic round-robin scheduler.
@@ -50,13 +52,15 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import os
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from orchestrator.registry import _repo_root, current_version
+from orchestrator.registry import _repo_root, current_version, list_versions
 
 _log = logging.getLogger(__name__)
 
@@ -67,6 +71,7 @@ __all__ = [
     "load_lineages",
     "load_or_default_lineages",
     "next_lineage",
+    "register_lineage",
     "write_lineages",
 ]
 
@@ -87,20 +92,48 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     On Windows ``os.replace`` raises ``PermissionError`` when the backend
     ``--serve`` holds an open handle on the target; retry with backoff
     before the final (raising) attempt.
+
+    This helper diverges from its byte-identical siblings
+    (``orchestrator.baselines._atomic_write_json``,
+    ``orchestrator.fingerprint._atomic_write_json``) in exactly two ways:
+    the scratch file carries the writer's pid, and the scratch is unlinked
+    on the failure path (see the ``finally`` below). Each of those modules
+    owns a private copy and ``write_lineages`` is this copy's only caller,
+    so neither change reaches another registry. A shared ``<path>.tmp`` let
+    two concurrent ``scripts/lineage.py`` invocations clobber each other's
+    scratch — the loser's ``replace`` then raised an unretried
+    ``FileNotFoundError`` while the winner reported success for an entry
+    that never landed. Per-process naming removes that collision; it does
+    not make the surrounding read-modify-write atomic, so concurrent
+    registry edits remain the operator's to serialize.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    for delay in _ATOMIC_REPLACE_RETRY_DELAYS:
+    tmp = path.with_suffix(f"{path.suffix}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        for delay in _ATOMIC_REPLACE_RETRY_DELAYS:
+            try:
+                tmp.replace(path)
+                return
+            except PermissionError:
+                time.sleep(delay)
+        tmp.replace(path)
+    finally:
+        # Second divergence from the siblings: drop the scratch on every
+        # exit path. A ``replace`` that never succeeds (a ``--serve`` handle
+        # outliving the backoff) used to leak the scratch file, and per-pid
+        # naming turned that leak from one reusable ``<path>.tmp`` into one
+        # accumulating file per invocation under ``data/``. After a
+        # successful ``replace`` the scratch is already gone, so this is a
+        # no-op; the unlink error is swallowed so it can never mask the
+        # write/replace failure being propagated.
         try:
-            tmp.replace(path)
-            return
-        except PermissionError:
-            time.sleep(delay)
-    tmp.replace(path)
+            tmp.unlink(missing_ok=True)
+        except OSError:  # pragma: no cover - defensive
+            pass
 
 
 DEFAULT_LINEAGE_ID = "main"
@@ -225,6 +258,99 @@ def write_lineages(path: Path, registry: dict[str, Lineage]) -> None:
         for lineage_id, lineage in registry.items()
     }
     _atomic_write_json(path, payload)
+
+
+# The slug shape :class:`Lineage` documents for ``lineage_id``
+# ("Kebab/slug identifier", see the field docs above). Enforced by
+# :func:`register_lineage` so a registry key can never carry a tab, a
+# newline or a non-ASCII character: ``scripts/lineage.py list`` emits
+# tab-separated rows, and on Windows a redirected stdout is ``cp1252``,
+# where printing such a key raises ``UnicodeEncodeError``.
+#
+# Applied with ``fullmatch``, NOT ``match``: Python's ``$`` also matches
+# immediately before a single trailing newline, so ``match`` accepted a
+# valid slug carrying one. That key persists, keeps the registry non-empty
+# and can never be named again by any shell-typeable ``remove`` argument,
+# which latches multi-lineage scheduling on with no operator undo -- the
+# exact teardown hatch Done-when (4) exists to provide. The anchors are
+# kept because the pattern is quoted verbatim in the rejection message.
+_LINEAGE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+
+
+def register_lineage(
+    path: Path,
+    lineage_id: str,
+    head_version: str,
+) -> Lineage:
+    """Add or update one lineage entry in the registry at *path*.
+
+    Validates *lineage_id* against the slug shape :class:`Lineage`
+    documents and *head_version* via
+    :func:`orchestrator.registry.list_versions`, both **before** the
+    registry is read or written, so a rejected registration leaves an
+    existing registry byte-identical and creates no file. Returns the
+    newly-registered :class:`Lineage`.
+
+    An existing entry with the same *lineage_id* is **updated in place**
+    through :func:`dataclasses.replace`, so only ``head_version`` changes
+    and ``pool_path`` / ``parent_chain`` / ``created_at`` / ``status``
+    survive. This is the one place the mirror of
+    :func:`orchestrator.baselines.register_baseline` deliberately stops:
+    ``Baseline`` has 3 fields and ``scripts/baseline.py`` expresses all 3,
+    so reconstructing the whole record there is lossless. ``Lineage`` has 6
+    and ``scripts/lineage.py`` expresses 2, so a fresh construct would
+    silently zero ``pool_path`` / ``parent_chain``, restamp ``created_at``
+    and revive a parked (``status != "active"``) lineage. Those are
+    operator-authored fields, and the generation-boundary write-back
+    (Phase EH Step EH.2) is specified to preserve them.
+
+    Raises:
+        ValueError: if *lineage_id* is empty or is not a slug, if
+            *head_version* is empty, or if *head_version* is not a
+            registered version.
+        json.JSONDecodeError: if the registry at *path* exists but is not
+            valid JSON (propagated from :func:`load_lineages`; a subclass
+            of ``ValueError``).
+        KeyError: if an existing registry entry is missing a required
+            field (propagated from :func:`load_lineages`).
+        OSError: if *path* cannot be read or written.
+    """
+    if not lineage_id:
+        raise ValueError(
+            "register_lineage: lineage_id must be a non-empty string"
+        )
+    if not _LINEAGE_ID_RE.fullmatch(lineage_id):
+        raise ValueError(
+            f"register_lineage: lineage_id {lineage_id!r} is not a valid "
+            f"slug; expected {_LINEAGE_ID_RE.pattern} (lowercase letters, "
+            "digits, '.', '_' and '-', e.g. 'main' or 'line-2')"
+        )
+    if not head_version:
+        raise ValueError(
+            "register_lineage: head_version must be a non-empty string"
+        )
+    known = list_versions()
+    if head_version not in known:
+        raise ValueError(
+            f"register_lineage: head_version {head_version!r} is not a "
+            f"registered version; known versions are {known!r}"
+        )
+    registry = load_lineages(path)
+    existing = registry.get(lineage_id)
+    if existing is not None:
+        lineage = dataclasses.replace(existing, head_version=head_version)
+    else:
+        lineage = Lineage(lineage_id=lineage_id, head_version=head_version)
+    registry[lineage_id] = lineage
+    write_lineages(path, registry)
+    _log.info(
+        "registered lineage %r -> head %s (status=%s, created_at=%s)",
+        lineage_id,
+        head_version,
+        lineage.status,
+        lineage.created_at,
+    )
+    return lineage
 
 
 def load_or_default_lineages(path: Path) -> dict[str, Lineage]:
