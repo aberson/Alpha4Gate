@@ -1,6 +1,6 @@
 # Alpha4Gate
 
-![Python](https://img.shields.io/badge/python-3.12-blue) [![linux-tests](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml/badge.svg?branch=master)](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml) ![pytest](https://img.shields.io/badge/pytest-2007%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-228%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
+![Python](https://img.shields.io/badge/python-3.12-blue) [![linux-tests](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml/badge.svg?branch=master)](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml) ![pytest](https://img.shields.io/badge/pytest-2037%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-228%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
 
 An AI agent that teaches itself to get better at a task with — zero human input.
 
@@ -155,7 +155,7 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 - **Three promotions in one night, on Linux -** First end-to-end successful headless evolve. v4 → v5 → v6 → v7 in one 8-hour unattended soak 
 - **Parallelizing the arena -** Evolve now runs four candidates in parallel per generation (concurrency window + worker-slot recycling). Steps 1-7 plus iter-3 hardening shipped 2026-04-30; subsequent generations took the lineage to **v10**.
 - **Now -** Self-play evolution is producing auto-promotions unattended on a parallel substrate that scales beyond a single Windows desktop. Claude proposes orthogonal improvements, the arena filters, master advances. The platform from the earlier phases now has a working growth engine on top of it — and it runs anywhere Linux + SC2 will run.
-- **Next -** Phase EH is planned and ready for issue sync: ten scoped hardening steps close the evolve population-persistence, dashboard-control, launcher-cap, and single-run safety seams. The build toolkit remains frozen; Phase EV's M1 operator observation is still the next live acceptance gate.
+- **Next -** Phase EH is **in progress**: ten scoped hardening steps close the evolve population-persistence, dashboard-control, launcher-cap, and single-run safety seams. **EH.1 and EH.2 shipped 2026-10-04** (#306/#307 closed under umbrella #305) — lineage state now survives process exit — with EH.3-EH.10 remaining. The build toolkit freeze is lifted; Phase EV's M1 operator observation is still the next live acceptance gate.
 
 ---
 
@@ -174,7 +174,7 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 | Frontend | React + TypeScript + Vite | Live dashboard with game state streaming |
 | Deep learning | PyTorch + Stable Baselines 3 | PPO policy network for strategic decisions |
 | Training data | SQLite | Structured (s,a,r,s') transition storage |
-| Testing (Python) | pytest | 2007 unit tests (2024 with the optional `[viewer]` extra), SC2 integration markers |
+| Testing (Python) | pytest | 2037 unit tests (2054 with the optional `[viewer]` extra), SC2 integration markers |
 | Testing (Frontend) | vitest + jsdom + @testing-library/react | 234 component / hook / lib tests (228 passing, 6 skipped) |
 | Linting | ruff + mypy | Strict type checking, consistent style |
 
@@ -301,7 +301,7 @@ bash scripts/start-dev.sh
 ### Testing
 
 ```bash
-uv run pytest              # 2007 unit tests (no SC2 needed; 2024 with --extra viewer)
+uv run pytest              # 2037 unit tests (no SC2 needed; 2054 with --extra viewer)
 uv run pytest -m sc2       # SC2 integration tests (SC2 must be running)
 uv run ruff check .        # Lint
 uv run mypy src bots --strict  # Type check
@@ -325,7 +325,7 @@ Alpha4Gate/
 ├── bots/v1..v10/            # Promoted snapshots — each a self-contained stack with its own data/
 ├── bots/current/            # Thin pointer package (MetaPathFinder → active version, v10 today)
 ├── src/orchestrator/        # Version registry, snapshots, self-play, Elo ladder, evolve
-├── tests/                   # 2007 unit tests across 113 files (+ SC2 integration markers)
+├── tests/                   # 2037 unit tests across 114 files (+ SC2 integration markers)
 ├── frontend/                # React + TypeScript dashboard (Vite, 6 tabs)
 ├── scripts/                 # Live test, training analysis, evolve runner, sandbox hook
 ├── documentation/wiki/      # Project wiki (start with index.md)

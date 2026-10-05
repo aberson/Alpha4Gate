@@ -128,16 +128,19 @@ is unreachable because there is only ever one lineage.
 
 **There is no runtime path that adds a lineage.** The population manager's `repopulate` list is
 always empty and `scripts/evolve.py` never reads it; lineage heads are only ever *updated* for an
-id that already exists. **And no CLI writes the registry** — `write_lineages`
-(`src/orchestrator/lineages.py:215`) has zero production callers. Note that `data/lineage.json`
+id that already exists. **A CLI now writes the registry** (Phase EH.1, `4eb7836`) —
+`scripts/lineage.py add <lineage_id> <head_version>` calls `register_lineage` → `write_lineages`
+(`src/orchestrator/lineages.py:249`), so hand-authoring JSON is no longer the only option. Note that `data/lineage.json`
 (**singular**, 4.6 KB, the version DAG written by `scripts/build_lineage.py`) does exist and is a
 completely different file. Do not confuse them.
 
 **So EL.7 has exactly two honest paths. Pick one before running it.**
 
-- **(i) Hand-author the registry.** Write `data/lineages.json` as a JSON object keyed by lineage
-  id, then run with `--lineages 4 --population-cap 3`. `lineage_id` and `head_version` are the
-  only required fields (`src/orchestrator/lineages.py:115-141`); the rest default. Heads must name
+- **(i) Seed the registry.** Preferred, since EH.1: run `uv run python scripts/lineage.py add <id>
+  <head_version>` once per lineage — it validates `head_version` against the on-disk version list,
+  so a typo fails loudly instead of seeding an unreachable head. Then run with
+  `--lineages 4 --population-cap 3`. To hand-author instead, `lineage_id` and `head_version` are the
+  only required fields (`src/orchestrator/lineages.py:170-175`); the rest default. Heads must name
   versions that exist on disk:
 
   ```json
@@ -185,7 +188,8 @@ That is expected, not a defect. It does mean promotions accumulate on a branch t
 on `master` — see the branch landing note.
 
 **The state file currently lies.** `data/evolve_run_state.json` says `"status": "running"` from a
-launcher-shaped run started **2026-08-28** that never completed a generation. No evolve or SC2
+launcher-shaped run started **2026-09-14** (`started_at: 2026-09-14T04:19:28+00:00`; re-verified
+2026-10-05 — 17 keys, no `pid` key) that never completed a generation. No evolve or SC2
 process is alive. The dashboard's Evolution tab will show this stale run. It will not block a new
 launch (the guard is process-based). Note it and move on.
 
@@ -346,9 +350,11 @@ record generations and promotions as **context, explicitly not a verdict**. This
 
 Plan: `documentation/plans/evolution-lines-plan.md:289-308`. Longest single gate, and the one
 that needs a decision before you start — **re-read defect 3.** Raising `--lineages` alone changes
-nothing; without a hand-authored `data/lineages.json` the run has exactly one lineage regardless.
+nothing; without a `data/lineages.json` on disk the run has exactly one lineage regardless.
 
-**Path (i) — real multi-lineage run.** Author `data/lineages.json` first (shape in defect 3), then:
+**Path (i) — real multi-lineage run.** Seed the registry first with
+`uv run python scripts/lineage.py add <id> <head_version>` per lineage (shape and alternatives in
+defect 3), then:
 
 ```powershell
 uv run python scripts/evolve.py --lineages 4 --population-cap 3 --hours 6 --generations 0 --fitness-mode both
@@ -372,10 +378,12 @@ tail. Do not attach a debugger or a second client.
 | Orphan processes | Zero | Zero |
 | `[evo-auto]` commits | Clean rows, nothing swept in from a dirty index | Same |
 
-**Known gap that shapes how you observe this one.** `write_lineages` has zero production callers
-(`src/orchestrator/lineages.py:215`), so lineage heads and extinction events live only in process
-memory and `data/lineages.json` is **never written back**. A run interrupted and resumed
-re-branches from stale heads, and extinct lineages revive.
+**This gap is now CLOSED — Phase EH.2 (`5fb4213`) added a generation-boundary write-back.** Heads
+and `status="extinct"` records persist to `data/lineages.json` at the end of every generation, and
+`next_lineage` filters to `status == "active"`, so a resumed run continues from the real heads and a
+culled lineage stays culled. **One condition matters for this gate:** the hop fires only when the
+registry was loaded from disk — so seed `data/lineages.json` via path (i) above, or nothing is
+persisted and you are back to the old in-memory behaviour.
 
 `data/fingerprints.json`, by contrast, **is** written — every gauntleted promotion saves one
 whenever `--population-cap > 0` (`scripts/evolve.py:4762`). Seeing that file appear is
@@ -383,9 +391,10 @@ expected, not contamination.
 
 Do not lean on the dashboard for this gate. `/api/evolve/lineages` is **disk-backed**, not a live
 in-memory view (`bots/v13/api.py:1641` reads the two registries plus `evolve_results.jsonl`), so
-with `lineages.json` never written the lineages array and the whole diversity matrix come back
-empty no matter when you call it. Observe from the run's own log and `evolve_results.jsonl` rows
-instead.
+with a disk-seeded registry it now reflects the persisted heads, refreshed once per generation
+boundary rather than live — expect it to lag the in-flight generation. Started with **no** registry
+on disk, the lineages array and the whole diversity matrix still come back empty no matter when you
+call it. Either way, the run's own log and `evolve_results.jsonl` rows remain the primary record.
 
 ---
 

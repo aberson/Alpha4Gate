@@ -68,6 +68,13 @@ PS> uv run --extra viewer python scripts/evolve.py --generations 0 --hours 8 --v
 > `--viewer` (default OFF) renders the run's SC2 games inside the themed
 > container — see [§Evolve with the themed viewer](#evolve-with-the-themed-viewer)
 > for the platform gate and, importantly, the stop gestures.
+> `--lineages N`, `--fitness-mode parent|baseline|both` and
+> `--population-cap N` (Phase EL) select the number of parallel lineages, the
+> fitness opponent set and the diversity-extinction cap; the defaults `1` /
+> `parent` / `0` are byte-identical to pre-EL behaviour.
+> Since EH.2, a run started from an on-disk `data/lineages.json` rewrites
+> lineage heads and `status="extinct"` records at every generation boundary; a
+> run with no registry on disk still persists nothing, by design.
 
 **Path B2 — one-click launcher (evolve + dashboard):**
 
@@ -502,6 +509,39 @@ PS> uv run python scripts/ladder.py --list                # current rankings
 PS> uv run python scripts/ladder.py --eval-only           # cross-version games without promotion
 ```
 
+### Lineages
+
+```powershell
+PS> uv run python scripts/lineage.py add line-2 v10          # register/update a lineage head
+PS> uv run python scripts/lineage.py list                    # all registered lineages
+PS> uv run python scripts/lineage.py remove line-2           # drop a lineage
+PS> uv run python scripts/lineage.py --path other.json list  # read a non-default registry
+```
+
+Owns `data/lineages.json` (**plural**) — the evolve lineage registry behind
+`--lineages N`. Never `data/lineage.json` (**singular**), which is an unrelated
+version DAG written by `scripts/build_lineage.py`. Don't conflate the two.
+
+- `--path` precedes the verb (`--path other.json list`, not `list --path other.json`).
+- `remove` on an absent id exits 0.
+- Re-`add`ing an existing id updates `head_version` in place and preserves
+  `pool_path`, `parent_chain`, `created_at` and `status`.
+- Advisory notes go to stderr, so stdout stays parseable.
+
+### Baselines
+
+```powershell
+PS> uv run python scripts/baseline.py add rules-v0 v0 --note "frozen rule bot"
+PS> uv run python scripts/baseline.py list
+PS> uv run python scripts/baseline.py remove rules-v0
+```
+
+Writes `data/baselines.json` — the frozen-opponent registry behind the fitness
+gauntlet. `add` takes a **name first, then a version** (`add <name> <version>`);
+`add <version>` alone is wrong. With no registry on disk the gauntlet is a
+silent no-op: `--fitness-mode baseline|both` degrades to `parent` and
+`--panel-floor` goes inert.
+
 ---
 
 ## Watching a running task
@@ -596,7 +636,7 @@ SC2 alone leaves the daemon hanging.
 
 ```powershell
 PS> uv sync                                              # install/refresh deps
-PS> uv run pytest -q                                     # 1397+ unit tests, ~70s
+PS> uv run pytest -q                                     # 2037 unit tests
 PS> uv run pytest -m sc2                                 # SC2 integration tests (needs SC2 running)
 PS> uv run pytest tests/test_evolve.py -q                # one file
 PS> uv run pytest tests/test_evolve.py::TestX -q         # one class
@@ -769,7 +809,8 @@ Run `/help` inside Claude Code to see the canonical list.
 - **Wiki:** `documentation/wiki/index.md` — system diagram + deep-dive pages
 - **Investigations:** `documentation/investigations/` — pre-plan analysis
 - **Per-version state:** `bots/v<N>/data/` (training.db, checkpoints, reward_rules.json)
-- **Cross-version state:** `data/` (evolve state, snapshots, ladder)
+- **Cross-version state:** `data/` (evolve state, snapshots, ladder, lineage
+  registry `lineages.json`, baseline registry `baselines.json`)
 - **Logs:** `logs/` (gitignored)
 - **Memory:** `$env:USERPROFILE\.claude\projects\c--Users-x-dev-Alpha4Gate\memory\`
 

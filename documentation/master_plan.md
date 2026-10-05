@@ -20,7 +20,7 @@ Single spine for the project. Status as of 2026-09-04. Each phase's narrative li
 | [evolve-judging-plan.md](plans/evolve-judging-plan.md) | EJ | EJ.1-EJ.6 shipped 2026-07-06 (#282-#287 closed); all six flags default OFF (bare invocation byte-identical); **EJ.7 smoke (#288) + EJ.8 soak (#289) operator-pending** |
 | [evolve-evidence-layer-plan.md](plans/evolve-evidence-layer-plan.md) | EI | Evolve evidence layer (EI.1-EI.14) - **planned 2026-09-02**; `/plan-review` (7 Blockers fixed) + `/plan-wrap` (READY WITH GAPS, 0 Blockers, all 7 gaps closed) both passed 2026-09-02. **Not yet redlined** - no operator decisions recorded, so run `/plan-redline` before building. Awaiting `/repo-sync`. Sequenced AFTER Phase EH (EH §6 D-8: both edit `scripts/evolve.py`; build one at a time). Output of the operator's evolve-restructure thread |
 | [evolve-viewer-plan.md](plans/evolve-viewer-plan.md) | EV | Themed viewer for evolution runs (`--viewer` + launcher opt-in). EV.1-EV.3 shipped 2026-08-10 (#291-#293) on branch `master-plan/phase-ev`; **EV.4 operator smoke (#294, now Manual UAT M1) + EV.5 observation soak (#295) operator-pending** |
-| [evolve-operational-hardening-plan.md](plans/evolve-operational-hardening-plan.md) | EH | Evolve operational hardening (EH.1-EH.10) - **planned 2026-09-04**, reviewed + redlined (9 operator decisions P-1..P-9 recorded); **`/plan-wrap` passed 2026-09-19, awaiting `/repo-sync`**; build blocked by the toolkit freeze (Backlog B5). Closes the population-state write-back seam (`write_lineages` unwired), the unread dashboard control file, the launcher `--generations` omission, and two unattended-run data-safety gaps |
+| [evolve-operational-hardening-plan.md](plans/evolve-operational-hardening-plan.md) | EH | Evolve operational hardening (EH.1-EH.10) - **IN PROGRESS, 2 of 10 shipped 2026-10-04**. Planned 2026-09-04, reviewed + redlined (9 operator decisions P-1..P-9 recorded), `/plan-wrap` passed 2026-09-19, `/repo-sync` ran 2026-10-04 (umbrella #305, steps #306-#315); the toolkit freeze is lifted. **EH.1 `4eb7836` (#306) wired the population-state write-back seam shut** (`scripts/lineage.py` CLI + `register_lineage`, giving `write_lineages` its first production caller) and **EH.2 `5fb4213` (#307) added the generation-boundary persist hop**. Still open: the unread dashboard control file, the launcher `--generations` omission, and two unattended-run data-safety gaps (EH.3-EH.10) |
 
 ### Archived sub-plans — shipped or cut (`documentation/archived/`)
 
@@ -170,7 +170,7 @@ of ~1-5s lag.
 |------|-----------|
 | **`v0_pretrain`** | Imitation-pretrained PPO checkpoint at `<version>/data/checkpoints/v0_pretrain.zip`. Behavior-cloned from rule-based decisions in `<version>/data/training.db`. Per-version, not shared. |
 | **KL-to-rules** | Auxiliary loss from the `feat/lstm-kl-imitation` PR. After each PPO gradient step, `kl_rules_coef * CE(policy_logits, rule_engine_action)` is applied. Disabled at `kl_rules_coef=0.0`. |
-| **Lineage** | An independent ancestor chain inside one evolve run (Phase EL). `--lineages N` advances N of them in parallel instead of a single `vN → vN+1` spine. Heads are held in memory only — `write_lineages` has no production caller. |
+| **Lineage** | An independent ancestor chain inside one evolve run (Phase EL). `--lineages N` advances N of them in parallel instead of a single `vN → vN+1` spine. Heads and `status="extinct"` records persist to `data/lineages.json` at each generation boundary (Phase EH.2) — but only when that registry was loaded from disk; a bare run with no registry file persists nothing, so the hop can never create or overwrite an operator-authored one. |
 | **Frozen baseline** | A previously-promoted version registered in `data/baselines.json` (via `scripts/baseline.py`) and replayed as a fixed opponent. Absent registry → `--fitness-mode` `baseline` or `both` silently degrades to `parent`. |
 | **Fingerprint** | A version's behavioural signature. The v1 fingerprint **is** its per-baseline win-rate vector, so it costs nothing beyond the gauntlet that produced it. |
 | **Extinction** | Culling a lineage that is both strictly less fit than a sibling and within `--diversity-threshold` of it. Requires `lineages > --population-cap`; at `lineages <= cap` the manager keeps all. |
@@ -1081,18 +1081,25 @@ SC2 processes). Record:
 
 ### Known gaps (carried, not fixed by this phase)
 
-- **Lineage state is never persisted.** `write_lineages` (`src/orchestrator/lineages.py`)
-  has zero production callers, so lineage heads and extinction events live only in process
-  memory. A resumed run re-branches from stale heads and extinct lineages revive. Queued
-  for the evolve operational-hardening plan.
+- **Lineage state is never persisted — CLOSED 2026-10-04 by Phase EH.1 + EH.2**
+  (`4eb7836`, `5fb4213`). `write_lineages` (`src/orchestrator/lineages.py:249`) now has two
+  production callers: `register_lineage` behind `scripts/lineage.py add`, and `run_loop`'s
+  generation-boundary persist hop. Advanced heads and `status="extinct"` records survive
+  process exit, and `next_lineage` filters to `status == "active"` so a culled lineage does
+  not resurrect into the round-robin. **Residual, by design:** the hop fires only when the
+  registry was loaded from disk, so a bare run with no `data/lineages.json` still persists
+  nothing — that guard is what stops the hop creating or overwriting an operator-authored
+  registry and permanently engaging multi-lineage scheduling.
 - **The gauntlet is inert without a registry.** `data/baselines.json` does not exist in a
   fresh checkout, and `--fitness-mode baseline|both` silently degrades to `parent` when it
   is empty or absent. Register anchors with `scripts/baseline.py` before any gate that
   depends on the gauntlet.
-- **`--lineages N` does not create N lineages, and nothing creates them.** The flag only
-  *engages* multi-lineage scheduling; the lineage set comes from `data/lineages.json`, which is
-  absent and has no writer. With no registry, `scripts/evolve.py:3744-3751` returns a single
-  implicit `main` lineage for any value of the flag. There is no runtime path that adds one
+- **`--lineages N` does not create N lineages.** The flag only *engages* multi-lineage
+  scheduling; the lineage set comes from `data/lineages.json`, which is absent in a fresh
+  checkout. With no registry, `scripts/evolve.py:3757-3768` returns a single implicit `main`
+  lineage for any value of the flag. **Since Phase EH.1 there is a writer** — seed the registry
+  with `uv run python scripts/lineage.py add <id> <head_version>` once per lineage, which is what
+  makes EL.7 (#279) runnable. There is no runtime path that adds one
   (`repopulate` is always empty and the runner never reads it). Do not confuse the absent
   `data/lineages.json` with `data/lineage.json` (singular), the version DAG that does exist.
 - **Extinction therefore cannot fire on a default checkout.** Even with a registry, the
@@ -2049,8 +2056,9 @@ Append-only — do not edit prior entries.
   (#279) remains. Phase 7 added `src/orchestrator/staleness.py` and a
   staleness-gated `soak` improvement type in `/improve-bot-advised`; issues
   #180–#184 closed, Step 6 (#280) remains. Known gap carried from EL and not fixed
-  since: `write_lineages` has zero production callers, so lineage heads and
-  extinctions are in-memory only.
+  until 2026-10-04, when Phase EH.1 + EH.2 (`4eb7836`, `5fb4213`) gave
+  `write_lineages` production callers and persisted heads and extinctions at the
+  generation boundary.
 
 - *2026-05-19* — **Plan trim: 5 cuts.** (1) **Phase 8 Step 11 closed.**
   The dedicated 8h Linux evolve soak was kept as a "MANDATORY observation"

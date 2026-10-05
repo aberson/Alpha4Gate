@@ -90,7 +90,7 @@ here because they operate on different things.
 | [Frontend Dashboard](frontend.md) | 6 tabs, React components, WebSocket protocol, poll cadences |
 | [Models Tab](models-tab.md) | Lineage, Live Runs, Inspector, Compare, Forensics — five questions answered, weight-dynamics + recovery procedures |
 | [Domain Coupling](domain-coupling.md) | What's SC2-specific vs domain-agnostic |
-| [Testing](testing.md) | 2007 unit tests, SC2 integration tests, coverage map |
+| [Testing](testing.md) | 2037 unit tests, SC2 integration tests, coverage map |
 | [Linux Dev Environment](linux-dev-environment.md) | WSL Ubuntu 22.04 setup — venv on ext4, env vars, gotchas |
 
 ---
@@ -103,6 +103,6 @@ here because they operate on different things.
 2. **Key Interfaces** — public API, data flow
 3. **Implementation Notes** — internal details (marked "verify against code" — these can drift)
 
-**For the active plan:** See [master_plan.md](../master_plan.md) for the current roadmap. Phases A, 0–5 complete. Phase 9 (improve-bot-evolve) operational and parallelized — v0→v10 via successive auto-promotions. Phase 8 (headless Linux training infrastructure) shipped end-to-end including the 8h soak (v4→v7, 2026-04-30). Phase N (win-prob heuristic + give-up) shipped. Evolve parallelization (4-way concurrency window + worker-slot recycling) shipped 2026-04-30. Next: Phase O scripted Hydra v1, Phase 7 (advised staleness), Tracks 7-10 capability research.
+**For the active plan:** See [master_plan.md](../master_plan.md) for the current roadmap. Phases A, 0–5, 7, 8, 9 and N are complete, and Phases EL (evolution lines), EJ (judging noise-floor) and EV (evolve `--viewer`) have shipped. Evolve has carried the lineage to v13 via successive auto-promotions. Phase EH (evolve operational hardening) is in progress — EH.1 and EH.2 of 10 shipped 2026-10-04. Next: EH.3–EH.10, then Phase EI (evolve evidence layer), Phase O scripted Hydra v1, and the Tracks 7-10 capability research phases.
 
 **For day-to-day operator commands:** See [operator-commands.md](operator-commands.md) — the cheat sheet for running the bot, launching evolve (Windows + WSL), watching tasks, debugging, and frequent recipes.

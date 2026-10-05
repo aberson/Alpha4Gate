@@ -2,7 +2,7 @@
 
 What's tested, how to run it, and what's not covered.
 
-> **At a glance:** 2007 unit tests across 113 files (2024 with the optional `[viewer]` extra), collected in ~13s. Heavy mocking of SC2 BotAI via MagicMock/AsyncMock — no SC2 client needed for unit tests. Integration tests require a running SC2 client and are marked `@pytest.mark.sc2`. No `conftest.py` — fixtures are inline. The suite covers the full autonomous loop (daemon, promotion, rollback, evaluator, advised-run bridge) plus the evolve substrate (orchestrator, pool, fitness/regression gates, evolve worker, sandbox hook) and the Phase 8 Linux substrate (SC2PATH resolver). Frontend has its own 234-test vitest suite — see [frontend.md](frontend.md).
+> **At a glance:** 2037 unit tests across 114 files (2054 with the optional `[viewer]` extra), collected in ~13s. Heavy mocking of SC2 BotAI via MagicMock/AsyncMock — no SC2 client needed for unit tests. Integration tests require a running SC2 client and are marked `@pytest.mark.sc2`. No `conftest.py` — fixtures are inline. The suite covers the full autonomous loop (daemon, promotion, rollback, evaluator, advised-run bridge) plus the evolve substrate (orchestrator, pool, fitness/regression gates, evolve worker, sandbox hook, lineage registry + CLI, baseline gauntlet, diversity fingerprint, extinction, posterior gate stats) and the Phase 8 Linux substrate (SC2PATH resolver). Frontend has its own 234-test vitest suite — see [frontend.md](frontend.md).
 
 ## Purpose & Design
 
@@ -80,6 +80,15 @@ cd frontend && npm test          # Frontend tests (vitest)
 | test_batch_runner.py | GameRecord aggregation |
 | test_ladder.py | Elo ladder, match recording, promotion gate |
 | test_sandbox_hook.py | Pre-commit sandbox enforcement (9 cases: passthrough, allowed/forbidden paths, traversal, mixed) |
+| test_lineages.py | Lineage registry read/write + head advance |
+| test_lineage_cli.py | scripts/lineage.py add/list/remove |
+| test_baselines.py | Frozen-baseline opponent registry |
+| test_baseline_cli.py | scripts/baseline.py add/list/remove |
+| test_population.py | Diversity-driven extinction |
+| test_fingerprint.py | Behavioural diversity fingerprint |
+| test_gate_stats.py | One-sided posterior rollback bar |
+| test_staleness_signal.py | Advised-loop staleness detection |
+| test_api_evolve_lineages.py | /api/evolve/lineages endpoint |
 
 Plus `pyproject.toml` config for pytest, mypy, ruff.
 
@@ -124,6 +133,6 @@ Plus `pyproject.toml` config for pytest, mypy, ruff.
 
 | File | Purpose |
 |------|---------|
-| `tests/test_*.py` | 48 Python test modules |
+| `tests/test_*.py` | 114 Python test modules |
 | `frontend/src/**/*.test.{ts,tsx}` | Frontend tests (vitest) |
 | `pyproject.toml` | pytest, mypy, ruff configuration |

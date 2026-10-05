@@ -138,10 +138,11 @@ Self-healing: `PromotionLogger` tolerates a corrupt history file (renames it to 
 
 | Component | File | What it shows |
 |---|---|---|
-| Recent Improvements | `frontend/src/components/RecentImprovements.tsx` | Classifies each history entry as `promotion \| rollback \| rejected` via `classifyEntry()`; timestamp, delta, reason_code, difficulty |
-| Reward Trends | `frontend/src/components/RewardTrends.tsx` | Per-rule reward contribution over last N games |
-| Checkpoint List | `frontend/src/components/CheckpointList.tsx` | All checkpoints with `best` indicator from `manifest.json` |
-| Loop tab | `frontend/src/components/LoopStatus.tsx` | Current daemon cycle; `last_result` contains `win_rate` and `final_difficulty` post-promotion |
+| Lineage timeline | `frontend/src/components/LineageView.tsx` + `TimelineList.tsx` | Classifies each entry as `promotion \| rollback \| rejected` via `/api/improvements/unified`; timestamp, delta, reason_code, difficulty |
+| Version Inspector | `frontend/src/components/VersionInspector.tsx` | All checkpoints with `best` indicator from `manifest.json` |
+
+Daemon-cycle state has no component post-refactor — `last_result` (`win_rate`,
+`final_difficulty`) is reachable only via `GET /api/training/daemon`.
 
 Alert rule `ruleRollbackFired` (warning severity) fires when the latest history entry has `promoted=false` and `reason` starts with `"rollback:"`. See [monitoring.md](monitoring.md) for the full alert table.
 

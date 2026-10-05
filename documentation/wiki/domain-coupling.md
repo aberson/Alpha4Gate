@@ -2,7 +2,7 @@
 
 What's SC2-specific vs what could work with any domain.
 
-> **At a glance:** 55 Python modules in `bots/v0/`. The entire `learning/` pipeline (trainer, daemon, evaluator, promotion, rollback, rewards, features, checkpoints, imitation, advisor_bridge, winprob_heuristic, etc.) has **zero SC2 imports** and is domain-agnostic. SC2 coupling concentrates in ~8 modules: `bot`, `connection`, `observer`, `macro_manager`, `micro`, `scouting`, `commands/executor`, plus the hybrid `learning/environment` bridge. The `/improve-bot-advised` loop reinforces this: it treats SC2 as an opaque task — code + config go in, win/loss + stats come out. See [improve-bot-advised-architecture.md](improve-bot-advised-architecture.md).
+> **At a glance:** 56 Python modules in `bots/v0/`. The entire `learning/` pipeline (trainer, daemon, evaluator, promotion, rollback, rewards, features, checkpoints, imitation, advisor_bridge, winprob_heuristic, etc.) has **zero SC2 imports** and is domain-agnostic. SC2 coupling concentrates in ~8 modules: `bot`, `connection`, `observer`, `macro_manager`, `micro`, `scouting`, `commands/executor`, plus the hybrid `learning/environment` bridge. The `/improve-bot-advised` loop reinforces this: it treats SC2 as an opaque task — code + config go in, win/loss + stats come out. See [improve-bot-advised-architecture.md](improve-bot-advised-architecture.md).
 
 ## Purpose & Design
 
@@ -13,7 +13,7 @@ This page maps the boundary between SC2-specific code and domain-agnostic infras
 ```
 Tier 0: Pure Domain-Agnostic     Tier 1: SC2 at Data Level     Tier 2: SC2 Types     Tier 3: SC2 API
 ─────────────────────────────    ──────────────────────────     ──────────────────     ──────────────
-learning/*  (17 modules)         decision_engine                macro_manager          bot
+learning/*  (22 modules)         decision_engine                macro_manager          bot
 api, web_socket, logger          claude_advisor                 micro                  connection
 config, console, batch_runner    build_orders                   scouting               observer
 commands/{primitives,parser,     build_backlog                  commands/executor      runner (entry)

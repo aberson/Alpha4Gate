@@ -49,10 +49,15 @@ See [index.md](index.md) for the system diagram, [improve-bot-advised-architectu
 | Phase 8 | Headless Linux training substrate — SC2PATH resolver, Linux CI, multi-stage Dockerfile. v4→v7 in the 8h Linux soak (2026-04-30). |
 | Phase N | Win-prob heuristic + give-up trigger — 30-step `winprob<0.05` after 8 min triggers `RequestLeaveGame`. |
 | 2026-04-30 | Evolve parallelization shipped — 4-way concurrency window + worker-slot recycling. Lineage extended to v10. |
+| Phase 7 | Advised-loop stale-policy detection — `staleness.py` + a staleness-gated `soak` improvement type (2026-06-20). |
+| Phase EL | Evolution Lines — parallel lineages, frozen-baseline gauntlet, diversity fingerprint, extinction (2026-06-20). |
+| Phase EJ | Evolve judging noise-floor — null-diff screen, one-sided posterior rollback bar, panel floor (2026-07-06). |
+| Phase EV | Evolve `--viewer` — evolution runs rendered inside the themed container (2026-08-10). |
+| Phase EH | Evolve operational hardening — EH.1 lineage registry CLI, EH.2 generation-boundary persistence (2026-10-04). |
 
 ## What's being worked on now?
 
-The active plan is [master_plan.md](../master_plan.md). Phases A, 0–5, 8, 9, N all complete; the versioning + headless + evolve substrate is fully built and producing auto-promotions on a parallel runtime (v0→v10 today). Next up: Phase O scripted Hydra v1 (themed expert sub-policies + rule-based switcher), Phase 7 (advised-loop staleness detection), and the Tracks 7-10 capability research phases (mini-games, replay-stream-as-live viewer, knowledge distillation, harvest-engineer skill, Wilson/SPRT statistical robustness). Phase G (multi-race: Zerg then Terran) sits past Phase 6.
+The active plan is [master_plan.md](../master_plan.md). Phases A, 0–5, 7, 8, 9 and N are complete, and Phases EL (evolution lines), EJ (judging noise-floor) and EV (evolve `--viewer`) have shipped. Evolve has carried the lineage to v13 via successive auto-promotions. Phase EH (evolve operational hardening) is in progress — EH.1 and EH.2 of 10 shipped 2026-10-04. Next: EH.3–EH.10, then Phase EI (evolve evidence layer), Phase O scripted Hydra v1, and the Tracks 7-10 capability research phases (mini-games, replay-stream-as-live viewer, knowledge distillation, harvest-engineer skill, Wilson/SPRT statistical robustness). Phase G (multi-race: Zerg then Terran) sits past Phase 6.
 
 ## How does the bot decide what to do?
 
@@ -126,11 +131,11 @@ The `/improve-bot-advised` loop treats SC2 as an opaque task: code + config go i
 | Frontend | React + TypeScript + Vite |
 | Deep learning | PyTorch, Stable Baselines 3 (PPO), recurrent PPO + custom KL variants |
 | Training data | SQLite |
-| Testing | pytest (2007 unit tests), ruff, mypy strict |
+| Testing | pytest (2037 unit tests), ruff, mypy strict |
 
 ## How many tests are there?
 
-2007 unit tests across 113 test files plus 234 frontend vitest tests. Zero type errors, zero lint violations. SC2 integration tests are separate (`pytest -m sc2`) and require a running SC2 client. See [testing.md](testing.md).
+2037 unit tests across 114 test files plus 234 frontend vitest tests. Zero type errors, zero lint violations. SC2 integration tests are separate (`pytest -m sc2`) and require a running SC2 client. See [testing.md](testing.md).
 
 ## Where do I start if I want to work on this?
 

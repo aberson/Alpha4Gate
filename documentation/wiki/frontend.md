@@ -8,7 +8,7 @@ unified improvements timeline, system health, and alert triage.
 > polling (3–10s, with exceptions below); the in-app alert engine runs
 > client-side over the polled snapshots. All frontend code is domain-agnostic
 > — it renders whatever JSON the backend sends. Unit tests run under
-> vitest + jsdom (119 passing across 13 files).
+> vitest + jsdom (234 tests — 228 passing, 6 skipped — across 23 files).
 
 ## Purpose & Design
 
@@ -18,14 +18,15 @@ and alerts as support. The original 12-tab layout (one tab per phase added
 during Phases 1–9) was trimmed in the dashboard refactor of 2026-04-29 — six
 of the dropped tabs had never been used in practice and the
 `RecentImprovements` / `AdvisedImprovements` / `RewardTrends` triple was
-consolidated into a single `ImprovementsTab` with a source filter.
+consolidated into the Models tab's Lineage timeline (`LineageView` /
+`TimelineList`) with a source filter.
 
 ### Tab layout
 
 | Tab | Component(s) | Data source | Refresh | Loop phase |
 |-----|-------------|-------------|---------|---|
 | **Advisor** | AdvisedControlPanel | `/api/advised/state` + `/api/advised/control` | 3s / 10s poll + on-demand | All advised-loop phases |
-| **Evolution** | EvolutionTab | `/api/evolve/state` + `/api/evolve/control` + `/api/evolve/current-round` + `/api/evolve/pool` + `/api/evolve/results` | Polled (per-endpoint) + on-demand | Self-play arena |
+| **Evolution** | EvolutionTab | `/api/evolve/state` + `/api/evolve/control` + `/api/evolve/current-round` + `/api/evolve/pool` + `/api/evolve/results` + `/api/evolve/lineages` | Polled (per-endpoint) + on-demand | Self-play arena |
 | **Models** | ModelsTab (LineageView / LiveRunsGrid / VersionInspector / CompareView / ForensicsView) | `/api/improvements/unified` (advised + evolve) via Lineage timeline mode | Refresh-on-demand | COMMIT (both loops) |
 | **Observable** | ObservableTab | Exhibition / replay-stream surface (Phase L placeholder) | On-demand | — |
 | **Processes** | ProcessMonitor + ResourceGauge + WslProcessesPanel + AlertsPanel | `/api/processes` + `/api/system/*` (separate router); alerts via the `useAlerts` hook | 5s poll | Cross-cutting (liveness + alerts) |
@@ -48,7 +49,8 @@ fitness pool with per-imp rank + outcome, current-round game record,
 generations-promoted counter, and a feed of recent results from
 `evolve_results.jsonl`. Pulls from `useEvolveRun`.
 
-**ImprovementsTab:** Unified table of advised + evolve improvements pulled
+**Models tab — Lineage timeline (`LineageView.tsx` / `TimelineList.tsx`):**
+Unified table of advised + evolve improvements pulled
 from `/api/improvements/unified`. Header has filter pills (All / Advised /
 Evolve) + entry count + manual refresh button. Each row has timestamp,
 source badge, title, outcome badge, metric blurb, and truncated principles
@@ -108,7 +110,7 @@ stop / reset-loop confirmations).
 | AdvisedControlPanel (state) | 3000ms | `useAdvisedRun` / `useApi` poll |
 | AdvisedControlPanel (control) | 10000ms | `useAdvisedRun` / `useApi` poll |
 | EvolutionTab | per-endpoint inside `useEvolveRun` | `useApi` polls |
-| ImprovementsTab | refresh-on-demand only | `useApi` (no `pollMs`) |
+| ModelsTab (LineageView) | refresh-on-demand only | `useApi` (no `pollMs`) |
 | ProcessMonitor / ResourceGauge / WslProcessesPanel | 5000ms | `useApi` / `useSystemInfo` |
 | AlertToast / AlertsPanel (via `useAlerts`) | 5000ms | setInterval + fetch, rules evaluated client-side |
 | HelpTab | one-time fetch on mount | `useApi` (no `pollMs`) |

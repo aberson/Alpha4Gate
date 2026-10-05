@@ -87,7 +87,7 @@ Each loop phase has a primary dashboard tab, a persistent evidence file, and cha
 | **TEST** | Advisor (validation row) | validation games in `training.db` | `=== ITER N VALIDATION START/COMPLETE ===` |
 | **COMMIT** | Models (Lineage timeline mode) | `data/improvement_log.json`, git master, GitHub issue | `improve-bot-advised: <title> (iteration N)` commit |
 | **TRAIN** | Models (Lineage timeline mode) | `bots/<active>/data/promotion_history.json`, `bots/<active>/data/checkpoints/manifest.json` | "daemon cycle N complete" |
-| **EVOLVE** (parallel substrate) | Evolution | `data/evolve_run_state.json`, `data/evolve_pool.json`, `data/evolve_results.jsonl` | `[evo-auto] generation N promoted stack (K imps)` |
+| **EVOLVE** (parallel substrate) | Evolution | `data/evolve_run_state.json`, `data/evolve_pool.json`, `data/evolve_results.jsonl`, `data/lineages.json` | `[evo-auto] generation N promoted stack (K imps)` |
 
 ### THE TASK — "is the game actually running?"
 
@@ -145,7 +145,7 @@ PASS ──> git commit to master
       └─> Improvements tab refreshes
 ```
 
-- **Improvements tab** (`AdvisedImprovements.tsx`) — persistent per-iteration log. Fields: `id, run_id, iteration, title, type, description, principles[], result, metrics {observation_wins, validation_wins, duration_delta_pct}, files_changed[]`. Endpoint: `/api/improvements`.
+- **Models tab → Lineage timeline** (`LineageView.tsx`) — persistent per-iteration log. Fields: `id, run_id, iteration, title, type, description, principles[], result, metrics {observation_wins, validation_wins, duration_delta_pct}, files_changed[]`. Endpoint: `/api/improvements`.
 - **Git history** — `git log --grep="improve-bot-advised"` on master.
 - **Run tags** — `advised/run/<RUN_TS>/baseline` and `advised/run/<RUN_TS>/final` bracket the session. Diff with `git log <baseline>..<final> --oneline`.
 - **GitHub umbrella issue** — label `advised-improvement-run`, titled with `$RUN_TS`, created in Phase 8.
@@ -164,7 +164,7 @@ new games ──> PPO gradient update ──> new checkpoint
                               promotion_history.json append
 ```
 
-- **Improvements tab** (`ImprovementsTab.tsx`) — unified timeline of advised + evolve improvements via `/api/improvements/unified`, sourced from `bots/<active>/data/promotion_history.json` plus `data/evolve_results.jsonl`. Each row classifies as `promotion | rollback | rejected` (advised) or `promoted | regression-rollback` (evolve), with `new_checkpoint, old_best, new_win_rate, old_win_rate, delta, reason, reason_code, difficulty` for advised entries and equivalent fields for evolve. Refresh-on-demand (no auto-poll).
+- **Models tab → Lineage timeline** (`LineageView.tsx` + `TimelineList.tsx`, inside `ModelsTab.tsx`) — unified timeline of advised + evolve improvements via `/api/improvements/unified`, sourced from `bots/<active>/data/promotion_history.json` plus `data/evolve_results.jsonl`. Each row classifies as `promotion | rollback | rejected` (advised) or `promoted | regression-rollback` (evolve), with `new_checkpoint, old_best, new_win_rate, old_win_rate, delta, reason, reason_code, difficulty` for advised entries and equivalent fields for evolve. Refresh-on-demand (no auto-poll).
 - **Daemon status** — pulled by `useDaemonStatus()` (5s poll) for the alert engine but no longer surfaces a Loop tab post-refactor; inspect via `/api/training/daemon` directly or `data/advised_run_state.json` if you need the raw shape.
 - **Manifests + reward logs** — `bots/<active>/data/checkpoints/manifest.json` lists checkpoints with the `best` indicator; `bots/<active>/data/reward_logs/game_*.jsonl` carries per-rule contribution over recent games (RewardTrends and the Training tab were both deleted in the refactor; the JSONLs are still written and queryable via `/api/training/reward-trends`).
 
@@ -243,6 +243,8 @@ Backed by `ErrorLogBuffer` (50-entry ring in `bots/v0/error_log.py`), surfaced v
 | Live game state | WebSocket `/ws/game` | Ephemeral (lost on disconnect) | THE TASK |
 | Command events | WebSocket `/ws/commands` | Ephemeral | THE TASK |
 | Action probabilities | `NeuralDecisionEngine._last_probabilities` | Ephemeral (memory) | THE TASK |
+| Lineage registry | `data/lineages.json` | Permanent (whole-file rewrite at every generation boundary since EH.2; extinct records retained with `status="extinct"`, never dropped) | EVOLVE |
+| Baseline opponent registry | `data/baselines.json` | Permanent | EVOLVE |
 
 ---
 
@@ -252,16 +254,15 @@ Tabs defined in `frontend/src/App.tsx`. Each tab consumes the endpoints or WebSo
 
 | Tab | Component | Feeds | Cadence | Phase |
 |---|---|---|---|---|
-| Live | `LiveView.tsx` | `/ws/game` | Real-time | THE TASK |
-| Stats | `Stats.tsx` | `/api/stats`, `/api/games`, `/api/games/{id}` | 10s | PLAY, TEST |
-| Decisions | `DecisionQueue.tsx` | `/api/decision-log`, `/ws/decisions` | Initial + live | THINK, THE TASK |
-| Training | `TrainingDashboard.tsx` + `ModelComparison` + `CheckpointList` + `RewardRuleEditor` | `/api/training/{status,history,models,checkpoints}`, `/api/reward-rules` | 5s | TRAIN |
-| Loop | `LoopStatus.tsx` + `TriggerControls.tsx` | `/api/training/daemon`, `/api/training/triggers` | 5s | TRAIN |
 | Advisor | `AdvisedControlPanel.tsx` | `/api/advised/state`, `/api/advised/control` | 3s state / 10s control | All 6 loop phases |
-| Improvements | `RecentImprovements.tsx` + `RewardTrends.tsx` + `AdvisedImprovements.tsx` | `/api/training/promotions/history`, `/api/training/reward-trends`, `/api/improvements` | 10s | COMMIT, TRAIN |
-| Processes | `ProcessMonitor.tsx` | `/api/processes`, cleanup endpoints | 5s | Cross-cutting (liveness) |
-| Alerts | `AlertsPanel.tsx` + `AlertToast.tsx` | client rules over poll data | — | Cross-cutting |
-| Ladder | `LadderTab.tsx` | `/api/ladder` (`data/bot_ladder.json`) | 10s | Cross-cutting (Elo) |
+| Evolution | `EvolutionTab.tsx` | `/api/evolve/{state,control,current-round,pool,results}`, `/api/evolve/lineages` | Per-endpoint poll | EVOLVE |
+| Models | `ModelsTab.tsx` — hosts `LineageView`, `LiveRunsGrid`, `VersionInspector`, `CompareView`, `ForensicsView` | `/api/improvements/unified` (Lineage timeline), `/api/ladder` (via `CompareView`) | Refresh-on-demand | COMMIT, TRAIN |
+| Observable | `ObservableTab.tsx` | Exhibition / replay-stream surface (Phase L placeholder) | On-demand | — |
+| Processes | `ProcessMonitor.tsx` + `ResourceGauge.tsx` + `WslProcessesPanel.tsx` + `AlertsPanel.tsx` | `/api/processes`, `/api/system/*`, cleanup endpoints; alerts via `useAlerts` | 5s | Cross-cutting (liveness + alerts) |
+| Help | `HelpTab.tsx` | `/api/operator-commands` | One-time fetch | — |
+
+Elo is no longer its own tab — `/api/ladder` (`data/bot_ladder.json`) now feeds
+`CompareView` inside the Models tab.
 
 A green dot appears in the nav bar when `advised_run_state.status ∈ {running, paused}` (`App.tsx:86–99`).
 
@@ -294,7 +295,7 @@ Three threads, two queues. All cross-thread communication uses `queue.Queue` (th
 |------|----------|-------|
 | Observer snapshot | Every 11 game steps (~0.5s at 1x) | `bot.py` |
 | Broadcast loop drain | 500ms | `api.py` |
-| Training dashboard poll | 5000ms | `TrainingDashboard.tsx` |
+| Training + daemon status poll | 5000ms | `/api/training/daemon` + `/api/training/status` (via `useDaemonStatus.ts`) |
 | Advisor tab poll | 3000ms state, 10000ms control | `useAdvisedRun.ts` |
 | Processes tab poll | 5000ms | `ProcessMonitor.tsx` |
 | Alerts recheck | 5000ms | `useAlerts.ts` |
