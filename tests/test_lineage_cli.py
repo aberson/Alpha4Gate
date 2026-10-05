@@ -378,7 +378,10 @@ def test_cli_engages_and_disengages_the_evolve_consumer(
     default_path = tmp_path / "data" / "lineages.json"
 
     # Baseline: nothing on disk, --lineages 1 -> single-lineage path.
-    assert evolve._load_lineage_registry_if_engaged(1) == {}
+    # The consumer returns ``(registry, from_disk)`` (Phase EH.2): the
+    # second element gates the generation-boundary write-back, and is
+    # False here because nothing was read from disk.
+    assert evolve._load_lineage_registry_if_engaged(1) == ({}, False)
 
     # Producer: add two lineages at the default path (no --path override).
     assert cli.main(["add", DEFAULT_LINEAGE_ID, "v0"]) == 0
@@ -395,13 +398,15 @@ def test_cli_engages_and_disengages_the_evolve_consumer(
     assert default_path.is_file()
 
     # Consumer now sees the scheduler engaged even at --lineages 1.
-    engaged = evolve._load_lineage_registry_if_engaged(1)
+    engaged, from_disk = evolve._load_lineage_registry_if_engaged(1)
     assert set(engaged) == {DEFAULT_LINEAGE_ID, "line-2"}
     assert engaged[DEFAULT_LINEAGE_ID].head_version == "v0"
     assert engaged["line-2"].head_version == "v9"
+    # Read from disk, so the EH.2 write-back gate is armed for this run.
+    assert from_disk is True
 
     # Teardown: removing every lineage disengages it again.
     assert cli.main(["remove", DEFAULT_LINEAGE_ID]) == 0
     assert cli.main(["remove", "line-2"]) == 0
     assert load_lineages(default_path) == {}
-    assert evolve._load_lineage_registry_if_engaged(1) == {}
+    assert evolve._load_lineage_registry_if_engaged(1) == ({}, False)

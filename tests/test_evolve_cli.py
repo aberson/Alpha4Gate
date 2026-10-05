@@ -2659,6 +2659,811 @@ def test_population_cap_real_decide_extinctions_through_gauntlet(
 
 
 # ---------------------------------------------------------------------------
+# Phase EH Step EH.2: generation-boundary lineage write-back
+# ---------------------------------------------------------------------------
+
+_EH2_SEED_CREATED_AT = "2026-01-02T03:04:05+00:00"
+
+
+def test_lineage_write_back_persists_advanced_head_and_logs(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """EH.2 clauses (1), (2), (8): heads reach disk, fields survive, one INFO.
+
+    Integration through the production entry point (``run_loop``): a real
+    2-lineage on-disk registry, two generations, and a real promotion on
+    ``main``'s turn. Afterwards the registry is re-read **from the file**
+    via ``load_lineages``:
+
+    - clause (1) ``persisted["main"].head_version != "v0"`` — the
+      load-bearing inequality. It fails at HEAD, where ``run_loop``
+      advances the head into a local dict and nothing flushes it.
+    - clause (2) ``persisted["main"].created_at`` still equals the seed
+      value, proving the hop merged with ``dataclasses.replace`` rather
+      than reconstructing the record (``pool_path`` / ``parent_chain`` are
+      asserted alongside it for the same reason).
+    - clause (8) exactly one INFO record per generation boundary, each
+      naming the generation index and every persisted lineage id with its
+      advanced ``head_version``.
+
+    Schedule (``write_lineages`` uses ``sort_keys=True``, so the loaded key
+    order — and therefore the round-robin — is ALPHABETICAL, not insertion
+    order):
+      gen 1: line-2 @ v9 -> both imps "close", no promotion
+      gen 2: main   @ v0 -> rank-1 passes -> promote v0 -> v1
+    """
+    import orchestrator.lineages as lineages_mod
+    from orchestrator.lineages import Lineage, load_lineages, write_lineages
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+    # The promotion path runs post-promotion hooks; stub so the real bot
+    # code is not invoked under the tmp registry.
+    monkeypatch.setattr(
+        "bots.v0.learning.post_promotion_hooks.run_post_promotion_hooks",
+        lambda _v: None,
+    )
+
+    registry_path = tmp_path / "data" / "lineages.json"
+    registry = {
+        "main": Lineage(
+            lineage_id="main",
+            head_version="v0",
+            pool_path="data/evolve_pool_main.json",
+            parent_chain=["v0"],
+            created_at=_EH2_SEED_CREATED_AT,
+        ),
+        "line-2": Lineage(
+            lineage_id="line-2",
+            head_version="v9",
+            pool_path="data/evolve_pool_line-2.json",
+            parent_chain=["v0", "v9"],
+            created_at=_EH2_SEED_CREATED_AT,
+        ),
+    }
+    write_lineages(registry_path, registry)
+
+    args = _build_args(tmp_path, pool_size=2, generations=2)
+    args.lineages = 2
+    pool = _make_pool(2)
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    def scripted_fitness(parent: str, imp: Improvement, **k: Any) -> Any:
+        # Pass the rank-1 imp ONLY on main's turn (parent v0) so main's
+        # head advances v0 -> v1; everything else stays active via "close".
+        if parent == "v0" and imp.rank == 1:
+            return _fitness(imp, bucket="pass", parent=parent)
+        return _fitness(imp, bucket="close", parent=parent)
+
+    stack_apply = _ScriptedStackApply([(True, "v1")])
+    regression = _ScriptedRegression([False])  # no rollback -> promotion sticks
+
+    with caplog.at_level(logging.INFO, logger="evolve"):
+        rc = cli.run_loop(
+            args,
+            generate_pool_fn=refresh,
+            run_fitness_fn=scripted_fitness,
+            stack_apply_fn=stack_apply,
+            run_regression_fn=regression,
+            current_version_fn=lambda: "v0",
+        )
+    assert rc == 0
+    assert len(stack_apply.calls) == 1
+    assert stack_apply.calls[0]["parent"] == "v0"
+
+    # --- clause (1): assert ON THE FILE, via the production reader. ---
+    assert registry_path.exists()
+    persisted = load_lineages(registry_path)
+    assert set(persisted) == {"main", "line-2"}, sorted(persisted)
+    assert persisted["main"].head_version != "v0"
+    assert persisted["main"].head_version == "v1"
+    # line-2 never promoted, so its head is unchanged — and still present:
+    # the writer is a whole-file replace, so a key missing from the payload
+    # would have been deleted from disk.
+    assert persisted["line-2"].head_version == "v9"
+
+    # --- clause (2): operator-authored fields survived the merge. ---
+    assert persisted["main"].created_at == _EH2_SEED_CREATED_AT
+    assert persisted["main"].pool_path == "data/evolve_pool_main.json"
+    assert persisted["main"].parent_chain == ["v0"]
+    assert persisted["main"].status == "active"
+    assert persisted["line-2"].created_at == _EH2_SEED_CREATED_AT
+    assert persisted["line-2"].parent_chain == ["v0", "v9"]
+
+    # --- clause (8): exactly one INFO record per generation boundary. ---
+    persist_logs = [
+        rec.getMessage()
+        for rec in caplog.records
+        if rec.levelno == logging.INFO
+        and "persisted lineage registry" in rec.getMessage()
+    ]
+    assert len(persist_logs) == 2, persist_logs
+    # Each line names its generation index and every persisted lineage id
+    # paired with the head that was actually written.
+    assert "gen 1 boundary" in persist_logs[0], persist_logs[0]
+    assert "main@v0" in persist_logs[0], persist_logs[0]
+    assert "line-2@v9" in persist_logs[0], persist_logs[0]
+    assert "gen 2 boundary" in persist_logs[1], persist_logs[1]
+    assert "main@v1" in persist_logs[1], persist_logs[1]
+    assert "line-2@v9" in persist_logs[1], persist_logs[1]
+
+
+def test_lineage_write_back_single_lineage_creates_no_file(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """EH.2 clause (3): the default ``--lineages 1`` run stays byte-identical.
+
+    With ``args.lineages = 1`` and no registry on disk the scheduler never
+    engages, so the generation-boundary write-back must not fire and
+    ``data/lineages.json`` must not be created — the back-compat invariant
+    a bare ``python scripts/evolve.py`` depends on.
+    """
+    import orchestrator.lineages as lineages_mod
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+
+    flips: list[str] = []
+    monkeypatch.setattr(
+        cli, "_primitive_restore_pointer", lambda v: flips.append(v)
+    )
+
+    registry_path = tmp_path / "data" / "lineages.json"
+    assert not registry_path.exists()
+
+    args = _build_args(tmp_path, pool_size=2, generations=2)
+    args.lineages = 1
+    pool = _make_pool(2)
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=lambda parent, imp, **k: _fitness(
+            imp, bucket="close", parent=parent
+        ),
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError()
+        ),
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+    assert not registry_path.exists()
+    assert flips == []  # scheduler never engaged
+
+
+def test_lineage_write_back_persists_extinction_as_status(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """EH.2 clause (4): a culled lineage persists as ``status="extinct"``.
+
+    Integration through ``run_loop`` with ``--population-cap`` engaged and
+    the extinction seam scripted to cull ``line-2``. The culled record must
+    survive to disk (the write-back is a whole-file replace, so dropping it
+    from the payload would DELETE it) carrying the cull decision's
+    ``head_version`` — not the registry's seed head, which would contradict
+    the extinction row written to the results file — and a subsequent
+    ``next_lineage`` over the persisted registry must never schedule it.
+    """
+    import orchestrator.lineages as lineages_mod
+    from orchestrator.lineages import (
+        Lineage,
+        load_lineages,
+        next_lineage,
+        write_lineages,
+    )
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+
+    registry_path = tmp_path / "data" / "lineages.json"
+    # sort_keys=True load order -> line-2 (v8), line-3 (v9), main (v0).
+    registry = {
+        "main": Lineage(
+            lineage_id="main",
+            head_version="v0",
+            created_at=_EH2_SEED_CREATED_AT,
+        ),
+        "line-2": Lineage(
+            lineage_id="line-2",
+            head_version="v8",
+            pool_path="data/evolve_pool_line-2.json",
+            created_at=_EH2_SEED_CREATED_AT,
+        ),
+        "line-3": Lineage(
+            lineage_id="line-3",
+            head_version="v9",
+            created_at=_EH2_SEED_CREATED_AT,
+        ),
+    }
+    write_lineages(registry_path, registry)
+
+    args = _build_args(tmp_path, pool_size=2, generations=4)
+    args.lineages = 3
+    args.population_cap = 2
+    args.diversity_threshold = 0.15
+    pool = _make_pool(2)
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    fitness_parents: list[str] = []
+
+    def recording_fitness(parent: str, imp: Improvement, **k: Any) -> Any:
+        fitness_parents.append(parent)
+        return _fitness(imp, bucket="close", parent=parent)
+
+    def scripted_decide(
+        lineages: dict[str, Any],
+        fingerprints: dict[str, Any],
+        fitnesses: dict[str, float],
+        *,
+        cap: int,
+        diversity_threshold: float,
+    ) -> Any:
+        from orchestrator.population import CullDecision, PopulationVerdict
+
+        if "line-2" in lineages:
+            return PopulationVerdict(
+                kept=[lid for lid in lineages if lid != "line-2"],
+                culled=[
+                    CullDecision(
+                        lineage_id="line-2",
+                        head_version=lineages["line-2"].head_version,
+                        dominated_by="line-3",
+                        reason="extinction: line-2 dominated by line-3 (test)",
+                    )
+                ],
+            )
+        return PopulationVerdict(kept=list(lineages.keys()), culled=[])
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=recording_fitness,
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError()
+        ),
+        decide_extinctions_fn=scripted_decide,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+
+    persisted = load_lineages(registry_path)
+    # The culled record was RETAINED, not dropped.
+    assert set(persisted) == {"main", "line-2", "line-3"}, sorted(persisted)
+    assert persisted["line-2"].status == "extinct"
+    # The cull decision's head, and the operator-authored fields, survived.
+    assert persisted["line-2"].head_version == "v8"
+    assert persisted["line-2"].pool_path == "data/evolve_pool_line-2.json"
+    assert persisted["line-2"].created_at == _EH2_SEED_CREATED_AT
+    # Survivors stay active.
+    assert persisted["main"].status == "active"
+    assert persisted["line-3"].status == "active"
+
+    # A subsequent run's scheduler never returns the extinct lineage —
+    # sweep the whole ring (plus two wraps) from every possible start.
+    for start in (None, "main", "line-2", "line-3"):
+        last: str | None = start
+        for _ in range(len(persisted) + 2):
+            last = next_lineage(persisted, last)
+            assert last != "line-2", (start, last)
+
+    # And in-run scheduling stayed byte-identical: line-2 (head v8) is
+    # culled at gen 1's boundary, after its own first turn, so no LATER
+    # generation ran against it (2 imps in that one generation).
+    assert fitness_parents.count("v8") == 2, fitness_parents
+
+
+def test_lineage_write_back_absent_registry_creates_no_file(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """EH.2 clause (6)(a): ``--lineages 3`` + no registry creates no file.
+
+    The data-loss trap. With ``--lineages > 1`` and an absent registry the
+    loader synthesizes an implicit single ``main``, which makes a bare
+    ``if _lineage_heads:`` guard truthy — so a hop gated on that alone
+    would CREATE ``data/lineages.json``, permanently engaging multi-lineage
+    scheduling for every later bare invocation (``--lineages`` has no
+    off-switch once a non-empty registry exists on disk). The real gate is
+    "the registry was loaded from disk".
+    """
+    import orchestrator.lineages as lineages_mod
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+
+    registry_path = tmp_path / "data" / "lineages.json"
+    assert not registry_path.exists()
+
+    args = _build_args(tmp_path, pool_size=2, generations=1)
+    args.lineages = 3
+    pool = _make_pool(2)
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    with caplog.at_level(logging.INFO, logger="evolve"):
+        rc = cli.run_loop(
+            args,
+            generate_pool_fn=refresh,
+            run_fitness_fn=lambda parent, imp, **k: _fitness(
+                imp, bucket="close", parent=parent
+            ),
+            stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError()
+            ),
+            run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError()
+            ),
+            current_version_fn=lambda: "v0",
+        )
+    assert rc == 0
+    assert not registry_path.exists()
+    assert not [
+        rec
+        for rec in caplog.records
+        if "persisted lineage registry" in rec.getMessage()
+    ]
+
+
+def test_lineage_write_back_malformed_registry_bytes_unchanged(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """EH.2 clause (6)(b): ``--lineages 3`` + a malformed registry is untouched.
+
+    The loader swallows the parse error into ``{}`` and synthesizes the
+    implicit ``main``, so a hop gated on ``_lineage_heads`` alone would
+    OVERWRITE the operator's file — destroying the hand-authored registry
+    the operator-gate runbook documents as today's only workaround.
+    Byte-equality is the assertion; "the run completes" alone is not
+    enough.
+    """
+    import orchestrator.lineages as lineages_mod
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+
+    registry_path = tmp_path / "data" / "lineages.json"
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+    registry_path.write_bytes(b"{not json")
+    before = registry_path.read_bytes()
+
+    args = _build_args(tmp_path, pool_size=2, generations=1)
+    args.lineages = 3
+    pool = _make_pool(2)
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    with caplog.at_level(logging.INFO, logger="evolve"):
+        rc = cli.run_loop(
+            args,
+            generate_pool_fn=refresh,
+            run_fitness_fn=lambda parent, imp, **k: _fitness(
+                imp, bucket="close", parent=parent
+            ),
+            stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError()
+            ),
+            run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError()
+            ),
+            current_version_fn=lambda: "v0",
+        )
+    assert rc == 0
+    assert registry_path.read_bytes() == before == b"{not json"
+    assert not [
+        rec
+        for rec in caplog.records
+        if "persisted lineage registry" in rec.getMessage()
+    ]
+
+
+def test_persisted_extinct_record_excluded_from_population_cap(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """EH.2 non-resurrection: a disk-persisted extinct record is NOT population.
+
+    The producer -> consumer round trip EH.2's own tests left open. EH.2
+    made ``run_loop`` the PRODUCER of persisted ``status="extinct"``
+    records; this drives the CONSUMER side — a restart over a registry
+    that already holds one — through the production entry point. A unit
+    test of the active filter cannot close it: the drift lives in the
+    relationship between the write-back and the startup seeding.
+
+    Registry on disk: ``main`` active @ v0, ``dead`` extinct @ v9, run
+    under ``--population-cap 1``. The spy hands the REAL
+    ``decide_extinctions`` the fitness + fingerprint vectors the EL.2
+    gauntlet would supply from live SC2 games, rigged so ``dead``
+    strictly out-fitnesses ``main`` on an identical (distance ``0.0`` ->
+    redundant) baseline vector. So the moment ``dead`` is admitted to the
+    population the real decision function culls ``main``:
+
+    - unfixed, the loop seeds ``_lineage_heads`` from EVERY loaded record
+      and rebuilds ``_live_lineages`` as fresh ``Lineage`` objects (whose
+      ``status`` defaults to ``"active"``), so the spy sees
+      ``{"dead", "main"}``, ``len(2) > cap(1)``, and the LIVE lineage is
+      made extinct by a dead one — ``persisted["main"].status`` comes
+      back ``"extinct"`` and gen 1 even runs against v9;
+    - fixed, the population is ``{"main"}``, ``len(1) <= cap(1)`` keeps
+      all, and ``main`` survives active.
+
+    Asserting only "main survives" would pass unfixed too whenever no
+    gauntlet has run (an unassessable lineage is never cull-eligible), so
+    the population handed to the decision function is asserted directly.
+    """
+    import orchestrator.lineages as lineages_mod
+    from orchestrator.lineages import Lineage, load_lineages, write_lineages
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+
+    registry_path = tmp_path / "data" / "lineages.json"
+    write_lineages(
+        registry_path,
+        {
+            "main": Lineage(
+                lineage_id="main",
+                head_version="v0",
+                created_at=_EH2_SEED_CREATED_AT,
+            ),
+            # sort_keys=True, so this one would be scheduled FIRST.
+            "dead": Lineage(
+                lineage_id="dead",
+                head_version="v9",
+                pool_path="data/evolve_pool_dead.json",
+                parent_chain=["v0", "v9"],
+                created_at=_EH2_SEED_CREATED_AT,
+                status="extinct",
+            ),
+        },
+    )
+
+    args = _build_args(tmp_path, pool_size=2, generations=2)
+    args.lineages = 2
+    args.population_cap = 1
+    args.diversity_threshold = 0.15
+    pool = _make_pool(2)
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    fitness_parents: list[str] = []
+
+    def recording_fitness(parent: str, imp: Improvement, **k: Any) -> Any:
+        fitness_parents.append(parent)
+        return _fitness(imp, bucket="close", parent=parent)
+
+    populations: list[set[str]] = []
+
+    def spy_decide(
+        lineages: dict[str, Any],
+        fingerprints: dict[str, Any],
+        fitnesses: dict[str, float],
+        *,
+        cap: int,
+        diversity_threshold: float,
+    ) -> Any:
+        from orchestrator.fingerprint import Fingerprint
+        from orchestrator.population import decide_extinctions
+
+        populations.append(set(lineages))
+        # The signals the EL.2 gauntlet writes from real SC2 games:
+        # identical vectors (distance 0.0 < threshold -> redundant) with
+        # the EXTINCT head strictly fitter, so the real decision function
+        # culls "main" as soon as "dead" is in the population.
+        return decide_extinctions(
+            lineages,
+            {
+                "v0": Fingerprint(version="v0", per_baseline={"b1": 0.10}),
+                "v9": Fingerprint(version="v9", per_baseline={"b1": 0.10}),
+            },
+            {"v0": 0.10, "v9": 0.90},
+            cap=cap,
+            diversity_threshold=diversity_threshold,
+        )
+
+    with caplog.at_level(logging.INFO, logger="evolve"):
+        rc = cli.run_loop(
+            args,
+            generate_pool_fn=refresh,
+            run_fitness_fn=recording_fitness,
+            stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError()
+            ),
+            run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError()
+            ),
+            decide_extinctions_fn=spy_decide,
+            current_version_fn=lambda: "v0",
+        )
+    assert rc == 0
+
+    # --- the drift itself: the extinct record never enters the population.
+    assert populations == [{"main"}, {"main"}], populations
+
+    # --- the consequence: the live lineage was NOT culled by a dead one.
+    persisted = load_lineages(registry_path)
+    assert set(persisted) == {"main", "dead"}, sorted(persisted)
+    assert persisted["main"].status == "active"
+    assert persisted["main"].head_version == "v0"
+    # The extinct record is preserved verbatim — neither revived nor
+    # deleted by the whole-file replace.
+    assert persisted["dead"].status == "extinct"
+    assert persisted["dead"].head_version == "v9"
+    assert persisted["dead"].pool_path == "data/evolve_pool_dead.json"
+    assert persisted["dead"].parent_chain == ["v0", "v9"]
+    assert persisted["dead"].created_at == _EH2_SEED_CREATED_AT
+
+    # --- and it was never SCHEDULED: no generation ran against its head.
+    assert set(fitness_parents) == {"v0"}, fitness_parents
+
+    # --- the startup log counts only the active lineage as engaged.
+    engaged = [
+        rec.getMessage()
+        for rec in caplog.records
+        if "multi-lineage scheduling engaged" in rec.getMessage()
+    ]
+    assert len(engaged) == 1, engaged
+    assert "across 1 lineage(s)" in engaged[0], engaged[0]
+    assert "main@v0" in engaged[0], engaged[0]
+    assert "dead" not in engaged[0], engaged[0]
+
+
+def test_all_extinct_registry_runs_single_lineage_and_warns(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """EH.2 non-resurrection, degenerate case: an all-extinct registry.
+
+    Nothing is schedulable, so the loop must take the single-lineage path
+    (no pointer flip, no round-robin) rather than resurrect the ring — and
+    must still PRESERVE the records, because the write-back is a
+    whole-file replace. A WARNING names them so the operator is not left
+    inferring a missing file from the absent "engaged" INFO line.
+    """
+    import orchestrator.lineages as lineages_mod
+    from orchestrator.lineages import Lineage, load_lineages, write_lineages
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+
+    flips: list[str] = []
+    monkeypatch.setattr(
+        cli, "_primitive_restore_pointer", lambda v: flips.append(v)
+    )
+
+    registry_path = tmp_path / "data" / "lineages.json"
+    write_lineages(
+        registry_path,
+        {
+            "line-2": Lineage(
+                lineage_id="line-2",
+                head_version="v8",
+                created_at=_EH2_SEED_CREATED_AT,
+                status="extinct",
+            ),
+            "line-3": Lineage(
+                lineage_id="line-3",
+                head_version="v9",
+                created_at=_EH2_SEED_CREATED_AT,
+                status="extinct",
+            ),
+        },
+    )
+
+    args = _build_args(tmp_path, pool_size=2, generations=1)
+    args.lineages = 2
+    args.population_cap = 1
+    pool = _make_pool(2)
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    fitness_parents: list[str] = []
+
+    def recording_fitness(parent: str, imp: Improvement, **k: Any) -> Any:
+        fitness_parents.append(parent)
+        return _fitness(imp, bucket="close", parent=parent)
+
+    # RECORD rather than raise: the extinction block wraps the decision
+    # call in ``except Exception`` and logs-and-continues, so a throwing
+    # stub here would be swallowed and assert nothing.
+    decide_calls: list[set[str]] = []
+
+    def recording_decide(lineages: dict[str, Any], *a: Any, **k: Any) -> Any:
+        from orchestrator.population import PopulationVerdict
+
+        decide_calls.append(set(lineages))
+        return PopulationVerdict(kept=list(lineages), culled=[])
+
+    with caplog.at_level(logging.INFO, logger="evolve"):
+        rc = cli.run_loop(
+            args,
+            generate_pool_fn=refresh,
+            run_fitness_fn=recording_fitness,
+            stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError()
+            ),
+            run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError()
+            ),
+            decide_extinctions_fn=recording_decide,
+            current_version_fn=lambda: "v0",
+        )
+    assert rc == 0
+    # No ring: the single-lineage path never flips the pointer, never
+    # measures a population against the cap, and the generation ran
+    # against the real current version rather than an extinct head.
+    assert flips == [], flips
+    assert decide_calls == [], decide_calls
+    assert set(fitness_parents) == {"v0"}, fitness_parents
+    assert not [
+        rec
+        for rec in caplog.records
+        if "multi-lineage scheduling engaged" in rec.getMessage()
+    ]
+    # The operator-facing warning names each id with its status.
+    warned = [
+        rec.getMessage()
+        for rec in caplog.records
+        if "holds no active record" in rec.getMessage()
+    ]
+    assert len(warned) == 1, warned
+    assert "line-2='extinct'" in warned[0], warned[0]
+    assert "line-3='extinct'" in warned[0], warned[0]
+    # Preserved on disk, unrevived.
+    persisted = load_lineages(registry_path)
+    assert set(persisted) == {"line-2", "line-3"}, sorted(persisted)
+    assert [lin.status for lin in persisted.values()] == [
+        "extinct",
+        "extinct",
+    ]
+    assert persisted["line-2"].head_version == "v8"
+    assert persisted["line-3"].head_version == "v9"
+
+
+def test_lineage_write_back_persist_failure_never_aborts_run(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """EH.2: a ``write_lineages`` failure is fail-soft — soak lives, no INFO.
+
+    The hop's stated guarantee. A disk failure at a generation boundary
+    (full volume, a file locked by ``--serve``, a permission change
+    mid-soak) must not abort a multi-hour run, must leave the file as it
+    was, and must emit NO success INFO line — that INFO is the operator's
+    only "it reached disk" evidence, so logging it for a write that never
+    landed is a false green.
+    """
+    import orchestrator.lineages as lineages_mod
+    from orchestrator.lineages import Lineage, write_lineages
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+
+    registry_path = tmp_path / "data" / "lineages.json"
+    write_lineages(
+        registry_path,
+        {
+            "main": Lineage(
+                lineage_id="main",
+                head_version="v0",
+                created_at=_EH2_SEED_CREATED_AT,
+            )
+        },
+    )
+    before = registry_path.read_bytes()
+
+    # Break the write only AFTER the seed exists. The hop imports
+    # ``write_lineages`` from the module inside its own try block, so the
+    # module attribute is what production code resolves at call time.
+    calls: list[int] = []
+
+    def exploding_write(*a: Any, **k: Any) -> None:
+        calls.append(1)
+        raise OSError("disk full (injected)")
+
+    monkeypatch.setattr(lineages_mod, "write_lineages", exploding_write)
+
+    args = _build_args(tmp_path, pool_size=2, generations=2)
+    # Engaged purely by the non-empty on-disk registry, not by the flag.
+    args.lineages = 1
+    pool = _make_pool(2)
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    fitness_parents: list[str] = []
+
+    def recording_fitness(parent: str, imp: Improvement, **k: Any) -> Any:
+        fitness_parents.append(parent)
+        return _fitness(imp, bucket="close", parent=parent)
+
+    with caplog.at_level(logging.INFO, logger="evolve"):
+        rc = cli.run_loop(
+            args,
+            generate_pool_fn=refresh,
+            run_fitness_fn=recording_fitness,
+            stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError()
+            ),
+            run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError()
+            ),
+            current_version_fn=lambda: "v0",
+        )
+
+    # The run completed through BOTH generation boundaries: the failure
+    # neither aborted the soak nor stopped the hop retrying next time.
+    assert rc == 0
+    assert len(calls) == 2, calls
+    assert set(fitness_parents) == {"v0"}, fitness_parents
+    # No success INFO for a write that never landed.
+    assert not [
+        rec
+        for rec in caplog.records
+        if "persisted lineage registry" in rec.getMessage()
+    ]
+    # The failure WAS surfaced, at ERROR, with a traceback.
+    failures = [
+        rec
+        for rec in caplog.records
+        if "failed to persist lineage registry" in rec.getMessage()
+    ]
+    assert len(failures) == 2, [rec.getMessage() for rec in failures]
+    assert all(rec.levelno == logging.ERROR for rec in failures), failures
+    assert all(rec.exc_info is not None for rec in failures), failures
+    # And the file on disk is untouched by the failed write.
+    assert registry_path.read_bytes() == before
+
+
+# ---------------------------------------------------------------------------
 # Phase EJ.2: null-diff screen (state bookkeeping + integration)
 # ---------------------------------------------------------------------------
 

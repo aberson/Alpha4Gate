@@ -3696,8 +3696,8 @@ def _record_parallel_failure(
 
 def _load_lineage_registry_if_engaged(
     lineages_arg: int,
-) -> dict[str, Lineage]:
-    """Return the lineage registry IFF multi-lineage scheduling is engaged.
+) -> tuple[dict[str, Lineage], bool]:
+    """Return ``(registry, from_disk)`` IFF multi-lineage scheduling is on.
 
     Engaged when ``--lineages > 1`` OR a non-empty ``data/lineages.json``
     exists. In that case the effective registry (implicit ``main`` when the
@@ -3711,6 +3711,19 @@ def _load_lineage_registry_if_engaged(
     implicit ``main`` lineage built inline (see below) — deliberately NOT
     re-reading via ``load_or_default_lineages``, which would raise again on
     the same malformed file.
+
+    The second tuple element is ``True`` only when a non-empty registry was
+    actually **read from disk** — it is captured from the load result
+    before the registry can be mutated anywhere downstream (the cull site
+    in ``run_loop`` pops culled ids out of it). It exists because the
+    returned dict alone cannot distinguish an on-disk registry from the
+    implicit ``main`` synthesized below, and the generation-boundary
+    write-back (Phase EH Step EH.2) **must not fire** for a synthesized
+    one: doing so would CREATE or OVERWRITE ``data/lineages.json`` for a
+    ``--lineages > 1`` run whose registry is absent or malformed,
+    destroying a hand-authored file and permanently engaging multi-lineage
+    scheduling for every later bare invocation. See
+    ``documentation/plans/evolve-operational-hardening-plan.md`` §6 D-2.
     """
     from orchestrator.lineages import (
         DEFAULT_LINEAGE_ID,
@@ -3732,12 +3745,16 @@ def _load_lineage_registry_if_engaged(
         )
         on_disk = {}
 
+    # Capture the from-disk fact HERE, off the raw load result and before
+    # anything can mutate the registry (EH.2 gate; see the docstring).
+    from_disk = bool(on_disk)
+
     if lineages_arg <= 1 and not on_disk:
         # Default path: --lineages 1 and no registry → single-lineage.
-        return {}
+        return {}, from_disk
 
     if on_disk:
-        return on_disk
+        return on_disk, from_disk
     # --lineages > 1 but no (or malformed) registry → implicit single
     # ``main`` lineage. Build it inline rather than re-reading the file:
     # ``load_or_default_lineages`` would call ``load_lineages`` a second
@@ -3748,7 +3765,7 @@ def _load_lineage_registry_if_engaged(
             lineage_id=DEFAULT_LINEAGE_ID,
             head_version=head,
         )
-    }
+    }, from_disk
 
 
 # ---------------------------------------------------------------------------
@@ -4171,9 +4188,37 @@ def run_loop(
     # single-lineage code path. Multi-lineage scheduling engages ONLY when
     # --lineages > 1 OR a non-empty registry exists on disk.
     _lineage_heads: dict[str, str] = {}
+    # The persist bucket for every NON-ACTIVE record (EH.2): the ones
+    # culled at this run's cull site, plus the ones already carrying a
+    # non-active status when the registry was read from disk (partitioned
+    # out just below). Declared OUTSIDE the generation loop so it
+    # accumulates across generations: ``write_lineages`` is a whole-file
+    # replace, so a record dropped from the payload is deleted from disk.
+    _extinct_lineages: dict[str, Lineage] = {}
     _last_lineage_id: str | None = None
     _lineages_arg = int(getattr(args, "lineages", 1) or 1)
-    _lineages_registry = _load_lineage_registry_if_engaged(_lineages_arg)
+    # ``_registry_from_disk`` gates the generation-boundary write-back: a
+    # synthesized implicit ``main`` must never be written to disk (EH.2).
+    _lineages_registry, _registry_from_disk = (
+        _load_lineage_registry_if_engaged(_lineages_arg)
+    )
+    # Partition the loaded registry by status ONCE, right here, so every
+    # downstream consumer sees a uniformly-ACTIVE ``_lineages_registry`` /
+    # ``_lineage_heads`` pair and no consumer has to re-derive the filter:
+    # ``next_lineage`` scheduling, the ``--population-cap`` live set, and
+    # the generation-boundary write-back payload. EH.2 made this loop the
+    # PRODUCER of persisted ``status="extinct"`` records, so a restart
+    # reads them back; seeding the head map from every record would
+    # round-robin them again AND count them toward ``--population-cap``
+    # (``decide_extinctions`` is status-agnostic — it culls from whatever
+    # population it is handed), letting a genuinely live lineage be culled
+    # in a dead one's place. Non-active records are MOVED into
+    # ``_extinct_lineages``, never dropped: the write-back is a whole-file
+    # replace, so a record missing from the payload is deleted from disk.
+    for _stale_lid in [
+        lid for lid, lin in _lineages_registry.items() if lin.status != "active"
+    ]:
+        _extinct_lineages[_stale_lid] = _lineages_registry.pop(_stale_lid)
     if _lineages_registry:
         _lineage_heads = {
             lid: lin.head_version for lid, lin in _lineages_registry.items()
@@ -4184,6 +4229,22 @@ def run_loop(
             len(_lineage_heads),
             ", ".join(
                 f"{lid}@{head}" for lid, head in _lineage_heads.items()
+            ),
+        )
+    elif _extinct_lineages:
+        # Registry present but holding no active record: there is nothing
+        # to round-robin, so the loop takes the single-lineage path and the
+        # write-back below still preserves the non-active records. Say so
+        # at WARNING — otherwise a registry on disk silently stops
+        # scheduling and the operator reads the absence of the "engaged"
+        # INFO line as a missing file.
+        _log.warning(
+            "evolve: lineage registry holds no active record (%s); running "
+            "single-lineage and leaving the record(s) on disk untouched "
+            "apart from their heads",
+            ", ".join(
+                f"{lid}={lin.status!r}"
+                for lid, lin in sorted(_extinct_lineages.items())
             ),
         )
 
@@ -5175,11 +5236,23 @@ def run_loop(
             # in-memory heads. fitnesses / fingerprints are keyed by VERSION;
             # a lineage head never gauntleted yet is simply absent, so
             # decide_extinctions treats it as unassessable (never culled).
-            from orchestrator.lineages import Lineage as _Lineage
-
+            #
+            # Derived from the REGISTRY record via ``dataclasses.replace``,
+            # NEVER a fresh ``Lineage(lineage_id=..., head_version=...)``:
+            # ``Lineage.status`` defaults to ``"active"``, so a fabricated
+            # object relabels whatever it was built from and would undo the
+            # load-time status partition even if the head map were clean.
+            # ``_lineages_registry`` is active-only (partitioned before the
+            # loop; culled ids popped from both dicts in step), so this set
+            # is exactly the live population ``cap`` is measured against —
+            # ``decide_extinctions`` is status-agnostic and counts every
+            # key it is handed.
             _live_lineages = {
-                lid: _Lineage(lineage_id=lid, head_version=head)
+                lid: dataclasses.replace(
+                    _lineages_registry[lid], head_version=head
+                )
                 for lid, head in _lineage_heads.items()
+                if lid in _lineages_registry
             }
             try:
                 _verdict = _decide_fn(
@@ -5197,6 +5270,23 @@ def run_loop(
                 )
             else:
                 for _cull in _verdict.culled:
+                    # Snapshot the culled record BEFORE the pops below:
+                    # ``:_lineages_registry.pop`` removes it, so the
+                    # generation-boundary write-back could not otherwise see
+                    # it and the whole-file replace would delete it from
+                    # disk. ``_cull.head_version`` (not the registry's seed
+                    # head) because ``_lineages_registry`` is loaded once
+                    # and never advanced — a seed head here would
+                    # contradict the extinction row written just below.
+                    _culled_record = _lineages_registry.get(_cull.lineage_id)
+                    if _culled_record is not None:
+                        _extinct_lineages[_cull.lineage_id] = (
+                            dataclasses.replace(
+                                _culled_record,
+                                head_version=_cull.head_version,
+                                status="extinct",
+                            )
+                        )
                     # Drop the culled lineage from the in-memory schedule so
                     # it stops being round-robined; the registry copy used by
                     # next_lineage is the live driver.
@@ -5228,6 +5318,81 @@ def run_loop(
         gen_durations_seconds.append(
             max(0.0, time_fn() - gen_start_monotonic)
         )
+
+        # --- Lineage registry write-back (Phase EH Step EH.2) ---
+        # The ONE persist hop for lineage state. Placed AFTER the duration
+        # append on purpose: ahead of it, the registry write's disk I/O
+        # would be charged to the reported generation duration the
+        # dashboard uses for its time-remaining range (see the
+        # ``write_run_state`` docstring).
+        #
+        # Gated on ``_registry_from_disk``, NOT merely on
+        # ``_lineage_heads`` being non-empty: with ``--lineages > 1`` and
+        # an absent or malformed registry the loader synthesizes an
+        # implicit ``main``, which makes a bare ``if _lineage_heads:``
+        # truthy and would CREATE or OVERWRITE ``data/lineages.json`` —
+        # destroying a hand-authored file, permanently engaging
+        # multi-lineage scheduling for every later bare invocation
+        # (``--lineages`` has no off-switch once a non-empty registry
+        # exists), and leaving the end-of-run pointer flip to a stale
+        # recorded head. A default ``--lineages 1`` run therefore stays
+        # byte-identical and creates no file.
+        #
+        # The payload MERGES the live heads onto the loaded records via
+        # ``dataclasses.replace`` — never a naive ``_lineages_registry``
+        # write, which would persist the stale seed ``head_version`` and
+        # fix nothing — so operator-authored ``pool_path`` /
+        # ``parent_chain`` / ``created_at`` survive. It is the UNION of the
+        # live records and ``_extinct_lineages``, because
+        # ``write_lineages`` is a whole-file replace: any key missing from
+        # the payload is deleted from disk.
+        #
+        # ``write_lineages`` rebuilds the entire file and
+        # ``_lineages_registry`` is loaded once before the loop and never
+        # re-read, so this is last-writer-wins: a ``scripts/lineage.py
+        # add/remove`` run mid-soak is reverted at the next generation
+        # boundary. Mutate the registry only while no evolve run is active.
+        if (_lineage_heads or _extinct_lineages) and _registry_from_disk:
+            try:
+                from orchestrator.lineages import (
+                    default_lineages_path,
+                    write_lineages,
+                )
+
+                _persist_payload: dict[str, Lineage] = {
+                    lid: dataclasses.replace(
+                        _lineages_registry[lid], head_version=head
+                    )
+                    for lid, head in _lineage_heads.items()
+                    if lid in _lineages_registry
+                }
+                _persist_payload.update(_extinct_lineages)
+                write_lineages(default_lineages_path(), _persist_payload)
+            # A disk failure must never abort a soak; the in-memory dicts
+            # stay authoritative.
+            except Exception:  # noqa: BLE001
+                _log.exception(
+                    "evolve: failed to persist lineage registry at the gen "
+                    "%d boundary; in-memory heads still drive scheduling",
+                    generation_index,
+                )
+            else:
+                # Exactly one INFO line per successful persist. Without it
+                # the hop leaves no per-boundary trace at all (the writer
+                # is a whole-file replace, so a post-hoc artifact shows
+                # only the final payload and one mtime).
+                _log.info(
+                    "evolve: persisted lineage registry at gen %d boundary "
+                    "— %s",
+                    generation_index,
+                    ", ".join(
+                        f"{lid}@{lin.head_version}"
+                        + ("" if lin.status == "active" else f" [{lin.status}]")
+                        for lid, lin in _persist_payload.items()
+                    )
+                    or "(empty)",
+                )
+
         generations_completed += 1
 
         # Summarise the generation for the run-log markdown. A panel-floor

@@ -8,7 +8,9 @@ at a tmp tree so no test touches the real ``data/`` dir.
 
 from __future__ import annotations
 
+import dataclasses
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -169,6 +171,76 @@ def test_next_lineage_single_lineage_returns_itself() -> None:
 def test_next_lineage_empty_registry_raises() -> None:
     with pytest.raises(ValueError, match="empty"):
         next_lineage({}, None)
+
+
+def test_next_lineage_skips_extinct_records() -> None:
+    """Phase EH.2: a persisted ``status="extinct"`` record is never scheduled.
+
+    The generation-boundary write-back persists culled lineages rather than
+    dropping them (plan §6 D-3), so without this filter a restart would
+    resurrect an extinct lineage into the round-robin.
+    """
+    registry = {
+        "main": _make_lineage("main", "v0"),
+        "line-2": dataclasses.replace(
+            _make_lineage("line-2", "v8"), status="extinct"
+        ),
+        "line-3": _make_lineage("line-3", "v9"),
+    }
+    assert next_lineage(registry, None) == "main"
+    assert next_lineage(registry, "main") == "line-3"
+    # Wrap skips the extinct record entirely.
+    assert next_lineage(registry, "line-3") == "main"
+    # An extinct id handed in as *last_id* is not a member of the active
+    # ring, so the scheduler restarts at the first active lineage rather
+    # than raising from ``list.index``.
+    assert next_lineage(registry, "line-2") == "main"
+
+
+def test_next_lineage_all_extinct_falls_back_and_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An all-extinct registry degrades to scheduling, never to a crash.
+
+    Phase EH.2 clause (7). ``next_lineage``'s in-loop call site
+    (``scripts/evolve.py``'s generation loop) reaches this helper with
+    whatever the registry holds, so an all-extinct on-disk registry must
+    fall back to every id and warn rather than abort the next run. (The
+    call site gained a status partition upstream in EH.2 iteration 2; this
+    fallback remains the defence-in-depth guarantee of the helper itself.)
+    """
+    registry = {
+        "main": dataclasses.replace(
+            _make_lineage("main", "v0"), status="extinct"
+        ),
+        "line-2": dataclasses.replace(
+            _make_lineage("line-2", "v8"), status="extinct"
+        ),
+    }
+    with caplog.at_level(logging.WARNING, logger="orchestrator.lineages"):
+        first = next_lineage(registry, None)
+    assert first == "main"
+    warnings = [
+        rec.getMessage()
+        for rec in caplog.records
+        if rec.levelno == logging.WARNING
+    ]
+    # Pin the ACTUAL text, not a hedged disjunction: a two-arm `or` whose
+    # first arm can never match passes on the loose second arm and asserts
+    # nothing about the warning contract.
+    assert any(
+        "none of the 2 registered lineage(s) is active" in msg
+        for msg in warnings
+    ), warnings
+    # The warning must also name each id with its status so the operator
+    # can see WHY nothing was schedulable.
+    assert any(
+        "main='extinct'" in msg and "line-2='extinct'" in msg
+        for msg in warnings
+    ), warnings
+    # The fallback ring still round-robins across every id.
+    assert next_lineage(registry, "main") == "line-2"
+    assert next_lineage(registry, "line-2") == "main"
 
 
 def test_next_lineage_preserves_insertion_order() -> None:

@@ -131,7 +131,17 @@ def main(argv: list[str] | None = None) -> int:
         try:
             # Probed before the write, and only for the default path, since
             # that is the only target the engagement note applies to.
-            dormant = args.path is None and not load_lineages(path)
+            #
+            # "Dormant" means nothing would be SCHEDULED, not merely that
+            # the file is absent or empty: ``scripts/evolve.py`` partitions
+            # non-active records out before its generation loop, so a
+            # registry holding only ``status="extinct"`` records schedules
+            # nothing and THIS ``add`` is the call that re-engages
+            # multi-lineage scheduling. Keying the note off emptiness alone
+            # would suppress it exactly then.
+            dormant = args.path is None and not any(
+                lin.status == "active" for lin in load_lineages(path).values()
+            )
             lineage = register_lineage(path, args.lineage_id, args.head_version)
         except _REGISTRY_ERRORS as exc:
             print(f"error: {exc}", file=sys.stderr)

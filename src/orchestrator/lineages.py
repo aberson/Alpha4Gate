@@ -43,7 +43,8 @@ Public surface
   ``lineage_id`` slug and the ``head_version`` before any write.
 - :func:`load_or_default_lineages` — read the registry, falling back to a
   single implicit ``main`` lineage when absent/empty.
-- :func:`next_lineage` — deterministic round-robin scheduler.
+- :func:`next_lineage` — deterministic round-robin scheduler over the
+  ``status == "active"`` records only.
 - :func:`default_lineages_path` — the canonical ``data/lineages.json`` path.
 """
 
@@ -387,18 +388,60 @@ def next_lineage(
 ) -> str:
     """Return the lineage_id to schedule after *last_id* (round-robin).
 
-    Ordering is the registry's insertion order (``dict`` iteration order,
-    which mirrors the on-disk JSON key order). The scheduler wraps: the
-    successor of the last id is the first id. When *last_id* is ``None`` or
-    not present in the registry, the first lineage is returned.
+    Only ``status == "active"`` records are scheduled. The evolve loop
+    persists culled lineages as ``status="extinct"`` at the generation
+    boundary (Phase EH Step EH.2), so without this filter a restart would
+    resurrect an extinct lineage into the round-robin — see
+    ``documentation/plans/evolve-operational-hardening-plan.md`` §6 D-3.
+
+    Ordering is the iteration order of *registry* **restricted to its
+    active records**, and that is NOT interchangeable with insertion
+    order:
+
+    - a registry read back from disk iterates **alphabetically** by
+      ``lineage_id``, because :func:`write_lineages` serializes with
+      ``json.dumps(..., sort_keys=True)`` and :func:`load_lineages`
+      preserves the file's key order;
+    - a registry built in memory iterates in that dict's **insertion**
+      order.
+
+    The two coincide only when the in-memory dict happens to already be
+    sorted, so a caller holding a round-tripped registry must not reason
+    about insertion order (the evolve loop's own lineage tests pin the
+    alphabetical schedule this produces).
+
+    The scheduler wraps: the successor of the last id is the first id.
+    When *last_id* is ``None``, absent from *registry*, or present but not
+    itself active, the first active lineage is returned.
+
+    When *registry* is non-empty but holds no active record, **every** id
+    is scheduled as a fallback and a WARNING is emitted — degrade, never
+    crash, rather than raising the ``ValueError`` below on a caller that
+    has no guard. That fallback is a guard for arbitrary callers,
+    not the evolve loop's path: ``scripts/evolve.py`` partitions
+    non-active records out of its registry BEFORE the generation loop and
+    skips lineage scheduling entirely when nothing is active, so it never
+    hands this function an all-extinct registry. Scheduling every id would
+    otherwise be a resurrection, which is exactly what the active filter
+    exists to prevent.
 
     Raises:
         ValueError: if *registry* is empty.
     """
-    ids = list(registry.keys())
-    if not ids:
+    if not registry:
         raise ValueError("next_lineage: registry is empty")
-    if last_id is None or last_id not in registry:
+    ids = [k for k, v in registry.items() if v.status == "active"]
+    if not ids:
+        _log.warning(
+            "next_lineage: none of the %d registered lineage(s) is active "
+            "(%s); scheduling all of them so the run can proceed",
+            len(registry),
+            ", ".join(
+                f"{k}={v.status!r}" for k, v in registry.items()
+            ),
+        )
+        ids = list(registry.keys())
+    if last_id is None or last_id not in ids:
         return ids[0]
     pos = ids.index(last_id)
     return ids[(pos + 1) % len(ids)]

@@ -106,7 +106,7 @@ lineages under a cap of three culls nothing, ever.
 **Blocker B — `--lineages N` does not create N lineages.** This is the real problem, and the
 obvious fix for blocker A does not survive it. The flag only *engages* multi-lineage scheduling;
 the lineage set comes entirely from `data/lineages.json`, which is **absent**. With no registry,
-`_load_lineage_registry_if_engaged` (`scripts/evolve.py:3697`, returning at `:3744-3751`) hands
+`_load_lineage_registry_if_engaged` (`scripts/evolve.py:3697`, returning at `:3758-3768`) hands
 back a single implicit `main` lineage headed at the current version, for **any** value of
 `--lineages`:
 
@@ -114,7 +114,12 @@ back a single implicit `main` lineage headed at the current version, for **any**
     # --lineages > 1 but no (or malformed) registry -> implicit single
     # ``main`` lineage.
     head = current_version()
-    return {DEFAULT_LINEAGE_ID: Lineage(lineage_id=DEFAULT_LINEAGE_ID, head_version=head)}
+    return {
+        DEFAULT_LINEAGE_ID: Lineage(
+            lineage_id=DEFAULT_LINEAGE_ID,
+            head_version=head,
+        )
+    }, from_disk
 ```
 
 So `--lineages 4 --population-cap 3` still yields `len(lineages) == 1 <= cap == 3`, still hits
