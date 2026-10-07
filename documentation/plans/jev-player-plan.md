@@ -157,7 +157,7 @@ Phase JV owns numeric Steps 201-208, newly reserved in the master plan. All are 
 
 - **Problem:** Make the real Jev CLI validate packaged graph definitions and execute deterministic observation scenarios through the production interpreter.
 - **Type:** code
-- **Status:** PENDING
+- **Status:** BLOCKED (2026-10-07)
 - **Issue:** #318
 - **Flags:** --reviewers deep
 - **Files:** `src/jev/contracts.py`, `policy.py`, `runtime.py`, `operations.py`; `bots/jev/v1` package and initial policy/manifest; `pyproject.toml`; `tests/test_jev_policy.py`, `tests/test_jev_runtime.py`.
