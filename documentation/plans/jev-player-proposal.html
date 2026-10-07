@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Jev v1 — player and viewer proposal</title>
+<style>
+:root{color-scheme:light dark;--bg:#f4f5f7;--paper:#fff;--ink:#192331;--muted:#536174;--line:#d9dfe7;--accent:#235cc7;--picked:#176447;--default:#875614}
+@media(prefers-color-scheme:dark){:root{--bg:#10151d;--paper:#19212d;--ink:#e8eef8;--muted:#afbdd0;--line:#37465a;--accent:#9bbfff;--picked:#8edbb1;--default:#f1c97e}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.6 system-ui,sans-serif}main{max-width:1040px;margin:auto;padding:48px 24px}h1{font-size:clamp(2.3rem,6vw,4rem);line-height:1.08;margin:12px 0 20px}h2{margin:44px 0 16px;line-height:1.25}h3{margin-top:0}a{color:var(--accent)}.eyebrow,.muted{color:var(--muted)}.card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:24px;margin:16px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}.grid .card{margin:0}.badge{font-weight:750;font-size:.85rem}.p{color:var(--picked)}.d{color:var(--default)}code{font-size:.9em;overflow-wrap:anywhere}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:12px 10px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted)}.table{overflow:auto}li{margin:8px 0}.flow{display:flex;flex-wrap:wrap;gap:10px;align-items:center}.flow span{padding:10px 14px;border:1px solid var(--line);border-radius:8px}footer{margin-top:44px;border-top:1px solid var(--line);padding-top:20px;font-size:.9rem}a:focus-visible{outline:3px solid var(--accent);outline-offset:4px}@media print{:root{--bg:white;--paper:white;--ink:black;--muted:#333;--line:#aaa;--accent:#17467e;--picked:#164b32;--default:#634110}main{max-width:none;padding:0}body{font-size:11pt}.card,tr{break-inside:avoid}h2,h3{break-after:avoid}a{color:inherit}h1{font-size:30pt}}
+</style>
+</head>
+<body><main>
+<header><p class="eyebrow">ALPHA4GATE / PHASE JV / PROPOSAL 1 / 7 OCTOBER 2026</p>
+<h1>Four Gateways.<br>One inspectable player.</h1>
+<p>Jev v1 plays a complete Zealot rush using a decision graph. Watch what it chooses, what it is waiting for, and whether its actions actually succeed.</p>
+<p class="muted">Planning complete; implementation and live acceptance have not started. The <a href="jev-player-plan.md">build plan</a> is the source of truth.</p></header>
+
+<section aria-labelledby="heard"><h2 id="heard">What I heard</h2>
+<div class="card"><p>LLMs can build and revise the player between games. During a match, Jev itself evaluates game facts and executes its graph, without live LLM calls or an RL policy.</p>
+<p>Start basic: one Protoss base, four Gateways, first attack at <strong>four Zealots</strong>, then continuous reinforcements. Jev owns every gameplay decision. First prove the player and dashboard work; connect evolution afterward.</p></div></section>
+
+<section aria-labelledby="shape"><h2 id="shape">Why this shape</h2>
+<div class="flow" aria-label="Runtime flow"><span>SC2 facts</span><b aria-hidden="true">→</b><span>Executable graph</span><b aria-hidden="true">→</b><span>Explicit commands</span><b aria-hidden="true">→</b><span>Observed results</span></div>
+<p>Economy, construction, production and army branches each get execution time. Waiting for minerals cannot freeze combat. Commands retain their originating node ID; the dashboard shows the same archived graph the match used.</p>
+<p>Existing scripted gameplay routines will not secretly run Jev. Shared operations answer factual questions and carry out explicit commands.</p></section>
+
+<section aria-labelledby="timeline"><h2 id="timeline">Build sequence</h2>
+<div class="table"><table><thead><tr><th>Step</th><th>Deliverable</th><th>Evidence of completion</th></tr></thead><tbody>
+<tr><td>201</td><td>Policy runtime</td><td>Valid graph executes; malformed graphs fail clearly; no lane starvation.</td></tr>
+<tr><td>202</td><td>Four-Gateway economy</td><td>Graph chooses workers, buildings and production; commands have acknowledgement and recovery.</td></tr>
+<tr><td>203</td><td>Complete rush</td><td>Four-Zealot attack, reinforcement, defense and enemy search.</td></tr>
+<tr><td>204</td><td>Run evidence</td><td>Policy, trace and result agree across game process and dashboard API.</td></tr>
+<tr><td>205</td><td>Jev dashboard</td><td>Inspect graph nodes, live/waiting branches, failures and finished runs.</td></tr>
+<tr><td>206</td><td>Validation workflow</td><td>Documented launch/stop process and executable evidence checker.</td></tr>
+<tr><td>207</td><td>Real smoke</td><td>60 seconds of actual SC2 through graph, disk, API and browser.</td></tr>
+<tr><td>208</td><td>Full-match acceptance</td><td>Three complete matches with trace and observed rush behavior.</td></tr>
+</tbody></table></div>
+<p><strong>Afterwards:</strong> In the Alpha4Gate repository, run <code>/plan-expedite --plan documentation/plans/jev-player-plan.md</code> for issue preparation, then <code>/build-phase --plan documentation/plans/jev-player-plan.md</code> after READY. No games were launched by planning.</p></section>
+
+<section aria-labelledby="choices"><h2 id="choices">Your choices</h2>
+<ul><li id="P1"><span class="badge p">P1</span> Independent Jev player family and version history.</li>
+<li id="P2"><span class="badge p">P2</span> LLM authors between games; Jev executes during games.</li>
+<li id="P3"><span class="badge p">P3</span> Jev owns all gameplay choices from its first version.</li>
+<li id="P4"><span class="badge p">P4</span> One-base, four-Gateway Zealot rush.</li>
+<li id="P5"><span class="badge p">P5</span> Attack at four Zealots and keep reinforcing.</li>
+<li id="P6"><span class="badge p">P6</span> Working player/viewer first; evolution later.</li>
+<li id="P7"><span class="badge p">P7</span> Dashboard first; graph beside the SC2 window later.</li>
+<li id="P8"><span class="badge p">P8</span> Inspect executable decisions and detect lack of progress.</li></ul></section>
+
+<section aria-labelledby="defaults"><h2 id="defaults">Implementation defaults</h2><p>These are agent-selected choices, not additional requirements attributed to you.</p>
+<div class="grid">
+<article class="card" id="D1"><h3><span class="badge d">D1</span> Separate package</h3><p><strong>What:</strong> <code>bots/jev/v1</code> with display name <code>v1.jev</code>; retain existing legacy IDs.</p><p><strong>Why:</strong> Prove the player before broad version-registry migration.</p><p><strong>Tweak:</strong> Timing and scope of family naming integration.</p></article>
+<article class="card" id="D2"><h3><span class="badge d">D2</span> Bounded behavior graph</h3><p><strong>What:</strong> JSON hierarchy with explicit operations, task state and nonblocking roots.</p><p><strong>Why:</strong> Inspectable execution with structural validation and finite per-tick work.</p><p><strong>Tweak:</strong> Node grammar, decision cadence and execution limits.</p></article>
+<article class="card" id="D3"><h3><span class="badge d">D3</span> Simple gameplay</h3><p><strong>What:</strong> 16 probes, no gas or upgrades, basic defense and search.</p><p><strong>Why:</strong> Small complete strategy that leaves failure explanations understandable.</p><p><strong>Tweak:</strong> Worker target, build priorities and defense distance.</p></article>
+<article class="card" id="D4"><h3><span class="badge d">D4</span> Confirm results</h3><p><strong>What:</strong> Observe action outcomes, limit retries and replan stalled tasks.</p><p><strong>Why:</strong> Sending a build command is not proof that construction started.</p><p><strong>Tweak:</strong> Retry count, deadlines and cooldowns.</p></article>
+<article class="card" id="D5"><h3><span class="badge d">D5</span> Read-only dashboard</h3><p><strong>What:</strong> Archived policy, bounded trace, atomic state snapshots and SVG graph inspection.</p><p><strong>Why:</strong> Reuse the dashboard without coupling game execution to the browser.</p><p><strong>Tweak:</strong> Trace retention and inspection presentation.</p></article>
+<article class="card" id="D6"><h3><span class="badge d">D6</span> Functional acceptance</h3><p><strong>What:</strong> Simple64 versus easy Terran, real smoke then three matches. Wins recorded, not required.</p><p><strong>Why:</strong> Establish correct gameplay and useful evidence before tuning strength.</p><p><strong>Tweak:</strong> Opponent, map, match limits and benchmark requirements.</p></article>
+</div></section>
+
+<section aria-labelledby="excluded"><h2 id="excluded">Not in v1</h2><p>Automated evolution or promotion; cross-family ladder matches; expansion or advanced units; graph editing in the browser; live LLM advice; graph embedded in the themed game window. The latter remains an explicit enhancement.</p></section>
+
+<section aria-labelledby="risks"><h2 id="risks">Risks to test</h2><ul>
+<li>A valid graph can still make poor strategic choices. Progress checks and match limits expose this; they cannot prove winning behavior.</li>
+<li>SC2 command timing and placement can fail. Tasks must confirm outcomes and recover from lost actors or rejected commands.</li>
+<li>The dashboard backend follows the current bot version. Its Jev route mount must survive future pointer migrations.</li>
+<li>SC2 must actually run for acceptance. Unit tests and fixture screenshots cannot replace the live smoke and complete matches.</li>
+</ul></section>
+
+<footer><h2>Feedback and source</h2><p>Use stable decision IDs, for example <code>D3 → 18 probes</code> or <code>D6 → test against Protoss</code>. These defaults stand unless changed; no additional approval is needed to retain them.</p><p><a href="jev-player-plan.md">Canonical plan</a> · <a href="jev-player-review.md">Technical review</a> · <a href="jev-player-wrap.md">Fresh-context check</a> · <a href="../master_plan.md">Master plan</a></p><p class="muted">Publication 1. Operator choices and default IDs remain stable in later revisions.</p></footer>
+</main></body></html>
