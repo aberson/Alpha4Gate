@@ -22,7 +22,7 @@ Created one umbrella and eight steps; enriched zero; updated umbrella checklist;
 
 ## Build boundary
 
-Run in `C:\Users\abero\dev\Alpha4Gate`. Begin with Step 201; no Jev implementation has run. Do not auto-run operator Steps 207/208. Do not resume the prior EH task simply because older state mentions it. EH.3-EH.10 remain separate unfinished work (#308-#315), as do EV live gates.
+Run in `C:\Users\x\dev\Alpha4Gate`. Begin with Step 201; no Jev implementation has run. Do not auto-run operator Steps 207/208. Do not resume the prior EH task simply because older state mentions it. EH.3-EH.10 remain separate unfinished work (#308-#315), as do EV live gates.
 
 ```text
 /goal "Jev Phase JV automated Steps 201-206 are all marked Status: DONE in documentation/plans/jev-player-plan.md (issues #318-#323 closed), and uv run pytest / uv run mypy src bots --strict / uv run ruff check . plus frontend npm run test:run / npm run lint / npm run build exit 0. STOP before operator Steps 207-208 (issues #324-#325); those are an operator handoff, not part of this goal."

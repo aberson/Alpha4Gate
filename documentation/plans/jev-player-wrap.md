@@ -76,6 +76,6 @@ None.
 
 Plan-expedite rerun 2026-10-07: repeated the full 13-section check after Step 204 gained API/dashboard browser-smoke acceptance. No remaining blockers or gaps; all steps still pending. Technical review precedes unchanged decision-inventory/proposal verification, then this wrap. Issue sync may now proceed.
 
-Next: repo-sync for this plan in `C:\Users\abero\dev\Alpha4Gate`, then build-phase after populated issue fields and durable handoff.
+Next: repo-sync for this plan in `C:\Users\x\dev\Alpha4Gate`, then build-phase after populated issue fields and durable handoff.
 
 READY
