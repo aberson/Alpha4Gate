@@ -8,7 +8,7 @@ Single spine for the project. Status as of 2026-09-04. Each phase's narrative li
 
 | Sub-plan | Phase | Status / remaining work |
 |---|---|---|
-| [jev-player-plan.md](plans/jev-player-plan.md) | JV | PLANNED 2026-10-07: independent graph-controlled four-Gateway Zealot player plus dashboard viewer; Steps 201-208 reserved; evolution and themed-window embedding deferred. [Proposal](plans/jev-player-proposal.html) |
+| [jev-player-plan.md](plans/jev-player-plan.md) | JV | READY FOR BUILD 2026-10-07: umbrella #317, Steps 201-208 (#318-#325); automated build stops after 206, before live operator gates. Independent graph-controlled four-Gateway Zealot player plus dashboard viewer; evolution and themed-window embedding deferred. [Proposal](plans/jev-player-proposal.html) |
 | [phase-d-build-plan.md](plans/phase-d-build-plan.md) | D | Automated build COMPLETE (incl. snapshot-counts follow-up); **M1/M2 operator validation pending** |
 | [evolution-lines-plan.md](plans/evolution-lines-plan.md) | EL | EL.1-EL.6 shipped 2026-06-20 (#273-#278 closed; EL.6 real-SC2 smoke PASS); **EL.7 soak (#279) operator-pending** |
 | [phase-6-build-plan.md](plans/phase-6-build-plan.md) | 6 | Self-play-driven improvement loop - planned |
@@ -48,7 +48,7 @@ Phases A and 0 (completed 2026-04-15/16) and earlier pre-master-plan work are do
 
 ## Phase JV — Jev player and dashboard viewer
 
-**Status:** PLANNED (2026-10-07), 0 of 8 steps implemented. **Objective:** prove a complete graph-controlled player and inspect its live decisions before connecting it to evolution. The initial policy is a one-base four-Gateway Zealot rush, attacking with four Zealots and continuously reinforcing. LLMs author the graph between matches; Jev owns gameplay without live LLM or RL decisions.
+**Status:** READY FOR BUILD (2026-10-07), 0 of 8 steps implemented. Reviews complete; umbrella #317 and step issues #318-#325 synced and verified. **Objective:** prove a complete graph-controlled player and inspect its live decisions before connecting it to evolution. The initial policy is a one-base four-Gateway Zealot rush, attacking with four Zealots and continuously reinforcing. LLMs author the graph between matches; Jev owns gameplay without live LLM or RL decisions.
 
 Build plan: [jev-player-plan.md](plans/jev-player-plan.md). This new phase reserves numeric **Steps 201-208**; prior phase numbering is unchanged. Acceptance requires a real pipeline smoke followed by three observed full matches. The graph embedded beside SC2 remains a later enhancement. Family storage and other agent defaults are explicit in the [proposal](plans/jev-player-proposal.html).
 

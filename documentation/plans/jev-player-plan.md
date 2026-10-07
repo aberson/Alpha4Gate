@@ -1,6 +1,6 @@
 # Phase JV: Jev player and decision-graph viewer
 
-Status: PLANNED. Authored 2026-10-07 against HEAD `f42b9b6`; no implementation or live validation has occurred.
+Status: READY FOR BUILD. Umbrella #317; automated issues #318-#323; operator gates #324-#325. Authored 2026-10-07 against HEAD `f42b9b6`; no implementation or live validation has occurred.
 
 ## 1. What This Is
 
@@ -151,14 +151,14 @@ One manually invoked match is not a new unattended evolution service. Neverthele
 
 ## 7. Build Steps
 
-Phase JV owns numeric Steps 201-208, newly reserved in the master plan. All are pending. Issue fields intentionally remain blank until repo-sync. Execute in order through build-step review gates; each step has a production caller and its own acceptance. Re-read source anchors before edits. Runtime-review startup below is from repository root; honor the existing Windows backend/worktree launch constraints and never reuse a stale backend as evidence of a changed checkout.
+Phase JV owns numeric Steps 201-208, newly reserved in the master plan. All are pending. Issue fields populated by repo-sync on 2026-10-07 (umbrella #317). Execute in order through build-step review gates; each step has a production caller and its own acceptance. Re-read source anchors before edits. Runtime-review startup below is from repository root; honor the existing Windows backend/worktree launch constraints and never reuse a stale backend as evidence of a changed checkout.
 
 ### Step 201: Validate and execute a bounded policy
 
 - **Problem:** Make the real Jev CLI validate packaged graph definitions and execute deterministic observation scenarios through the production interpreter.
 - **Type:** code
 - **Status:** PENDING
-- **Issue:**
+- **Issue:** #318
 - **Flags:** --reviewers deep
 - **Files:** `src/jev/contracts.py`, `policy.py`, `runtime.py`, `operations.py`; `bots/jev/v1` package and initial policy/manifest; `pyproject.toml`; `tests/test_jev_policy.py`, `tests/test_jev_runtime.py`.
 - **Produces:** Typed contracts, interpreter, validator, `--validate-policy` path, packaged data and bounded scenario tests; operation implementations are explicit, not placeholder success stubs.
@@ -170,7 +170,7 @@ Phase JV owns numeric Steps 201-208, newly reserved in the master plan. All are 
 - **Problem:** Drive a real Jev bot's economic actions entirely through graph-selected operations.
 - **Type:** code
 - **Status:** PENDING
-- **Issue:**
+- **Issue:** #319
 - **Flags:** --reviewers deep
 - **Files:** `src/jev/sc2_adapter.py`, `bot.py`, `runner.py`, `operations.py`, `runtime.py`; `bots/jev/v1/policy.json`; `tests/test_jev_economy.py`, `tests/test_jev_sc2.py`.
 - **Produces:** Single-match entry point, visible-state adapter, worker/supply/powered-building/Zealot production lanes, task acknowledgement/reservation/recovery.
@@ -183,7 +183,7 @@ Phase JV owns numeric Steps 201-208, newly reserved in the master plan. All are 
 - **Problem:** Make the army complete matches through Jev-controlled attack, defense, reinforcement and search behavior.
 - **Type:** code
 - **Status:** PENDING
-- **Issue:**
+- **Issue:** #320
 - **Flags:** --reviewers deep
 - **Files:** `bots/jev/v1/policy.json`; `src/jev/operations.py`, `sc2_adapter.py`, `runtime.py`, `runner.py`; `tests/test_jev_army.py`.
 - **Produces:** Full v1 policy and terminal-result lifecycle.
@@ -196,7 +196,7 @@ Phase JV owns numeric Steps 201-208, newly reserved in the master plan. All are 
 - **Problem:** Deliver consistent graph and execution state from the game process through the existing dashboard API.
 - **Type:** code
 - **Status:** PENDING
-- **Issue:**
+- **Issue:** #321
 - **Flags:** --reviewers deep --ui
 - **Start-cmd:** bash scripts/start-dev.sh
 - **URL:** http://localhost:3000/
@@ -210,7 +210,7 @@ Phase JV owns numeric Steps 201-208, newly reserved in the master plan. All are 
 - **Problem:** Let a user follow the actual graph and inspect its live decisions from a Jev tab.
 - **Type:** code
 - **Status:** PENDING
-- **Issue:**
+- **Issue:** #322
 - **Flags:** --reviewers full --ui
 - **Start-cmd:** bash scripts/start-dev.sh
 - **URL:** http://localhost:3000/?tab=jev
@@ -225,7 +225,7 @@ Phase JV owns numeric Steps 201-208, newly reserved in the master plan. All are 
 - **Problem:** Provide one documented production workflow for smoke and full-match evidence collection.
 - **Type:** code
 - **Status:** PENDING
-- **Issue:**
+- **Issue:** #323
 - **Flags:** --reviewers deep
 - **Files:** `scripts/validate_jev.py`, `documentation/operator/jev-validation.md`, `README.md`, `CLAUDE.md`; `tests/test_jev_validation.py`.
 - **Produces:** `validate_jev.py --run-id UUIDHEX --api-base http://localhost:8765` verifier that compares disk/API hashes, sequence and result without mocks; operational guide, acceptance report template and updated launch docs.
@@ -237,7 +237,7 @@ Phase JV owns numeric Steps 201-208, newly reserved in the master plan. All are 
 - **Problem:** Prove SC2 observation through Jev execution, persistence, API and browser completes a real cycle before longer matches.
 - **Type:** operator
 - **Status:** PENDING
-- **Issue:**
+- **Issue:** #324
 - **Files:** Existing procedure from Step 206; no authored code in this step.
 - **Produces:** Smoke evidence: run ID, policy hash, command/result event, verifier output and dashboard screenshot.
 - **Done when:** After SC2 startup, observe 60 seconds of actual gameplay with graph-driven commands and live dashboard updates; disk/API/browser agree on run/hash/node IDs; close/reopen the tab and recover current state; stop cleanly and verify terminal stopped state. No mocks or replayed fixtures. Failures leave this gate incomplete.
@@ -248,7 +248,7 @@ Phase JV owns numeric Steps 201-208, newly reserved in the master plan. All are 
 - **Problem:** Establish whether Jev reliably plays the intended rush through full matches with useful inspection evidence.
 - **Type:** operator
 - **Status:** PENDING
-- **Issue:**
+- **Issue:** #325
 - **Files:** Existing procedure from Step 206; no authored code in this step.
 - **Produces:** Three sequential match evidence bundles and observed findings classified as functional blockers, strategy tuning or later enhancements.
 - **Done when:** Run seeds 1, 2 and 3 against Terran difficulty 1 on Simple64, 900 game-second / 1800 wall-second limits per match. All three terminate normally with SC2 outcomes and complete trace provenance; no unbounded loop, orphaned run or duplicate-spend failure. At least one match visibly reaches four Gateways and sends the first four-Zealot attack, with reinforcement evidence. Inspect one waiting task and one completed command/result in browser; record observed recovery when it occurs, and explicitly mark unobserved recovery cases as scenario-tested only. A timeout/crash or absent rush behavior is a functional blocker; losses alone are tuning findings. Report wins without an estimated general win rate. Phase remains incomplete until blockers are fixed and affected gates rerun.
