@@ -340,6 +340,84 @@ describe("VersionInspector — Actions sub-panel", () => {
       ).toBeInTheDocument();
     });
   });
+
+  // Rules-of-hooks regression: ActionsPanel used to call ``useTheme()``
+  // only on the populated branch, so the SAME mounted panel flipping
+  // between the empty and populated branches (e.g. switching versions)
+  // changed its hook count mid-life. React does not throw for an
+  // all-or-nothing change, but it silently drops the hook's effect
+  // without running its cleanup — leaking useThemeMode's
+  // MutationObserver. Exercise both directions on one mounted instance,
+  // then assert every observer that started observing was disconnected.
+  function actionsByVersionFetch(populated: ReadonlySet<string>) {
+    const base = makeFetchMock({});
+    return vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url = typeof input === "string" ? input : input.toString();
+      const m = url.match(/\/api\/versions\/(v\d+)\/actions$/);
+      if (m) {
+        return jsonResponse(
+          populated.has(m[1])
+            ? [
+                { action_id: 0, name: "opening", count: 50, pct: 0.5 },
+                { action_id: 1, name: "macro", count: 50, pct: 0.5 },
+              ]
+            : [],
+        );
+      }
+      return base(input);
+    });
+  }
+
+  it("renders both branches on one mounted panel without leaking theme subscriptions", async () => {
+    const observing = new Set<MutationObserver>();
+    const origObserve = MutationObserver.prototype.observe;
+    const origDisconnect = MutationObserver.prototype.disconnect;
+    vi.spyOn(MutationObserver.prototype, "observe").mockImplementation(
+      function (this: MutationObserver, ...args) {
+        observing.add(this);
+        return origObserve.apply(this, args);
+      },
+    );
+    vi.spyOn(MutationObserver.prototype, "disconnect").mockImplementation(
+      function (this: MutationObserver) {
+        observing.delete(this);
+        return origDisconnect.apply(this);
+      },
+    );
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      actionsByVersionFetch(new Set(["v3"])),
+    );
+
+    const { rerender, unmount } = render(
+      <VersionInspector version="v3" onCompareWithParent={vi.fn()} />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("inspector-actions-body")).toBeInTheDocument();
+    });
+
+    // populated -> empty
+    rerender(<VersionInspector version="v2" onCompareWithParent={vi.fn()} />);
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("inspector-actions-empty"),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("version-inspector-title")).toHaveTextContent(
+      "v2",
+    );
+
+    // empty -> populated
+    rerender(<VersionInspector version="v3" onCompareWithParent={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByTestId("inspector-actions-body")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByTestId("inspector-actions-body").querySelector("svg"),
+    ).not.toBeNull();
+
+    unmount();
+    expect(observing.size).toBe(0);
+  });
 });
 
 describe("VersionInspector — Improvements applied sub-panel", () => {

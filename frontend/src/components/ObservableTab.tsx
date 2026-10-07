@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useVersions } from "../hooks/useVersions";
 import { StaleDataBanner } from "./StaleDataBanner";
 
@@ -47,17 +47,16 @@ export function ObservableTab() {
     return cur?.parent ?? null;
   }, [versions]);
 
-  useEffect(() => {
-    if (leftVersion === null && currentVersionName !== null) {
-      setLeftVersion(currentVersionName);
-    }
-  }, [leftVersion, currentVersionName]);
-
-  useEffect(() => {
-    if (rightVersion === null && currentParentName !== null) {
-      setRightVersion(currentParentName);
-    }
-  }, [rightVersion, currentParentName]);
+  // Default-snap each slot during render (React's "adjust state when
+  // inputs change" pattern) instead of via setState-in-effect. Each
+  // guard turns false once its slot is populated, so this settles in one
+  // extra render pass and never clobbers an operator's pick.
+  if (leftVersion === null && currentVersionName !== null) {
+    setLeftVersion(currentVersionName);
+  }
+  if (rightVersion === null && currentParentName !== null) {
+    setRightVersion(currentParentName);
+  }
 
   return (
     <div className="observable-tab" data-testid="observable-tab">

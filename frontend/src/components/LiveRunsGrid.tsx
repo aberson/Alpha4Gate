@@ -243,7 +243,7 @@ export interface LiveRunsGridProps {
   // #267: harness chips on the Models tab filter the runs grid by
   // ``row.harness``. ``training-daemon`` rows are not chip-able and
   // always pass through; the chip-able subset is governed by
-  // ``passesHarnessFilter`` in ModelsTab.
+  // ``passesHarnessFilter`` in ``modelsTabUtils``.
   harnessFilter?: Set<string>;
 }
 

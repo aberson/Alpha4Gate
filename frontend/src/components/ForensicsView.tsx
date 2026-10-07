@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ResponsiveContainer,
   LineChart,
@@ -79,8 +79,13 @@ function ForensicsViewActive({ version }: { version: string }) {
   // Selected game id; ``null`` until the history fetch resolves and we
   // pick the most-recent row. The operator can override via the
   // dropdown. ``null`` also resets every time ``version`` changes (the
-  // useEffect below repicks the most-recent game for the new version).
+  // render-time adjustment below repicks the most-recent game for the
+  // new version).
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
+  // Version the current selection belongs to — React's "adjust state
+  // while rendering when a prop changes" pattern (instead of a
+  // setState-in-effect reset).
+  const [selectionVersion, setSelectionVersion] = useState<string>(version);
 
   const games = useMemo(() => {
     const overall = historyRes.data?.rolling_overall ?? [];
@@ -93,15 +98,16 @@ function ForensicsViewActive({ version }: { version: string }) {
   // Default to the most-recent game once history resolves. We pick
   // ``games[games.length-1]`` because ``rolling_overall`` is appended in
   // chronological order (oldest first). The selector resets to ``null``
-  // and re-snaps when ``version`` changes.
-  useEffect(() => {
+  // and re-snaps when ``version`` changes. Both adjustments happen during
+  // render (guarded, so they settle in one extra pass) rather than in an
+  // effect — React re-renders immediately without committing the stale
+  // intermediate selection.
+  if (selectionVersion !== version) {
+    setSelectionVersion(version);
     setSelectedGameId(null);
-  }, [version]);
-  useEffect(() => {
-    if (selectedGameId === null && games.length > 0) {
-      setSelectedGameId(games[games.length - 1].game_id);
-    }
-  }, [selectedGameId, games]);
+  } else if (selectedGameId === null && games.length > 0) {
+    setSelectedGameId(games[games.length - 1].game_id);
+  }
 
   const forensicsRes = useGameForensics(version, selectedGameId);
 
@@ -198,11 +204,9 @@ interface TrajectorySectionProps {
   forensics: import("../types/forensics").ForensicsResponse | null;
 }
 
-function TrajectorySection({
-  version: _version,
-  gameId,
-  forensics,
-}: TrajectorySectionProps) {
+// ``version`` stays in the props contract (callers pass it) but the
+// section itself only needs the game id + forensics payload.
+function TrajectorySection({ gameId, forensics }: TrajectorySectionProps) {
   if (gameId === null) {
     return (
       <p data-testid="forensics-trajectory-pending" style={emptyStyle}>

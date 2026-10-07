@@ -239,6 +239,10 @@ function ActionsPanel({
 }: {
   actions: ReturnType<typeof useVersionDetail>["actions"];
 }) {
+  // Hooks first, unconditionally: the panel flips between the empty and
+  // populated branches while mounted (e.g. on version change), so a hook
+  // after the early return would change the hook list mid-life.
+  const t = useTheme();
   if (!actions || actions.length === 0) {
     return (
       <p data-testid="inspector-actions-empty" style={emptyStyle}>
@@ -256,7 +260,6 @@ function ActionsPanel({
   }));
   // Tweak height so each bar gets ~24px row.
   const height = Math.max(160, data.length * 24 + 40);
-  const t = useTheme();
   const chrome = t.color.chart.chrome;
   const barColor = LAYER_PALETTE[0];
   return (

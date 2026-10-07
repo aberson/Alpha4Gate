@@ -13,25 +13,32 @@ export function useWebSocket({ url, onMessage, reconnectInterval = 3000 }: UseWe
   const closingRef = useRef(false);
 
   const connect = useCallback(() => {
-    closingRef.current = false;
-    const ws = new WebSocket(url);
-    wsRef.current = ws;
+    // The reconnect timer re-invokes ``open`` — the same closure (same
+    // url / onMessage / reconnectInterval) this ``connect`` was built
+    // with — rather than reading ``connect`` from inside its own
+    // initializer.
+    function open(): void {
+      closingRef.current = false;
+      const ws = new WebSocket(url);
+      wsRef.current = ws;
 
-    ws.onopen = () => setConnected(true);
-    ws.onclose = () => {
-      setConnected(false);
-      if (!closingRef.current) {
-        reconnectTimer.current = window.setTimeout(connect, reconnectInterval);
-      }
-    };
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        onMessage?.(data);
-      } catch {
-        // Ignore parse errors
-      }
-    };
+      ws.onopen = () => setConnected(true);
+      ws.onclose = () => {
+        setConnected(false);
+        if (!closingRef.current) {
+          reconnectTimer.current = window.setTimeout(open, reconnectInterval);
+        }
+      };
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          onMessage?.(data);
+        } catch {
+          // Ignore parse errors
+        }
+      };
+    }
+    open();
   }, [url, onMessage, reconnectInterval]);
 
   useEffect(() => {

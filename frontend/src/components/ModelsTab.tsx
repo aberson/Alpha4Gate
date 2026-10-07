@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useVersions } from "../hooks/useVersions";
 import { StaleDataBanner } from "./StaleDataBanner";
 import { LineageView } from "./LineageView";
@@ -7,6 +7,7 @@ import { VersionInspector } from "./VersionInspector";
 import { CompareView } from "./CompareView";
 import { ForensicsView } from "./ForensicsView";
 import { HARNESS_ORIGINS } from "../types/version";
+import { passesHarnessFilter } from "./modelsTabUtils";
 
 /**
  * Models tab SHELL — Step 3 / Step 4 of the Models-tab build plan.
@@ -51,23 +52,8 @@ function coerceRace(raw: string | null | undefined): string {
   return raw;
 }
 
-/**
- * #267: a harness origin "passes" the filter when either it's not one
- * of the four chip-able origins (e.g., ``"training-daemon"`` rows in
- * Live Runs are governed by their own daemon control, not the chips)
- * OR it's explicitly enabled in the ``harnessFilter`` set. Default
- * state has all 4 chip-able origins enabled, so this is a no-op until
- * the operator toggles a chip off.
- */
-const CHIPPABLE_HARNESSES = new Set<string>(HARNESS_ORIGINS);
-
-export function passesHarnessFilter(
-  harness: string,
-  filter: Set<string>,
-): boolean {
-  if (!CHIPPABLE_HARNESSES.has(harness)) return true;
-  return filter.has(harness);
-}
+// #267: ``passesHarnessFilter`` lives in ``./modelsTabUtils`` so this
+// module exports only components (react-refresh boundary).
 
 interface LineageContainerProps {
   onNodeSelect: (versionName: string) => void;
@@ -198,15 +184,15 @@ export function ModelsTab() {
 
   // When the registry loads (or refetches) and we don't yet have a
   // selection, snap to the current version. Avoids clobbering an
-  // operator's manual selection on subsequent refreshes. Done in
-  // ``useEffect`` (not inline-during-render) so the empty -> populated
+  // operator's manual selection on subsequent refreshes. Adjusted
+  // during render (React's "adjust state when inputs change" pattern,
+  // guarded so it settles in one extra pass) rather than in an effect;
+  // the guard is re-evaluated every render, so the empty -> populated
   // transition that follows a manual clear still re-snaps.
-  useEffect(() => {
-    if (selectedVersion === null && versions.length > 0) {
-      const current = versions.find((v) => v.current);
-      setSelectedVersion((current ?? versions[0]).name);
-    }
-  }, [selectedVersion, versions]);
+  if (selectedVersion === null && versions.length > 0) {
+    const current = versions.find((v) => v.current);
+    setSelectedVersion((current ?? versions[0]).name);
+  }
 
   // Race-filter visibility: HIDDEN when every version coerces to the
   // same race (today: always protoss). Coercion handles ``race: null``
@@ -267,14 +253,19 @@ export function ModelsTab() {
   // default A=selectedVersion and B=selectedVersion's parent. Skipped
   // when either is already populated (e.g. the Inspector pre-filled
   // them, or the operator picked a side and re-toggled to Compare).
-  useEffect(() => {
-    if (activeSubView !== "compare") return;
-    if (compareA !== null || compareB !== null) return;
-    if (selectedVersion === null || versions.length === 0) return;
+  // Adjusted during render (guarded: once A is set the condition is
+  // false) rather than via setState-in-effect.
+  if (
+    activeSubView === "compare" &&
+    compareA === null &&
+    compareB === null &&
+    selectedVersion !== null &&
+    versions.length > 0
+  ) {
     const row = versions.find((v) => v.name === selectedVersion);
     setCompareA(selectedVersion);
     setCompareB(row?.parent ?? null);
-  }, [activeSubView, compareA, compareB, selectedVersion, versions]);
+  }
 
   // #267: filter the dropdown options by the active harness chips so
   // toggling off "evolve" hides evolve-origin versions from the version
