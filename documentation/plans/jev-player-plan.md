@@ -183,7 +183,7 @@ Phase JV owns numeric Steps 201-208, newly reserved in the master plan. All are 
 
 - **Problem:** Make the army complete matches through Jev-controlled attack, defense, reinforcement and search behavior.
 - **Type:** code
-- **Status:** PENDING
+- **Status:** BLOCKED (2026-10-07)
 - **Issue:** #320
 - **Flags:** --reviewers deep
 - **Files:** `bots/jev/v1/policy.json`; `src/jev/operations.py`, `sc2_adapter.py`, `runtime.py`, `runner.py`; `tests/test_jev_army.py`.
