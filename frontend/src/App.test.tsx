@@ -45,11 +45,37 @@ describe("App tab deep-link", () => {
     return match;
   }
 
-  it("opens the Evolution tab for ?tab=evolution", () => {
-    window.history.replaceState({}, "", "/?tab=evolution");
+  // Every tab in App's TAB_NAMES, with its nav button label.
+  const TABS: Array<[string, string]> = [
+    ["advisor", "Advisor"],
+    ["evolution", "Evolution"],
+    ["models", "Models"],
+    ["observable", "Observable"],
+    ["processes", "Processes"],
+    ["help", "Help"],
+    ["jev", "Jev"],
+  ];
+
+  it("has one nav button per tab", () => {
     render(<App />);
-    expect(navButton("Evolution")).toHaveClass("active");
-    expect(navButton("Advisor")).not.toHaveClass("active");
+    const labels = Array.from(document.querySelectorAll("nav button")).map((btn) =>
+      btn.textContent?.trim(),
+    );
+    expect(labels).toEqual(TABS.map(([, label]) => label));
+  });
+
+  it.each(TABS)("opens the matching tab for ?tab=%s", (tab, label) => {
+    window.history.replaceState({}, "", `/?tab=${tab}`);
+    render(<App />);
+    expect(navButton(label)).toHaveClass("active");
+    const others = TABS.filter(([name]) => name !== tab);
+    for (const [, other] of others) expect(navButton(other)).not.toHaveClass("active");
+  });
+
+  it("renders the Jev tab for ?tab=jev", () => {
+    window.history.replaceState({}, "", "/?tab=jev");
+    render(<App />);
+    expect(screen.getByTestId("jev-tab")).toBeInTheDocument();
   });
 
   it("matches tab names case-insensitively (?tab=Evolution)", () => {

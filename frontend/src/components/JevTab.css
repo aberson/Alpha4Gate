@@ -1,0 +1,440 @@
+/* Jev tab: run picker, run summary, decision graph, node inspector, trace.
+ * Status colours always accompany text and outline style (never colour alone).
+ * Flat selectors (no nesting), so test environments parse this sheet too. */
+
+.jev-tab {
+  --jev-active: #2ecc71;
+  --jev-waiting: #f59e0b;
+  --jev-failure: #dc2626;
+  --jev-stale: #fbbc04;
+
+  text-align: left;
+  padding: 12px 16px 24px;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.jev-tab h2 {
+  margin: 0 0 4px;
+  color: var(--text-h);
+}
+
+.jev-tab h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  color: var(--text-h);
+}
+
+.jev-tab h4 {
+  margin: 12px 0 4px;
+  font-size: 13px;
+  color: var(--text-h);
+}
+
+.jev-tab code,
+.jev-tab pre {
+  font-family: var(--mono);
+}
+
+/* Inline identifiers sit in running text: smaller than the global code chip. */
+.jev-tab code {
+  display: inline;
+  padding: 0 4px;
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+}
+
+.jev-tab pre {
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  max-height: 220px;
+  overflow: auto;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.jev-tab-intro,
+.jev-note {
+  margin: 4px 0 12px;
+  opacity: 0.8;
+}
+
+.jev-notice {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-radius: 4px;
+  border-left: 3px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+.jev-notice-error {
+  border-left-color: var(--jev-failure);
+  background: rgba(220, 38, 38, 0.1);
+}
+
+.jev-notice-warning {
+  border-left-color: var(--jev-stale);
+  background: rgba(251, 188, 4, 0.15);
+}
+
+.jev-notice-waiting {
+  border-left: 3px dashed var(--jev-waiting);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.jev-empty {
+  padding: 16px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
+
+.jev-empty p {
+  margin: 4px 0;
+}
+
+.jev-run-picker,
+.jev-run-summary {
+  margin-bottom: 12px;
+}
+
+.jev-run-select select {
+  margin-left: 6px;
+  max-width: 100%;
+  padding: 4px 6px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text-h);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.jev-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.jev-badge {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.jev-badge-failed {
+  border-color: var(--jev-failure);
+}
+
+.jev-badge-finished {
+  border-color: var(--jev-active);
+}
+
+.jev-badge-stale,
+.jev-badge-offline {
+  border: 1px dashed var(--jev-stale);
+}
+
+.jev-badge-live::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--jev-active);
+  animation: jev-pulse 1.6s ease-in-out infinite;
+}
+
+.jev-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 8px 0;
+}
+
+.jev-facts dt {
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.jev-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.jev-run-body {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.jev-graph {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.jev-graph-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.jev-graph-toolbar button {
+  min-width: 30px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-h);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.jev-graph-toolbar button:hover:not(:disabled) {
+  border-color: var(--accent-border);
+}
+
+.jev-graph-toolbar button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.jev-graph-zoom {
+  min-width: 84px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.jev-graph-legend,
+.jev-graph-hint {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 2px 0;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.jev-graph-viewport {
+  display: block;
+  width: 100%;
+  height: 520px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--code-bg);
+  touch-action: none;
+  user-select: none;
+}
+
+.jev-graph-background {
+  fill: transparent;
+  cursor: grab;
+}
+
+.jev-graph-background:active {
+  cursor: grabbing;
+}
+
+.jev-graph-edge {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 1.5;
+  pointer-events: none;
+}
+
+.jev-graph-node {
+  cursor: pointer;
+  outline: none;
+}
+
+.jev-graph-node rect {
+  fill: var(--bg);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.jev-graph-node text {
+  fill: var(--text-h);
+  font-family: var(--mono);
+  pointer-events: none;
+}
+
+.jev-graph-node-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.jev-graph-node-status {
+  font-size: 10px;
+}
+
+.jev-graph-node-hidden {
+  font-size: 10px;
+  font-style: italic;
+}
+
+.jev-graph-node-active rect {
+  stroke: var(--jev-active);
+  stroke-width: 3;
+}
+
+.jev-graph-node-waiting rect {
+  stroke: var(--jev-waiting);
+  stroke-width: 2.5;
+  stroke-dasharray: 6 3;
+}
+
+.jev-graph-node-failure rect {
+  stroke: var(--jev-failure);
+  stroke-dasharray: 2 2;
+}
+
+/* Not live (stale, offline or final): active/waiting are history, drawn muted.
+ * The outline pattern stays, so the two remain distinguishable. */
+.jev-graph-node-last-known rect {
+  stroke: var(--text);
+  opacity: 0.6;
+}
+
+.jev-graph-node-last-known text {
+  opacity: 0.75;
+}
+
+/* Selection changes the fill only, so the status outline stays visible. */
+.jev-graph-node-selected rect {
+  fill: var(--accent-bg);
+}
+
+.jev-graph-node:focus-visible rect {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+.jev-graph-node-live rect {
+  animation: jev-pulse 1.6s ease-in-out infinite;
+}
+
+.jev-graph-toggle {
+  cursor: pointer;
+}
+
+.jev-graph-toggle circle {
+  fill: var(--bg);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.jev-graph-toggle text {
+  fill: var(--text-h);
+  font-size: 12px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.jev-inspector {
+  flex: 0 0 340px;
+  max-width: 100%;
+  max-height: 640px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-sizing: border-box;
+}
+
+.jev-inspector p {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+
+.jev-node-events,
+.jev-node-tasks {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.jev-node-events li,
+.jev-node-tasks li {
+  margin-bottom: 6px;
+  overflow-wrap: anywhere;
+}
+
+.jev-trace {
+  margin-top: 16px;
+}
+
+.jev-trace-scroll {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.jev-trace-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.jev-trace-scroll th,
+.jev-trace-scroll td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+/* Only the reason column wraps; the short columns stay on one line. */
+.jev-trace-scroll td:last-child {
+  width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.jev-trace-scroll th {
+  position: sticky;
+  top: 0;
+  background: var(--code-bg);
+  color: var(--text-h);
+}
+
+@keyframes jev-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (max-width: 900px) {
+  .jev-run-body {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .jev-inspector {
+    flex-basis: auto;
+    max-height: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jev-graph-node-live rect,
+  .jev-badge-live::before {
+    animation: none;
+  }
+}

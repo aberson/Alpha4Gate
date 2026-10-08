@@ -8,6 +8,7 @@ import { ResourceGauge } from "./components/ResourceGauge";
 import { WslProcessesPanel } from "./components/WslProcessesPanel";
 import { AlertsPanel } from "./components/AlertsPanel";
 import { HelpTab } from "./components/HelpTab";
+import { JevTab } from "./components/JevTab";
 import { AlertToast } from "./components/AlertToast";
 import { ConnectionStatus } from "./components/ConnectionStatus";
 import { useAdvisedRun } from "./hooks/useAdvisedRun";
@@ -21,6 +22,7 @@ const TAB_NAMES = [
   "observable",
   "processes",
   "help",
+  "jev",
 ] as const;
 
 type Tab = (typeof TAB_NAMES)[number];
@@ -108,6 +110,12 @@ function App() {
           >
             Help
           </button>
+          <button
+            onClick={() => setTab("jev")}
+            className={tab === "jev" ? "active" : ""}
+          >
+            Jev
+          </button>
         </nav>
         <ConnectionStatus />
         </div>
@@ -133,6 +141,7 @@ function App() {
           </>
         )}
         {tab === "help" && <HelpTab />}
+        {tab === "jev" && <JevTab />}
       </main>
     </div>
   );
