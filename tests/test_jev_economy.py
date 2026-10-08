@@ -15,8 +15,10 @@ Pylon power), so acknowledgement comes from the next observation as in a match.
 from __future__ import annotations
 
 import asyncio
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -431,7 +433,10 @@ def _play(
     world: _World, steps: int, before_step: _Hook | None = None
 ) -> tuple[MatchOutcome, JevController, _Launcher]:
     launcher = _Launcher(world, steps, before_step)
-    outcome = run_match(MatchOptions(), load_policy(), launcher=launcher)
+    with tempfile.TemporaryDirectory() as run_root:  # the evidence is not under test here
+        outcome = run_match(
+            MatchOptions(), load_policy(), launcher=launcher, run_root=Path(run_root)
+        )
     assert launcher.controller is not None
     return outcome, launcher.controller, launcher
 
@@ -497,7 +502,7 @@ def _assert_graph_attributed(world: _World, controller: JevController, bot: JevB
 
 
 def test_cli_match_issues_only_graph_attributed_commands(
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     world = _world(minerals=50, mining=False)
 
@@ -505,7 +510,8 @@ def test_cli_match_issues_only_graph_attributed_commands(
         world.minerals += 6  # ~17 minerals per game second
 
     launcher = _Launcher(world, steps=150, before_step=income)
-    code = runner.main([], load_policy=load_policy, prog="jev-test", launcher=launcher)
+    argv = ["--run-root", str(tmp_path)]
+    code = runner.main(argv, load_policy=load_policy, prog="jev-test", launcher=launcher)
     assert code == runner.EXIT_OK
     out = capsys.readouterr().out
     assert "jev match finished: result=win" in out

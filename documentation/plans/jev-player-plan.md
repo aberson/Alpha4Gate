@@ -197,7 +197,7 @@ Phase JV owns numeric Steps 201-208, newly reserved in the master plan. All are 
 
 - **Problem:** Deliver consistent graph and execution state from the game process through the existing dashboard API.
 - **Type:** code
-- **Status:** PENDING
+- **Status:** DONE (2026-10-08)
 - **Issue:** #321
 - **Flags:** --reviewers deep --ui
 - **Start-cmd:** bash scripts/start-dev.sh
@@ -206,6 +206,7 @@ Phase JV owns numeric Steps 201-208, newly reserved in the master plan. All are 
 - **Produces:** Atomic run snapshots, bounded trace, archived policy, read-only route mount and replay/result references.
 - **Done when:** Real writer/reader/router integration preserves graph hash and large unit tags, serves two isolated run directories correctly, bounds history/rotation, exposes stale/crashed producer evidence, rejects path traversal, and tolerates partial JSONL tail without corrupting state. Existing API responses remain unchanged. Legacy version discovery excludes Jev. Capture a browser dashboard smoke with the actual telemetry-written fixture served through the Vite `/api/jev` proxy, checking response schema/hash and existing dashboard navigation; the new graph screen arrives in Step 205.
 - **Depends on:** 203
+- **Build note (build-phase orchestrator decision, 2026-10-08):** `policy.json` is immutable once written. `metadata.json` is written at run start and atomically rewritten exactly once at the terminal transition, only to fill `replay_path` (the replay exists only after the match); every other field stays equal. Responses may carry additive fields beyond the minimum shapes in section 5 (`omitted` on the run list for malformed runs skipped, `metadata` on the run detail as the replay/result reference, `tasks_omitted` and `trace` rotation/drop/completeness counts on RunState, error code `run_not_found` for 404); no listed field is removed or renamed. A `starting` run has no game-step heartbeat while SC2 launches, so it reads `stale` once its last write is older than five wall-clock seconds, until the first game step: that is the stale rule applied honestly, not a defect.
 
 ### Step 205: Inspect Jev from the dashboard
 

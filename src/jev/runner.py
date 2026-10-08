@@ -6,8 +6,22 @@ packaged policy loader. Defaults match the plan's launch command::
     --map Simple64 --opponent-race Terran --difficulty 1 --seed 1
     --max-game-seconds 900 --max-wall-seconds 1800
 
-plus ``--realtime``, and ``--validate-policy`` (with optional ``--policy-file``)
-to validate and exit without SC2.
+plus ``--realtime``, ``--run-root`` (an absolute directory for run evidence),
+and ``--validate-policy`` (with optional ``--policy-file``) to validate and exit
+without SC2.
+
+Every match records its evidence (plan D5, :mod:`jev.telemetry`) in a new
+directory ``<run root>/<run_id>/`` -- the run root defaults to
+``<repository>/data/jev/runs``. The directory, with the archived policy, a
+``starting`` state and the run metadata, is written before anything launches;
+the bot refreshes the state while it plays; the runner writes the terminal state
+(and the replay reference, when burnysc2 saved the replay into the directory)
+however the match ended -- even when an exception escapes the match (Ctrl+C
+during the preflight is recorded ``stopped``, any other escape ``failed`` with
+``match_crashed``) before it is re-raised. Mandatory evidence that cannot be
+written fails the run with ``persistence_failed``: before launch nothing is
+launched, during the match the bot leaves the game, and at the end the outcome
+turns into that failure.
 
 A match is one built-in-AI game: no daemon, no automatic restart. The SC2 install
 and map are resolved before anything launches (the repository's SC2 path
@@ -25,7 +39,8 @@ time); the wall-clock limit counts from the first game step.
 Exit codes: :data:`EXIT_OK` for a finished win/loss/draw and a valid policy;
 :data:`EXIT_FAILURE` for an invalid policy, unavailable SC2, a crash
 (``match_crashed``, even when burnysc2 reported the crash as a Defeat or exited
-with a nonzero status after the bot attached) or a match that ended without a result;
+with a nonzero status after the bot attached), evidence that could not be
+persisted (``persistence_failed``) or a match that ended without a result;
 :data:`EXIT_USAGE` for command-line errors;
 :data:`EXIT_TIMEOUT` when a game-time or wall-clock limit ended the match;
 :data:`EXIT_STOPPED` after Ctrl+C.
@@ -37,6 +52,8 @@ imported lazily, after the SC2 preflight passed.
 from __future__ import annotations
 
 import argparse
+import asyncio
+import contextlib
 import io
 import itertools
 import os
@@ -47,13 +64,15 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, NoReturn, Protocol
 
 from jev.contracts import (
     MAX_MESSAGE_CHARS,
+    ErrorCode,
     JevError,
+    RunMetadata,
     RunResult,
     RunStatus,
     full_match,
@@ -63,6 +82,15 @@ from jev.contracts import (
     safe_repr,
 )
 from jev.policy import PolicyBundle, PolicyError, describe_bundle
+from jev.telemetry import (
+    EvidenceFiles,
+    PersistenceFailed,
+    RunRecorder,
+    default_run_root,
+    read_source_commit,
+    repository_root,
+    utc_timestamp,
+)
 
 if TYPE_CHECKING:
     from jev.bot import JevController, MatchResult
@@ -93,6 +121,7 @@ __all__ = [
     "Sc2Unavailable",
     "TerminalSafeArgumentParser",
     "build_parser",
+    "exception_error",
     "main",
     "run_match",
 ]
@@ -303,19 +332,34 @@ class Sc2Launcher:
             Bot(Race.Protoss, JevBot(controller)),
             Computer(Race[options.opponent_race], Difficulty(options.difficulty)),
         ]
+        # burnysc2 saves the replay itself (Client.save_replay) when the bot leaves
+        # or the game ends; the recorder records it once the file exists.
+        recorder = controller.recorder
+        replay = None if recorder is None else str(recorder.replay_file)
         main_thread = threading.current_thread() is threading.main_thread()
         previous = signal.getsignal(signal.SIGINT) if main_thread else None
         try:
             # A failure before the bot attaches (SC2 could not launch, connect or
             # create the game) is classified sc2_unavailable by run_match.
             result = run_game(
-                map_settings, players, realtime=options.realtime, random_seed=options.seed
+                map_settings,
+                players,
+                realtime=options.realtime,
+                random_seed=options.seed,
+                save_replay_as=replay,
             )
         finally:
             if previous is not None:
                 # burnysc2 leaves SIGINT at SIG_DFL after a match; restore Ctrl+C.
                 signal.signal(signal.SIGINT, previous)
         return match_result(result)
+
+
+def exception_error(code: ErrorCode, exc: BaseException) -> JevError:
+    """THE error record for an exception: ``'TypeName': message``, rendered and capped."""
+    name = safe_repr(type(exc).__name__)
+    detail = safe_exception_text(exc, MAX_MESSAGE_CHARS)
+    return JevError(code, render_text(f"{name}: {detail}")[:MAX_MESSAGE_CHARS])
 
 
 def _limit_seconds(reason: str, limit: int) -> str:
@@ -326,11 +370,13 @@ def run_match(
     options: MatchOptions,
     bundle: PolicyBundle,
     *,
+    run_root: Path,
     launcher: MatchLauncher | None = None,
     run_id: str | None = None,
     clock: Callable[[], float] = time.monotonic,
+    evidence_files: EvidenceFiles | None = None,
 ) -> MatchOutcome:
-    """Prepare and play one match; never raises for match-level failures.
+    """Prepare and play one match, recording its evidence; never raises for match-level failures.
 
     ``launcher`` defaults to :class:`Sc2Launcher`. Infrastructure failure, a
     crash, a time limit and a stop all come back as a :class:`MatchOutcome` with
@@ -339,24 +385,93 @@ def run_match(
     a nonzero ``SystemExit`` -- is ``sc2_unavailable``; after it, ``match_crashed``
     unless the controller had already ended the match (a stop or time limit stays
     one, e.g. when :class:`~jev.bot.LeaveFailed` ended burnysc2's loop).
+
+    The evidence directory is ``run_root / run_id`` (see the module docstring);
+    ``clock`` also paces its state writes and ``evidence_files`` overrides its
+    disk operations (tests). Raises :class:`ValueError` for a relative
+    ``run_root`` or an invalid ``run_id``; an exception that escapes the match
+    itself (e.g. Ctrl+C during the preflight) is re-raised once the run's
+    terminal state is written.
     """
     launcher = Sc2Launcher() if launcher is None else launcher
     run_id = uuid.uuid4().hex if run_id is None else run_id
+    recorder = RunRecorder(
+        run_root,
+        _run_metadata(run_id, options, bundle),
+        roots=bundle.policy.roots,
+        files=evidence_files,
+        clock=clock,
+    )
+    try:
+        recorder.start(bundle.policy_bytes)
+    except PersistenceFailed as exc:  # no evidence, no match: nothing is launched
+        return _not_played(run_id, "persistence_failed", exc.message)
+    try:
+        outcome, controller = _play(options, bundle, launcher, recorder, clock)
+    except BaseException as exc:  # an interrupt or a defect: the run still ends on disk
+        _record_escape(recorder, exc)
+        raise
+    return _finish(recorder, controller, outcome)
+
+
+def _record_escape(recorder: RunRecorder, exc: BaseException) -> None:
+    """Best-effort terminal state for a match an escaping exception ends.
+
+    Ctrl+C or a cancellation is ``stopped`` (plan D6); anything else is ``failed``
+    with ``match_crashed``. If even this cannot be persisted, the exception in
+    flight still wins (the run then reads as stale).
+    """
+    if isinstance(exc, KeyboardInterrupt | asyncio.CancelledError):
+        with contextlib.suppress(PersistenceFailed):
+            recorder.finish(None, status="stopped")
+        return
+    with contextlib.suppress(PersistenceFailed):
+        recorder.finish(None, status="failed", error=exception_error("match_crashed", exc))
+
+
+def _run_metadata(run_id: str, options: MatchOptions, bundle: PolicyBundle) -> RunMetadata:
+    return RunMetadata(
+        run_id=run_id,
+        created_at=utc_timestamp(time.time()),
+        family=bundle.policy.family,
+        version=bundle.policy.version,
+        policy_hash=bundle.policy_hash,
+        source_commit=read_source_commit(repository_root()),
+        map=options.map_name,
+        opponent_race=options.opponent_race,
+        difficulty=options.difficulty,
+        seed=options.seed,
+        max_game_seconds=float(options.max_game_seconds),
+        max_wall_seconds=float(options.max_wall_seconds),
+    )
+
+
+def _play(
+    options: MatchOptions,
+    bundle: PolicyBundle,
+    launcher: MatchLauncher,
+    recorder: RunRecorder,
+    clock: Callable[[], float],
+) -> tuple[MatchOutcome, JevController | None]:
+    """Play the match; its outcome, and the controller once one exists."""
+    run_id = recorder.run_dir.name
     try:
         setup = launcher.prepare(options)
     except Sc2Unavailable as exc:
-        return _unavailable(run_id, exc)
+        return _unavailable(run_id, exc), None
 
     try:
         from jev.bot import JevController  # imports burnysc2: only after the preflight
     except (Exception, SystemExit) as exc:  # a broken burnysc2 is infrastructure, not a crash
-        return _unavailable(run_id, _never_started("burnysc2 could not be imported", exc))
+        return _unavailable(run_id, _never_started("burnysc2 could not be imported", exc)), None
 
-    controller = JevController(bundle, run_id=run_id, limits=options.limits(), clock=clock)
+    controller = JevController(
+        bundle, run_id=run_id, limits=options.limits(), clock=clock, recorder=recorder
+    )
     try:
         result = launcher.play(controller, setup, options)
     except Sc2Unavailable as exc:
-        return _unavailable(run_id, exc)
+        return _unavailable(run_id, exc), controller
     except KeyboardInterrupt:
         controller.request_stop()  # Ctrl+C before the bot could leave on its own
         result = None
@@ -366,21 +481,36 @@ def run_match(
         if exc.code is None or exc.code == 0:
             controller.request_stop()
         elif not controller.attached:
-            return _unavailable(run_id, _never_started("SC2 exited before the match began", exc))
+            failure = _never_started("SC2 exited before the match began", exc)
+            return _unavailable(run_id, failure), controller
         elif controller.terminal is None:
             controller.record_crash(exc)
         result = None
     except Exception as exc:
         if not controller.attached:
-            return _unavailable(run_id, _never_started("SC2 could not start the match", exc))
+            failure = _never_started("SC2 could not start the match", exc)
+            return _unavailable(run_id, failure), controller
         if controller.terminal is None and not controller.stop_requested:
             controller.record_crash(exc)
         result = None  # SC2's own result, if any, never hides a recorded terminal reason
+    return _classify(controller, result, options), controller
+
+
+def _classify(
+    controller: JevController, result: MatchResult | None, options: MatchOptions
+) -> MatchOutcome:
+    """The outcome of a match the controller took part in."""
     terminal = controller.terminal
     if terminal == "crashed":
         crash = controller.crash
         message = "match crashed" if crash is None else f"match crashed: {crash.message}"
         return _outcome(controller, "failed", None, crash, message, EXIT_FAILURE)
+    if terminal == "persistence_failed":
+        failure = controller.evidence_failure
+        message = "run evidence could not be persisted"
+        if failure is not None:
+            message = f"{message}: {failure.message}"
+        return _outcome(controller, "failed", None, failure, message, EXIT_FAILURE)
     if terminal == "stopped" or (terminal is None and controller.stop_requested):
         return _outcome(controller, "stopped", None, None, "stopped on request", EXIT_STOPPED)
     if terminal == "game_timeout":
@@ -408,18 +538,59 @@ def _never_started(what: str, exc: BaseException) -> Sc2Unavailable:
 
 
 def _unavailable(run_id: str, exc: Sc2Unavailable) -> MatchOutcome:
-    message = render_text(exc.message)[:MAX_MESSAGE_CHARS]
+    return _not_played(run_id, "sc2_unavailable", exc.message)
+
+
+def _not_played(run_id: str, code: ErrorCode, message: str) -> MatchOutcome:
+    """A failed outcome for a match that never ran (``message`` is rendered and capped)."""
+    shown = render_text(message)[:MAX_MESSAGE_CHARS]
     return MatchOutcome(
         run_id=run_id,
         status="failed",
         result=None,
-        error=JevError("sc2_unavailable", message),
-        message=message,
+        error=JevError(code, shown),
+        message=shown,
         game_seconds=0.0,
         commands_accepted=0,
         commands_rejected=0,
         exit_code=EXIT_FAILURE,
     )
+
+
+def _finish(
+    recorder: RunRecorder, controller: JevController | None, outcome: MatchOutcome
+) -> MatchOutcome:
+    """Write the terminal evidence; if that fails, the outcome is ``persistence_failed``.
+
+    The failed outcome keeps the match's true ``result`` (e.g. a win stays a win);
+    the recorder's message names any error the run had ended with before. If an
+    exception interrupts the terminal write (e.g. a second Ctrl+C), the recorder is
+    still live: the write is retried once from the last persisted state, with the
+    same outcome, before the exception is re-raised.
+    """
+    source = None if controller is None else controller.runtime
+    try:
+        recorder.finish(source, status=outcome.status, result=outcome.result, error=outcome.error)
+    except PersistenceFailed as exc:
+        if outcome.error is not None and outcome.error.code == exc.code:
+            return outcome  # the match already ended for this reason
+        return replace(
+            outcome,
+            status="failed",
+            error=JevError("persistence_failed", exc.message),
+            message=render_text(
+                f"{outcome.message}; run evidence could not be persisted: {exc.message}"
+            ),
+            exit_code=EXIT_FAILURE,
+        )
+    except BaseException:  # e.g. a second Ctrl+C during the terminal write
+        if recorder.live:
+            with contextlib.suppress(PersistenceFailed):
+                recorder.finish(
+                    None, status=outcome.status, result=outcome.result, error=outcome.error
+                )
+        raise
+    return outcome
 
 
 def _outcome(
@@ -486,6 +657,13 @@ def _bounded_int(low: int, high: int) -> Callable[[str], int]:
     return parse
 
 
+def _absolute_path(text: str) -> Path:
+    path = Path(text)
+    if not path.is_absolute():
+        raise argparse.ArgumentTypeError(f"expected an absolute path, got {safe_repr(text)}")
+    return path
+
+
 def _map_name(text: str) -> str:
     if not full_match(MAP_NAME_RE, text):
         raise argparse.ArgumentTypeError(
@@ -538,6 +716,13 @@ def build_parser(prog: str) -> argparse.ArgumentParser:
     )
     parser.add_argument("--realtime", action="store_true", help="play at real-time speed")
     parser.add_argument(
+        "--run-root",
+        type=_absolute_path,
+        default=None,
+        help="write the run's evidence under this absolute directory "
+        "(default: <repository>/data/jev/runs)",
+    )
+    parser.add_argument(
         "--validate-policy",
         action="store_true",
         help="validate the packaged policy and manifest, print the policy hash, and exit",
@@ -586,6 +771,8 @@ def main(
     args = parser.parse_args(argv)
     if args.policy_file is not None and not args.validate_policy:
         parser.error("--policy-file requires --validate-policy")
+    if args.run_root is not None and args.validate_policy:
+        parser.error("--run-root cannot be used with --validate-policy (nothing is recorded)")
     try:
         bundle = load_policy(args.policy_file)
     except PolicyError as exc:
@@ -603,6 +790,7 @@ def main(
         max_wall_seconds=args.max_wall_seconds,
         realtime=args.realtime,
     )
-    outcome = run_match(options, bundle, launcher=launcher)
+    run_root = default_run_root() if args.run_root is None else args.run_root
+    outcome = run_match(options, bundle, run_root=run_root, launcher=launcher)
     _report(outcome)
     return outcome.exit_code

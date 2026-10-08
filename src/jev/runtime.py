@@ -91,6 +91,7 @@ from jev.contracts import (
     LATCHES,
     LOCATION_SOURCES,
     MAX_ABS_NUMBER,
+    MAX_ACTIVE_TASKS,
     MAX_COORDINATE,
     MAX_ENTITY_ORDERS,
     MAX_OBSERVED_ENTITIES,
@@ -323,7 +324,7 @@ class LifecycleConfig:
     progress_check_seconds: float = 10.0
     replan_after_seconds: float = 30.0
     failure_cooldown_seconds: float = 10.0
-    max_active_tasks: int = 128
+    max_active_tasks: int = MAX_ACTIVE_TASKS
     task_history_limit: int = 256
 
     def __post_init__(self) -> None:

@@ -12,15 +12,21 @@
    which is also the only time it checks acknowledgements;
 4. on a tick, builds that Observation through
    :class:`~jev.sc2_adapter.Sc2Adapter`, ticks :class:`~jev.runtime.JevRuntime`
-   and hands the graph-selected commands to the adapter, which issues them.
+   and hands the graph-selected commands to the adapter, which issues them;
+5. hands the step's runtime events to the run's
+   :class:`~jev.telemetry.RunRecorder`, which traces them and refreshes the run
+   state at most twice per wall-clock second -- on every live step, ticked or
+   not, so the state's heartbeat keeps pace with the game.
 
 A failure inside that pipeline never escapes a step: it is recorded as a crash
 (error code ``match_crashed``) and the bot leaves the game, so the runner reports
 a failure whatever burnysc2 does with bot exceptions (some of its loops log them
-and report a Defeat). A failed leave is retried on the following steps, at most
-:data:`MAX_LEAVE_ATTEMPTS` attempts in all; if every attempt fails,
-:class:`LeaveFailed` is raised out of the step so burnysc2 ends its game loop, and
-a match never idles on past its limits.
+and report a Defeat). Run evidence that cannot be persisted
+(:class:`~jev.telemetry.PersistenceFailed`) ends the match the same way, with
+error code ``persistence_failed`` instead. A failed leave is retried on the
+following steps, at most :data:`MAX_LEAVE_ATTEMPTS` attempts in all; if every
+attempt fails, :class:`LeaveFailed` is raised out of the step so burnysc2 ends its
+game loop, and a match never idles on past its limits.
 
 :class:`JevBot` is the thin ``BotAI`` shim burnysc2 runs: ``on_start`` attaches
 the controller to the live game and registers Ctrl+C as a clean-leave request,
@@ -44,6 +50,7 @@ from sc2.data import Result
 
 from jev.contracts import (
     MAX_MESSAGE_CHARS,
+    RECENT_EVENT_LIMIT,
     Event,
     JevError,
     render_text,
@@ -51,9 +58,10 @@ from jev.contracts import (
     safe_repr,
 )
 from jev.policy import PolicyBundle
-from jev.runner import MatchLimits
+from jev.runner import MatchLimits, exception_error
 from jev.runtime import JevRuntime, TickResult
 from jev.sc2_adapter import BotAIPort, GamePort, Sc2Adapter
+from jev.telemetry import PersistenceFailed, RunRecorder
 
 __all__ = [
     "JevBot",
@@ -61,7 +69,6 @@ __all__ = [
     "LeaveFailed",
     "MAX_LEAVE_ATTEMPTS",
     "MatchResult",
-    "RECENT_EVENT_LIMIT",
     "TerminalReason",
     "match_result",
 ]
@@ -69,9 +76,7 @@ __all__ = [
 #: An SC2 outcome the match ended with (a stop or time limit is a TerminalReason).
 MatchResult = Literal["win", "loss", "draw"]
 #: Why the controller itself ended the match.
-TerminalReason = Literal["stopped", "game_timeout", "wall_timeout", "crashed"]
-#: Recent events kept in memory (plan D5 keeps 200 in a run snapshot).
-RECENT_EVENT_LIMIT: Final = 200
+TerminalReason = Literal["stopped", "game_timeout", "wall_timeout", "crashed", "persistence_failed"]
 #: Attempts to leave the game, one per game step, before :class:`LeaveFailed`.
 MAX_LEAVE_ATTEMPTS: Final = 3
 
@@ -103,8 +108,9 @@ class JevController:
     The runtime uses the plan's default cadence, budgets and task lifecycle. The
     wall-clock limit counts from the first game step, so SC2's startup is not
     charged to it (burnysc2 bounds the launch with its own connect timeout);
-    ``clock`` is injectable. Raises :class:`ValueError` for an invalid run id or
-    limits.
+    ``clock`` is injectable. ``recorder`` receives every live step's events (the
+    runner always passes one; without it nothing is persisted). Raises
+    :class:`ValueError` for an invalid run id or limits.
     """
 
     def __init__(
@@ -114,6 +120,7 @@ class JevController:
         run_id: str,
         limits: MatchLimits,
         clock: Callable[[], float] = time.monotonic,
+        recorder: RunRecorder | None = None,
     ) -> None:
         if not isinstance(limits, MatchLimits):
             raise ValueError(f"limits must be MatchLimits, got {safe_repr(limits)}")
@@ -133,6 +140,8 @@ class JevController:
         self._result: MatchResult | None = None
         self._game_seconds = 0.0
         self._recent: deque[Event] = deque(maxlen=RECENT_EVENT_LIMIT)
+        self._recorder = recorder
+        self._evidence_failure: JevError | None = None
 
     @property
     def stop_requested(self) -> bool:
@@ -165,6 +174,16 @@ class JevController:
         return self._crash
 
     @property
+    def evidence_failure(self) -> JevError | None:
+        """The ``persistence_failed`` error, once run evidence could not be written."""
+        return self._evidence_failure
+
+    @property
+    def recorder(self) -> RunRecorder | None:
+        """The run's evidence recorder, if any."""
+        return self._recorder
+
+    @property
     def result(self) -> MatchResult | None:
         """The SC2 result reported at match end, if any."""
         return self._result
@@ -176,7 +195,8 @@ class JevController:
 
     @property
     def recent_events(self) -> tuple[Event, ...]:
-        """The latest :data:`RECENT_EVENT_LIMIT` runtime events, oldest first."""
+        """The latest :data:`~jev.contracts.RECENT_EVENT_LIMIT` runtime events, oldest
+        first: every event, not only the ones the run trace keeps."""
         return tuple(self._recent)
 
     def attach(self, game: Any, port: GamePort) -> None:
@@ -199,10 +219,7 @@ class JevController:
         reason, and only the first crash's error is kept.
         """
         if self._crash is None:
-            name = safe_repr(type(exc).__name__)
-            detail = safe_exception_text(exc, MAX_MESSAGE_CHARS)
-            message = render_text(f"{name}: {detail}")[:MAX_MESSAGE_CHARS]
-            self._crash = JevError("match_crashed", message)
+            self._crash = exception_error("match_crashed", exc)
         self._terminal = "crashed"
 
     async def step(self) -> TickResult | None:
@@ -212,7 +229,8 @@ class JevController:
         once leaving has failed :data:`MAX_LEAVE_ATTEMPTS` times; nothing else
         escapes. A failure in the step's own pipeline -- malformed game state (the
         adapter's ValueError), a runtime error, an exception from the SC2 port -- is
-        recorded with :meth:`record_crash` and the bot leaves the game. Once the
+        recorded with :meth:`record_crash` and the bot leaves the game; evidence
+        that cannot be persisted ends the match as ``persistence_failed``. Once the
         match has ended for any reason the bot only leaves: a failed leave is kept as
         :attr:`leave_failure` and retried on the next step. It never changes why the
         match ended: a clean stop or time limit stays one (SC2 may already have ended
@@ -228,6 +246,10 @@ class JevController:
             return await self._step(port)
         except LeaveFailed:
             raise
+        except PersistenceFailed as exc:
+            self._evidence_failure = JevError(exc.code, exc.message)
+            await self._end(port, "persistence_failed")
+            return None
         except Exception as exc:
             self.record_crash(exc)
             await self._leave(port)
@@ -251,12 +273,18 @@ class JevController:
         self.adapter.collect_rejections(port, self.runtime)
         if not self.runtime.is_due(game_seconds):
             self.adapter.remember(self._game, port)
+            self._publish(())
             return None
         result = self.runtime.tick(self.adapter.observe(self._game, port))
         if result.ticked:
             await self.adapter.issue(result.commands, port, self.runtime)
             self._recent.extend(result.events)
+        self._publish(result.events)
         return result
+
+    def _publish(self, events: tuple[Event, ...]) -> None:
+        if self._recorder is not None:
+            self._recorder.update(self.runtime, events)
 
     async def _end(self, port: GamePort, reason: TerminalReason) -> None:
         self._terminal = reason

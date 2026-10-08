@@ -38,6 +38,8 @@ from bots.v13.web_socket import (
     drain_broadcast_queue,
     drain_command_event_queue,
 )
+from jev.api import create_router as create_jev_router
+from jev.telemetry import default_run_root as default_jev_run_root
 
 _log = logging.getLogger(__name__)
 
@@ -182,6 +184,10 @@ async def _lifespan(application: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Alpha4Gate", version="0.1.0", lifespan=_lifespan)
+# Phase JV: the read-only Jev run-evidence routes (/api/jev), served from the
+# repository-root data/jev/runs the Jev runner writes (derived from module paths,
+# never the working directory). Carry this mount into any later pointer migration.
+app.include_router(create_jev_router(default_jev_run_root()))
 
 
 # --- Command Helpers ---

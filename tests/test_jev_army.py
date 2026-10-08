@@ -38,6 +38,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -580,10 +581,12 @@ def _play(
     launcher = _Launcher(world, steps, *hooks)
     bundle = load_policy()
     chosen = MatchOptions() if options is None else options
-    if clock is None:
-        outcome = run_match(chosen, bundle, launcher=launcher)
-    else:
-        outcome = run_match(chosen, bundle, launcher=launcher, clock=clock)
+    with tempfile.TemporaryDirectory() as run_root:  # the evidence is not under test here
+        root = Path(run_root)
+        if clock is None:
+            outcome = run_match(chosen, bundle, launcher=launcher, run_root=root)
+        else:
+            outcome = run_match(chosen, bundle, launcher=launcher, clock=clock, run_root=root)
     assert launcher.controller is not None
     sequences = sorted(launcher.events)
     assert sequences == list(range(1, len(sequences) + 1))  # the trace lost no event
@@ -1229,11 +1232,11 @@ def test_scenario_give_up_rounds_add_up_to_a_demotion_until_damage_breaks_the_ch
 # ---------------------------------------------------------------------------
 
 
-def test_cli_game_time_limit_cuts_a_running_rush_short() -> None:
+def test_cli_game_time_limit_cuts_a_running_rush_short(tmp_path: Path) -> None:
     """The --max-game-seconds limit stops a rush in progress: the bot only leaves."""
     world = _base()
     launcher = _Launcher(world, 200)
-    argv = ["--max-game-seconds", "20"]
+    argv = ["--max-game-seconds", "20", "--run-root", str(tmp_path)]
     runner.main(argv, load_policy=load_policy, prog="jev-test", launcher=launcher)
     assert 20.0 <= world.seconds < 20.0 + STEP_SECONDS  # left on the first step past it
     first_wave = sorted((a, t) for loop, a, t in _sent_attacks(world) if loop == 0)
@@ -1320,6 +1323,10 @@ _JEV_DIRS = (_REPO / "src" / "jev", _REPO / "bots" / "jev")
 #: The one first-party module outside Jev that Jev may import: the SC2 install
 #: path resolver used by the runner's preflight.
 _ALLOWED_FIRST_PARTY = frozenset({"orchestrator.paths"})
+#: The dashboard's read-only router: the one Jev module off the gameplay call graph,
+#: and the only one that may import the web framework (the dashboard's own).
+_DASHBOARD_MODULES = frozenset({"jev.api"})
+_DASHBOARD_EXTERNALS = frozenset({"fastapi"})
 #: Legacy gameplay trees, PPO/RL inference stacks and LLM clients.
 _FORBIDDEN_MODULE = (
     r"\A(?:bots\.(?:current|v\d+)|torch|stable_baselines3|sb3_contrib|gymnasium|gym|"
@@ -1408,11 +1415,18 @@ def test_static_import_graph_of_jev_has_no_legacy_rl_or_llm_dependency() -> None
         found, _ = _imports(path)
         parents = {".".join(name.split(".")[:i]) for i in range(1, name.count(".") + 1)}
         queue.extend(m for m in found | parents if m.startswith(("jev", "bots")))
+    dashboard_external: set[str] = set()
     for path in sorted(audited):
         found, outside = _imports(path)
         first_party |= found
-        external |= outside
+        if _module_name(path) in _DASHBOARD_MODULES:
+            dashboard_external |= outside
+        else:
+            external |= outside
     assert _GAMEPLAY_MODULES <= reachable  # the scan covered the real entry point's graph
+    assert not reachable & _DASHBOARD_MODULES  # a match never loads the web router
+    dashboard_tops = {name.split(".")[0] for name in dashboard_external}
+    assert dashboard_tops <= set(sys.stdlib_module_names) | _DASHBOARD_EXTERNALS
     others = {m for m in first_party if not m.startswith(("jev", "bots.jev"))} - {"bots"}
     assert others <= _ALLOWED_FIRST_PARTY, sorted(others)
     for name in _ALLOWED_FIRST_PARTY:
@@ -1423,7 +1437,8 @@ def test_static_import_graph_of_jev_has_no_legacy_rl_or_llm_dependency() -> None
         external |= outside
     tops = {name.split(".")[0] for name in external}
     assert tops <= set(sys.stdlib_module_names) | {"sc2"}, sorted(tops)  # burnysc2 + stdlib
-    assert not [m for m in first_party | external | reachable if forbidden.match(m)]
+    everything = first_party | external | dashboard_external | reachable
+    assert not [m for m in everything if forbidden.match(m)]
 
 
 _RUNTIME_AUDIT = r"""
@@ -1435,7 +1450,7 @@ from bots.jev.v1 import load_policy
 from jev.bot import JevBot, JevController
 from jev.runner import MatchOptions
 
-rc = main([])  # the CLI's real SC2 preflight; SC2PATH is an empty folder here
+rc = main(["--run-root", sys.argv[2]])  # the real SC2 preflight; SC2PATH is empty here
 
 
 def unit(tag, name, position, **extra):
@@ -1502,7 +1517,7 @@ def test_runtime_modules_after_playing_steps_have_no_legacy_rl_or_llm_dependency
     env_root = tmp_path / "no-sc2"
     env_root.mkdir()
     proc = subprocess.run(
-        [sys.executable, str(script), _FORBIDDEN_MODULE],
+        [sys.executable, str(script), _FORBIDDEN_MODULE, str(tmp_path / "runs")],
         cwd=tmp_path,
         capture_output=True,
         text=True,

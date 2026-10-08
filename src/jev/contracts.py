@@ -1,9 +1,9 @@
 """Typed Jev records (schema version 1).
 
-These are the shapes shared by the policy loader, the interpreter, and (in later
-Phase JV steps) the SC2 adapter, telemetry writer and read-only API. Every record
-here is a frozen dataclass; the JSON wire forms are produced by ``to_dict`` /
-``to_document`` so no consumer hand-authors a second schema.
+These are the shapes shared by the policy loader, the interpreter, the SC2
+adapter, the run-evidence writer/reader (``jev.telemetry``) and the read-only API.
+Every record here is a frozen dataclass; the JSON wire forms are produced by
+``to_dict`` / ``to_document`` so no consumer hand-authors a second schema.
 
 Wire conventions (plan section 5):
 
@@ -45,6 +45,9 @@ __all__ = [
     "COMPOSITE_KINDS",
     "CommandSpec",
     "ENTITY_COLLECTIONS",
+    "ERROR_CODES",
+    "EVENT_KINDS",
+    "EVENT_STATUSES",
     "Entity",
     "EntityCollection",
     "ErrorCode",
@@ -63,6 +66,7 @@ __all__ = [
     "Latch",
     "LocationSource",
     "MAX_ABS_NUMBER",
+    "MAX_ACTIVE_TASKS",
     "MAX_COORDINATE",
     "MAX_DOCUMENT_ELEMENTS",
     "MAX_ENTITY_ORDERS",
@@ -89,17 +93,21 @@ __all__ = [
     "PolicyError",
     "PolicyIssue",
     "PolicyNode",
+    "RECENT_EVENT_LIMIT",
     "RUN_RESULTS",
     "RUN_STATUSES",
     "RunMetadata",
     "RunResult",
     "RunState",
     "RunStatus",
+    "RunSummary",
     "SCHEMA_VERSION",
     "TASK_STATUSES",
+    "TERMINAL_RUN_STATUSES",
     "Target",
     "Task",
     "TaskStatus",
+    "TraceStats",
     "encode_point",
     "encode_tag",
     "encode_target",
@@ -148,6 +156,7 @@ ErrorCode = Literal[
     "wall_timeout",
     "sc2_unavailable",
     "match_crashed",
+    "run_not_found",
 ]
 #: Observation fields holding entity records; the only collections a policy may query.
 EntityCollection = Literal[
@@ -189,7 +198,17 @@ LOCATION_SOURCES: Final[tuple[LocationSource, ...]] = get_args(LocationSource)
 POINT_KEYWORDS: Final[tuple[PointKeyword, ...]] = get_args(PointKeyword)
 LATCHES: Final[tuple[Latch, ...]] = get_args(Latch)
 RUN_STATUSES: Final[tuple[RunStatus, ...]] = get_args(RunStatus)
+#: Run statuses after which the producer never writes again (no heartbeat expected).
+TERMINAL_RUN_STATUSES: Final[frozenset[RunStatus]] = frozenset({"finished", "stopped", "failed"})
 RUN_RESULTS: Final[tuple[RunResult, ...]] = get_args(RunResult)
+EVENT_KINDS: Final[tuple[EventKind, ...]] = get_args(EventKind)
+EVENT_STATUSES: Final[tuple[EventStatus, ...]] = get_args(EventStatus)
+ERROR_CODES: Final[tuple[ErrorCode, ...]] = get_args(ErrorCode)
+#: A RunState keeps at most this many recent trace events (plan D5).
+RECENT_EVENT_LIMIT: Final = 200
+#: At most this many tasks are active at once, and a RunState lists at most this
+#: many (plan D5); the runtime's default task limit and the state cap share it.
+MAX_ACTIVE_TASKS: Final = 128
 
 # Shape regexes are anchored with \A...\Z (``$`` would accept a trailing newline)
 # and are linear-time (no nested or overlapping quantifiers). Always apply them via
@@ -906,8 +925,68 @@ class JevError:
 
 
 @dataclass(frozen=True)
+class TraceStats:
+    """Bookkeeping of a run's JSONL trace, carried in every :class:`RunState`.
+
+    ``segment`` is the number ``N`` of the segment being appended
+    (``events.N.jsonl``); ``events`` counts events appended to the trace;
+    ``rotated_segments`` / ``dropped_segments`` count rotations and the oldest
+    segments deleted to keep the retention limit; ``dropped_events`` counts events
+    no longer on disk (in a deleted segment, or lost to a failed append).
+    ``complete`` is False once any event was dropped or mandatory evidence failed
+    to persist: the retained trace then no longer holds every traced event.
+    """
+
+    segment: int = 1
+    events: int = 0
+    rotated_segments: int = 0
+    dropped_segments: int = 0
+    dropped_events: int = 0
+    complete: bool = True
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            "segment": self.segment,
+            "events": self.events,
+            "rotated_segments": self.rotated_segments,
+            "dropped_segments": self.dropped_segments,
+            "dropped_events": self.dropped_events,
+            "complete": self.complete,
+        }
+
+
+@dataclass(frozen=True)
+class RunSummary:
+    """One run-list entry (``GET /api/jev/runs``): the fields that lead a RunState."""
+
+    run_id: str
+    family: str
+    version: int
+    policy_hash: str
+    status: RunStatus
+    updated_at: str
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            "run_id": self.run_id,
+            "family": self.family,
+            "version": self.version,
+            "policy_hash": self.policy_hash,
+            "status": self.status,
+            "updated_at": self.updated_at,
+        }
+
+
+@dataclass(frozen=True)
 class RunState:
-    """Atomic run snapshot (written by telemetry in a later step)."""
+    """Atomic run snapshot (``state.json``, written by :mod:`jev.telemetry`).
+
+    ``recent_events`` holds at most :data:`RECENT_EVENT_LIMIT` trace events and
+    ``tasks`` at most :data:`MAX_ACTIVE_TASKS` active tasks; ``tasks_omitted``
+    counts active tasks beyond that cap, and ``trace`` describes the JSONL trace.
+    The wire form leads with ``schema_version`` and the :class:`RunSummary`
+    fields, so a reader can take a run's summary from a short prefix.
+    """
 
     run_id: str
     family: str
@@ -923,17 +1002,24 @@ class RunState:
     recent_events: tuple[Event, ...]
     result: RunResult | None = None
     error: JevError | None = None
+    tasks_omitted: int = 0
+    trace: TraceStats = field(default_factory=TraceStats)
     schema_version: int = SCHEMA_VERSION
+
+    def summary(self) -> RunSummary:
+        return RunSummary(
+            run_id=self.run_id,
+            family=self.family,
+            version=self.version,
+            policy_hash=self.policy_hash,
+            status=self.status,
+            updated_at=self.updated_at,
+        )
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "schema_version": self.schema_version,
-            "run_id": self.run_id,
-            "family": self.family,
-            "version": self.version,
-            "policy_hash": self.policy_hash,
-            "status": self.status,
-            "updated_at": self.updated_at,
+            **self.summary().to_dict(),
             "game_seconds": self.game_seconds,
             "last_sequence": self.last_sequence,
             "active_nodes": list(self.active_nodes),
@@ -942,19 +1028,26 @@ class RunState:
             "recent_events": [event.to_dict() for event in self.recent_events],
             "result": self.result,
             "error": None if self.error is None else self.error.to_dict(),
+            "tasks_omitted": self.tasks_omitted,
+            "trace": self.trace.to_dict(),
         }
 
 
 @dataclass(frozen=True)
 class RunMetadata:
-    """Immutable per-run provenance (written once by the runner in a later step)."""
+    """Per-run provenance (``metadata.json``, written by :mod:`jev.telemetry`).
+
+    ``source_commit`` is the checkout's git commit, or None when it is unknown;
+    ``replay_path`` is relative to the run directory and None until burnysc2 has
+    saved the replay -- the only field that changes after the run starts.
+    """
 
     run_id: str
     created_at: str
     family: str
     version: int
     policy_hash: str
-    source_commit: str
+    source_commit: str | None
     map: str
     opponent_race: str
     difficulty: int

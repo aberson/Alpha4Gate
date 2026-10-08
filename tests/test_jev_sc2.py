@@ -921,8 +921,11 @@ def test_match_outcomes_map_to_statuses_and_exit_codes(
     code: str | None,
     exit_code: int,
     left: bool,
+    tmp_path: Path,
 ) -> None:
-    outcome = run_match(MatchOptions(max_game_seconds=60), load_policy(), launcher=launcher)
+    outcome = run_match(
+        MatchOptions(max_game_seconds=60), load_policy(), launcher=launcher, run_root=tmp_path
+    )
     assert (outcome.status, outcome.result, outcome.exit_code) == (status, result, exit_code)
     assert (outcome.error.code if outcome.error is not None else None) == code
     assert launcher.played is (launcher.prepare_error is None)
@@ -930,10 +933,11 @@ def test_match_outcomes_map_to_statuses_and_exit_codes(
 
 
 def test_an_adapter_crash_is_a_failure_even_though_sc2_reports_a_defeat(
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     launcher = _Launcher(steps=5, before_step=_corrupt_state_at_step_one)
-    code = runner.main([], load_policy=load_policy, prog="jev-test", launcher=launcher)
+    argv = ["--run-root", str(tmp_path)]
+    code = runner.main(argv, load_policy=load_policy, prog="jev-test", launcher=launcher)
     assert code == EXIT_FAILURE  # not the 0 an ordinary loss exits with
     captured = capsys.readouterr()
     assert "jev match failed: result=None" in captured.out
@@ -981,9 +985,12 @@ def test_a_failed_leave_keeps_a_clean_stop_or_time_limit(
     status: str,
     code: str | None,
     exit_code: int,
+    tmp_path: Path,
 ) -> None:
     launcher = _launcher_with_port(_ClosedOnLeave(), before_step=hook)
-    outcome = run_match(MatchOptions(max_game_seconds=60), load_policy(), launcher=launcher)
+    outcome = run_match(
+        MatchOptions(max_game_seconds=60), load_policy(), launcher=launcher, run_root=tmp_path
+    )
     assert (outcome.status, outcome.exit_code) == (status, exit_code)
     assert (outcome.error.code if outcome.error is not None else None) == code  # not a crash
     assert "leaving the game failed: 'ConnectionResetError'" in outcome.message
@@ -997,7 +1004,7 @@ class _Clock:
         return self.now
 
 
-def test_wall_clock_limit_counts_from_the_first_game_step() -> None:
+def test_wall_clock_limit_counts_from_the_first_game_step(tmp_path: Path) -> None:
     """SC2's launch (1000 s here) is not charged to the 900 s match budget."""
     clock = _Clock()
     seconds_at_step = [1000.0, 1500.0, 1901.0]
@@ -1007,7 +1014,7 @@ def test_wall_clock_limit_counts_from_the_first_game_step() -> None:
 
     launcher = _Launcher(steps=3, before_step=advance)
     options = MatchOptions(max_wall_seconds=900)
-    outcome = run_match(options, load_policy(), launcher=launcher, clock=clock)
+    outcome = run_match(options, load_policy(), launcher=launcher, clock=clock, run_root=tmp_path)
     assert (outcome.status, outcome.result, outcome.exit_code) == (
         "failed",
         "timeout",
@@ -1018,9 +1025,12 @@ def test_wall_clock_limit_counts_from_the_first_game_step() -> None:
     assert launcher.port.left
 
 
-def test_cli_defaults_are_the_plan_launch_command(capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_defaults_are_the_plan_launch_command(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
     launcher = _Launcher()
-    code = runner.main([], load_policy=load_policy, prog="jev-test", launcher=launcher)
+    argv = ["--run-root", str(tmp_path)]
+    code = runner.main(argv, load_policy=load_policy, prog="jev-test", launcher=launcher)
     assert code == EXIT_OK
     assert launcher.options == MatchOptions(
         map_name="Simple64",
@@ -1123,7 +1133,9 @@ def test_sc2_failures_inside_run_game_are_classified_by_whether_the_match_began(
     code: str,
 ) -> None:
     _patch_burnysc2_launch(monkeypatch, tmp_path, run_game)
-    outcome = run_match(MatchOptions(), load_policy(), launcher=Sc2Launcher())
+    outcome = run_match(
+        MatchOptions(), load_policy(), launcher=Sc2Launcher(), run_root=tmp_path / "runs"
+    )
     assert (outcome.status, outcome.exit_code) == ("failed", EXIT_FAILURE)
     assert outcome.error is not None and outcome.error.code == code
 
@@ -1146,22 +1158,25 @@ class _FailsBeforeAttach:
 @pytest.mark.parametrize(
     "error", [SystemExit(2), ConnectionRefusedError("refused")], ids=["nonzero-exit", "exception"]
 )
-def test_failures_before_the_bot_attaches_are_sc2_unavailable(error: BaseException) -> None:
+def test_failures_before_the_bot_attaches_are_sc2_unavailable(
+    error: BaseException, tmp_path: Path
+) -> None:
     """burnysc2 never handed the bot a running game: infrastructure, not a crash."""
     launcher = _FailsBeforeAttach(error)
-    outcome = run_match(MatchOptions(), load_policy(), launcher=launcher)
+    outcome = run_match(MatchOptions(), load_policy(), launcher=launcher, run_root=tmp_path)
     assert launcher.played
     assert (outcome.status, outcome.result, outcome.exit_code) == ("failed", None, EXIT_FAILURE)
     assert outcome.error is not None and outcome.error.code == "sc2_unavailable"
 
 
 def test_a_broken_burnysc2_import_is_sc2_unavailable_without_a_traceback(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     monkeypatch.delitem(sys.modules, "jev.bot")  # re-imported by the runner ...
     monkeypatch.setitem(sys.modules, "sc2.bot_ai", None)  # ... against a broken burnysc2
     launcher = _FailsBeforeAttach(AssertionError("never played"))
-    code = runner.main([], load_policy=load_policy, prog="jev-test", launcher=launcher)
+    argv = ["--run-root", str(tmp_path)]
+    code = runner.main(argv, load_policy=load_policy, prog="jev-test", launcher=launcher)
     assert code == EXIT_FAILURE and not launcher.played  # stopped at the import
     captured = capsys.readouterr()
     assert "jev: sc2_unavailable:" in captured.err and "Traceback" not in captured.err
@@ -1197,7 +1212,7 @@ def test_bare_run_without_sc2_fails_early_and_launches_nothing(tmp_path: Path) -
     code = (
         "import sys\n"
         "from bots.jev.v1.__main__ import main\n"
-        "rc = main([])\n"
+        f"rc = main(['--run-root', {str(tmp_path / 'runs')!r}])\n"
         "print('SC2_IMPORTED', 'sc2' in sys.modules)\n"
         "raise SystemExit(rc)\n"
     )
@@ -1223,7 +1238,7 @@ def test_out_of_range_flags_are_capped_usage_errors(tmp_path: Path) -> None:
 
 
 @pytest.mark.sc2
-def test_live_short_match_issues_only_graph_attributed_commands() -> None:
+def test_live_short_match_issues_only_graph_attributed_commands(tmp_path: Path) -> None:
     """One real 60-game-second match on Simple64 through the production runner."""
     captured: list[JevController] = []
 
@@ -1236,6 +1251,7 @@ def test_live_short_match_issues_only_graph_attributed_commands() -> None:
         MatchOptions(max_game_seconds=60, max_wall_seconds=600),
         load_policy(),
         launcher=_Recording(),
+        run_root=tmp_path,
     )
     assert outcome.error is not None and outcome.error.code == "game_timeout", outcome
     (controller,) = captured
