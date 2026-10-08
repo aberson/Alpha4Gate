@@ -157,13 +157,14 @@ Phase JV owns numeric Steps 201-208, newly reserved in the master plan. All are 
 
 - **Problem:** Make the real Jev CLI validate packaged graph definitions and execute deterministic observation scenarios through the production interpreter.
 - **Type:** code
-- **Status:** BLOCKED (2026-10-07)
+- **Status:** DONE (2026-10-07)
 - **Issue:** #318
 - **Flags:** --reviewers deep
 - **Files:** `src/jev/contracts.py`, `policy.py`, `runtime.py`, `operations.py`; `bots/jev/v1` package and initial policy/manifest; `pyproject.toml`; `tests/test_jev_policy.py`, `tests/test_jev_runtime.py`.
 - **Produces:** Typed contracts, interpreter, validator, `--validate-policy` path, packaged data and bounded scenario tests; operation implementations are explicit, not placeholder success stubs.
 - **Done when:** CLI validates the shipped policy; invalid cycles/missing references/unknown operations fail with node-specific errors; one running lane cannot starve another; tick budget bounds a pathological graph; installed-wheel validation finds bundled JSON. Scenario events identify the executed nodes.
 - **Depends on:** none
+- **Build note (build-phase orchestrator decision, 2026-10-07):** Step 201 delivers the runtime-side D4 task lifecycle (acknowledgement timeouts, bounded retries, deadlines, cooldown, reservations) and a shipped policy that already encodes the four-Gateway economy and the D3 army lanes, because the interpreter, task dedup and scenario Done-when need a complete, validating graph to exercise every allowlisted operation. This front-loading is accepted rather than removed and re-added. Steps 202 and 203 keep ownership of everything SC2-observed (visible-state adapter, real command issue, observation-based acknowledgement against live state, terminal results) and of their own Done-when verification; they extend or correct this baseline instead of authoring it from scratch.
 
 ### Step 202: Run the four-Gateway economy in SC2
 

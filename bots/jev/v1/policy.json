@@ -1,0 +1,1135 @@
+{
+  "schema_version": 1,
+  "family": "jev",
+  "version": 1,
+  "roots": [
+    "economy",
+    "construction",
+    "production",
+    "army"
+  ],
+  "parameters": {
+    "probe_target": 16,
+    "gateway_target": 4,
+    "first_attack_zealots": 4,
+    "supply_trigger_free": 4,
+    "workers_per_patch": 2,
+    "defense_radius": 20,
+    "rally_distance": 8,
+    "army_arrive_within": 4
+  },
+  "nodes": [
+    {
+      "id": "economy",
+      "label": "Economy: keep idle probes mining",
+      "kind": "sequence",
+      "children": [
+        "economy.idle_probes",
+        "economy.mineral_patches",
+        "economy.assign"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "economy.idle_probes",
+      "label": "Idle probes not held by a task",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_units",
+        "filter": {
+          "types": [
+            "Probe"
+          ],
+          "idle": true
+        },
+        "sort": {
+          "by": "tag"
+        },
+        "limit": 32,
+        "exclude_busy": true,
+        "bind": "idle_probes"
+      }
+    },
+    {
+      "id": "economy.mineral_patches",
+      "label": "Visible mineral patches near the main, nearest first",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "mineral_fields",
+        "filter": {
+          "within": {
+            "point": "start_location",
+            "distance": 12
+          }
+        },
+        "sort": {
+          "by": "distance",
+          "from": "start_location"
+        },
+        "limit": 8,
+        "bind": "patches"
+      }
+    },
+    {
+      "id": "economy.assign",
+      "label": "Send each idle probe to the least-loaded patch",
+      "kind": "action",
+      "children": [],
+      "operation": "gather",
+      "args": {
+        "workers": "$idle_probes",
+        "minerals": "$patches",
+        "per_patch": {
+          "param": "workers_per_patch"
+        }
+      }
+    },
+    {
+      "id": "construction",
+      "label": "Construction: supply, power, then Gateways",
+      "kind": "selector",
+      "children": [
+        "construction.supply",
+        "construction.power",
+        "construction.repower",
+        "construction.gateways"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "construction.supply",
+      "label": "Emergency supply: Pylon at four free supply or fewer",
+      "kind": "sequence",
+      "children": [
+        "construction.supply.low",
+        "construction.supply.none_warping",
+        "construction.supply.none_ordered",
+        "construction.supply.site",
+        "construction.supply.worker",
+        "construction.supply.build"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "construction.supply.low",
+      "label": "Free supply at or below the trigger",
+      "kind": "condition",
+      "children": [],
+      "operation": "resource_compare",
+      "args": {
+        "resource": "supply_free",
+        "op": "<=",
+        "value": {
+          "param": "supply_trigger_free"
+        }
+      }
+    },
+    {
+      "id": "construction.supply.none_warping",
+      "label": "No Pylon under construction",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Pylon"
+          ],
+          "under_construction": true
+        },
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "construction.supply.none_ordered",
+      "label": "No unacknowledged supply Pylon order",
+      "kind": "condition",
+      "children": [],
+      "operation": "task_count_compare",
+      "args": {
+        "node": "construction.supply.build",
+        "statuses": [
+          "pending",
+          "issued"
+        ],
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "construction.supply.site",
+      "label": "Pylon placement candidates near the main",
+      "kind": "select",
+      "children": [],
+      "operation": "select_placement",
+      "args": {
+        "structure": "Pylon",
+        "near": "start_location",
+        "radius_min": 6,
+        "radius_max": 12,
+        "require_power": false,
+        "limit": 8,
+        "bind": "pylon_site"
+      }
+    },
+    {
+      "id": "construction.supply.worker",
+      "label": "Nearest available mining or idle probe to the site, tie by tag",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_units",
+        "filter": {
+          "types": [
+            "Probe"
+          ],
+          "any_of": [
+            {
+              "idle": true
+            },
+            {
+              "order_in": [
+                "HARVEST_GATHER",
+                "HARVEST_RETURN"
+              ]
+            }
+          ]
+        },
+        "sort": {
+          "by": "distance",
+          "from": "$pylon_site"
+        },
+        "limit": 1,
+        "exclude_busy": true,
+        "bind": "pylon_builder"
+      }
+    },
+    {
+      "id": "construction.supply.build",
+      "label": "Build the supply Pylon (holds minerals while short)",
+      "kind": "action",
+      "children": [],
+      "operation": "build",
+      "args": {
+        "structure": "Pylon",
+        "worker": "$pylon_builder",
+        "site": "$pylon_site",
+        "hold_reservation": true
+      }
+    },
+    {
+      "id": "construction.power",
+      "label": "Replace missing power: a Pylon whenever none exists",
+      "kind": "sequence",
+      "children": [
+        "construction.power.no_pylon",
+        "construction.power.no_supply_order",
+        "construction.power.none_ordered",
+        "construction.power.site",
+        "construction.power.worker",
+        "construction.power.build"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "construction.power.no_pylon",
+      "label": "No Pylon exists",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Pylon"
+          ]
+        },
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "construction.power.no_supply_order",
+      "label": "No unacknowledged supply Pylon order",
+      "kind": "condition",
+      "children": [],
+      "operation": "task_count_compare",
+      "args": {
+        "node": "construction.supply.build",
+        "statuses": [
+          "pending",
+          "issued"
+        ],
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "construction.power.none_ordered",
+      "label": "No unacknowledged power Pylon order",
+      "kind": "condition",
+      "children": [],
+      "operation": "task_count_compare",
+      "args": {
+        "node": "construction.power.build",
+        "statuses": [
+          "pending",
+          "issued"
+        ],
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "construction.power.site",
+      "label": "Pylon placement candidates near the main",
+      "kind": "select",
+      "children": [],
+      "operation": "select_placement",
+      "args": {
+        "structure": "Pylon",
+        "near": "start_location",
+        "radius_min": 6,
+        "radius_max": 12,
+        "require_power": false,
+        "limit": 8,
+        "bind": "power_site"
+      }
+    },
+    {
+      "id": "construction.power.worker",
+      "label": "Nearest available mining or idle probe to the site, tie by tag",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_units",
+        "filter": {
+          "types": [
+            "Probe"
+          ],
+          "any_of": [
+            {
+              "idle": true
+            },
+            {
+              "order_in": [
+                "HARVEST_GATHER",
+                "HARVEST_RETURN"
+              ]
+            }
+          ]
+        },
+        "sort": {
+          "by": "distance",
+          "from": "$power_site"
+        },
+        "limit": 1,
+        "exclude_busy": true,
+        "bind": "power_builder"
+      }
+    },
+    {
+      "id": "construction.power.build",
+      "label": "Build the power Pylon (holds minerals while short)",
+      "kind": "action",
+      "children": [],
+      "operation": "build",
+      "args": {
+        "structure": "Pylon",
+        "worker": "$power_builder",
+        "site": "$power_site",
+        "hold_reservation": true
+      }
+    },
+    {
+      "id": "construction.repower",
+      "label": "Replace power for an unpowered Gateway",
+      "kind": "sequence",
+      "children": [
+        "construction.repower.none_warping",
+        "construction.repower.no_supply_order",
+        "construction.repower.no_power_order",
+        "construction.repower.none_ordered",
+        "construction.repower.gateway",
+        "construction.repower.site",
+        "construction.repower.worker",
+        "construction.repower.build"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "construction.repower.none_warping",
+      "label": "No Pylon is already warping in",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Pylon"
+          ],
+          "under_construction": true
+        },
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "construction.repower.no_supply_order",
+      "label": "No supply Pylon order is pending",
+      "kind": "condition",
+      "children": [],
+      "operation": "task_count_compare",
+      "args": {
+        "node": "construction.supply.build",
+        "statuses": [
+          "pending",
+          "issued"
+        ],
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "construction.repower.no_power_order",
+      "label": "No first power Pylon order is pending",
+      "kind": "condition",
+      "children": [],
+      "operation": "task_count_compare",
+      "args": {
+        "node": "construction.power.build",
+        "statuses": [
+          "pending",
+          "issued"
+        ],
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "construction.repower.none_ordered",
+      "label": "No replacement Pylon order is pending",
+      "kind": "condition",
+      "children": [],
+      "operation": "task_count_compare",
+      "args": {
+        "node": "construction.repower.build",
+        "statuses": [
+          "pending",
+          "issued"
+        ],
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "construction.repower.gateway",
+      "label": "Choose an unpowered Gateway",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Gateway"
+          ],
+          "powered": false
+        },
+        "sort": {
+          "by": "tag"
+        },
+        "limit": 1,
+        "bind": "unpowered_gateway"
+      }
+    },
+    {
+      "id": "construction.repower.site",
+      "label": "Choose a Pylon site that powers it",
+      "kind": "select",
+      "children": [],
+      "operation": "select_placement",
+      "args": {
+        "structure": "Pylon",
+        "near": "$unpowered_gateway",
+        "radius_min": 2,
+        "radius_max": 5,
+        "require_power": false,
+        "limit": 8,
+        "bind": "repower_site"
+      }
+    },
+    {
+      "id": "construction.repower.worker",
+      "label": "Choose the nearest available probe",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_units",
+        "filter": {
+          "types": [
+            "Probe"
+          ],
+          "any_of": [
+            {
+              "idle": true
+            },
+            {
+              "order_in": [
+                "HARVEST_GATHER",
+                "HARVEST_RETURN"
+              ]
+            }
+          ]
+        },
+        "sort": {
+          "by": "distance",
+          "from": "$repower_site"
+        },
+        "limit": 1,
+        "exclude_busy": true,
+        "bind": "repower_builder"
+      }
+    },
+    {
+      "id": "construction.repower.build",
+      "label": "Build the replacement Pylon",
+      "kind": "action",
+      "children": [],
+      "operation": "build",
+      "args": {
+        "structure": "Pylon",
+        "worker": "$repower_builder",
+        "site": "$repower_site",
+        "hold_reservation": true
+      }
+    },
+    {
+      "id": "construction.gateways",
+      "label": "Gateways toward the target",
+      "kind": "sequence",
+      "children": [
+        "construction.gateways.below_target",
+        "construction.gateways.allowed",
+        "construction.gateways.site",
+        "construction.gateways.worker",
+        "construction.gateways.build"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "construction.gateways.below_target",
+      "label": "Fewer Gateways than the target (any build progress)",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Gateway"
+          ]
+        },
+        "op": "<",
+        "value": {
+          "param": "gateway_target"
+        }
+      }
+    },
+    {
+      "id": "construction.gateways.allowed",
+      "label": "First Gateway, or the first-four-Zealots milestone is reached",
+      "kind": "selector",
+      "children": [
+        "construction.gateways.allowed.first",
+        "construction.gateways.allowed.wave_ready",
+        "construction.gateways.allowed.attack_launched"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "construction.gateways.allowed.first",
+      "label": "No Gateway yet",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Gateway"
+          ]
+        },
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "construction.gateways.allowed.wave_ready",
+      "label": "First wave of Zealots exists",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_units",
+        "filter": {
+          "types": [
+            "Zealot"
+          ]
+        },
+        "op": ">=",
+        "value": {
+          "param": "first_attack_zealots"
+        }
+      }
+    },
+    {
+      "id": "construction.gateways.allowed.attack_launched",
+      "label": "First attack already launched",
+      "kind": "condition",
+      "children": [],
+      "operation": "latch_is_set",
+      "args": {
+        "latch": "attack_launched"
+      }
+    },
+    {
+      "id": "construction.gateways.site",
+      "label": "Gateway candidates inside Pylon power near the main",
+      "kind": "select",
+      "children": [],
+      "operation": "select_placement",
+      "args": {
+        "structure": "Gateway",
+        "near": "start_location",
+        "radius_min": 5,
+        "radius_max": 14,
+        "require_power": true,
+        "limit": 8,
+        "bind": "gateway_site"
+      }
+    },
+    {
+      "id": "construction.gateways.worker",
+      "label": "Nearest available mining or idle probe to the site, tie by tag",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_units",
+        "filter": {
+          "types": [
+            "Probe"
+          ],
+          "any_of": [
+            {
+              "idle": true
+            },
+            {
+              "order_in": [
+                "HARVEST_GATHER",
+                "HARVEST_RETURN"
+              ]
+            }
+          ]
+        },
+        "sort": {
+          "by": "distance",
+          "from": "$gateway_site"
+        },
+        "limit": 1,
+        "exclude_busy": true,
+        "bind": "gateway_builder"
+      }
+    },
+    {
+      "id": "construction.gateways.build",
+      "label": "Build a Gateway (holds minerals while short)",
+      "kind": "action",
+      "children": [],
+      "operation": "build",
+      "args": {
+        "structure": "Gateway",
+        "worker": "$gateway_builder",
+        "site": "$gateway_site",
+        "hold_reservation": true
+      }
+    },
+    {
+      "id": "production",
+      "label": "Production: Zealots first, then probes with leftover minerals",
+      "kind": "selector",
+      "children": [
+        "production.zealots",
+        "production.probes"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "production.zealots",
+      "label": "Train a Zealot from every idle powered Gateway",
+      "kind": "sequence",
+      "children": [
+        "production.zealots.gateways",
+        "production.zealots.train"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "production.zealots.gateways",
+      "label": "Ready, idle, powered Gateways by tag",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Gateway"
+          ],
+          "ready": true,
+          "idle": true,
+          "powered": true
+        },
+        "sort": {
+          "by": "tag"
+        },
+        "limit": {
+          "param": "gateway_target"
+        },
+        "bind": "idle_gateways"
+      }
+    },
+    {
+      "id": "production.zealots.train",
+      "label": "Train Zealots (holds minerals while short)",
+      "kind": "action",
+      "children": [],
+      "operation": "train",
+      "args": {
+        "unit": "Zealot",
+        "producers": "$idle_gateways",
+        "hold_reservation": true
+      }
+    },
+    {
+      "id": "production.probes",
+      "label": "Probes toward the target (lowest spending priority)",
+      "kind": "sequence",
+      "children": [
+        "production.probes.below_target",
+        "production.probes.nexus",
+        "production.probes.train"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "production.probes.below_target",
+      "label": "Fewer probes than the target",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_units",
+        "filter": {
+          "types": [
+            "Probe"
+          ]
+        },
+        "op": "<",
+        "value": {
+          "param": "probe_target"
+        }
+      }
+    },
+    {
+      "id": "production.probes.nexus",
+      "label": "The ready, idle Nexus",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Nexus"
+          ],
+          "ready": true,
+          "idle": true
+        },
+        "sort": {
+          "by": "tag"
+        },
+        "limit": 1,
+        "bind": "idle_nexus"
+      }
+    },
+    {
+      "id": "production.probes.train",
+      "label": "Train a probe if minerals remain after higher priorities",
+      "kind": "action",
+      "children": [],
+      "operation": "train",
+      "args": {
+        "unit": "Probe",
+        "producers": "$idle_nexus",
+        "hold_reservation": false
+      }
+    },
+    {
+      "id": "army",
+      "label": "Army: defend, attack once latched, otherwise rally",
+      "kind": "selector",
+      "children": [
+        "army.defend",
+        "army.attack",
+        "army.rally"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "army.defend",
+      "label": "Defend the main against nearby ground threats",
+      "kind": "sequence",
+      "children": [
+        "army.defend.threat",
+        "army.defend.target",
+        "army.defend.zealots",
+        "army.defend.attack"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "army.defend.threat",
+      "label": "Visible ground enemy within the defense radius of the main",
+      "kind": "condition",
+      "children": [],
+      "operation": "threat_within",
+      "args": {
+        "point": "start_location",
+        "distance": {
+          "param": "defense_radius"
+        }
+      }
+    },
+    {
+      "id": "army.defend.target",
+      "label": "Nearest ground threat to the main, tie by tag",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "visible_enemies",
+        "filter": {
+          "flying": false,
+          "structure": false,
+          "within": {
+            "point": "start_location",
+            "distance": {
+              "param": "defense_radius"
+            }
+          }
+        },
+        "sort": {
+          "by": "distance",
+          "from": "start_location"
+        },
+        "limit": 1,
+        "bind": "threat"
+      }
+    },
+    {
+      "id": "army.defend.zealots",
+      "label": "Every Zealot",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_units",
+        "filter": {
+          "types": [
+            "Zealot"
+          ]
+        },
+        "sort": {
+          "by": "tag"
+        },
+        "limit": 200,
+        "bind": "defenders"
+      }
+    },
+    {
+      "id": "army.defend.attack",
+      "label": "Attack the threat (cancels this lane's other army tasks)",
+      "kind": "action",
+      "children": [],
+      "operation": "attack",
+      "args": {
+        "units": "$defenders",
+        "target": "$threat",
+        "arrive_within": {
+          "param": "army_arrive_within"
+        },
+        "preempt": true
+      }
+    },
+    {
+      "id": "army.attack",
+      "label": "Attack once latched; new Zealots reinforce",
+      "kind": "sequence",
+      "children": [
+        "army.attack.launch",
+        "army.attack.zealots",
+        "army.attack.target",
+        "army.attack.go"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "army.attack.launch",
+      "label": "Attack latched, or latch it at the first-wave size",
+      "kind": "selector",
+      "children": [
+        "army.attack.launch.latched",
+        "army.attack.launch.first_wave"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "army.attack.launch.latched",
+      "label": "First attack already launched",
+      "kind": "condition",
+      "children": [],
+      "operation": "latch_is_set",
+      "args": {
+        "latch": "attack_launched"
+      }
+    },
+    {
+      "id": "army.attack.launch.first_wave",
+      "label": "Enough ready Zealots for the first attack",
+      "kind": "sequence",
+      "children": [
+        "army.attack.launch.first_wave.ready",
+        "army.attack.launch.first_wave.latch"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "army.attack.launch.first_wave.ready",
+      "label": "Ready Zealots at or above the first-wave size",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_units",
+        "filter": {
+          "types": [
+            "Zealot"
+          ],
+          "ready": true
+        },
+        "op": ">=",
+        "value": {
+          "param": "first_attack_zealots"
+        }
+      }
+    },
+    {
+      "id": "army.attack.launch.first_wave.latch",
+      "label": "Latch attack_launched",
+      "kind": "action",
+      "children": [],
+      "operation": "set_latch",
+      "args": {
+        "latch": "attack_launched"
+      }
+    },
+    {
+      "id": "army.attack.zealots",
+      "label": "Every ready Zealot",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_units",
+        "filter": {
+          "types": [
+            "Zealot"
+          ],
+          "ready": true
+        },
+        "sort": {
+          "by": "tag"
+        },
+        "limit": 200,
+        "bind": "attackers"
+      }
+    },
+    {
+      "id": "army.attack.target",
+      "label": "Visible structures, then remembered structures, then the enemy start",
+      "kind": "selector",
+      "children": [
+        "army.attack.target.visible",
+        "army.attack.target.remembered",
+        "army.attack.target.enemy_start"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "army.attack.target.visible",
+      "label": "Nearest visible enemy structure to the army",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "visible_enemies",
+        "filter": {
+          "structure": true
+        },
+        "sort": {
+          "by": "distance",
+          "from": "$attackers"
+        },
+        "limit": 1,
+        "bind": "target"
+      }
+    },
+    {
+      "id": "army.attack.target.remembered",
+      "label": "Nearest remembered enemy structure to the army",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "remembered_enemy_structures",
+        "sort": {
+          "by": "distance",
+          "from": "$attackers"
+        },
+        "limit": 1,
+        "bind": "target"
+      }
+    },
+    {
+      "id": "army.attack.target.enemy_start",
+      "label": "Nearest known enemy start location",
+      "kind": "select",
+      "children": [],
+      "operation": "select_locations",
+      "args": {
+        "source": "enemy_start_locations",
+        "sort": {
+          "by": "distance",
+          "from": "start_location"
+        },
+        "limit": 1,
+        "bind": "target"
+      }
+    },
+    {
+      "id": "army.attack.go",
+      "label": "Attack the chosen target with every ready Zealot",
+      "kind": "action",
+      "children": [],
+      "operation": "attack",
+      "args": {
+        "units": "$attackers",
+        "target": "$target",
+        "arrive_within": {
+          "param": "army_arrive_within"
+        },
+        "preempt": true
+      }
+    },
+    {
+      "id": "army.rally",
+      "label": "Gather toward the map centre until the attack launches",
+      "kind": "sequence",
+      "children": [
+        "army.rally.point",
+        "army.rally.zealots",
+        "army.rally.move"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "army.rally.point",
+      "label": "Point a fixed distance from the main toward the map centre",
+      "kind": "select",
+      "children": [],
+      "operation": "select_point",
+      "args": {
+        "from": "start_location",
+        "toward": "map_center",
+        "distance": {
+          "param": "rally_distance"
+        },
+        "bind": "rally_point"
+      }
+    },
+    {
+      "id": "army.rally.zealots",
+      "label": "Every Zealot",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_units",
+        "filter": {
+          "types": [
+            "Zealot"
+          ]
+        },
+        "sort": {
+          "by": "tag"
+        },
+        "limit": 200,
+        "bind": "rally_units"
+      }
+    },
+    {
+      "id": "army.rally.move",
+      "label": "Move Zealots to the rally point",
+      "kind": "action",
+      "children": [],
+      "operation": "move",
+      "args": {
+        "units": "$rally_units",
+        "target": "$rally_point",
+        "arrive_within": {
+          "param": "army_arrive_within"
+        },
+        "preempt": true
+      }
+    }
+  ]
+}
