@@ -93,8 +93,8 @@ None. Blank Issue fields are intentional before repo-sync. The stronger-play
 target can remain unmet after a valid experiment; the plan explicitly preserves
 that distinction rather than promising a win-rate increase.
 
-Next: `/plan-expedite --plan documentation/plans/jev-v2-plan.md` in
-`C:/Users/abero/dev/Alpha4Gate` to route the reviewed plan through issue sync.
+Next: `/plan-expedite --plan documentation/plans/jev-v2-plan.md` in the
+Alpha4Gate repository root to route the reviewed plan through issue sync.
 After READY, `/build-phase --plan documentation/plans/jev-v2-plan.md` in the same
 project. Preserve the uncommitted JI prerequisite source before worktree isolation.
 
