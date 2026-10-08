@@ -183,13 +183,14 @@ Phase JV owns numeric Steps 201-208, newly reserved in the master plan. All are 
 
 - **Problem:** Make the army complete matches through Jev-controlled attack, defense, reinforcement and search behavior.
 - **Type:** code
-- **Status:** BLOCKED (2026-10-07)
+- **Status:** DONE (2026-10-08)
 - **Issue:** #320
 - **Flags:** --reviewers deep
 - **Files:** `bots/jev/v1/policy.json`; `src/jev/operations.py`, `sc2_adapter.py`, `runtime.py`, `runner.py`; `tests/test_jev_army.py`.
 - **Produces:** Full v1 policy and terminal-result lifecycle.
 - **Done when:** Production-runtime scenarios launch with four ready Zealots before all Gateways complete, reinforce below four after attack latches, interrupt/resume for defense, invalidate dead targets, search after clearing the enemy start, and terminate within CLI time limits. Import/call audit finds no legacy gameplay, PPO inference or LLM client in Jev's gameplay call graph.
 - **Depends on:** 202
+- **Build note (build-phase orchestrator decision, 2026-10-08):** D3's "A destroyed Nexus ends economy recovery" is read as: once no Nexus exists, the recovery lanes stop — probe training, Gateway rebuilds and power-Pylon replacement. Surviving Gateways may keep training Zealots from banked minerals, and the army keeps defending, searching and attacking until SC2 ends the match or a time limit expires. Unreachable targets are abandoned through bounded recovery (D4): a give-up is attributed per target, not per actor, so staggered attackers cannot keep a stuck target alive indefinitely.
 
 <!-- autofix-applied: 2026-10-07 -->
 ### Step 204: Expose inspectable run evidence

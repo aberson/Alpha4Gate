@@ -65,6 +65,7 @@ def _unit(tag: int, name: str = "Probe", **fields: Any) -> SimpleNamespace:
         "name": name,
         "position": (28.0, 26.0),
         "health": 40.0,
+        "shield": 0.0,
         "build_progress": 1.0,
         "orders": [],
         "is_structure": False,
@@ -265,6 +266,7 @@ class _Exploding:
         ({"units": [_unit(2**64)]}, "units[0].tag"),
         ({"units": [_unit(2000, name="Probe\x1b[2J")]}, "units[0].name"),
         ({"units": [_unit(2000, health="full")]}, "units[0].health"),
+        ({"units": [_unit(2000, shield=-1.0)]}, "units[0].shield"),
         ({"units": [_unit(2000, orders=[_order("HARVEST\nGATHER")])]}, "orders[0].ability"),
         ({"units": [_unit(2000, orders=[_order("MOVE", (1.0,))])]}, "orders[0].target"),
         ({"units": [_unit(2000), _unit(2000)]}, "repeats own tag"),
@@ -1124,6 +1126,45 @@ def test_sc2_failures_inside_run_game_are_classified_by_whether_the_match_began(
     outcome = run_match(MatchOptions(), load_policy(), launcher=Sc2Launcher())
     assert (outcome.status, outcome.exit_code) == ("failed", EXIT_FAILURE)
     assert outcome.error is not None and outcome.error.code == code
+
+
+class _FailsBeforeAttach:
+    """A launcher whose ``play`` fails before the bot is bound to a running game."""
+
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+        self.played = False
+
+    def prepare(self, options: MatchOptions) -> object:
+        return "setup"
+
+    def play(self, controller: JevController, setup: object, options: MatchOptions) -> Any:
+        self.played = True
+        raise self.error
+
+
+@pytest.mark.parametrize(
+    "error", [SystemExit(2), ConnectionRefusedError("refused")], ids=["nonzero-exit", "exception"]
+)
+def test_failures_before_the_bot_attaches_are_sc2_unavailable(error: BaseException) -> None:
+    """burnysc2 never handed the bot a running game: infrastructure, not a crash."""
+    launcher = _FailsBeforeAttach(error)
+    outcome = run_match(MatchOptions(), load_policy(), launcher=launcher)
+    assert launcher.played
+    assert (outcome.status, outcome.result, outcome.exit_code) == ("failed", None, EXIT_FAILURE)
+    assert outcome.error is not None and outcome.error.code == "sc2_unavailable"
+
+
+def test_a_broken_burnysc2_import_is_sc2_unavailable_without_a_traceback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delitem(sys.modules, "jev.bot")  # re-imported by the runner ...
+    monkeypatch.setitem(sys.modules, "sc2.bot_ai", None)  # ... against a broken burnysc2
+    launcher = _FailsBeforeAttach(AssertionError("never played"))
+    code = runner.main([], load_policy=load_policy, prog="jev-test", launcher=launcher)
+    assert code == EXIT_FAILURE and not launcher.played  # stopped at the import
+    captured = capsys.readouterr()
+    assert "jev: sc2_unavailable:" in captured.err and "Traceback" not in captured.err
 
 
 def test_preflight_finds_the_map_one_folder_down(

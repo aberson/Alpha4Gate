@@ -28,7 +28,13 @@ from jev.contracts import (
     Order,
     Policy,
 )
-from jev.operations import BUILD_ABILITY, PYLON_POWER_RADIUS, TRAIN_ABILITY, distance
+from jev.operations import (
+    BUILD_ABILITY,
+    PYLON_POWER_RADIUS,
+    TRAIN_ABILITY,
+    decode_arrive_within,
+    distance,
+)
 from jev.policy import PolicyError, parse_policy
 from jev.runtime import (
     COMMAND_BUDGET_REASON,
@@ -284,6 +290,8 @@ def _with_entity(field: str, **changes: Any) -> Observation:
         (lambda: _with_entity("enemy_start_locations", value=((1.0,),)), "enemy_start_locations"),
         (lambda: _with_entity("units", position=(math.nan, 0.0)), "position"),
         (lambda: _with_entity("units", health=math.inf), "health"),
+        (lambda: _with_entity("units", shield=math.nan), "shield"),
+        (lambda: _with_entity("units", shield=-1.0), "shield"),
         (lambda: _with_entity("units", orders=(Order("MOVE", (math.nan, 1.0)),)), "order target"),
         (lambda: _with_entity("units", orders=(Order("MOVE", None, math.nan),)), "order progress"),
         (lambda: _with_entity("units", tag=True), "tag"),
@@ -324,6 +332,7 @@ HUGE = 10**400  # beyond float range: must be a ValueError, never an OverflowErr
         (lambda: _with_entity("expansion_locations", value=((0.0, HUGE),)), "expansion"),
         (lambda: _with_entity("units", position=(HUGE, 0.0)), "position"),
         (lambda: _with_entity("units", health=HUGE), "health"),
+        (lambda: _with_entity("units", shield=HUGE), "shield"),
         (lambda: _with_entity("units", build_progress=HUGE), "build_progress"),
         (lambda: _with_entity("units", tag=2**64), "tag"),
         (lambda: _with_entity("units", orders=(Order("MOVE", None, HUGE),)), "order progress"),
@@ -780,21 +789,48 @@ def test_running_training_fails_at_its_sixty_second_deadline() -> None:
     assert any("cooling down" in d.reason for d in _kinds(late, "diagnostic"))
 
 
+@pytest.mark.parametrize(
+    ("params", "expected"),
+    [
+        ({"arrive_within": 4}, 4.0),
+        ({"arrive_within": 2.5}, 2.5),
+        ({}, 0.0),
+        ({"arrive_within": True}, 0.0),
+        ({"arrive_within": "4"}, 0.0),
+        ({"arrive_within": None}, 0.0),
+        ({"arrive_within": math.nan}, 0.0),
+        ({"arrive_within": HUGE}, 0.0),
+        ({"arrive_within": [4]}, 0.0),
+    ],
+    ids=["int", "float", "absent", "bool", "text", "none", "nan", "huge", "list"],
+)
+def test_arrive_within_decodes_a_radius_or_falls_back_to_zero(
+    params: dict[str, Any], expected: float
+) -> None:
+    decoded = decode_arrive_within(params)
+    assert decoded == expected and type(decoded) is float
+
+
 def test_arrive_within_has_one_decoder_shared_by_ack_progress_and_runtime() -> None:
-    """One decode (value and fallback) for the arrival radius, never three."""
+    """One decoder for the arrival radius: one read of its key in all of jev, never a copy."""
+    import importlib
     import inspect
+    import pkgutil
+    import re
 
-    import jev.operations as operations_module
-    import jev.runtime as runtime_module
+    import jev
 
-    decode = operations_module.decode_arrive_within
-    assert runtime_module.decode_arrive_within is decode
-    for params, expected in (({}, 0.0), ({"arrive_within": 4}, 4.0), ({"arrive_within": 2.5}, 2.5)):
-        assert decode(params) == expected
-    for hostile in (True, "4", None, math.nan, HUGE, [4]):
-        assert decode({"arrive_within": hostile}) == 0.0
-    sources = inspect.getsource(operations_module) + inspect.getsource(runtime_module)
-    assert sources.count(".get(PARAM_ARRIVE_WITHIN") == 1  # only inside the decoder
+    names = [f"jev.{info.name}" for info in pkgutil.iter_modules(jev.__path__)]
+    modules = [jev, *(importlib.import_module(name) for name in names)]
+    reads = re.compile(r"""(?:\.get\(|\[)\s*(?:PARAM_ARRIVE_WITHIN|["']arrive_within["'])""")
+    found = [
+        (module.__name__, match.group())
+        for module in modules
+        for match in reads.finditer(inspect.getsource(module))
+    ]
+    assert found == [("jev.operations", ".get(PARAM_ARRIVE_WITHIN")]  # only inside the decoder
+    held = [vars(m)["decode_arrive_within"] for m in modules if "decode_arrive_within" in vars(m)]
+    assert held and all(decoder is decode_arrive_within for decoder in held)  # imports, no copies
 
 
 def test_unacknowledged_command_is_retried_three_times_then_fails_and_cools_down() -> None:
@@ -1951,28 +1987,34 @@ _REMEMBERED = Entity(
     ("enemies", "remembered", "target"),
     [
         pytest.param((_SEEN,), (_REMEMBERED,), _SEEN.tag, id="visible-structure-first"),
-        pytest.param((), (_REMEMBERED,), _REMEMBERED.tag, id="then-remembered"),
-        pytest.param((), (), ENEMY_START, id="then-enemy-start"),
+        pytest.param((), (_REMEMBERED,), _REMEMBERED.position, id="then-remembered-where-seen"),
     ],
 )
-def test_scenario_attack_prefers_visible_then_remembered_structures(
+def test_scenario_attack_takes_the_enemy_start_then_visible_then_remembered_structures(
     enemies: tuple[Entity, ...], remembered: tuple[Entity, ...], target: object
 ) -> None:
-    """D3: visible enemy structures, then remembered ones, then the enemy start."""
+    """D3: the first attack goes to the enemy start; once there, visible enemy
+    structures come first, then remembered ones (attack-moved to where seen)."""
     runtime = JevRuntime(load_policy().policy, run_id=uuid.uuid4().hex)
-    zealots = tuple(_zealot(6000 + i, (60.0, 60.0)) for i in range(4))
-    obs = _observation(
-        200.0,
-        minerals=0,
-        supply_used=20,
-        supply_cap=23,
-        units=zealots,
-        structures=(_nexus(idle=False, orders=(Order(TRAIN_ABILITY["Probe"]),)),),
-        enemies=enemies,
-        remembered=remembered,
-    )
-    attacks = [c for c in runtime.tick(obs).commands if c.node_id == "army.attack.go"]
-    assert len(attacks) == 4 and all(c.target == target for c in attacks)
+    structures = (_nexus(idle=False, orders=(Order(TRAIN_ABILITY["Probe"]),)),)
+
+    def attacks(seconds: float, zealots: tuple[Entity, ...]) -> list[object]:
+        obs = _observation(
+            seconds,
+            minerals=0,
+            supply_used=20,
+            supply_cap=23,
+            units=zealots,
+            structures=structures,
+            enemies=enemies,
+            remembered=remembered,
+        )
+        return [c.target for c in runtime.tick(obs).commands if c.node_id == "army.attack.go"]
+
+    away = tuple(_zealot(6000 + i, (60.0, 60.0)) for i in range(4))
+    assert attacks(200.0, away) == [ENEMY_START] * 4  # structures in view do not divert it
+    there = tuple(_zealot(6000 + i, ENEMY_START, (Order("ATTACK", ENEMY_START),)) for i in range(4))
+    assert attacks(200.25, there) == [target] * 4
 
 
 def test_scenario_events_follow_the_wire_contract(v1_runtime: JevRuntime) -> None:

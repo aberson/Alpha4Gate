@@ -11,17 +11,21 @@ to validate and exit without SC2.
 
 A match is one built-in-AI game: no daemon, no automatic restart. The SC2 install
 and map are resolved before anything launches (the repository's SC2 path
-resolver, then burnysc2's own map lookup); if either is missing, or SC2 then
-fails to launch, connect or create the game before the bot starts, the run fails
-with ``sc2_unavailable``. Ctrl+C asks the bot to leave cleanly and the run
-records ``stopped`` (during SC2's launch, burnysc2 cleans up the SC2 it started
-and exits; that is recorded as ``stopped`` too); SC2 processes are never
-blanket-killed. The wall-clock limit counts from the first game step.
+resolver, then burnysc2's own map lookup); if either is missing, burnysc2 cannot
+be imported, or the match fails before the bot attaches to a running game (SC2
+cannot launch, connect or create it, or burnysc2 exits with a nonzero status),
+the run fails with ``sc2_unavailable``. Ctrl+C asks the bot to leave cleanly and
+the run records ``stopped`` (during SC2's launch, burnysc2 cleans up the SC2 it
+started and exits; that is recorded as ``stopped`` too); SC2 processes are never
+blanket-killed. A game-time or wall-clock limit makes the bot leave and records
+result ``timeout`` -- status ``finished`` for the game clock (the match ran its
+allotted game time), ``failed`` for the wall clock (the host could not play it in
+time); the wall-clock limit counts from the first game step.
 
 Exit codes: :data:`EXIT_OK` for a finished win/loss/draw and a valid policy;
 :data:`EXIT_FAILURE` for an invalid policy, unavailable SC2, a crash
 (``match_crashed``, even when burnysc2 reported the crash as a Defeat or exited
-with a nonzero status) or a match that ended without a result;
+with a nonzero status after the bot attached) or a match that ended without a result;
 :data:`EXIT_USAGE` for command-line errors;
 :data:`EXIT_TIMEOUT` when a game-time or wall-clock limit ended the match;
 :data:`EXIT_STOPPED` after Ctrl+C.
@@ -302,16 +306,11 @@ class Sc2Launcher:
         main_thread = threading.current_thread() is threading.main_thread()
         previous = signal.getsignal(signal.SIGINT) if main_thread else None
         try:
+            # A failure before the bot attaches (SC2 could not launch, connect or
+            # create the game) is classified sc2_unavailable by run_match.
             result = run_game(
                 map_settings, players, realtime=options.realtime, random_seed=options.seed
             )
-        except Exception as exc:
-            if controller.attached:
-                raise  # the match was running: a crash, not an unavailable SC2
-            # The bot never started: SC2 could not launch, connect or create the game.
-            name = safe_repr(type(exc).__name__)
-            detail = safe_exception_text(exc)
-            raise Sc2Unavailable(f"SC2 could not start the match ({name}: {detail})") from exc
         finally:
             if previous is not None:
                 # burnysc2 leaves SIGINT at SIG_DFL after a match; restore Ctrl+C.
@@ -335,7 +334,11 @@ def run_match(
 
     ``launcher`` defaults to :class:`Sc2Launcher`. Infrastructure failure, a
     crash, a time limit and a stop all come back as a :class:`MatchOutcome` with
-    a nonzero exit code; a win, loss or draw exits zero.
+    a nonzero exit code; a win, loss or draw exits zero. A failure before the bot
+    attached to a running game -- burnysc2 failing to import, any exception, or
+    a nonzero ``SystemExit`` -- is ``sc2_unavailable``; after it, ``match_crashed``
+    unless the controller had already ended the match (a stop or time limit stays
+    one, e.g. when :class:`~jev.bot.LeaveFailed` ended burnysc2's loop).
     """
     launcher = Sc2Launcher() if launcher is None else launcher
     run_id = uuid.uuid4().hex if run_id is None else run_id
@@ -344,7 +347,10 @@ def run_match(
     except Sc2Unavailable as exc:
         return _unavailable(run_id, exc)
 
-    from jev.bot import JevController  # imports burnysc2: only after the preflight
+    try:
+        from jev.bot import JevController  # imports burnysc2: only after the preflight
+    except (Exception, SystemExit) as exc:  # a broken burnysc2 is infrastructure, not a crash
+        return _unavailable(run_id, _never_started("burnysc2 could not be imported", exc))
 
     controller = JevController(bundle, run_id=run_id, limits=options.limits(), clock=clock)
     try:
@@ -359,10 +365,14 @@ def run_match(
         # handler has cleaned up the SC2 it launched, sys.exit(2) on a broken exchange.
         if exc.code is None or exc.code == 0:
             controller.request_stop()
+        elif not controller.attached:
+            return _unavailable(run_id, _never_started("SC2 exited before the match began", exc))
         elif controller.terminal is None:
             controller.record_crash(exc)
         result = None
     except Exception as exc:
+        if not controller.attached:
+            return _unavailable(run_id, _never_started("SC2 could not start the match", exc))
         if controller.terminal is None and not controller.stop_requested:
             controller.record_crash(exc)
         result = None  # SC2's own result, if any, never hides a recorded terminal reason
@@ -385,6 +395,16 @@ def run_match(
         message = "the match ended without a result"
         return _outcome(controller, "failed", None, None, message, EXIT_FAILURE)
     return _outcome(controller, "finished", result, None, f"result {result}", EXIT_OK)
+
+
+def _never_started(what: str, exc: BaseException) -> Sc2Unavailable:
+    """An ``sc2_unavailable`` error for a failure before the bot attached (rendered)."""
+    name = safe_repr(type(exc).__name__)
+    if isinstance(exc, SystemExit):
+        detail = f"exit status {safe_repr(exc.code)}"
+    else:
+        detail = safe_exception_text(exc)
+    return Sc2Unavailable(f"{what} ({name}: {detail})")
 
 
 def _unavailable(run_id: str, exc: Sc2Unavailable) -> MatchOutcome:

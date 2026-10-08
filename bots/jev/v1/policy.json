@@ -21,15 +21,33 @@
   "nodes": [
     {
       "id": "economy",
-      "label": "Economy: keep idle probes mining",
+      "label": "Economy: keep idle probes mining while a Nexus stands",
       "kind": "sequence",
       "children": [
+        "economy.nexus",
         "economy.idle_probes",
         "economy.mineral_patches",
         "economy.assign"
       ],
       "operation": null,
       "args": {}
+    },
+    {
+      "id": "economy.nexus",
+      "label": "A Nexus stands (a destroyed Nexus ends economy recovery)",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Nexus"
+          ]
+        },
+        "op": ">=",
+        "value": 1
+      }
     },
     {
       "id": "economy.idle_probes",
@@ -91,13 +109,11 @@
     },
     {
       "id": "construction",
-      "label": "Construction: supply, power for Gateways, then Gateways",
+      "label": "Construction: emergency supply; while a Nexus stands, power for Gateways, then Gateways",
       "kind": "selector",
       "children": [
         "construction.supply",
-        "construction.repower",
-        "construction.power",
-        "construction.gateways"
+        "construction.base"
       ],
       "operation": null,
       "args": {}
@@ -403,6 +419,46 @@
         "site": "$power_site",
         "hold_reservation": true
       }
+    },
+    {
+      "id": "construction.base",
+      "label": "Recovery lanes: power and Gateways, only while a Nexus stands",
+      "kind": "sequence",
+      "children": [
+        "construction.base.nexus",
+        "construction.base.lanes"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "construction.base.nexus",
+      "label": "A Nexus stands (a destroyed Nexus ends Gateway and power rebuilds)",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Nexus"
+          ]
+        },
+        "op": ">=",
+        "value": 1
+      }
+    },
+    {
+      "id": "construction.base.lanes",
+      "label": "Re-power a Gateway, replace missing power, then Gateways toward the target",
+      "kind": "selector",
+      "children": [
+        "construction.repower",
+        "construction.power",
+        "construction.gateways"
+      ],
+      "operation": null,
+      "args": {}
     },
     {
       "id": "construction.repower",
@@ -888,7 +944,7 @@
     },
     {
       "id": "army",
-      "label": "Army: defend, attack once latched, otherwise rally",
+      "label": "Army: defend, attack once latched, otherwise rally until the launch",
       "kind": "selector",
       "children": [
         "army.defend",
@@ -926,7 +982,7 @@
     },
     {
       "id": "army.defend.target",
-      "label": "Nearest ground threat to the main, tie by tag",
+      "label": "Nearest ground threat to the main, tie by tag, unless defense gave up on it",
       "kind": "select",
       "children": [],
       "operation": "select_entities",
@@ -947,6 +1003,7 @@
           "from": "start_location"
         },
         "limit": 1,
+        "skip_demoted_by": "army.defend.attack",
         "bind": "threat"
       }
     },
@@ -1083,53 +1140,115 @@
     },
     {
       "id": "army.attack.target",
-      "label": "Visible structures, then remembered structures, then the enemy start",
+      "label": "The first known enemy start until visited; then visible structures, remembered structures, then cycle expansion locations",
       "kind": "selector",
       "children": [
+        "army.attack.target.enemy_start",
         "army.attack.target.visible",
         "army.attack.target.remembered",
-        "army.attack.target.enemy_start"
+        "army.attack.target.search"
       ],
       "operation": null,
       "args": {}
     },
     {
       "id": "army.attack.target.visible",
-      "label": "Nearest visible enemy structure to the army",
+      "label": "Nearest visible ground enemy structure to the army the attack has not demoted",
       "kind": "select",
       "children": [],
       "operation": "select_entities",
       "args": {
         "collection": "visible_enemies",
         "filter": {
-          "structure": true
+          "structure": true,
+          "flying": false
         },
         "sort": {
           "by": "distance",
           "from": "$attackers"
         },
         "limit": 1,
+        "skip_demoted_by": "army.attack.go",
         "bind": "target"
       }
     },
     {
       "id": "army.attack.target.remembered",
-      "label": "Nearest remembered enemy structure to the army",
+      "label": "Nearest remembered ground structure not disproven by vision and not demoted (attacked where it was seen)",
       "kind": "select",
       "children": [],
       "operation": "select_entities",
       "args": {
         "collection": "remembered_enemy_structures",
+        "filter": {
+          "flying": false
+        },
         "sort": {
           "by": "distance",
           "from": "$attackers"
         },
+        "limit": 1,
+        "skip_demoted_by": "army.attack.go",
+        "bind": "target"
+      }
+    },
+    {
+      "id": "army.attack.target.search",
+      "label": "Search: cycle expansion locations in distance order from the enemy start",
+      "kind": "sequence",
+      "children": [
+        "army.attack.target.search.origin",
+        "army.attack.target.search.next"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "army.attack.target.search.origin",
+      "label": "Search origin: the nearest known enemy start",
+      "kind": "select",
+      "children": [],
+      "operation": "select_locations",
+      "args": {
+        "source": "enemy_start_locations",
+        "sort": {
+          "by": "distance",
+          "from": "start_location"
+        },
+        "limit": 1,
+        "bind": "search_origin"
+      }
+    },
+    {
+      "id": "army.attack.target.search.next",
+      "label": "Expansion location the attack visited least recently (never first), nearest first",
+      "kind": "select",
+      "children": [],
+      "operation": "select_locations",
+      "args": {
+        "source": "expansion_locations",
+        "sort": {
+          "by": "distance",
+          "from": "$search_origin"
+        },
+        "least_recently_visited_by": "army.attack.go",
         "limit": 1,
         "bind": "target"
       }
     },
     {
       "id": "army.attack.target.enemy_start",
+      "label": "The first known enemy start, until the attack visits it",
+      "kind": "sequence",
+      "children": [
+        "army.attack.target.enemy_start.first",
+        "army.attack.target.enemy_start.unreached"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "army.attack.target.enemy_start.first",
       "label": "Nearest known enemy start location",
       "kind": "select",
       "children": [],
@@ -1142,6 +1261,19 @@
         },
         "limit": 1,
         "bind": "target"
+      }
+    },
+    {
+      "id": "army.attack.target.enemy_start.unreached",
+      "label": "The attack has not visited it yet (reached it, or given up after a replan)",
+      "kind": "condition",
+      "children": [],
+      "operation": "visit_count_compare",
+      "args": {
+        "node": "army.attack.go",
+        "point": "$target",
+        "op": "==",
+        "value": 0
       }
     },
     {
@@ -1161,15 +1293,26 @@
     },
     {
       "id": "army.rally",
-      "label": "Gather toward the map centre until the attack launches",
+      "label": "Before the first attack launches, gather toward the map centre",
       "kind": "sequence",
       "children": [
+        "army.rally.before_launch",
         "army.rally.point",
         "army.rally.zealots",
         "army.rally.move"
       ],
       "operation": null,
       "args": {}
+    },
+    {
+      "id": "army.rally.before_launch",
+      "label": "The first attack has not launched (a latched army never walks home)",
+      "kind": "condition",
+      "children": [],
+      "operation": "latch_is_clear",
+      "args": {
+        "latch": "attack_launched"
+      }
     },
     {
       "id": "army.rally.point",

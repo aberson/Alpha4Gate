@@ -29,9 +29,10 @@ Between policy ticks the controller needs only the clock
 built only when the runtime will tick.
 
 Per entity: ``tag`` (uint64), ``name`` (SC2's unit type name, e.g. ``"Probe"``,
-the spelling the operation tables use), ``position``, ``health``,
-``build_progress``, ``is_structure``, ``is_flying`` and, for own entities,
-``orders``: ``order.ability.id.name`` (burnysc2 reports the generic ability, e.g.
+the spelling the operation tables use), ``position``, ``health``, ``shield`` (a
+non-negative number), ``build_progress``, ``is_structure``, ``is_flying`` and,
+for own entities, ``orders``: ``order.ability.id.name`` (burnysc2 reports the
+generic ability, e.g.
 ``HARVEST_GATHER``), the target (tag, point, or None -- burnysc2 reports tag 0
 for "no target") and progress; at most :data:`~jev.contracts.MAX_ENTITY_ORDERS`
 queued orders are read. Game state is untrusted input: anything malformed raises
@@ -220,6 +221,14 @@ def _count(value: object, where: str) -> int:
     raise ValueError(f"{where} must be a non-negative integer, got {safe_repr(value)}")
 
 
+def _amount(value: object, where: str) -> float:
+    """A finite, bounded, non-negative number (shields)."""
+    number = _number(value, where)
+    if number < 0:
+        raise ValueError(f"{where} must not be negative, got {safe_repr(value)}")
+    return number
+
+
 def _flag(value: object, where: str) -> bool:
     if not isinstance(value, bool):
         raise ValueError(f"{where} must be a bool, got {safe_repr(value)}")
@@ -296,6 +305,7 @@ def _entity(unit: Any, where: str, *, own: bool, structure_flags: bool) -> Entit
         type_name=type_name,
         position=_point(unit.position, f"{where}.position"),
         health=_number(unit.health, f"{where}.health"),
+        shield=_amount(unit.shield, f"{where}.shield"),
         build_progress=_number(unit.build_progress, f"{where}.build_progress"),
         orders=_orders(unit.orders, f"{where}.orders") if own else (),
         is_structure=_flag(unit.is_structure, f"{where}.is_structure"),

@@ -8,14 +8,32 @@ typed arguments and (for selections) its permitted binding output. The validator
 Three categories:
 
 * **Predicates** (``condition`` and ``wait`` nodes): count comparisons, resources
-  and supply, threat distance, task state, the ``attack_launched`` latch and game
+  and supply, threat distance, task state (task counts and which map locations a
+  node visited), the ``attack_launched`` latch (set or still clear) and game
   time. Powered/idle/ready checks are filter keys on the counted collection.
 * **Selections** (``select`` nodes): filter/sort/limit over an observation
-  collection, map locations, a derived point, or bounded placement candidates.
-  The result is bound under the node's ``bind`` name in the root-local context.
+  collection, map locations (optionally least recently visited first, which
+  cycles through them), a derived point, or bounded placement candidates. The
+  result is bound under the node's ``bind`` name in the root-local context.
 * **Actions** (``action`` nodes): explicit gather/build/train/move/attack command
   intents plus the ``set_latch`` memory write. The runtime turns intents into
   deduplicated tasks and :class:`~jev.contracts.CommandSpec` records.
+
+Visits are explicit runtime memory, not a hidden variable in an operation: for
+every action node a ``visits`` argument names, the runtime records which map
+locations that node visited and when (:class:`Visit`, read through
+:meth:`RuntimeView.visits`). A node *visits* a
+location when one of its tasks targeting it succeeds (arrived) or gives up on
+it -- fails ``no_progress`` or ``deadline``, the D4 replan -- and when the node
+finds one of its actors already there (an intent satisfied on arrival). A
+search therefore moves on both from a location it reached and from one it
+could not reach.
+
+Demotions are the same kind of memory for entity targets: for every action node
+a ``demotions`` argument names, an entity the node's tasks gave up on in
+consecutive rounds is *demoted* (:meth:`RuntimeView.demoted`), and a selection
+with ``skip_demoted_by`` passes over it -- to the next structure, memory or
+the search -- until the demotion lapses (see :mod:`jev.runtime`).
 
 There are deliberately no strategy helpers (``manage_economy``, ``rush``,
 ``expand_now``, ``distribute_workers`` ...): the node arguments carry every
@@ -103,6 +121,7 @@ __all__ = [
     "OpOutcome",
     "OperationSpec",
     "PARAM_ARRIVE_WITHIN",
+    "PARAM_TARGET_TAG",
     "PARAM_STRUCTURE",
     "PARAM_UNIT",
     "PARAM_UNIT_COUNT",
@@ -124,8 +143,12 @@ __all__ = [
     "Selection",
     "SortKey",
     "SortOrder",
+    "TARGET_LOST_REASON",
+    "TRACKED_MEMORIES",
     "TRAIN_ABILITY",
     "TaskSubject",
+    "TrackedMemory",
+    "Visit",
     "WORKER_TYPE",
     "binding_inputs",
     "binding_output",
@@ -141,6 +164,7 @@ __all__ = [
     "placement_candidates",
     "resolve_args",
     "resolve_point",
+    "tracked_nodes",
     "validate_operation_args",
 ]
 
@@ -207,6 +231,9 @@ PARAM_UNIT: Final = "unit"
 #: Own units of the trained type when the train intent was planned (D4 "new unit" ack).
 PARAM_UNIT_COUNT: Final = "unit_count"
 PARAM_ARRIVE_WITHIN: Final = "arrive_within"
+#: The entity an attack intent was planned against (its target may be the point
+#: where that entity was seen); the runtime keys give-ups and demotions on it.
+PARAM_TARGET_TAG: Final = "target_tag"
 
 
 def decode_arrive_within(params: Mapping[str, JsonValue]) -> float:
@@ -236,6 +263,9 @@ MAX_ISSUES_PER_FIELD: Final = 8
 MAX_FILTER_NAMES: Final = 32
 #: An order/structure within this distance of a target point counts as "at" it.
 POINT_MATCH_TOLERANCE: Final = 1.0
+#: Why a unit-targeted task ends at once (D4): its target is no longer a visible
+#: enemy -- destroyed or out of sight; visible state cannot tell which.
+TARGET_LOST_REASON: Final = "target lost: no longer a visible enemy"
 
 Comparator = Literal["<", "<=", "==", "!=", ">=", ">"]
 COMPARATORS: Final[tuple[Comparator, ...]] = get_args(Comparator)
@@ -300,6 +330,15 @@ class Binding:
         return [str(e.tag) for e in self.entities]
 
 
+@dataclass(frozen=True)
+class Visit:
+    """Runtime memory: how many visit events an action node had at one map location,
+    and the game time of the latest (the module docstring says what counts)."""
+
+    count: int
+    last_game_seconds: float
+
+
 class RuntimeView(Protocol):
     """Read-only facts an operation may consult (implemented by the runtime)."""
 
@@ -353,6 +392,24 @@ class RuntimeView(Protocol):
         rejected or unacknowledged, for as long as that intent cools down. It is
         task state, so recovery selects a *new* site instead of re-proposing the
         same rejected ones (D3/D4).
+        """
+        ...
+
+    def visits(self, node_id: str) -> Mapping[Point, Visit]:
+        """Map locations action node ``node_id`` visited, keyed exactly.
+
+        Recorded by the runtime for every node a ``visits`` argument names (empty for
+        any other node), for the observation's start and expansion locations
+        only. Keys are the tasks' targets verbatim -- the bound points -- so a
+        location from map metadata matches itself exactly.
+        """
+        ...
+
+    def demoted(self, node_id: str) -> frozenset[int]:
+        """Entity tags action node ``node_id`` has demoted and not re-allowed yet.
+
+        Recorded for every node a ``demotions`` argument names (empty for any
+        other node); see :mod:`jev.runtime` for when a demotion starts and lapses.
         """
         ...
 
@@ -423,17 +480,29 @@ class Ack:
 
 @dataclass(frozen=True)
 class Progress:
+    """A running task's progress. ``metric`` is the distance still to close;
+    ``engaged`` is the health plus shields of the enemies the unit is fighting (None
+    when it is not fighting) -- the runtime counts a fall in their total by the next
+    progress check as progress, so a fight that hurts nobody is still a stall (D4)."""
+
     state: Literal["ongoing", "complete", "lost"]
     reason: str
     metric: float | None = None
+    engaged: Mapping[int, float] | None = None
 
 
 @dataclass(frozen=True)
 class Lifecycle:
-    """Observation-based confirmation rules for one action operation (plan D4)."""
+    """Observation-based confirmation rules for one action operation (plan D4).
+
+    ``target_lost`` names why a not-yet-acknowledged task's target can no longer
+    be acted on (None while it can); ``progress`` reports the same for a running
+    task as ``lost``. Either way the task is invalidated at once (D4).
+    """
 
     acknowledge: Callable[[TaskSubject, Observation], Ack | None]
     progress: Callable[[TaskSubject, Observation], Progress]
+    target_lost: Callable[[TaskSubject, Observation], str | None]
     completes_on_ack: bool
     deadline_kind: Literal["build", "train"] | None
     tracks_movement: bool
@@ -463,9 +532,19 @@ ArgType = Literal[
 ]
 
 
+#: Runtime memories an operation can read about an action node's tasks.
+TrackedMemory = Literal["visits", "demotions"]
+TRACKED_MEMORIES: Final[tuple[TrackedMemory, ...]] = get_args(TrackedMemory)
+
+
 @dataclass(frozen=True)
 class ArgSpec:
-    """Typed argument declaration. ``param`` lets a numeric arg cite a policy parameter."""
+    """Typed argument declaration. ``param`` lets a numeric arg cite a policy parameter.
+
+    ``tracks`` marks a ``node`` argument whose runtime memory the operation reads
+    (:meth:`RuntimeView.visits` or :meth:`RuntimeView.demoted`); the runtime keeps
+    that memory for exactly the nodes such arguments name (:func:`tracked_nodes`).
+    """
 
     type: ArgType
     required: bool = True
@@ -474,6 +553,7 @@ class ArgSpec:
     maximum: float | None = None
     default: JsonValue = None
     param: bool = False
+    tracks: TrackedMemory | None = None
 
 
 @dataclass(frozen=True)
@@ -823,10 +903,38 @@ def _task_count_compare(view: RuntimeView, args: Args) -> OpOutcome:
     )
 
 
+def _visit_count_compare(view: RuntimeView, args: Args) -> OpOutcome:
+    node_id = _arg_str(args, "node")
+    point = resolve_point(view, _arg_str(args, "point"))
+    op = _arg_str(args, "op")
+    expected = _arg_int(args, "value")
+    if point is None:
+        return OpOutcome(False, "visit point unresolved", {"node": node_id})
+    visit = view.visits(node_id).get(point)
+    count = 0 if visit is None else visit.count
+    ok = compare(count, op, expected)
+    verdict = "holds" if ok else "does not hold"
+    reason = f"visits of {node_id} at {format_point(point)}: {count} {op} {expected} {verdict}"
+    facts: dict[str, JsonValue] = {
+        "node": node_id,
+        "point": [point[0], point[1]],
+        "count": count,
+        "op": op,
+        "value": expected,
+    }
+    return OpOutcome(ok, reason, facts)
+
+
 def _latch_is_set(view: RuntimeView, args: Args) -> OpOutcome:
     latch = _arg_str(args, "latch")
     ok = view.latch_is_set(latch)
     return OpOutcome(ok, f"latch {latch} is {'set' if ok else 'clear'}", {"latch": latch})
+
+
+def _latch_is_clear(view: RuntimeView, args: Args) -> OpOutcome:
+    latch = _arg_str(args, "latch")
+    ok = not view.latch_is_set(latch)
+    return OpOutcome(ok, f"latch {latch} is {'clear' if ok else 'set'}", {"latch": latch})
 
 
 def _game_time_compare(view: RuntimeView, args: Args) -> OpOutcome:
@@ -858,8 +966,15 @@ def _select_entities(view: RuntimeView, args: Args) -> Selection:
     ]
     if exclude_busy:
         candidates = [e for e in candidates if not view.actor_is_busy(e.tag)]
+    facts: dict[str, JsonValue] = {}
+    skip_by = args.get("skip_demoted_by")
+    if isinstance(skip_by, str):
+        demoted = view.demoted(skip_by)
+        kept = [e for e in candidates if e.tag not in demoted]
+        facts["demoted"] = len(candidates) - len(kept)
+        candidates = kept
     chosen = _sort_entities(candidates, _arg_obj(args, "sort"), view)[:limit]
-    facts: dict[str, JsonValue] = {"matched": len(candidates), "selected": len(chosen)}
+    facts.update({"matched": len(candidates), "selected": len(chosen)})
     if len(chosen) < min_count:
         return Selection(None, f"{len(chosen)} {collection} selected, need {min_count}", facts)
     binding = Binding("units", entities=tuple(chosen))
@@ -871,13 +986,26 @@ def _select_locations(view: RuntimeView, args: Args) -> Selection:
     source = _location_source(_arg_str(args, "source"))
     limit = _arg_int(args, "limit")
     min_count = _arg_int(args, "min_count")
-    points = _sort_points(view.observation.locations(source), _arg_obj(args, "sort"), view)[:limit]
-    facts: dict[str, JsonValue] = {"selected": len(points)}
+    ordered = _sort_points(view.observation.locations(source), _arg_obj(args, "sort"), view)
+    facts: dict[str, JsonValue] = {}
+    visited_by = args.get("least_recently_visited_by")
+    if isinstance(visited_by, str):
+        # Never-visited locations first, then the oldest visit; the sort is stable,
+        # so the authored order breaks ties and repeated selection cycles through it.
+        visits = view.visits(visited_by)
+        ordered = sorted(ordered, key=lambda point: _visit_time(visits.get(point)))
+        facts["visited"] = sum(1 for point in ordered if point in visits)
+    points = ordered[:limit]
+    facts["selected"] = len(points)
     if len(points) < min_count:
         return Selection(None, f"{len(points)} {source} available, need {min_count}", facts)
     binding = Binding("points", points=tuple(points))
     facts["points"] = binding.describe()
     return Selection(binding, f"selected {len(points)} from {source}", facts)
+
+
+def _visit_time(visit: Visit | None) -> float:
+    return -math.inf if visit is None else visit.last_game_seconds
 
 
 def _select_point(view: RuntimeView, args: Args) -> Selection:
@@ -1000,6 +1128,14 @@ def _select_placement(view: RuntimeView, args: Args) -> Selection:
 # ---------------------------------------------------------------------------
 # Action implementations
 # ---------------------------------------------------------------------------
+
+
+def _visible_enemy(tag: int, obs: Observation) -> Entity | None:
+    """The visible enemy with ``tag``, or None (one linear pass over visible enemies)."""
+    for enemy in obs.visible_enemies:
+        if enemy.tag == tag:
+            return enemy
+    return None
 
 
 def _own_actors(
@@ -1138,11 +1274,20 @@ def _unit_command(view: RuntimeView, args: Args, ability: str) -> ActionPlan:
     preempt = _arg_bool(args, "preempt")
     target: Target
     target_key: str
+    params: dict[str, JsonValue] = {PARAM_ARRIVE_WITHIN: arrive_within}
     if target_binding.kind == "units" and ability == ATTACK_ABILITY:
         if not target_binding.entities:
             return ActionPlan(failure_reason="target binding empty", preempt=preempt)
-        target = target_binding.entities[0].tag
-        target_key = f"#{target}"
+        chosen = target_binding.entities[0]
+        params[PARAM_TARGET_TAG] = chosen.tag
+        if _visible_enemy(chosen.tag, view.observation) is not None:
+            target = chosen.tag
+            target_key = f"#{target}"
+        else:
+            # SC2 can only target a unit in sight: an entity that is not a visible
+            # enemy (a remembered structure) is attack-moved to where it was seen.
+            target = chosen.position
+            target_key = format_point(target)
     else:
         point = target_binding.first_point()
         if point is None:
@@ -1150,10 +1295,16 @@ def _unit_command(view: RuntimeView, args: Args, ability: str) -> ActionPlan:
         target = point
         target_key = format_point(point)
     actors, blocked = _own_actors(view, sorted(units, key=lambda u: u.tag), structures=False)
+    # An attack-move point is done only once no ground enemy holds it (D3: cleared).
+    held = (
+        isinstance(target, tuple)
+        and ability == ATTACK_ABILITY
+        and bool(_ground_enemies_near(target, arrive_within, view.observation))
+    )
     intents: list[Intent] = []
     for unit in actors:
         if isinstance(target, tuple):
-            satisfied = distance(unit.position, target) <= arrive_within
+            satisfied = not held and distance(unit.position, target) <= arrive_within
         else:
             order = unit.orders[0] if unit.orders else None
             satisfied = order is not None and order.ability == ability and order.target == target
@@ -1164,7 +1315,7 @@ def _unit_command(view: RuntimeView, args: Args, ability: str) -> ActionPlan:
                 ability=ability,
                 target=target,
                 satisfied=satisfied,
-                params={PARAM_ARRIVE_WITHIN: arrive_within},
+                params=params,
             )
         )
     return ActionPlan(
@@ -1283,24 +1434,65 @@ def _unit_ack(task: TaskSubject, obs: Observation) -> Ack | None:
     return None
 
 
+def _ground_enemies_near(point: Point, radius: float, obs: Observation) -> dict[int, float]:
+    """Health and shields of every visible ground enemy (unit or structure) in range."""
+    return {
+        enemy.tag: enemy.durability
+        for enemy in obs.visible_enemies
+        if not enemy.is_flying and distance(point, enemy.position) <= radius
+    }
+
+
 def _unit_progress(task: TaskSubject, obs: Observation) -> Progress:
+    """Movement/attack progress (metric: the distance still to close).
+
+    An attack-move point is reached only once it is *clear*: no visible ground
+    enemy within ``arrive_within`` of it (D3: move on after clearing a target).
+    While enemies hold it, or while the unit fights ground enemies within that
+    radius on the way, the task reports them as ``engaged``: the fight is progress
+    only while they lose health, so an enemy the unit cannot hurt still ends in
+    the 30 s replan. A unit target in range is engaged likewise.
+    """
     unit = obs.own_entity(task.actor_tag)
     if unit is None:
         return Progress("lost", "unit lost")
+    engage_range = decode_arrive_within(task.params)
     if isinstance(task.target, tuple):
         gap = distance(unit.position, task.target)
-        if gap <= decode_arrive_within(task.params):
-            return Progress("complete", "arrived", gap)
+        attacking = task.ability == ATTACK_ABILITY
+        holding = _ground_enemies_near(task.target, engage_range, obs) if attacking else {}
+        if gap <= engage_range and not holding:
+            return Progress("complete", "arrived; the location is clear", gap)
+        if gap <= engage_range:
+            return Progress("ongoing", "clearing the location", gap, holding)
+        fighting = _ground_enemies_near(unit.position, engage_range, obs) if attacking else {}
+        if fighting:
+            return Progress("ongoing", "fighting on the way", gap, fighting)
         return Progress("ongoing", "moving", gap)
-    for enemy in obs.visible_enemies:
-        if enemy.tag == task.target:
-            return Progress("ongoing", "engaging", distance(unit.position, enemy.position))
-    return Progress("complete", "target no longer visible")
+    enemy = _visible_enemy(task.target, obs) if isinstance(task.target, int) else None
+    if enemy is None:
+        return Progress("lost", TARGET_LOST_REASON)
+    gap = distance(unit.position, enemy.position)
+    engaged = {enemy.tag: enemy.durability} if gap <= engage_range else None
+    return Progress("ongoing", "engaging", gap, engaged)
+
+
+def _unit_target_lost(task: TaskSubject, obs: Observation) -> str | None:
+    """A unit target that is no longer a visible enemy invalidates the task (D4)."""
+    if isinstance(task.target, int) and _visible_enemy(task.target, obs) is None:
+        return TARGET_LOST_REASON
+    return None
+
+
+def _target_never_lost(task: TaskSubject, obs: Observation) -> str | None:
+    """Gather/build/train: acknowledgement and retries cover their targets."""
+    return None
 
 
 _GATHER_LIFECYCLE: Final = Lifecycle(
     acknowledge=_gather_ack,
     progress=_immediate_progress,
+    target_lost=_target_never_lost,
     completes_on_ack=True,
     deadline_kind=None,
     tracks_movement=False,
@@ -1309,6 +1501,7 @@ _GATHER_LIFECYCLE: Final = Lifecycle(
 _BUILD_LIFECYCLE: Final = Lifecycle(
     acknowledge=_build_ack,
     progress=_build_progress,
+    target_lost=_target_never_lost,
     completes_on_ack=False,
     deadline_kind="build",
     tracks_movement=False,
@@ -1317,6 +1510,7 @@ _BUILD_LIFECYCLE: Final = Lifecycle(
 _TRAIN_LIFECYCLE: Final = Lifecycle(
     acknowledge=_train_ack,
     progress=_train_progress,
+    target_lost=_target_never_lost,
     completes_on_ack=False,
     deadline_kind="train",
     tracks_movement=False,
@@ -1325,6 +1519,7 @@ _TRAIN_LIFECYCLE: Final = Lifecycle(
 _UNIT_LIFECYCLE: Final = Lifecycle(
     acknowledge=_unit_ack,
     progress=_unit_progress,
+    target_lost=_unit_target_lost,
     completes_on_ack=False,
     deadline_kind=None,
     tracks_movement=True,
@@ -1390,10 +1585,28 @@ _SPECS: Final[tuple[OperationSpec, ...]] = (
         _task_count_compare,
     ),
     PredicateOp(
+        "visit_count_compare",
+        "Compare how many times an action node visited a map location (a task "
+        "arrived at or gave up on it, or an actor was already there)",
+        {
+            "node": ArgSpec("node", tracks="visits"),
+            "point": ArgSpec("point"),
+            "op": _COMPARATOR,
+            "value": ArgSpec("int", minimum=0, maximum=1000, param=True),
+        },
+        _visit_count_compare,
+    ),
+    PredicateOp(
         "latch_is_set",
         "Whether a cross-tick latch has been set",
         {"latch": ArgSpec("enum", choices=LATCHES)},
         _latch_is_set,
+    ),
+    PredicateOp(
+        "latch_is_clear",
+        "Whether a cross-tick latch is still clear (has never been set)",
+        {"latch": ArgSpec("enum", choices=LATCHES)},
+        _latch_is_clear,
     ),
     PredicateOp(
         "game_time_compare",
@@ -1416,6 +1629,7 @@ _SPECS: Final[tuple[OperationSpec, ...]] = (
                 "int", required=False, minimum=1, maximum=MAX_SELECTION, default=1, param=True
             ),
             "exclude_busy": ArgSpec("bool", required=False, default=False),
+            "skip_demoted_by": ArgSpec("node", required=False, tracks="demotions"),
             "bind": _BIND,
         },
         "units",
@@ -1423,10 +1637,13 @@ _SPECS: Final[tuple[OperationSpec, ...]] = (
     ),
     SelectOp(
         "select_locations",
-        "Sort and limit map start/expansion locations",
+        "Sort and limit map start/expansion locations; with least_recently_visited_by, "
+        "locations that node never visited come first, then the one visited longest "
+        "ago (the sort breaks ties), so repeated selection cycles through them",
         {
             "source": ArgSpec("enum", choices=LOCATION_SOURCES),
             "sort": ArgSpec("sort", required=False, choices=LOCATION_SORT_KEYS),
+            "least_recently_visited_by": ArgSpec("node", required=False, tracks="visits"),
             "limit": ArgSpec("int", minimum=1, maximum=MAX_LOCATIONS, param=True),
             "min_count": ArgSpec(
                 "int", required=False, minimum=1, maximum=MAX_LOCATIONS, default=1, param=True
@@ -1520,7 +1737,8 @@ _SPECS: Final[tuple[OperationSpec, ...]] = (
     ),
     ActionOp(
         "attack",
-        "Attack-move bound units to a bound point, or attack a bound unit",
+        "Attack a bound visible enemy; attack-move bound units to a bound point, or to "
+        "where a bound entity that is not a visible enemy (a remembered structure) was seen",
         {
             "units": ArgSpec("entities"),
             "target": ArgSpec("target"),
@@ -1919,6 +2137,18 @@ def binding_inputs(
             if _is_binding_ref(ref):
                 out.append((str(ref)[1:], _BINDING_KINDS["point"], f"{key}.from"))
     return out
+
+
+def tracked_nodes(
+    operation: str, args: Mapping[str, JsonValue], memory: TrackedMemory
+) -> frozenset[str]:
+    """Action node ids whose ``memory`` ``args`` read (every argument tracking it)."""
+    spec = OPERATIONS[operation]
+    return frozenset(
+        value
+        for key, arg_spec in spec.args.items()
+        if arg_spec.tracks == memory and isinstance(value := args.get(key), str)
+    )
 
 
 def binding_output(operation: str, args: Mapping[str, JsonValue]) -> tuple[str, BindingKind] | None:

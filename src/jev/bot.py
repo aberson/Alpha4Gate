@@ -17,11 +17,16 @@
 A failure inside that pipeline never escapes a step: it is recorded as a crash
 (error code ``match_crashed``) and the bot leaves the game, so the runner reports
 a failure whatever burnysc2 does with bot exceptions (some of its loops log them
-and report a Defeat). :class:`JevBot` is the thin ``BotAI`` shim burnysc2 runs:
-``on_start`` attaches the controller to the live game and registers Ctrl+C as a
-clean-leave request, ``on_step`` steps the controller, ``on_end`` records SC2's
-result. There is no legacy gameplay code, LLM or neural policy anywhere on this
-path: every game command comes from a policy node through a runtime task.
+and report a Defeat). A failed leave is retried on the following steps, at most
+:data:`MAX_LEAVE_ATTEMPTS` attempts in all; if every attempt fails,
+:class:`LeaveFailed` is raised out of the step so burnysc2 ends its game loop, and
+a match never idles on past its limits.
+
+:class:`JevBot` is the thin ``BotAI`` shim burnysc2 runs: ``on_start`` attaches
+the controller to the live game and registers Ctrl+C as a clean-leave request,
+``on_step`` steps the controller, ``on_end`` records SC2's result. There is no
+legacy gameplay code, LLM or neural policy anywhere on this path: every game
+command comes from a policy node through a runtime task.
 """
 
 from __future__ import annotations
@@ -53,6 +58,8 @@ from jev.sc2_adapter import BotAIPort, GamePort, Sc2Adapter
 __all__ = [
     "JevBot",
     "JevController",
+    "LeaveFailed",
+    "MAX_LEAVE_ATTEMPTS",
     "MatchResult",
     "RECENT_EVENT_LIMIT",
     "TerminalReason",
@@ -65,6 +72,18 @@ MatchResult = Literal["win", "loss", "draw"]
 TerminalReason = Literal["stopped", "game_timeout", "wall_timeout", "crashed"]
 #: Recent events kept in memory (plan D5 keeps 200 in a run snapshot).
 RECENT_EVENT_LIMIT: Final = 200
+#: Attempts to leave the game, one per game step, before :class:`LeaveFailed`.
+MAX_LEAVE_ATTEMPTS: Final = 3
+
+
+class LeaveFailed(RuntimeError):
+    """Leaving the game failed :data:`MAX_LEAVE_ATTEMPTS` times.
+
+    Raised out of :meth:`JevController.step` (so out of ``on_step``): burnysc2 then
+    ends its game loop and the SC2 process it launched, so a match whose leave
+    keeps failing still ends. The controller keeps the reason it ended the match.
+    """
+
 
 _SC2_RESULTS: Final[dict[Result, MatchResult]] = {
     Result.Victory: "win",
@@ -109,6 +128,7 @@ class JevController:
         self._terminal: TerminalReason | None = None
         self._crash: JevError | None = None
         self._left = False
+        self._leave_attempts = 0
         self._leave_failure: str | None = None
         self._result: MatchResult | None = None
         self._game_seconds = 0.0
@@ -129,8 +149,14 @@ class JevController:
         return self._port is not None
 
     @property
+    def left(self) -> bool:
+        """Whether the bot has left the game (a leave request succeeded)."""
+        return self._left
+
+    @property
     def leave_failure(self) -> str | None:
-        """Why leaving the game failed, if it did (rendered, capped); not a crash."""
+        """Why the latest leave attempt failed, while the bot has not left (rendered,
+        capped); a diagnostic, not a crash."""
         return self._leave_failure
 
     @property
@@ -182,14 +208,15 @@ class JevController:
     async def step(self) -> TickResult | None:
         """Run one game step; the tick result, or None when the policy did not tick.
 
-        Raises :class:`RuntimeError` before :meth:`attach`; nothing else escapes.
-        A failure in the step's own pipeline -- malformed game state (the adapter's
-        ValueError), a runtime error, an exception from the SC2 port -- is recorded
-        with :meth:`record_crash` and the bot leaves the game. Once the match has
-        ended for any reason the bot leaves (once) and does nothing else. A failed
-        leave is kept as :attr:`leave_failure` and never changes why the match
-        ended: a clean stop or time limit stays one (SC2 may already have ended the
-        game on the same step).
+        Raises :class:`RuntimeError` before :meth:`attach`, and :class:`LeaveFailed`
+        once leaving has failed :data:`MAX_LEAVE_ATTEMPTS` times; nothing else
+        escapes. A failure in the step's own pipeline -- malformed game state (the
+        adapter's ValueError), a runtime error, an exception from the SC2 port -- is
+        recorded with :meth:`record_crash` and the bot leaves the game. Once the
+        match has ended for any reason the bot only leaves: a failed leave is kept as
+        :attr:`leave_failure` and retried on the next step. It never changes why the
+        match ended: a clean stop or time limit stays one (SC2 may already have ended
+        the game on the same step).
         """
         port = self._port
         if port is None:
@@ -199,6 +226,8 @@ class JevController:
             return None
         try:
             return await self._step(port)
+        except LeaveFailed:
+            raise
         except Exception as exc:
             self.record_crash(exc)
             await self._leave(port)
@@ -234,15 +263,27 @@ class JevController:
         await self._leave(port)
 
     async def _leave(self, port: GamePort) -> None:
+        """One leave attempt per call until one succeeds; LeaveFailed when exhausted."""
         if self._left:
             return
-        self._left = True
-        try:
-            await port.leave()
-        except Exception as exc:  # a diagnostic, not a crash: the reason to end stands
-            name = safe_repr(type(exc).__name__)
-            detail = safe_exception_text(exc)
-            self._leave_failure = render_text(f"{name}: {detail}")[:MAX_MESSAGE_CHARS]
+        if self._leave_attempts < MAX_LEAVE_ATTEMPTS:
+            self._leave_attempts += 1
+            try:
+                await port.leave()
+            except Exception as exc:  # a diagnostic, not a crash: the reason to end stands
+                name = safe_repr(type(exc).__name__)
+                detail = safe_exception_text(exc)
+                self._leave_failure = render_text(f"{name}: {detail}")[:MAX_MESSAGE_CHARS]
+            else:
+                self._left = True
+                self._leave_failure = None
+                return
+            if self._leave_attempts < MAX_LEAVE_ATTEMPTS:
+                return  # retried on the next step
+        raise LeaveFailed(
+            f"leaving the game failed {self._leave_attempts} times; "
+            f"last failure: {self._leave_failure}"
+        )
 
 
 class JevBot(BotAI):
@@ -260,7 +301,9 @@ class JevBot(BotAI):
             self.controller.record_crash(exc)
 
     async def on_step(self, iteration: int) -> None:
-        await self.controller.step()  # pipeline failures are recorded, never raised
+        # Pipeline failures are recorded, never raised; only LeaveFailed escapes, so
+        # burnysc2 ends a game the bot could not leave.
+        await self.controller.step()
 
     async def on_end(self, game_result: Result) -> None:
         self.controller.finish(match_result(game_result))

@@ -26,16 +26,50 @@ One :class:`JevRuntime` executes one validated policy for one run:
   or unconfirmed command is retried at most three times after its first attempt
   (four attempts in all), at least one game second apart, with a five-second
   acknowledgement timeout; construction/training deadlines after acknowledgement;
-  movement replans after 30 game seconds without progress; dead actors fail tasks
-  at once; failed intents cool down for ten game seconds with a diagnostic. While
-  a build intent cools down after failing placement, its candidate sites are
-  excluded from new placement selections, so recovery picks a new site.
+  movement checks progress every ten game seconds and replans after 30 without
+  progress (closing on the target, or a fight whose engaged enemies lost health
+  or shields since the previous check, measured tick by tick over the enemies in
+  both samples -- a fight that hurts nobody is a stall); dead actors
+  -- and unit targets that are no longer visible enemies -- fail tasks at once
+  (cause ``lost``, no cooldown, so the graph reselects from current facts on the
+  same tick); failed intents cool down for ten game seconds
+  with a diagnostic. While a build intent cools down after failing placement, its
+  candidate sites are excluded from new placement selections, so recovery picks a
+  new site.
 * **Adapter hooks.** The SC2 adapter reports what SC2 did with each command:
   :meth:`JevRuntime.mark_command_accepted` (still not success) or
   :meth:`JevRuntime.mark_command_rejected`; :meth:`JevRuntime.task_status` lets it
   ignore late reports for tasks that have already moved on.
-* **Memory.** Cross-tick memory is task state plus the ``attack_launched`` latch.
-  Bindings live only for one root evaluation in one tick.
+* **Memory.** Cross-tick memory is task state, the visits derived from tasks and
+  intents, and the ``attack_launched`` latch. For every action node a ``visits``
+  argument names, a start/expansion location counts as visited when one of the
+  node's tasks targeting it succeeds (arrived), gives up on it (an
+  :data:`ABANDON_CAUSES` failure, the replan; for these army target nodes also a
+  :data:`REFUSAL_CAUSES` failure once its retries are spent), or when the node
+  finds an actor already there (count and latest game time, at most
+  :data:`MAX_TRACKED_VISITS` locations per node). Bindings live only for one
+  root evaluation in one tick.
+* **Bounded recovery from unreachable targets (D4).** A task that gives up
+  makes its intent a fresh task on retry (the order SC2 still carries never
+  counts as already done). For every action node a ``demotions`` argument
+  names, :data:`MAX_TARGET_GIVE_UPS` consecutive give-up rounds against the same
+  entity target (no damage dealt to it in between) demote it, with a diagnostic:
+  selections with ``skip_demoted_by`` pass over it to the next candidate. The
+  demotion lapses, with a diagnostic, once the entity is seen at another position,
+  comes back into sight after being out of it, or the node has visited every
+  expansion location since (its search cycle completed); the seen-elsewhere rule
+  applies to structures only, so a unit target that keeps moving is still
+  demoted. Rounds short of a demotion are
+  cleared when the entity is seen elsewhere or when the entity itself loses
+  durability to an actor's task against it (hurting the target breaks the chain;
+  closing in, or hurting other enemies on the way, is progress but no break), so
+  a target that drops out of sight between rounds, or that the army keeps walking
+  toward without reaching, is still demoted. Give-ups are
+  attributed per target, not per actor: one counts for the army (a visit or a
+  round) only when no actor has made progress on that target -- closed in,
+  hurt it, or reached it -- for the replan window, and then at most once per
+  window. Staggered attackers cannot keep a stuck target alive, and one stuck
+  actor cannot abandon a target the others are winning.
 
 Every event and command names its originating node (and task where applicable).
 Issuing commands to SC2 is the adapter's job; :meth:`JevRuntime.tick` returns the
@@ -48,6 +82,7 @@ import itertools
 from collections import Counter, deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Final, Literal, get_args
 
 from jev.contracts import (
@@ -92,6 +127,8 @@ from jev.operations import (
     OP_GATHER,
     OPERATIONS,
     PARAM_STRUCTURE,
+    PARAM_TARGET_TAG,
+    POINT_MATCH_TOLERANCE,
     ActionOp,
     Binding,
     CompiledFilter,
@@ -100,13 +137,17 @@ from jev.operations import (
     PredicateOp,
     SelectOp,
     TaskSubject,
+    TrackedMemory,
+    Visit,
     compile_filter,
-    decode_arrive_within,
+    distance,
     resolve_args,
+    tracked_nodes,
 )
 from jev.policy import policy_hash, validate_policy
 
 __all__ = [
+    "ABANDON_CAUSES",
     "COMMAND_BUDGET_REASON",
     "COOLDOWN_CAUSES",
     "FAILURE_CAUSES",
@@ -114,7 +155,11 @@ __all__ = [
     "JevRuntime",
     "LifecycleConfig",
     "MAX_CONFIG_INT",
+    "MAX_TARGET_GIVE_UPS",
+    "MAX_TRACKED_GIVE_UPS",
+    "MAX_TRACKED_VISITS",
     "NODE_BUDGET_REASON",
+    "REFUSAL_CAUSES",
     "RUNTIME_NODE_ID",
     "SITE_EXCLUSION_CAUSES",
     "TickConfig",
@@ -131,6 +176,13 @@ FAILURE_CAUSES: Final[tuple[FailureCause, ...]] = get_args(FailureCause)
 COOLDOWN_CAUSES: Final[frozenset[FailureCause]] = frozenset(
     {"unacknowledged", "rejected", "deadline", "no_progress"}
 )
+#: Failures that mean a task gave up on its target (the D4 replan): a location it
+#: targeted counts as visited, so a search moves on instead of retrying it first.
+ABANDON_CAUSES: Final[frozenset[FailureCause]] = frozenset({"no_progress", "deadline"})
+#: Terminal refusals (retries spent) that are also a give-up for the nodes whose
+#: targets the runtime tracks (visits/demotions: the army's targets) -- SC2 dropping
+#: an order on an unpathable point or an unattackable unit must not hold the search.
+REFUSAL_CAUSES: Final[frozenset[FailureCause]] = frozenset({"rejected", "unacknowledged"})
 #: Build failures that exclude the task's candidate sites while the intent cools down.
 SITE_EXCLUSION_CAUSES: Final[frozenset[FailureCause]] = frozenset({"rejected", "unacknowledged"})
 #: Task states whose command is not yet confirmed: cost committed, actor held.
@@ -139,6 +191,16 @@ UNACKNOWLEDGED_STATUSES: Final[frozenset[TaskStatus]] = frozenset({"pending", "i
 #: never collide with an authored id: authored ids must match NODE_ID_RE).
 RUNTIME_NODE_ID: Final = "@runtime"
 _TIME_EPSILON: Final = 1e-9
+#: Map locations whose visits are kept per tracked node: every start and expansion
+#: location one observation may carry, so no location is ever dropped.
+MAX_TRACKED_VISITS: Final = len(LOCATION_SOURCES) * MAX_OBSERVED_LOCATIONS
+#: Consecutive give-up rounds against one entity target before the node demotes it
+#: (consecutive: no damage dealt to the target in between; see _target_damaged).
+MAX_TARGET_GIVE_UPS: Final = 2
+#: Entity targets (and given-up intents) remembered per tracked node, oldest dropped.
+MAX_TRACKED_GIVE_UPS: Final = MAX_OBSERVED_ENTITIES
+#: Why a demotion lapsed: the ``allowed_again`` fact of its diagnostic.
+_AllowedAgain = Literal["moved", "sighted_again", "search_cycle"]
 
 
 #: Largest integer a config field may hold (keeps deque/allocation sizes sane).
@@ -200,6 +262,8 @@ def _check_entity(path: str, entity: object) -> None:
     for field_name in ("health", "build_progress"):
         if not is_bounded_number(getattr(entity, field_name)):
             raise ValueError(f"observation {path}.{field_name} must be a finite number")
+    if not is_bounded_number(entity.shield) or entity.shield < 0:
+        raise ValueError(f"observation {path}.shield must be a finite number >= 0")
     for field_name in ("is_structure", "is_flying"):
         if not isinstance(getattr(entity, field_name), bool):
             raise ValueError(f"observation {path}.{field_name} must be a bool")
@@ -321,6 +385,9 @@ class _TaskRecord:
     last_progress_at: float | None = None
     last_check_at: float | None = None
     last_metric: float | None = None
+    last_engaged: Mapping[int, float] | None = None
+    damage_dealt: float = 0.0  # engaged enemies' durability lost since the last check
+    target_damage: float = 0.0  # the entity target's own share of damage_dealt
     tracked_tag: int | None = None
     failure_cause: FailureCause | None = None
 
@@ -382,6 +449,17 @@ class _TaskRecord:
             last_progress_game_seconds=self.last_progress_at,
             reason=self.reason,
         )
+
+
+@dataclass
+class _GiveUps:
+    """An entity target a tracked node gave up on: consecutive rounds (no damage
+    dealt to it in between) and demotion."""
+
+    position: Point
+    out_of_sight: bool
+    rounds: int = 0
+    demoted_at: float | None = None
 
 
 @dataclass
@@ -474,6 +552,13 @@ class _View:
                 found.update(sites)
         return frozenset(found)
 
+    def visits(self, node_id: str) -> Mapping[Point, Visit]:
+        return MappingProxyType(self._runtime._visits.get(node_id, {}))
+
+    def demoted(self, node_id: str) -> frozenset[int]:
+        records = self._runtime._give_ups.get(node_id, {})
+        return frozenset(tag for tag, record in records.items() if record.demoted_at is not None)
+
 
 class JevRuntime:
     """Interpret one validated policy for one run (see module docstring)."""
@@ -521,6 +606,22 @@ class JevRuntime:
         self._filters: dict[str, CompiledFilter | None] = {
             node_id: compile_filter(args.get("filter")) for node_id, args in self._args.items()
         }
+        # Visits and demotions are kept only for the nodes some operation reads them for.
+        self._visit_nodes = self._tracked_nodes("visits")
+        self._demotion_nodes = self._tracked_nodes("demotions")
+        # node id -> map location -> Visit, least recent first (insertion order).
+        self._visits: dict[str, dict[Point, Visit]] = {}
+        # This tick's start and expansion locations: the points visits are kept for.
+        self._map_locations: frozenset[Point] = frozenset()
+        # node id -> entity tag -> give-up record, least recent first.
+        self._give_ups: dict[str, dict[int, _GiveUps]] = {}
+        # intent key -> actor of a task that gave up on it (never satisfied by the
+        # order SC2 still carries: its retry is a fresh task), least recent first.
+        self._gave_up_keys: dict[str, int] = {}
+        # node id -> target (entity tag, else point) -> game time of the latest progress
+        # any actor made on it, or of its latest counted give-up; least recent first.
+        self._target_clocks: dict[str, dict[int | Point, float]] = {}
+        self._tick_observation: Observation | None = None
         self._sequence = 0
         self._task_counter = itertools.count(1)
         self._active: dict[str, _TaskRecord] = {}
@@ -548,6 +649,15 @@ class JevRuntime:
         self._waiting_nodes: set[str] = set()
         self._own_unit_tags: frozenset[int] = frozenset()
         self._own_structure_tags: frozenset[int] = frozenset()
+
+    def _tracked_nodes(self, memory: TrackedMemory) -> frozenset[str]:
+        return frozenset(
+            itertools.chain.from_iterable(
+                tracked_nodes(node.operation, self._args[node.id], memory)
+                for node in self._policy.nodes
+                if node.operation is not None
+            )
+        )
 
     # -- public surface ------------------------------------------------------
 
@@ -599,11 +709,18 @@ class JevRuntime:
         self._waiting_nodes = set()
         self._own_unit_tags = frozenset(e.tag for e in observation.own_units)
         self._own_structure_tags = frozenset(e.tag for e in observation.own_structures)
+        self._map_locations = frozenset(
+            itertools.chain.from_iterable(observation.locations(s) for s in LOCATION_SOURCES)
+        )
+        self._tick_observation = observation
+        own = self._own_unit_tags | self._own_structure_tags
+        self._gave_up_keys = {k: a for k, a in self._gave_up_keys.items() if a in own}
         now = observation.game_seconds
         self._cooldowns = {k: v for k, v in self._cooldowns.items() if v > now}
         self._rejected_sites = {k: v for k, v in self._rejected_sites.items() if v[2] > now}
 
         self._update_tasks(observation)
+        self._lapse_give_ups(observation)
 
         remaining_evals = self._tick_config.max_node_evaluations
         remaining_commands = self._tick_config.max_commands
@@ -939,6 +1056,16 @@ class JevRuntime:
             del self._by_intent[task.intent_key]
         self._history.append(task)
         self._terminal_counts[(task.node_id, status)] += 1
+        # A give-up speaks for the army only when the whole target stalled (per target).
+        abandoned = task.failure_cause in ABANDON_CAUSES or (
+            task.failure_cause in REFUSAL_CAUSES
+            and task.node_id in self._visit_nodes | self._demotion_nodes
+        )
+        gave_up = abandoned and self._target_stalled(task)
+        if status == "succeeded":
+            self._target_progressed(task)
+        if status == "succeeded" or gave_up:
+            self._record_visit(task.node_id, task.target)  # cleared, or gave up
         self._task_event(task)
         if task.failure_cause in COOLDOWN_CAUSES:
             until = self._last_game_seconds + self._life.failure_cooldown_seconds
@@ -964,6 +1091,184 @@ class JevRuntime:
                     "excluded_sites": excluded,
                 },
             )
+        if abandoned:
+            self._retry_fresh(task)
+        if gave_up:
+            self._remember_give_up(task)
+
+    def _record_visit(self, node_id: str, target: Target) -> None:
+        """Runtime memory: ``node_id`` visited map location ``target`` now (O(1)).
+
+        Only nodes a ``visits`` argument names, and only the tick's start and
+        expansion locations, are kept; anything else is ignored.
+        """
+        if node_id not in self._visit_nodes or not isinstance(target, tuple):
+            return
+        if target not in self._map_locations:
+            return
+        points = self._visits.setdefault(node_id, {})
+        previous = points.pop(target, None)  # re-inserted last: the most recent
+        count = 1 if previous is None else previous.count + 1
+        points[target] = Visit(count, self._last_game_seconds)
+        if len(points) > MAX_TRACKED_VISITS:  # unreachable with fixed map metadata
+            del points[next(iter(points))]  # the least recent visit
+
+    @staticmethod
+    def _target_key(task: _TaskRecord) -> int | Point | None:
+        """The target a give-up is attributed to: its entity, else its point."""
+        tag = task.params.get(PARAM_TARGET_TAG)
+        if isinstance(tag, int) and not isinstance(tag, bool):
+            return tag
+        return task.target
+
+    def _target_progressed(self, task: _TaskRecord) -> None:
+        """An actor made progress on (or reached) ``task``'s target now (O(1))."""
+        key = self._target_key(task)
+        if key is None or task.node_id not in self._visit_nodes | self._demotion_nodes:
+            return
+        clocks = self._target_clocks.setdefault(task.node_id, {})
+        clocks.pop(key, None)  # re-inserted last: the most recent
+        clocks[key] = self._last_game_seconds
+        if len(clocks) > MAX_TRACKED_GIVE_UPS:
+            del clocks[next(iter(clocks))]
+
+    def _target_stalled(self, task: _TaskRecord) -> bool:
+        """Whether ``task``'s give-up counts for the army: no actor made progress on
+        the target for the replan window. A counted give-up opens the next window,
+        so simultaneous or staggered give-ups count once per window.
+        """
+        key = self._target_key(task)
+        if key is None or task.node_id not in self._visit_nodes | self._demotion_nodes:
+            return True  # nothing reads this node's target memory
+        last = self._target_clocks.get(task.node_id, {}).get(key)
+        window = self._life.replan_after_seconds - _TIME_EPSILON
+        if last is not None and self._last_game_seconds - last < window:
+            return False  # someone progressed, or a round counted, within the window
+        self._target_progressed(task)  # this round opens the next window
+        return True
+
+    def _target_damaged(self, task: _TaskRecord) -> None:
+        """``task``'s entity target itself lost durability since the last progress
+        check: its partial give-up rounds are forgotten, so rounds add up to a
+        demotion only while the target takes no damage in between (O(1)). Closing
+        in, or hurting other enemies on the way, is progress but never breaks the
+        chain, so a target the army cannot reach or hurt is still demoted; a
+        demotion stands until one of its lapse rules lifts it.
+        """
+        tag = task.params.get(PARAM_TARGET_TAG)
+        if not isinstance(tag, int) or isinstance(tag, bool):
+            return
+        records = self._give_ups.get(task.node_id, {})
+        record = records.get(tag)
+        if record is not None and record.demoted_at is None:
+            del records[tag]
+
+    def _retry_fresh(self, task: _TaskRecord) -> None:
+        """After a give-up the intent's retry is a fresh task (never already done)."""
+        keys = self._gave_up_keys
+        keys.pop(task.intent_key, None)
+        keys[task.intent_key] = task.actor_tag
+        if len(keys) > MAX_TRACKED_GIVE_UPS:
+            del keys[next(iter(keys))]
+
+    def _remember_give_up(self, task: _TaskRecord) -> None:
+        """The army gave up on its target: count a round against it.
+
+        Called once per round (see :meth:`_target_stalled`). At
+        :data:`MAX_TARGET_GIVE_UPS` rounds the target is demoted, with a diagnostic.
+        Bounded and O(1) apart from one pass over the tick's visible enemies.
+        """
+        tag = task.params.get(PARAM_TARGET_TAG)
+        observation = self._tick_observation
+        if (
+            task.node_id not in self._demotion_nodes
+            or not isinstance(tag, int)
+            or isinstance(tag, bool)
+            or observation is None
+        ):
+            return
+        seen = next((e for e in observation.visible_enemies if e.tag == tag), None)
+        if isinstance(task.target, tuple):
+            position: Point = task.target  # attacked where it was remembered
+        elif seen is not None:
+            position = seen.position
+        else:
+            return  # the target is gone: nothing left to demote
+        now = self._last_game_seconds
+        records = self._give_ups.setdefault(task.node_id, {})
+        record = records.pop(tag, None)
+        if record is None:
+            record = _GiveUps(position, out_of_sight=seen is None)
+        records[tag] = record  # re-inserted last: the most recent
+        if len(records) > MAX_TRACKED_GIVE_UPS:
+            del records[next(iter(records))]
+        if record.demoted_at is not None:
+            return  # already demoted
+        record.rounds += 1
+        record.position = position
+        if record.rounds < MAX_TARGET_GIVE_UPS:
+            return
+        record.demoted_at = now
+        record.out_of_sight = seen is None
+        self._diagnostic(
+            task.node_id,
+            f"target {tag} demoted after {record.rounds} give-up rounds; selections skip "
+            "it until it is seen elsewhere, sighted again, or the search cycle completes",
+            {
+                "target": str(tag),
+                "demoted": True,
+                "give_ups": record.rounds,
+                "position": [position[0], position[1]],
+            },
+        )
+
+    def _lapse_give_ups(self, observation: Observation) -> None:
+        """Forget give-ups on targets whose situation changed (D4: fresh evaluation).
+
+        Any record lapses once its entity, a structure, is seen at another position
+        (a unit target keeps its record however it moves). A demotion
+        also lapses, with a diagnostic, once the entity comes back into sight after
+        being out of it or the node has visited every expansion location since the
+        demotion; partial rounds survive both, so they still add up to a demotion.
+        O(visible + remembered + locations + records) per tick.
+        """
+        if not any(self._give_ups.values()):
+            return
+        visible = {e.tag: e for e in observation.visible_enemies}
+        remembered = {e.tag: e for e in observation.remembered_enemy_structures}
+        locations = observation.expansion_locations
+        for node_id, records in self._give_ups.items():
+            visits = self._visits.get(node_id, {})
+            # Every expansion location visited by then completes a search cycle.
+            times = [visits[p].last_game_seconds for p in locations if p in visits]
+            cycled_at = min(times) if locations and len(times) == len(locations) else None
+            for tag, record in list(records.items()):
+                demoted_at = record.demoted_at
+                entity = visible.get(tag)
+                if entity is None:
+                    entity = remembered.get(tag)
+                reason: _AllowedAgain | None = None
+                if (  # structures only: a unit moving about is still the same target
+                    entity is not None
+                    and entity.is_structure
+                    and distance(entity.position, record.position) > POINT_MATCH_TOLERANCE
+                ):
+                    reason = "moved"
+                elif demoted_at is not None and tag in visible and record.out_of_sight:
+                    reason = "sighted_again"
+                elif demoted_at is not None and cycled_at is not None and cycled_at > demoted_at:
+                    reason = "search_cycle"
+                if tag not in visible:
+                    record.out_of_sight = True
+                if reason is None:
+                    continue
+                del records[tag]
+                if demoted_at is not None:
+                    self._diagnostic(
+                        node_id,
+                        f"target {tag} allowed again ({reason})",
+                        {"target": str(tag), "allowed_again": reason},
+                    )
 
     def _unacknowledged(self, task: _TaskRecord, now: float) -> None:
         timeout = self._life.ack_timeout_seconds
@@ -981,6 +1286,11 @@ class JevRuntime:
             if task.status in UNACKNOWLEDGED_STATUSES:
                 if observation.own_entity(task.actor_tag) is None:
                     self._fail(task, "lost", "actor lost")
+                    continue
+                # A running task reports a lost target through its progress instead.
+                target_lost = task.lifecycle.target_lost(task.subject(), observation)
+                if target_lost is not None:
+                    self._fail(task, "lost", target_lost)
                     continue
             if task.status == "issued":
                 ack = task.lifecycle.acknowledge(task.subject(), observation)
@@ -1018,23 +1328,56 @@ class JevRuntime:
         if not task.lifecycle.tracks_movement:
             return
         metric = progress.metric
+        # Damage is sampled every tick, over enemies in both consecutive samples only;
+        # the entity target's own loss is kept apart: only it breaks a give-up chain.
+        task.damage_dealt += self._durability_drop(task.last_engaged, progress.engaged)
+        key = self._target_key(task)
+        if isinstance(key, int):
+            task.target_damage += self._durability_drop(
+                task.last_engaged, progress.engaged, only=key
+            )
+        task.last_engaged = progress.engaged
         if task.last_metric is None:
             task.last_metric = metric
         elif task.last_check_at is not None and (
             now - task.last_check_at >= self._life.progress_check_seconds - _TIME_EPSILON
         ):
-            engage_range = decode_arrive_within(task.params)
             improved = metric is not None and metric < task.last_metric - 1.0
-            engaged = metric is not None and metric <= engage_range
-            if improved or engaged:
+            if improved or task.damage_dealt > 0.0:
                 task.last_progress_at = now
+                self._target_progressed(task)
+            if task.target_damage > 0.0:
+                self._target_damaged(task)
             task.last_metric = metric
+            task.damage_dealt = 0.0
+            task.target_damage = 0.0
             task.last_check_at = now
         last_progress = task.last_progress_at if task.last_progress_at is not None else now
         if now - last_progress >= self._life.replan_after_seconds - _TIME_EPSILON:
             self._fail(
                 task, "no_progress", f"no progress for {self._life.replan_after_seconds:g}s; replan"
             )
+
+    @staticmethod
+    def _durability_drop(
+        before: Mapping[int, float] | None,
+        after: Mapping[int, float] | None,
+        only: int | None = None,
+    ) -> float:
+        """Health plus shields the engaged enemies lost between two consecutive samples.
+
+        Only enemies in both samples count (same tags), so an enemy that arrives,
+        retreats out of range or leaves sight is never mistaken for damage; damage
+        dealt before a kill was already counted on the ticks it landed. O(engaged);
+        with ``only``, just that enemy's loss under the same rule (O(1)).
+        """
+        if not before or not after:
+            return 0.0
+        if only is not None:
+            if only not in before or only not in after:
+                return 0.0
+            return max(0.0, before[only] - after[only])
+        return sum(max(0.0, before[tag] - after[tag]) for tag in before.keys() & after.keys())
 
     def _issue_retries(self, frame: _RootFrame, observation: Observation) -> None:
         now = observation.game_seconds
@@ -1198,8 +1541,9 @@ class JevRuntime:
             if key in self._by_intent:
                 active += 1
                 continue
-            if intent.satisfied:
+            if intent.satisfied and key not in self._gave_up_keys:
                 satisfied += 1
+                self._record_visit(node.id, intent.target)  # an actor is already there
                 continue
             refusal = self._refusal(node, frame, view, key, intent, plan.preempt, now)
             if refusal is not None:
@@ -1308,4 +1652,5 @@ class JevRuntime:
         )
         self._active[task.id] = task
         self._by_intent[key] = task.id
+        self._gave_up_keys.pop(key, None)
         self._dispatch(task, frame)

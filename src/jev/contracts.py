@@ -709,6 +709,7 @@ class Entity:
     ``ready`` / ``idle`` / ``powered`` are populated for own production structures
     and may be ``None`` elsewhere; the ``is_*`` properties apply the documented
     fallbacks (ready := fully built, idle := no orders, powered := explicit True).
+    ``shield`` is the Protoss shield (0 for other races); damage lands on it first.
     """
 
     tag: int
@@ -722,6 +723,12 @@ class Entity:
     ready: bool | None = None
     idle: bool | None = None
     powered: bool | None = None
+    shield: float = 0.0
+
+    @property
+    def durability(self) -> float:
+        """Health plus shield: what damage must remove before the entity dies."""
+        return self.health + self.shield
 
     @property
     def is_ready(self) -> bool:
