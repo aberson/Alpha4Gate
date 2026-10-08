@@ -42,7 +42,9 @@ $runId = (Get-ChildItem data\jev\runs -Directory | Sort-Object CreationTime | Se
 uv run python scripts\validate_jev.py --run-id $runId --api-base http://localhost:8765  # Jev: verify a run's disk evidence against the API (backend: bots.current.runner --serve)
 ```
 
-Jev live smoke/acceptance procedure (start, stop, Step 207/208 checklists, report template): `documentation/operator/jev-validation.md`.
+Typesafe integration: opt in with `uv run python -m bots.jev.v1 --decision-provider typesafe --realtime`; requires `TYPESAFE_API_KEY` in the process environment. Default remains local scripted. `--decision-model` defaults to `jev-latest`; `--decision-max-requests` defaults to 450. Model chooses army intent; graph owns command legality/execution. Dashboard Army decision panel distinguishes model and fallback.
+
+Jev live smoke/acceptance procedure (start, stop, Step 207/208 checklists, report template, section 13 Typesafe gate): `documentation/operator/jev-validation.md`.
 
 ## Directory layout
 

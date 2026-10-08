@@ -267,7 +267,7 @@ uv run python -m bots.v0.runner --map Simple64
 
 ### Run the Jev player
 
-Jev (`v1.jev`) is a separate player family: a one-base, four-Gateway Zealot rush whose every gameplay choice comes from an executable decision graph (`bots/jev/v1/policy.json`, interpreted by `src/jev/`) — no PPO and no LLM during the game. Each match writes its evidence to `data/jev/runs/<run_id>/`, which the dashboard's Jev tab (`/?tab=jev`) and the read-only `/api/jev` routes serve.
+Jev (`v1.jev`) is a separate player family: a one-base, four-Gateway Zealot rush executed by a decision graph (`bots/jev/v1/policy.json`, interpreted by `src/jev/`). The default `scripted` provider runs locally. Opt into the actual hosted Typesafe Jev model with `--decision-provider typesafe`: it chooses attack, defend or regroup while the graph handles legal commands and production. There is no PPO in this player. Each match writes evidence to `data/jev/runs/<run_id>/`, served by the dashboard's Jev tab (`/?tab=jev`) and the read-only `/api/jev` routes.
 
 From the repository root, in PowerShell. Terminal 1, the dashboard backend (it keeps running):
 
@@ -290,6 +290,14 @@ uv run python -m bots.jev.v1 --map Simple64 --opponent-race Terran --difficulty 
 $runId = (Get-ChildItem data\jev\runs -Directory | Sort-Object CreationTime | Select-Object -Last 1).Name  # the newest run's ID
 uv run python scripts\validate_jev.py --run-id $runId --api-base http://localhost:8765   # verify it: disk vs API
 ```
+
+For actual Typesafe gameplay, configure `TYPESAFE_API_KEY` in terminal 3 and run:
+
+```powershell
+uv run python -m bots.jev.v1 --decision-provider typesafe --decision-model jev-latest --decision-max-requests 450 --realtime
+```
+
+The dashboard's **Army decision** panel identifies Typesafe decisions and scripted fallback, actual returned model, latency and token usage. Missing credentials fail before SC2 starts. Setup and the separate live integration gate: [Typesafe validation](documentation/operator/jev-validation.md#13-typesafe-jev-integration-phase-ji).
 
 Stop a match with Ctrl+C once in its own terminal (the bot leaves cleanly; never kill SC2 processes wholesale). Full smoke and acceptance procedure: [documentation/operator/jev-validation.md](documentation/operator/jev-validation.md).
 

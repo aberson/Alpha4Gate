@@ -81,6 +81,7 @@ from jev.contracts import (
     safe_exception_text,
     safe_repr,
 )
+from jev.decision import ArmyDecisions, DecisionConfig, TypesafeProvider
 from jev.policy import PolicyBundle, PolicyError, describe_bundle
 from jev.telemetry import (
     EvidenceFiles,
@@ -199,6 +200,9 @@ class MatchOptions:
     max_game_seconds: int = DEFAULT_MAX_GAME_SECONDS
     max_wall_seconds: int = DEFAULT_MAX_WALL_SECONDS
     realtime: bool = False
+    decision_provider: str = "scripted"
+    decision_model: str = "jev-latest"
+    decision_max_requests: int = 450
 
     def __post_init__(self) -> None:
         if not full_match(MAP_NAME_RE, self.map_name):
@@ -217,6 +221,9 @@ class MatchOptions:
         if not isinstance(self.realtime, bool):
             raise ValueError(f"realtime must be a bool, got {safe_repr(self.realtime)}")
         self.limits()  # validates both limits
+        if self.decision_provider not in ("scripted", "typesafe"):
+            raise ValueError("decision_provider must be scripted or typesafe")
+        DecisionConfig(model=self.decision_model, max_requests=self.decision_max_requests)
 
     def limits(self) -> MatchLimits:
         return MatchLimits(self.max_game_seconds, self.max_wall_seconds)
@@ -397,6 +404,12 @@ def run_match(
     """
     launcher = Sc2Launcher() if launcher is None else launcher
     run_id = uuid.uuid4().hex if run_id is None else run_id
+    has_key = bool(os.environ.get("TYPESAFE_API_KEY", "").strip())
+    if options.decision_provider == "typesafe" and not has_key:
+        return _not_played(
+            run_id, "sc2_unavailable",
+            "TYPESAFE_API_KEY is required for --decision-provider typesafe",
+        )
     recorder = RunRecorder(
         run_root,
         _run_metadata(run_id, options, bundle),
@@ -467,8 +480,17 @@ def _play(
     except (Exception, SystemExit) as exc:  # a broken burnysc2 is infrastructure, not a crash
         return _unavailable(run_id, _never_started("burnysc2 could not be imported", exc)), None
 
+    decisions = None
+    if options.decision_provider == "typesafe":
+        config = DecisionConfig(
+            model=options.decision_model, max_requests=options.decision_max_requests
+        )
+        decisions = ArmyDecisions(
+            TypesafeProvider(os.environ["TYPESAFE_API_KEY"], config), config, clock=clock
+        )
     controller = JevController(
-        bundle, run_id=run_id, limits=options.limits(), clock=clock, recorder=recorder
+        bundle, run_id=run_id, limits=options.limits(), clock=clock, recorder=recorder,
+        decisions=decisions,
     )
     try:
         result = launcher.play(controller, setup, options)
@@ -719,6 +741,15 @@ def build_parser(prog: str) -> argparse.ArgumentParser:
     )
     parser.add_argument("--realtime", action="store_true", help="play at real-time speed")
     parser.add_argument(
+        "--decision-provider", choices=("scripted", "typesafe"),
+        default="scripted", help="army decision source (default: scripted)",
+    )
+    parser.add_argument("--decision-model", default="jev-latest", help="Typesafe model identifier")
+    parser.add_argument(
+        "--decision-max-requests", type=_bounded_int(1, 10000), default=450,
+        help="maximum Typesafe requests per match (default: 450)",
+    )
+    parser.add_argument(
         "--run-root",
         type=absolute_path,
         default=None,
@@ -784,6 +815,10 @@ def main(
     if args.validate_policy:
         print(render_text(describe_bundle(bundle)))
         return EXIT_OK
+    try:
+        DecisionConfig(model=args.decision_model, max_requests=args.decision_max_requests)
+    except ValueError as exc:
+        parser.error(str(exc))
     options = MatchOptions(
         map_name=args.map,
         opponent_race=args.opponent_race,
@@ -792,6 +827,9 @@ def main(
         max_game_seconds=args.max_game_seconds,
         max_wall_seconds=args.max_wall_seconds,
         realtime=args.realtime,
+        decision_provider=args.decision_provider,
+        decision_model=args.decision_model,
+        decision_max_requests=args.decision_max_requests,
     )
     run_root = default_run_root() if args.run_root is None else args.run_root
     outcome = run_match(options, bundle, run_root=run_root, launcher=launcher)

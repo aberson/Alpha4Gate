@@ -1,0 +1,39 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Jev v2 proposal</title><style>body{--bg:#f5f2eb;--fg:#253731;--card:#fffdf8;--muted:#556c62;--line:#c6d1c7;--accent:#176e60;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,sans-serif;margin:0}main{max-width:1040px;margin:auto;padding:34px 24px}h1{font-size:36px;line-height:1.15}h2{margin-top:30px}section,header{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px;margin:18px 0}a{color:var(--accent)}small,.muted{color:var(--muted)}li{margin:9px 0}table{border-collapse:collapse;width:100%}td,th{text-align:left;vertical-align:top;padding:10px;border-bottom:1px solid var(--line)}code{overflow-wrap:anywhere}dl{display:grid;grid-template-columns:60px 1fr;gap:8px}dt{font-weight:bold}dd{margin:0}.default{border-left:4px solid var(--accent);padding-left:16px;margin:20px 0}@media(prefers-color-scheme:dark){body{--bg:#17221e;--fg:#e6eee8;--card:#202d27;--muted:#b0c1b6;--line:#4b6557;--accent:#8ad9bb}}@media print{body{--bg:white;--fg:black;--card:white;--muted:#333;--line:#aaa;--accent:#164f43;font-size:11pt}main{padding:0}section,header{break-inside:avoid;border-radius:0}a{color:inherit}button{display:none}}</style></head><body><main>
+<header><p>Alpha4Gate / Phase J2 / Publication 3 / 2026-10-08</p><h1>From a working rush to an adaptive player</h1><p>Approved direction with dashboard-first launch added; planning proposal. No v2 implementation or stronger-play acceptance claimed.</p><p><a href="jev-v2-plan.md">Canonical build plan</a> &middot; <a href="../jev-v2-progress.html">Progress inventory</a></p></header>
+<section><h2>What I heard</h2><p>Keep the four-Gateway identity, then develop a player that scouts, expands and adapts against harder opponents. Jev owns the whole decision process: strategic choices, execution choices and the graph that carries them through. Make those decisions visible live. The test must open the correct dashboard game before SC2 starts; no menu navigation should be necessary.</p></section>
+<section><h2>Why this shape</h2><p>The current executor can only build Pylons and Gateways and train Probes and Zealots. V2 needs real gas, expansion and tech actions before the hosted model can usefully choose them. We will measure baseline weaknesses first and preserve its executable source.</p></section>
+<section><h2>Phase timeline</h2><p>This is build order, not a time forecast. All steps are pending.</p><ol>
+<li><strong>212: Establish reproducible Jev benchmarks</strong> <small>(code)</small></li>
+<li><strong>224: Open the exact live game before starting SC2</strong> <small>(code)</small></li>
+<li><strong>213: Observe the harder-opponent baseline</strong> <small>(operator)</small></li>
+<li><strong>214: Make the v2 opening spend and reinforce reliably</strong> <small>(code)</small></li>
+<li><strong>215: Scout with bounded, honest enemy memory</strong> <small>(code)</small></li>
+<li><strong>216: Execute a gas economy safely</strong> <small>(code)</small></li>
+<li><strong>217: Carry out a recoverable natural expansion</strong> <small>(code)</small></li>
+<li><strong>218: Produce and control a mixed army</strong> <small>(code)</small></li>
+<li><strong>219: Let Typesafe choose persistent strategic plans</strong> <small>(code)</small></li>
+<li><strong>220: Let Typesafe decide within execution branches</strong> <small>(code)</small></li>
+<li><strong>221: Visualize active plans and execution paths</strong> <small>(code)</small></li>
+<li><strong>222: Prove the full v2 decision cycle in SC2</strong> <small>(operator)</small></li>
+<li><strong>223: Evaluate harder-opponent improvement</strong> <small>(wait)</small></li>
+</ol><p><strong>Afterwards:</strong> run <code>/plan-expedite --plan documentation/plans/jev-v2-plan.md</code> in Alpha4Gate to sync the reviewed plan; after READY run <code>/build-phase --plan documentation/plans/jev-v2-plan.md</code>.</p></section>
+<section><h2>Operator choices</h2><dl>
+<dt id="P1">P1</dt><dd>Adaptive four-Gateway opening with expansion and limited tech</dd>
+<dt id="P2">P2</dt><dd>Jev owns strategic and execution decisions; Typesafe participates at both levels</dd>
+<dt id="P3">P3</dt><dd>Inspect live graph branches and decisions</dd>
+<dt id="P4">P4</dt><dd>Measure progress against harder opponents</dd>
+<dt id="P5">P5</dt><dd>Keep evolution and themed SC2 embedding for later</dd>
+<dt id="P6">P6</dt><dd>Open the dashboard first on the exact game and follow every test automatically</dd>
+</dl></section>
+<section><h2>Agent defaults</h2>
+<article class="default" id="D1"><h3>D1: New v2 package with frozen v1 executable baseline</h3><p><strong>Why:</strong> A shared-runtime change must not silently change the comparison opponent.</p><p><strong>Tweak:</strong> Version packaging and baseline custody</p></article>
+<article class="default" id="D2"><h3>D2: Persistent plans with four question families and one shared 450-request cap</h3><p><strong>Why:</strong> Strategic direction and execution choices need bounded, traceable ownership.</p><p><strong>Tweak:</strong> Question cadence, confidence, timeout and priorities</p></article>
+<article class="default" id="D3"><h3>D3: Four Gateways, one scout, reservations and recovery deadlines</h3><p><strong>Why:</strong> Make progress without duplicate spending or an indefinitely stuck plan.</p><p><strong>Tweak:</strong> Supply buffer, group size and reservation deadlines</p></article>
+<article class="default" id="D4"><h3>D4: Natural expansion, gas, Cybernetics Core, Zealots and Stalkers</h3><p><strong>Why:</strong> Provide a modest second act before adding the full tech tree.</p><p><strong>Tweak:</strong> Composition ratios and technology scope</p></article>
+<article class="default" id="D5"><h3>D5: Lane colors, observed activity paths and explicit blockers</h3><p><strong>Why:</strong> Show concurrent decisions without confusing attack color with failure.</p><p><strong>Tweak:</strong> Trail duration and follow behavior</p></article>
+<article class="default" id="D6"><h3>D6: MediumHard panel across all races; 4/6 wins plus improvement over v1</h3><p><strong>Why:</strong> Use a measurable small-panel target with preserved comparison cases.</p><p><strong>Tweak:</strong> Difficulty, case count and acceptance threshold</p></article>
+<article class="default" id="D7"><h3>D7: Session-scoped launch URL, rendered-ready barrier and one-tab batch following</h3><p><strong>Why:</strong> Opening a tab or selecting the newest archive does not prove the correct game is visible.</p><p><strong>Tweak:</strong> Readiness deadline and explicit headless opt-out</p></article>
+</section>
+<section><h2>Not in this milestone</h2><p>No automatic evolution, runtime graph rewriting, full tech tree, spells, research upgrades, cloak detection, more than two bases or embedded SC2 window. Scope is Simple64 against built-in opponents.</p></section>
+<section><h2>Risks</h2><p>More complexity may not win more games. Reservations may starve production; model answers may arrive late; a small test panel may overstate strength. Deadlines, explicit fallbacks, immutable provenance and held-out comparison make these failures visible.</p><p>Hosted match cap: 450 calls; batch cap: six matches, two hours and 2,700 calls. Tokens are reported; these are not currency guarantees. No paid matches run during planning.</p></section>
+<section><h2>Feedback and source</h2><p>Reply by stable ID, for example <code>D4 -&gt; add detection in a later phase</code> or <code>D6 -&gt; use more evaluation seeds</code>. The plan is the source of truth; this proposal is its readable view.</p><p><a href="jev-v2-plan.md">Plan</a> &middot; <a href="jev-v2-review.md">Technical review</a> &middot; <a href="jev-v2-wrap.md">Fresh-context check</a></p></section></main></body></html>

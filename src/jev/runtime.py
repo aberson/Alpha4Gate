@@ -513,6 +513,9 @@ class _View:
     def latch_is_set(self, latch: str) -> bool:
         return self._runtime._latches.get(latch, False)
 
+    def army_mode(self) -> str | None:
+        return self._runtime._army_mode
+
     def own_unit_tags(self) -> frozenset[int]:
         return self._runtime._own_unit_tags
 
@@ -557,8 +560,7 @@ class _View:
         return MappingProxyType(self._runtime._visits.get(node_id, {}))
 
     def demoted(self, node_id: str) -> frozenset[int]:
-        records = self._runtime._give_ups.get(node_id, {})
-        return frozenset(tag for tag, record in records.items() if record.demoted_at is not None)
+        return self._runtime.demoted_targets(node_id)
 
 
 class JevRuntime:
@@ -636,6 +638,24 @@ class JevRuntime:
         # that failed placement; pruned with the cooldowns (bounded by them).
         self._rejected_sites: dict[str, tuple[str, frozenset[Point], float]] = {}
         self._latches: dict[str, bool] = {latch: False for latch in LATCHES}
+        self._army_mode: str | None = None
+        self._decision_facts: dict[str, JsonValue] = {}
+        self._decision_reported: dict[str, JsonValue] = {}
+        self._decision_report_time = -1.0
+        # Derive guarded task ownership from the graph, not action-node names.
+        self._army_task_modes: dict[str, str] = {}
+        for branch in policy.nodes:
+            if branch.kind != "sequence" or not branch.children:
+                continue
+            guard = policy.node(branch.children[0])
+            if guard.operation != "army_mode_is":
+                continue
+            mode = str(self._args[guard.id]["mode"])
+            pending = list(branch.children)
+            while pending:
+                child = policy.node(pending.pop())
+                self._army_task_modes[child.id] = mode
+                pending.extend(child.children)
         self._last_tick_seconds: float | None = None
         self._last_game_loop = 0
         self._last_game_seconds = 0.0
@@ -688,6 +708,18 @@ class JevRuntime:
     def task_history(self) -> tuple[Task, ...]:
         return tuple(task.snapshot(self._life) for task in self._history)
 
+    def demoted_targets(self, node_id: str) -> frozenset[int]:
+        """Visible targets this action has given up on; also used by model eligibility."""
+        records = self._give_ups.get(node_id, {})
+        return frozenset(tag for tag, record in records.items() if record.demoted_at is not None)
+
+    def set_army_decision(self, mode: str | None, facts: dict[str, JsonValue]) -> None:
+        """Supply the coordinator's decision for the next graph evaluation."""
+        if mode not in (None, "attack", "defend", "regroup"):
+            raise ValueError("invalid army mode")
+        self._army_mode = mode
+        self._decision_facts = dict(facts)
+
     def tick(self, observation: Observation) -> TickResult:
         """Run one policy tick if the cadence allows; return commands and events.
 
@@ -702,6 +734,21 @@ class JevRuntime:
         self._last_tick_seconds = observation.game_seconds
         self._last_game_loop = observation.game_loop
         self._last_game_seconds = observation.game_seconds
+        # Existing event wire format carries provider evidence without breaking archives.
+        if self._decision_facts and "army" in self._policy.roots:
+            stable = {
+                k: v for k, v in self._decision_facts.items() if k != "response_age_game_seconds"
+            }
+            if (
+                stable != self._decision_reported
+                or observation.game_seconds - self._decision_report_time >= 1
+            ):
+                self._emit(
+                    "army", None, "diagnostic", "success", "Army decision source",
+                    self._decision_facts,
+                )
+                self._decision_reported = stable
+                self._decision_report_time = observation.game_seconds
         self._commands = []
         self._reserved_actors = set()
         self._held_minerals = 0
@@ -722,6 +769,11 @@ class JevRuntime:
 
         self._update_tasks(observation)
         self._lapse_give_ups(observation)
+        if self._army_mode is not None:
+            for task in list(self._active.values()):
+                mode = self._army_task_modes.get(task.node_id)
+                if mode is not None and mode != self._army_mode:
+                    self._finish(task, "cancelled", f"army intent changed to {self._army_mode}")
 
         remaining_evals = self._tick_config.max_node_evaluations
         remaining_commands = self._tick_config.max_commands

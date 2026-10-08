@@ -102,6 +102,44 @@
   margin-bottom: 12px;
 }
 
+.jev-army-decision {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--code-bg);
+}
+
+.jev-army-decision-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.jev-army-decision-title h3 {
+  margin-right: auto;
+}
+
+.jev-decision-source-typesafe {
+  border-color: var(--jev-active);
+}
+
+.jev-decision-source-scripted_fallback {
+  border-style: dashed;
+  border-color: var(--jev-waiting);
+}
+
+.jev-decision-details {
+  margin-top: 8px;
+}
+
+.jev-decision-details summary {
+  color: var(--text-h);
+  cursor: pointer;
+  font-weight: 600;
+}
+
 .jev-run-select select {
   margin-left: 6px;
   max-width: 100%;

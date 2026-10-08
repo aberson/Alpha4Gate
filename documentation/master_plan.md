@@ -8,7 +8,9 @@ Single spine for the project. Status as of 2026-09-04. Each phase's narrative li
 
 | Sub-plan | Phase | Status / remaining work |
 |---|---|---|
-| [jev-player-plan.md](plans/jev-player-plan.md) | JV | READY FOR BUILD 2026-10-07: umbrella #317, Steps 201-208 (#318-#325); automated build stops after 206, before live operator gates. Independent graph-controlled four-Gateway Zealot player plus dashboard viewer; evolution and themed-window embedding deferred. [Proposal](plans/jev-player-proposal.html) |
+| [jev-player-plan.md](plans/jev-player-plan.md) | JV | Steps 201-206 implemented; recorded live gates 207/208 pending. Local scripted baseline; actual Typesafe integration follows in Phase JI. Independent graph-controlled four-Gateway Zealot player plus dashboard viewer; evolution and themed-window embedding deferred. [Proposal](plans/jev-player-proposal.html) |
+| [jev-typesafe-plan.md](plans/jev-typesafe-plan.md) | JI | Steps 209-211 complete: offline checks and actual hosted-service/SC2 acceptance passed. [Validation](plans/jev-typesafe-validation.md) |
+| [jev-v2-plan.md](plans/jev-v2-plan.md) | J2 | APPROVED FOR PREPARATION: Steps 212-224. Dashboard-first exact-game launch, adaptive player, strategic/execution decisions and MediumHard comparison. [Proposal](plans/jev-v2-proposal.html) |
 | [phase-d-build-plan.md](plans/phase-d-build-plan.md) | D | Automated build COMPLETE (incl. snapshot-counts follow-up); **M1/M2 operator validation pending** |
 | [evolution-lines-plan.md](plans/evolution-lines-plan.md) | EL | EL.1-EL.6 shipped 2026-06-20 (#273-#278 closed; EL.6 real-SC2 smoke PASS); **EL.7 soak (#279) operator-pending** |
 | [phase-6-build-plan.md](plans/phase-6-build-plan.md) | 6 | Self-play-driven improvement loop - planned |
@@ -48,9 +50,32 @@ Phases A and 0 (completed 2026-04-15/16) and earlier pre-master-plan work are do
 
 ## Phase JV — Jev player and dashboard viewer
 
-**Status:** READY FOR BUILD (2026-10-07), 0 of 8 steps implemented. Reviews complete; umbrella #317 and step issues #318-#325 synced and verified. **Objective:** prove a complete graph-controlled player and inspect its live decisions before connecting it to evolution. The initial policy is a one-base four-Gateway Zealot rush, attacking with four Zealots and continuously reinforcing. LLMs author the graph between matches; Jev owns gameplay without live LLM or RL decisions.
+**Status:** Automated Steps 201-206 implemented (2026-10-08); recorded live gates 207/208 pending. Reviews complete; umbrella #317 and step issues #318-#325 synced and verified. **Objective:** prove a complete graph-controlled player and inspect its live decisions before connecting it to evolution. The initial policy is a one-base four-Gateway Zealot rush, attacking with four Zealots and continuously reinforcing. This implementation is a local scripted graph, not Typesafe AI Jev. Phase JI corrects that misunderstanding with an opt-in live Typesafe decision provider.
 
 Build plan: [jev-player-plan.md](plans/jev-player-plan.md). This new phase reserves numeric **Steps 201-208**; prior phase numbering is unchanged. Acceptance requires a real pipeline smoke followed by three observed full matches. The graph embedded beside SC2 remains a later enhancement. Family storage and other agent defaults are explicit in the [proposal](plans/jev-player-proposal.html).
+
+## Phase JI - Typesafe Jev integration
+
+**Status:** COMPLETE; LIVE ACCEPTANCE PASSED (2026-10-08). Steps 209-211 verified. Connect actual Typesafe Jev to attack/defend/regroup decisions, retaining the four-Gateway rush and local command execution. Add explicit provider/fallback evidence in the dashboard. Numeric Steps 209-211; hosted-service plus SC2 validation passed with a full realtime match, dashboard evidence and pending-request cleanup.
+
+Build plan: [jev-typesafe-plan.md](plans/jev-typesafe-plan.md). [Phase JI progress](jev-typesafe-progress.html). Evolution remains deferred.
+
+## Phase J2 - Adaptive Jev player
+
+**Status:** APPROVED FOR PREPARATION (2026-10-08); 0/13 build and live-acceptance steps complete.
+**Objective:** build an inspectable two-base four-Gateway player and measure
+improvement over frozen v1 against MediumHard opponents. Typesafe participates
+in strategy and execution choices; local graph actions own the full lifecycle.
+Scope includes scouting, gas, a natural expansion, Zealot/Stalker production,
+bounded plan recovery, live branch visualization and paired real-game evaluation.
+Dashboard-first launch selects the exact run before SC2 starts and follows each
+batch game automatically. Step 224 precedes baseline Step 213; existing IDs are
+unchanged. Evolution, broader tech and embedded SC2 remain deferred. Numeric **Steps 212-224**.
+
+Build plan: [jev-v2-plan.md](plans/jev-v2-plan.md).
+Current Jev progress: [J2 inventory](jev-v2-progress.html); the JI progress page
+is the historical integration checkpoint. Planning checks are not implementation
+or stronger-play acceptance.
 
 ## Source
 

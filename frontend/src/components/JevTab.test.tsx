@@ -377,6 +377,127 @@ describe("JevTab node inspector", () => {
   });
 });
 
+describe("JevTab army decision", () => {
+  function armyDecision(extraFacts: Doc): Doc {
+    return event(RUN_A, 8, "army", {
+      reason: "Army decision source",
+      facts: extraFacts,
+    });
+  }
+
+  it("does not infer a provider for an older run without decision evidence", async () => {
+    await renderRun(runState(RUN_A, HASH_A));
+    expect(screen.getByTestId("jev-decision-unavailable")).toHaveTextContent(
+      "Provider evidence unavailable",
+    );
+    expect(screen.queryByText(/Source: Typesafe/)).not.toBeInTheDocument();
+  });
+
+  it("separates the current applied intent from a pending request's last response", async () => {
+    await renderRun(
+      runState(RUN_A, HASH_A, {
+        recent_events: [
+          armyDecision({
+            decision_provider: "typesafe",
+            source: "typesafe",
+            choice: "defend",
+            reason: "holding the natural",
+            pending: true,
+            requested_model: "requested-model",
+            model: "actual-model",
+            question: "Choose the army intent",
+            options: ["attack", "defend", "regroup"],
+            answer: "attack",
+            confidence: 0.72,
+            probabilities: { attack: 0.72, defend: 0.2, regroup: 0.08 },
+            latency_ms: 124,
+            calls: 2,
+            input_tokens: 30,
+            output_tokens: 8,
+            max_requests: 4,
+            observation_game_seconds: 11,
+            response_age_game_seconds: 3.5,
+          }),
+        ],
+      }),
+    );
+    const panel = screen.getByTestId("jev-army-decision");
+    expect(within(panel).getByText("Source: Typesafe response")).toBeInTheDocument();
+    expect(within(panel).getByTestId("jev-decision-age")).toHaveTextContent("Live evidence");
+    expect(definition(panel, "Current applied intent")).toHaveTextContent("defend");
+    expect(definition(panel, "Request state")).toHaveTextContent("Pending now");
+
+    fireEvent.click(within(panel).getByText("Typesafe request and last response details"));
+    expect(definition(panel, "Last service answer")).toHaveTextContent("attack");
+    expect(definition(panel, "Requested model")).toHaveTextContent("requested-model");
+    expect(definition(panel, "Actual response model")).toHaveTextContent("actual-model");
+    expect(panel).toHaveTextContent('"attack": 0.72');
+  });
+
+  it("labels a scripted fallback without treating the requested model as an actual response", async () => {
+    await renderRun(
+      runState(RUN_A, HASH_A, {
+        recent_events: [
+          armyDecision({
+            decision_provider: "typesafe",
+            source: "scripted_fallback",
+            choice: "regroup",
+            reason: "service unavailable",
+            pending: false,
+            requested_model: "configured-model",
+            model: null,
+            question: "Choose",
+            options: ["attack", "defend", "regroup"],
+            answer: null,
+            confidence: null,
+            probabilities: {},
+            latency_ms: null,
+            calls: 1,
+            input_tokens: 0,
+            output_tokens: 0,
+            max_requests: 2,
+            observation_game_seconds: 4,
+            response_age_game_seconds: null,
+          }),
+        ],
+      }),
+    );
+    const panel = screen.getByTestId("jev-army-decision");
+    expect(panel).toHaveTextContent("Source: Scripted fallback");
+    expect(definition(panel, "Current applied intent")).toHaveTextContent("regroup");
+    fireEvent.click(within(panel).getByText("Typesafe request and last response details"));
+    expect(definition(panel, "Requested model")).toHaveTextContent("configured-model");
+    expect(definition(panel, "Actual response model")).toHaveTextContent("not recorded");
+    expect(definition(panel, "Last service answer")).toHaveTextContent("none recorded");
+  });
+
+  it.each([
+    ["stale", { stale: true }],
+    ["archived", { status: "finished", result: "win" }],
+  ])("labels %s decision evidence and pending state as last known", async (_, stateExtra) => {
+    await renderRun(
+      runState(RUN_A, HASH_A, {
+        ...stateExtra,
+        recent_events: [
+          armyDecision({
+            decision_provider: "typesafe",
+            source: "typesafe",
+            choice: "attack",
+            reason: "pressure",
+            pending: true,
+            calls: 1,
+          }),
+        ],
+      }),
+    );
+    const panel = screen.getByTestId("jev-army-decision");
+    expect(within(panel).getByTestId("jev-decision-age")).toHaveTextContent(
+      "Last known evidence",
+    );
+    expect(definition(panel, "Request state")).toHaveTextContent("Pending when recorded");
+  });
+});
+
 describe("JevTab recent trace", () => {
   it("lists recent events newest first and labels status changes as transitions", async () => {
     await renderRun(

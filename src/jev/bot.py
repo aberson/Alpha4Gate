@@ -31,8 +31,8 @@ game loop, and a match never idles on past its limits.
 :class:`JevBot` is the thin ``BotAI`` shim burnysc2 runs: ``on_start`` attaches
 the controller to the live game and registers Ctrl+C as a clean-leave request,
 ``on_step`` steps the controller, ``on_end`` records SC2's result. There is no
-legacy gameplay code, LLM or neural policy anywhere on this path: every game
-command comes from a policy node through a runtime task.
+legacy gameplay code or RL policy on this path. The optional Typesafe coordinator
+supplies army intent; every command still comes from a graph node and runtime task.
 """
 
 from __future__ import annotations
@@ -57,6 +57,7 @@ from jev.contracts import (
     safe_exception_text,
     safe_repr,
 )
+from jev.decision import ArmyDecisions
 from jev.policy import PolicyBundle
 from jev.runner import MatchLimits, exception_error
 from jev.runtime import JevRuntime, TickResult
@@ -121,6 +122,7 @@ class JevController:
         limits: MatchLimits,
         clock: Callable[[], float] = time.monotonic,
         recorder: RunRecorder | None = None,
+        decisions: ArmyDecisions | None = None,
     ) -> None:
         if not isinstance(limits, MatchLimits):
             raise ValueError(f"limits must be MatchLimits, got {safe_repr(limits)}")
@@ -142,6 +144,8 @@ class JevController:
         self._recent: deque[Event] = deque(maxlen=RECENT_EVENT_LIMIT)
         self._recorder = recorder
         self._evidence_failure: JevError | None = None
+        self._decisions = decisions
+        self._parameters = bundle.policy.parameters
 
     @property
     def stop_requested(self) -> bool:
@@ -275,7 +279,23 @@ class JevController:
             self.adapter.remember(self._game, port)
             self._publish(())
             return None
-        result = self.runtime.tick(self.adapter.observe(self._game, port))
+        observation = self.adapter.observe(self._game, port)
+        if self._decisions is not None:
+            mode, facts = self._decisions.poll(
+                observation,
+                launched=self.runtime.latches.get("attack_launched", False),
+                first_wave=int(self._parameters["first_attack_zealots"]),  # type: ignore[arg-type]
+                defense_radius=float(self._parameters["defense_radius"]),  # type: ignore[arg-type]
+                demoted_defense=self.runtime.demoted_targets("army.defend.attack"),
+            )
+            self.runtime.set_army_decision(mode, facts)
+        else:
+            self.runtime.set_army_decision(
+                None,
+                {"decision_provider": "scripted", "source": "scripted", "choice": None,
+                 "reason": "local_graph", "calls": 0},
+            )
+        result = self.runtime.tick(observation)
         if result.ticked:
             await self.adapter.issue(result.commands, port, self.runtime)
             self._recent.extend(result.events)
@@ -292,6 +312,7 @@ class JevController:
 
     async def _leave(self, port: GamePort) -> None:
         """One leave attempt per call until one succeeds; LeaveFailed when exhausted."""
+        await self.close_decisions()
         if self._left:
             return
         if self._leave_attempts < MAX_LEAVE_ATTEMPTS:
@@ -312,6 +333,10 @@ class JevController:
             f"leaving the game failed {self._leave_attempts} times; "
             f"last failure: {self._leave_failure}"
         )
+
+    async def close_decisions(self) -> None:
+        if self._decisions is not None:
+            await self._decisions.close()
 
 
 class JevBot(BotAI):
@@ -334,6 +359,7 @@ class JevBot(BotAI):
         await self.controller.step()
 
     async def on_end(self, game_result: Result) -> None:
+        await self.controller.close_decisions()
         self.controller.finish(match_result(game_result))
 
     def _register_stop_request(self) -> None:

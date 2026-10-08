@@ -24,7 +24,7 @@ there.
 - Windows with StarCraft II at `C:\Program Files (x86)\StarCraft II\` (or `SC2PATH` set),
   and `Simple64.SC2Map` under its `Maps` folder (from the Blizzard CDN map pack, not GitHub).
 - [uv](https://docs.astral.sh/uv/) with Python 3.12 or newer, and Node.js with npm.
-- No API keys or Claude credentials: Jev makes no LLM call.
+- The default scripted baseline needs no API key. Actual Typesafe gameplay requires `TYPESAFE_API_KEY`; see section 13.
 - Ports 8765 and 3000 free; only one backend may own 8765. No output from this command
   means both are free:
 
@@ -440,3 +440,90 @@ Remove-Item -Recurse -Force data\jev\runs
 
 The evidence folder (`data\jev\evidence\`) is yours to keep or remove the same way. Never
 delete files inside a run directory to "fix" a verifier failure: record the failure instead.
+
+
+## 13. Typesafe Jev integration (Phase JI)
+
+The baseline above is a local scripted player. `--decision-provider typesafe`
+uses the actual hosted Jev model for army intent. It is opt-in; merely naming the
+player Jev or setting a key does not engage the service.
+
+Obtain a key from the [Typesafe console](https://console.typesafe.ai). In terminal 3,
+read it without placing the literal key in shell history (Windows PowerShell):
+
+```powershell
+$jevSecret = Read-Host "Typesafe API key" -AsSecureString
+$env:TYPESAFE_API_KEY = [System.Net.NetworkCredential]::new('', $jevSecret).Password
+Remove-Variable jevSecret
+uv run python -m bots.jev.v1 --decision-provider typesafe --decision-model jev-latest --decision-max-requests 450 --realtime --map Simple64 --opponent-race Terran --difficulty 1 --seed 1 --max-game-seconds 900 --max-wall-seconds 1800
+```
+
+The key is read from the process environment, not `.env` or a policy file. Do not
+paste it into chat or evidence. Remove it when finished with these runs:
+
+```powershell
+Remove-Item Env:TYPESAFE_API_KEY
+```
+
+Start the dashboard using section 4. Select the new run and open **Army decision**.
+Initially the army follows scripted fallback; requests start when there is more
+than one feasible army option. Observe at least 60 seconds after that point.
+
+Record all of the following before accepting the smoke:
+
+1. Configured provider is `typesafe`, requests increase, and **Source: Typesafe**
+   appears with a nonempty actual response model. `jev-latest` is a requested alias,
+   not evidence of the returned model version.
+2. The current applied intent matches a successful `army.*.mode` guard (or the
+   regroup guard `army.rally.before_launch`) and a corresponding command/task in
+   the trace. A last service answer shown beside **Scripted fallback** was not applied.
+3. Production and economy continue while a request is pending. Inspect the question,
+   options, confidence, probabilities, latency, response age and token usage.
+4. Verify disk/API consistency using section 6. Record the run ID, policy hash,
+   event sequence and corresponding command node. Old archived runs without provider
+   evidence are explicitly labeled unavailable, never silently labeled Typesafe.
+5. Press Ctrl+C once while a request is pending, verify the run stops cleanly, and
+   record its final state. Then run a complete match with the same command and
+   record outcome, accepted choices, fallbacks and token counts. Do not estimate a
+   win rate from this one match.
+
+The runtime allows one outstanding request, at most one dispatch per two wall
+seconds, a 1.5-second total request timeout and 450 requests per match by default.
+Responses expire after eight game seconds or five wall seconds, and changes in
+army membership, nearby threats, home structures or launch state invalidate them.
+Targets the graph has abandoned are excluded from the model's defense options.
+Confidence below 0.5 also falls back. Authentication errors disable further calls
+for the match. Other errors retry only through the normal dispatch cadence, within
+the cap. These are starting defaults to assess during live play.
+
+Use realtime for the first smoke: accelerated game time may make otherwise quick
+responses stale. Economy, production, legal placements and target/actor selection
+remain local. Jev controls only army intent in this first integration; regroup is
+allowed after launch. The original four-ready-Zealot first-attack gate still applies.
+
+The trace records requests and token usage, not a billing estimate. See the
+[Typesafe HTTP API](https://docs.typesafe.ai/api) for the service contract. Offline
+transport fixtures and simulated SC2 tests do not satisfy this live gate.
+
+
+### Reuse the encrypted local key from assisted setup
+
+Assisted setup on 2026-10-08 saved the key encrypted with Windows DPAPI at
+`%LOCALAPPDATA%\Alpha4Gate\typesafe-key.dpapi`. Only the same Windows account
+can decrypt it. For another match, run this from the repository root:
+
+```powershell
+$jevKeyFile = Join-Path $env:LOCALAPPDATA 'Alpha4Gate\typesafe-key.dpapi'
+$jevSecret = ConvertTo-SecureString -String ((Get-Content -LiteralPath $jevKeyFile -Raw).Trim())
+$env:TYPESAFE_API_KEY = [System.Net.NetworkCredential]::new('', $jevSecret).Password
+$jevSecret.Dispose()
+try {
+    uv run python -m bots.jev.v1 --decision-provider typesafe --realtime --map Simple64 --opponent-race Terran --difficulty 1 --seed 1 --max-game-seconds 900 --max-wall-seconds 1800
+} finally {
+    Remove-Item Env:TYPESAFE_API_KEY
+}
+```
+
+The player still reads only the environment; it does not automatically load this
+credential. [Live acceptance results](../plans/jev-typesafe-validation.md#live-acceptance--2026-10-08)
+record the completed match and cleanup checks.

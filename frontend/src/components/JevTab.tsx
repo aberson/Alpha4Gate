@@ -12,6 +12,7 @@ import {
   type JevRunState,
   type JevTarget,
   type JevTask,
+  type JsonObject,
   type JsonValue,
 } from "../types/jev";
 import "./JevTab.css";
@@ -41,6 +42,7 @@ const TRACE_ROWS = 40;
 const JSON_PREVIEW_CHARS = 2000;
 /** The events of a run whose state has not loaded (one stable identity). */
 const NO_EVENTS: JevEvent[] = [];
+const ARMY_DECISION_REASON = "Army decision source";
 
 function describeError(error: JevLoadError): string {
   switch (error.kind) {
@@ -72,6 +74,28 @@ function formatJson(value: JsonValue): string {
   return text.length > JSON_PREVIEW_CHARS
     ? `${text.slice(0, JSON_PREVIEW_CHARS)}\n… (cut at ${JSON_PREVIEW_CHARS} characters)`
     : text;
+}
+
+function factString(facts: JsonObject, key: string): string | null {
+  const value = facts[key];
+  return typeof value === "string" ? value : null;
+}
+
+function factNumber(facts: JsonObject, key: string): number | null {
+  const value = facts[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function factBoolean(facts: JsonObject, key: string): boolean | null {
+  const value = facts[key];
+  return typeof value === "boolean" ? value : null;
+}
+
+function sourceLabel(source: string | null): string {
+  if (source === "typesafe") return "Typesafe response";
+  if (source === "scripted_fallback") return "Scripted fallback";
+  if (source === "scripted") return "Scripted";
+  return source ?? "unknown";
 }
 
 /** Runtime status per node: the latest node evaluation, overridden by active/waiting. */
@@ -274,9 +298,146 @@ function RunView({ runId, run, policy }: RunViewProps) {
   return (
     <>
       <RunSummary state={state} live={live} run={run} />
+      <ArmyDecisionPanel events={events} live={live} />
       {graph}
       <RecentTrace events={events} />
     </>
+  );
+}
+
+function ArmyDecisionPanel({ events, live }: { events: JevEvent[]; live: boolean }) {
+  const decision =
+    events.findLast(
+      (event) => event.node_id === "army" && event.reason === ARMY_DECISION_REASON,
+    ) ?? null;
+
+  if (decision === null) {
+    return (
+      <section className="jev-army-decision" aria-labelledby="jev-army-decision-heading">
+        <h3 id="jev-army-decision-heading">Army decision</h3>
+        <p className="jev-note" data-testid="jev-decision-unavailable">
+          Provider evidence unavailable for this run. Older runs may not contain army decision
+          diagnostics.
+        </p>
+      </section>
+    );
+  }
+
+  const { facts } = decision;
+  const provider = factString(facts, "decision_provider");
+  const source = factString(facts, "source");
+  const choice = factString(facts, "choice");
+  const reason = factString(facts, "reason");
+  const pending = factBoolean(facts, "pending");
+  const requestedModel = factString(facts, "requested_model");
+  const actualModel = factString(facts, "model");
+  const question = factString(facts, "question");
+  const answer = factString(facts, "answer");
+  const confidence = factNumber(facts, "confidence");
+  const latency = factNumber(facts, "latency_ms");
+  const calls = factNumber(facts, "calls");
+  const inputTokens = factNumber(facts, "input_tokens");
+  const outputTokens = factNumber(facts, "output_tokens");
+  const maxRequests = factNumber(facts, "max_requests");
+  const observationSeconds = factNumber(facts, "observation_game_seconds");
+  const responseAge = factNumber(facts, "response_age_game_seconds");
+  const optionsValue = facts.options;
+  const options =
+    Array.isArray(optionsValue) && optionsValue.every((value) => typeof value === "string")
+      ? optionsValue
+      : null;
+  const probabilities = facts.probabilities;
+  const hasProbabilities =
+    probabilities !== null && typeof probabilities === "object" && !Array.isArray(probabilities);
+  const hasServiceDetails =
+    requestedModel !== null ||
+    actualModel !== null ||
+    question !== null ||
+    options !== null ||
+    answer !== null ||
+    confidence !== null ||
+    hasProbabilities ||
+    latency !== null ||
+    inputTokens !== null ||
+    outputTokens !== null ||
+    maxRequests !== null ||
+    observationSeconds !== null ||
+    responseAge !== null ||
+    pending !== null;
+
+  return (
+    <section
+      className="jev-army-decision"
+      aria-labelledby="jev-army-decision-heading"
+      data-testid="jev-army-decision"
+    >
+      <div className="jev-army-decision-title">
+        <h3 id="jev-army-decision-heading">Army decision</h3>
+        <span className="jev-badge" data-testid="jev-decision-age">
+          {live ? "Live evidence" : "Last known evidence"}
+        </span>
+        <span className={`jev-badge jev-decision-source-${source ?? "unknown"}`}>
+          Source: {sourceLabel(source)}
+        </span>
+      </div>
+      <dl className="jev-facts">
+        <dt>Configured provider</dt>
+        <dd>{provider ?? "not recorded"}</dd>
+        <dt>Current applied intent</dt>
+        <dd data-testid="jev-decision-choice">{choice ?? "none recorded"}</dd>
+        <dt>Decision reason</dt>
+        <dd>{reason ?? "not recorded"}</dd>
+        <dt>Requests made</dt>
+        <dd>{calls ?? "not recorded"}</dd>
+        {pending !== null && (
+          <>
+            <dt>Request state</dt>
+            <dd>{pending ? (live ? "Pending now" : "Pending when recorded") : "Settled"}</dd>
+          </>
+        )}
+      </dl>
+      {hasServiceDetails && (
+        <details className="jev-decision-details">
+          <summary>Typesafe request and last response details</summary>
+          <dl className="jev-facts">
+            <dt>Requested model</dt>
+            <dd>{requestedModel ?? "not recorded"}</dd>
+            <dt>Actual response model</dt>
+            <dd data-testid="jev-decision-model">{actualModel ?? "not recorded"}</dd>
+            <dt>Question</dt>
+            <dd>{question ?? "not recorded"}</dd>
+            <dt>Options</dt>
+            <dd>{options === null ? "not recorded" : options.join(", ")}</dd>
+            <dt>Last service answer</dt>
+            <dd data-testid="jev-decision-answer">{answer ?? "none recorded"}</dd>
+            <dt>Confidence</dt>
+            <dd>{confidence ?? "not recorded"}</dd>
+            <dt>Latency</dt>
+            <dd>{latency === null ? "not recorded" : `${latency} ms`}</dd>
+            <dt>Token use</dt>
+            <dd>
+              {inputTokens === null && outputTokens === null
+                ? "not recorded"
+                : `${inputTokens ?? "?"} input / ${outputTokens ?? "?"} output`}
+            </dd>
+            <dt>Request budget</dt>
+            <dd>{maxRequests ?? "not recorded"}</dd>
+            <dt>Observation game time</dt>
+            <dd>
+              {observationSeconds === null ? "not recorded" : formatSeconds(observationSeconds)}
+            </dd>
+            <dt>Last response age</dt>
+            <dd>{responseAge === null ? "none recorded" : formatSeconds(responseAge)}</dd>
+          </dl>
+          {hasProbabilities && (
+            <>
+              <h4>Last response probabilities</h4>
+              <pre>{formatJson(probabilities)}</pre>
+            </>
+          )}
+        </details>
+      )}
+    </section>
   );
 }
 

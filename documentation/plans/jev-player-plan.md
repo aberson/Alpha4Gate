@@ -1,6 +1,8 @@
 # Phase JV: Jev player and decision-graph viewer
 
-Status: READY FOR BUILD. Umbrella #317; automated issues #318-#323; operator gates #324-#325. Authored 2026-10-07 against HEAD `f42b9b6`; no implementation or live validation has occurred.
+Status: AUTOMATED BUILD COMPLETE (Steps 201-206, 2026-10-08). Recorded operator gates 207/208 remain pending. User reports successful play; that report does not replace the specified evidence bundles. Umbrella #317; automated issues #318-#323; operator gates #324-#325.
+
+**Provider correction (2026-10-08):** Phase JV built a local scripted graph, not Typesafe AI Jev. The original no-live-model premise below describes that baseline only and is superseded for model-backed play by [Phase JI: Typesafe integration](jev-typesafe-plan.md). The user has authorized that integration. Historical acceptance criteria below are retained for the scripted baseline.
 
 ## 1. What This Is
 
@@ -303,7 +305,7 @@ Stop only the processes started for this workflow. Ctrl+C targets the Jev foregr
 | ID | P/D | choice | status |
 |---|---|---|---|
 | P1 | P | Separate Jev family with independent version history | Confirmed in conversation |
-| P2 | P | LLM authors graph between games; no gameplay LLM | Confirmed |
+| P2 | P | Coding LLM authors graph between games; Typesafe Jev evaluates live game state | Corrected 2026-10-08; Phase JI supersedes the original misunderstanding |
 | P3 | P | Jev owns every gameplay choice from first version | Confirmed |
 | P4 | P | Basic one-base four-Gateway Zealot rush | Confirmed |
 | P5 | P | First attack at four Zealots; continuously reinforce | Confirmed |

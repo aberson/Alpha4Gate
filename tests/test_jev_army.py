@@ -1436,7 +1436,8 @@ def test_static_import_graph_of_jev_has_no_legacy_rl_or_llm_dependency() -> None
         assert found == set()  # the allowed helper imports no other first-party code
         external |= outside
     tops = {name.split(".")[0] for name in external}
-    assert tops <= set(sys.stdlib_module_names) | {"sc2"}, sorted(tops)  # burnysc2 + stdlib
+    # Typesafe's opt-in HTTP boundary is the sole new gameplay external dependency.
+    assert tops <= set(sys.stdlib_module_names) | {"sc2", "httpx"}, sorted(tops)
     everything = first_party | external | dashboard_external | reachable
     assert not [m for m in everything if forbidden.match(m)]
 

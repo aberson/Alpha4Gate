@@ -959,6 +959,7 @@
       "label": "Defend the main against nearby ground threats",
       "kind": "sequence",
       "children": [
+        "army.defend.mode",
         "army.defend.threat",
         "army.defend.target",
         "army.defend.zealots",
@@ -1047,6 +1048,7 @@
       "label": "Attack once latched; new Zealots reinforce",
       "kind": "sequence",
       "children": [
+        "army.attack.mode",
         "army.attack.launch",
         "army.attack.zealots",
         "army.attack.target",
@@ -1306,12 +1308,12 @@
     },
     {
       "id": "army.rally.before_launch",
-      "label": "The first attack has not launched (a latched army never walks home)",
+      "label": "Regroup when Jev chooses it; scripted rally before launch",
       "kind": "condition",
       "children": [],
-      "operation": "latch_is_clear",
+      "operation": "army_mode_is",
       "args": {
-        "latch": "attack_launched"
+        "mode": "regroup"
       }
     },
     {
@@ -1362,6 +1364,26 @@
           "param": "army_arrive_within"
         },
         "preempt": true
+      }
+    },
+    {
+      "id": "army.defend.mode",
+      "label": "Jev chooses defend, or scripted fallback",
+      "kind": "condition",
+      "children": [],
+      "operation": "army_mode_is",
+      "args": {
+        "mode": "defend"
+      }
+    },
+    {
+      "id": "army.attack.mode",
+      "label": "Jev chooses attack, or scripted fallback",
+      "kind": "condition",
+      "children": [],
+      "operation": "army_mode_is",
+      "args": {
+        "mode": "attack"
       }
     }
   ]

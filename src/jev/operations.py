@@ -357,6 +357,8 @@ class RuntimeView(Protocol):
 
     def latch_is_set(self, latch: str) -> bool: ...
 
+    def army_mode(self) -> str | None: ...
+
     def own_unit_tags(self) -> frozenset[int]:
         """Tags of this tick's own units (actors for unit commands)."""
         ...
@@ -923,6 +925,17 @@ def _visit_count_compare(view: RuntimeView, args: Args) -> OpOutcome:
         "value": expected,
     }
     return OpOutcome(ok, reason, facts)
+
+
+def _army_mode_is(view: RuntimeView, args: Args) -> OpOutcome:
+    wanted = _arg_str(args, "mode")
+    mode = view.army_mode()
+    # A missing usable answer restores the original selector and pre-launch rally.
+    ok = (mode == wanted) if mode is not None else (
+        wanted != "regroup" or not view.latch_is_set("attack_launched")
+    )
+    return OpOutcome(ok, f"army mode {mode or 'scripted'}; branch {wanted}",
+                     {"mode": mode, "branch": wanted})
 
 
 def _latch_is_set(view: RuntimeView, args: Args) -> OpOutcome:
@@ -1595,6 +1608,12 @@ _SPECS: Final[tuple[OperationSpec, ...]] = (
             "value": ArgSpec("int", minimum=0, maximum=1000, param=True),
         },
         _visit_count_compare,
+    ),
+    PredicateOp(
+        "army_mode_is",
+        "Branch on the current Typesafe army decision, or use the scripted baseline",
+        {"mode": ArgSpec("enum", choices=("attack", "defend", "regroup"))},
+        _army_mode_is,
     ),
     PredicateOp(
         "latch_is_set",
