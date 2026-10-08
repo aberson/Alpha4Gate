@@ -212,7 +212,7 @@ Phase JV owns numeric Steps 201-208, newly reserved in the master plan. All are 
 
 - **Problem:** Let a user follow the actual graph and inspect its live decisions from a Jev tab.
 - **Type:** code
-- **Status:** PENDING
+- **Status:** BLOCKED (2026-10-08)
 - **Issue:** #322
 - **Flags:** --reviewers full --ui
 - **Start-cmd:** bash scripts/start-dev.sh
