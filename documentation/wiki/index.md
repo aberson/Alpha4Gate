@@ -35,11 +35,12 @@ here because they operate on different things.
                    ┌───────────────────────────────┐
                    │   Transparency Dashboard      │
                    │                               │
-                   │  6 tabs: Advisor, Evolution,  │
+                   │  7 tabs: Advisor, Evolution,  │
                    │  Models, Observable,          │
-                   │  Processes, Help              │
+                   │  Processes, Help, Jev         │
                    │  (refactored 2026-04-29 from  │
-                   │   the original 12-tab layout) │
+                   │   the original 12-tab layout; │
+                   │   Jev added 2026-10-08)       │
                    └───────────────────────────────┘
 ```
 
@@ -76,7 +77,7 @@ here because they operate on different things.
 
 | Page | Description |
 |------|-------------|
-| [Architecture Overview](architecture.md) | Six-layer bot architecture, on_step() pipeline, inter-layer data flow |
+| [Architecture Overview](architecture.md) | Seven-layer bot architecture, on_step() pipeline, inter-layer data flow |
 | [Decision Engine](decision-engine.md) | Strategic state machine — states, transitions, triggers |
 | [Command System](command-system.md) | Three command modes, parser, interpreter, executor, queue |
 | [Army & Combat](army-combat.md) | Coherence, staging, engagement, retreat, micro |
@@ -87,10 +88,10 @@ here because they operate on different things.
 
 | Page | Description |
 |------|-------------|
-| [Frontend Dashboard](frontend.md) | 6 tabs, React components, WebSocket protocol, poll cadences |
+| [Frontend Dashboard](frontend.md) | 7 tabs, React components, WebSocket protocol, poll cadences |
 | [Models Tab](models-tab.md) | Lineage, Live Runs, Inspector, Compare, Forensics — five questions answered, weight-dynamics + recovery procedures |
 | [Domain Coupling](domain-coupling.md) | What's SC2-specific vs domain-agnostic |
-| [Testing](testing.md) | 2037 unit tests, SC2 integration tests, coverage map |
+| [Testing](testing.md) | 2744 unit tests passing across 122 files (with the `[viewer]` extra; 2708 without), SC2 integration tests, coverage map |
 | [Linux Dev Environment](linux-dev-environment.md) | WSL Ubuntu 22.04 setup — venv on ext4, env vars, gotchas |
 
 ---
@@ -103,6 +104,6 @@ here because they operate on different things.
 2. **Key Interfaces** — public API, data flow
 3. **Implementation Notes** — internal details (marked "verify against code" — these can drift)
 
-**For the active plan:** See [master_plan.md](../master_plan.md) for the current roadmap. Phases A, 0–5, 7, 8, 9 and N are complete, and Phases EL (evolution lines), EJ (judging noise-floor) and EV (evolve `--viewer`) have shipped. Evolve has carried the lineage to v13 via successive auto-promotions. Phase EH (evolve operational hardening) is in progress — EH.1 and EH.2 of 10 shipped 2026-10-04. Next: EH.3–EH.10, then Phase EI (evolve evidence layer), Phase O scripted Hydra v1, and the Tracks 7-10 capability research phases.
+**For the active plan:** See [master_plan.md](../master_plan.md) for the current roadmap. Phases A, 0–5, 7, 8, 9 and N are complete, and Phases EL (evolution lines), EJ (judging noise-floor) and EV (evolve `--viewer`) have shipped. Evolve has carried the lineage to v13 via successive auto-promotions. Phase EH (evolve operational hardening) is in progress — EH.1 and EH.2 of 10 shipped 2026-10-04. Phase JV (Jev player and dashboard viewer) automated Steps 201–206 shipped 2026-10-07 to 2026-10-08 (#318–#323 closed); operator Steps 207/208 (#324/#325) remain as Manual UAT M1/M2 (procedure: [jev-validation.md](../operator/jev-validation.md)). Next: EH.3–EH.10, then Phase EI (evolve evidence layer), Phase O scripted Hydra v1, and the Tracks 7-10 capability research phases.
 
 **For day-to-day operator commands:** See [operator-commands.md](operator-commands.md) — the cheat sheet for running the bot, launching evolve (Windows + WSL), watching tasks, debugging, and frequent recipes.

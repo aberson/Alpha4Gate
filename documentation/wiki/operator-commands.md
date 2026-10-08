@@ -234,7 +234,7 @@ PS> .\scripts\launch-evolve.ps1 -Hours 8          # evolve run (--viewer) + dash
   --serve` on :8765) and the frontend (Vite on :3000) in separate persistent
   windows, waits for :3000 to answer, then opens the dashboard. `-Tab <name>`
   appends the `/?tab=<name>` deep link; valid names are
-  `advisor` | `evolution` | `models` | `observable` | `processes` | `help`.
+  `advisor` | `evolution` | `models` | `observable` | `processes` | `help` | `jev`.
   It does **not** start a game. (Distinct from `scripts/start-dev.sh`, which
   is the `build-step --ui` capture harness and kills the backend when its
   foreground exits.)
@@ -272,6 +272,28 @@ PS> npm run dev                                     # :3000 -> proxies to :8765
 
 Stop the dev server: close the PowerShell window or Ctrl+C. Verify port 8765
 is free if backend won't start: `Get-NetTCPConnection -LocalPort 8765`.
+
+### Jev player
+
+Jev is a separate player family: a four-Gateway Zealot rush whose gameplay
+choices come from the decision graph in `bots/jev/v1/policy.json`. Each match
+writes its evidence to `data/jev/runs/<run_id>/`.
+
+```powershell
+PS> uv run python -m bots.jev.v1 --validate-policy      # validate the packaged policy, print its hash (no SC2)
+PS> uv run python -m bots.jev.v1 --map Simple64 --opponent-race Terran --difficulty 1 --seed 1 --max-game-seconds 900 --max-wall-seconds 1800
+PS> $runId = (Get-ChildItem data\jev\runs -Directory | Sort-Object CreationTime | Select-Object -Last 1).Name   # newest run's ID
+PS> uv run python scripts\validate_jev.py --run-id $runId --api-base http://localhost:8765   # disk vs API
+```
+
+- The verifier needs the dashboard backend running
+  ([§Backend API](#backend-api--websockets-for-the-dashboard)). Exit codes:
+  `0` pass, `1` verification failure, `2` usage error.
+- Watch at <http://localhost:3000/?tab=jev> (or `.\scripts\launch-a4g.ps1 -Tab jev`).
+- **Stop a match with Ctrl+C once** in its own terminal; the bot leaves
+  cleanly. Never kill SC2 processes wholesale.
+- Full smoke and acceptance procedure:
+  [documentation/operator/jev-validation.md](../operator/jev-validation.md).
 
 ### Headless (no SC2 client) — Phase 8 Docker worker
 
@@ -636,13 +658,13 @@ SC2 alone leaves the daemon hanging.
 
 ```powershell
 PS> uv sync                                              # install/refresh deps
-PS> uv run pytest -q                                     # 2037 unit tests
+PS> uv run pytest -q                                     # 2744 pass, 3 skipped with [viewer] (2708 pass, 24 skipped without)
 PS> uv run pytest -m sc2                                 # SC2 integration tests (needs SC2 running)
 PS> uv run pytest tests/test_evolve.py -q                # one file
 PS> uv run pytest tests/test_evolve.py::TestX -q         # one class
 PS> uv run ruff check .
-PS> uv run mypy src bots --strict                        # 292 source files
-PS> cd frontend; npm run test                            # 234 vitest
+PS> uv run mypy src bots --strict                        # 821 source files
+PS> cd frontend; npm run test                            # 284 vitest (278 pass, 6 skipped)
 PS> cd frontend; npm run lint
 ```
 

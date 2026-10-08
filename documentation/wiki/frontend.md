@@ -3,12 +3,12 @@
 React SPA for autonomous-loop transparency: advised runs, evolve generations,
 unified improvements timeline, system health, and alert triage.
 
-> **At a glance:** 6-tab SPA (Advisor, Evolution, Models, Observable,
-> Processes, Help) built with React + TypeScript + Vite. Live state via REST
+> **At a glance:** 7-tab SPA (Advisor, Evolution, Models, Observable,
+> Processes, Help, Jev) built with React + TypeScript + Vite. Live state via REST
 > polling (3–10s, with exceptions below); the in-app alert engine runs
 > client-side over the polled snapshots. All frontend code is domain-agnostic
 > — it renders whatever JSON the backend sends. Unit tests run under
-> vitest + jsdom (234 tests — 228 passing, 6 skipped — across 23 files).
+> vitest + jsdom (284 tests — 278 passing, 6 skipped — across 26 files).
 
 ## Purpose & Design
 
@@ -31,6 +31,7 @@ consolidated into the Models tab's Lineage timeline (`LineageView` /
 | **Observable** | ObservableTab | Exhibition / replay-stream surface (Phase L placeholder) | On-demand | — |
 | **Processes** | ProcessMonitor + ResourceGauge + WslProcessesPanel + AlertsPanel | `/api/processes` + `/api/system/*` (separate router); alerts via the `useAlerts` hook | 5s poll | Cross-cutting (liveness + alerts) |
 | **Help** | HelpTab | `/api/operator-commands` (reads `documentation/wiki/operator-commands.md` from disk) | One-time fetch | — |
+| **Jev** | JevTab (JevGraph) | `/api/jev/runs` + `/api/jev/runs/{run_id}` + `/api/jev/runs/{run_id}/policy` (read-only, served from `data/jev/runs`) | 5s run-list poll + 1s selected-run poll; archived policy retried on the 1s poll until it first loads, then never refetched (immutable); 4s request timeout | — (independent Jev player, outside both loops) |
 
 The Advisor tab is the single source of truth for advised-loop state — it
 reads `data/advised_run_state.json` via `/api/advised/state` and writes
@@ -72,12 +73,25 @@ actions, "mark all read", and "clear history". Persisted to `localStorage`
 via `alertStorage.ts`.
 
 **AlertToast:** Transient overlay that appears when a new alert fires this
-poll, auto-dismissing after a timeout. Clicking it jumps to the Alerts tab.
+poll, auto-dismissing after a timeout. Its **View** button jumps to the Processes
+tab, where AlertsPanel lives (there is no separate Alerts tab), and dismisses that
+toast.
 
 **HelpTab:** Renders `documentation/wiki/operator-commands.md` from disk via
 `react-markdown` + `remark-gfm`. The backend re-reads the markdown on each
 request, so an edit to the `.md` surfaces here on the next page load
 without a frontend rebuild.
+
+**JevTab:** Read-only browser for Jev runs: a run selector, the run's archived
+policy shown as a graph, node details (the policy definition from the archived
+policy, latest evaluations, command events, and tasks with deadlines), and the
+recent trace, which labels each status change as a runtime transition. Each
+snapshot is labeled live, stale, offline, or final, and only a live run
+animates. Pulls from `useJevRun`.
+
+**JevGraph:** `d3-hierarchy` SVG tree of the archived policy forest with active
+and waiting node status. Supports pan, zoom, and collapse, and is a
+keyboard-navigable ARIA tree.
 
 **ConnectionStatus:** Header connection dot + advised-run badge mounted at
 the App shell, outside the tab switch.
@@ -102,6 +116,7 @@ stop / reset-loop confirmations).
 | `useDaemonStatus()` | Daemon + training-status polling | 5s poll of `/api/training/daemon` + `/api/training/status`. Currently only consumed by `useAlerts` for daemon-state alert rules — the dashboard refactor removed the Loop tab driver. |
 | `useAlerts()` | Client-side alert engine | 5s poll of training + advised + promotions endpoints, runs `alertRules.ts` over the snapshot, persists via `alertStorage.ts`. |
 | `useSystemInfo()` | Host resource snapshots | Backs ResourceGauge + WslProcessesPanel; reads the `/api/system/*` router. |
+| `useJevRun()` | Jev run list + selected run + archived policy | 5s list poll, 1s selected-run poll, 4s abort timeout per request. The policy is retried on the 1s poll until it first loads, then never refetched. Selects the newest run when none is selected yet (the first non-empty list response) and keeps that selection until the user picks another, so it does not switch to runs started later; clears its timers and aborts requests on unmount. |
 
 ### Polling intervals
 
@@ -114,6 +129,7 @@ stop / reset-loop confirmations).
 | ProcessMonitor / ResourceGauge / WslProcessesPanel | 5000ms | `useApi` / `useSystemInfo` |
 | AlertToast / AlertsPanel (via `useAlerts`) | 5000ms | setInterval + fetch, rules evaluated client-side |
 | HelpTab | one-time fetch on mount | `useApi` (no `pollMs`) |
+| JevTab | 1000ms selected run / 5000ms run list | `useJevRun` (setInterval + fetch with AbortController) |
 | Everything else | One-time | useEffect fetch on mount |
 
 ---
@@ -122,8 +138,10 @@ stop / reset-loop confirmations).
 
 **Stack:** React 18 + TypeScript + Vite. Dev server on `:3000`, proxies to backend `:8765`.
 
-**Routing:** Tab-based via `useState<Tab>("advisor")` — no React Router, just conditional
-rendering based on active tab. Default tab is `advisor`.
+**Routing:** Tab-based via `useState<Tab>(initialTab)` — no React Router, just conditional
+rendering based on active tab. The `/?tab=<name>` deep link (case-insensitive, one of the 7
+`TAB_NAMES`) picks the initial tab; an unknown or absent value falls back to `advisor`.
+Operators open the Jev tab with `/?tab=jev`.
 
 **Frontend is domain-agnostic:** Components render whatever JSON the API returns. Unit
 type names, strategic states, and command vocabulary come from the backend. No SC2
@@ -143,9 +161,10 @@ survive page reloads; "clear history" resets the watermark without losing the
 underlying rule definitions.
 
 Surface: `AlertToast` appears as a transient overlay whenever a new alert fires this
-poll (auto-dismisses), while `AlertsPanel` is the full history view on the Alerts
-tab with filtering, per-alert ack/dismiss, "mark all read", and an unread-count
-badge on the tab button.
+poll (auto-dismisses), while `AlertsPanel` is the full history view on the Processes
+tab with filtering, per-alert ack/dismiss, and "mark all read". (`useAlerts` still
+computes an unread count, but no tab button renders it since the Alerts tab was folded
+into Processes.)
 
 ### Test infrastructure
 
@@ -156,7 +175,7 @@ as `*.test.tsx` / `*.test.ts`. Run with `npm test -- --run` or `npm run test:run
 
 | File | Purpose |
 |------|---------|
-| `frontend/src/App.tsx` | 6-tab routing + top-level alert overlay + ConnectionStatus |
+| `frontend/src/App.tsx` | 7-tab routing (with the `/?tab=<name>` deep link) + top-level alert overlay + ConnectionStatus |
 | `frontend/src/components/AdvisedControlPanel.tsx` | Advisor tab: live status, loop controls, hints, reward injection |
 | `frontend/src/components/EvolutionTab.tsx` | Evolution tab: pool + current round + results feed |
 | `frontend/src/components/ModelsTab.tsx` | Models tab shell: lineage, live runs, version inspector, compare, forensics |
@@ -172,6 +191,8 @@ as `*.test.tsx` / `*.test.ts`. Run with `npm test -- --run` or `npm run test:run
 | `frontend/src/components/AlertsPanel.tsx` | Full alert history + filter + ack |
 | `frontend/src/components/AlertToast.tsx` | Transient new-alert overlay |
 | `frontend/src/components/HelpTab.tsx` | Renders `operator-commands.md` via react-markdown |
+| `frontend/src/components/JevTab.tsx` | Jev tab: read-only run browser |
+| `frontend/src/components/JevGraph.tsx` | Jev policy graph view (d3-hierarchy SVG tree) |
 | `frontend/src/components/ConnectionStatus.tsx` | Header connection dot + advised-run badge |
 | `frontend/src/components/StaleDataBanner.tsx` | Reusable stale-data warning banner |
 | `frontend/src/components/ConfirmDialog.tsx` | Reusable confirm modal |
@@ -183,6 +204,7 @@ as `*.test.tsx` / `*.test.ts`. Run with `npm test -- --run` or `npm run test:run
 | `frontend/src/hooks/useDaemonStatus.ts` | Daemon + training status polling (consumed only by `useAlerts`) |
 | `frontend/src/hooks/useAlerts.ts` | Client-side alert engine + persistence |
 | `frontend/src/hooks/useSystemInfo.ts` | Host resource snapshots backing the Processes tab |
+| `frontend/src/hooks/useJevRun.ts` | Jev run list + selected run + archived policy polling |
 | `frontend/src/lib/alertRules.ts` | Alert rule definitions and evaluator |
 | `frontend/src/lib/alertStorage.ts` | `localStorage` persistence for alerts |
 | `frontend/src/lib/idbCache.ts` | IndexedDB cache used by `useApi` |

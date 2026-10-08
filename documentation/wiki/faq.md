@@ -54,10 +54,11 @@ See [index.md](index.md) for the system diagram, [improve-bot-advised-architectu
 | Phase EJ | Evolve judging noise-floor — null-diff screen, one-sided posterior rollback bar, panel floor (2026-07-06). |
 | Phase EV | Evolve `--viewer` — evolution runs rendered inside the themed container (2026-08-10). |
 | Phase EH | Evolve operational hardening — EH.1 lineage registry CLI, EH.2 generation-boundary persistence (2026-10-04). |
+| Phase JV | Jev player — graph-controlled four-Gateway Zealot rush (no PPO or LLM in-game), run evidence + read-only `/api/jev`, dashboard Jev tab, live-validation verifier; Steps 201-206 (2026-10-08). |
 
 ## What's being worked on now?
 
-The active plan is [master_plan.md](../master_plan.md). Phases A, 0–5, 7, 8, 9 and N are complete, and Phases EL (evolution lines), EJ (judging noise-floor) and EV (evolve `--viewer`) have shipped. Evolve has carried the lineage to v13 via successive auto-promotions. Phase EH (evolve operational hardening) is in progress — EH.1 and EH.2 of 10 shipped 2026-10-04. Next: EH.3–EH.10, then Phase EI (evolve evidence layer), Phase O scripted Hydra v1, and the Tracks 7-10 capability research phases (mini-games, replay-stream-as-live viewer, knowledge distillation, harvest-engineer skill, Wilson/SPRT statistical robustness). Phase G (multi-race: Zerg then Terran) sits past Phase 6.
+The active plan is [master_plan.md](../master_plan.md). Phases A, 0–5, 7, 8, 9 and N are complete, and Phases EL (evolution lines), EJ (judging noise-floor) and EV (evolve `--viewer`) have shipped. Evolve has carried the lineage to v13 via successive auto-promotions. Phase EH (evolve operational hardening) is in progress — EH.1 and EH.2 of 10 shipped 2026-10-04. Phase JV — the Jev graph-controlled four-Gateway Zealot player plus the dashboard Jev tab — shipped its automated Steps 201-206 from 2026-10-07 to 2026-10-08 (#318-#323); operator Steps 207/208 (#324/#325) are pending as Manual UAT M1/M2 ([jev-validation.md](../operator/jev-validation.md)). Next: EH.3–EH.10, then Phase EI (evolve evidence layer), Phase O scripted Hydra v1, and the Tracks 7-10 capability research phases (mini-games, replay-stream-as-live viewer, knowledge distillation, harvest-engineer skill, Wilson/SPRT statistical robustness). Phase G (multi-race: Zerg then Terran) sits past Phase 6.
 
 ## How does the bot decide what to do?
 
@@ -94,8 +95,8 @@ Four mechanisms at different timescales ([evaluation-pipeline.md](evaluation-pip
 
 ## What can I see in the dashboard?
 
-Six tabs after the 2026-04-29 refactor — Models and Observable replaced Improvements and Alerts in a
-later pass ([frontend.md](frontend.md)):
+Seven tabs. The 2026-04-29 refactor left six — Models and Observable replaced Improvements and Alerts in a
+later pass — and Phase JV added Jev ([frontend.md](frontend.md)):
 
 | Tab | What it shows |
 |---|---|
@@ -105,6 +106,7 @@ later pass ([frontend.md](frontend.md)):
 | Observable | Exhibition / replay-stream surface (Phase L placeholder) |
 | Processes | Live process inventory, port bindings, state-file contents, WSL processes, and the severity-filtered alerts panel |
 | Help | Renders `documentation/wiki/operator-commands.md` from disk |
+| Jev | Read-only Jev decision graph: run selector, graph with active/waiting nodes, node details, recent trace |
 
 ## How does Claude fit in?
 
@@ -131,11 +133,11 @@ The `/improve-bot-advised` loop treats SC2 as an opaque task: code + config go i
 | Frontend | React + TypeScript + Vite |
 | Deep learning | PyTorch, Stable Baselines 3 (PPO), recurrent PPO + custom KL variants |
 | Training data | SQLite |
-| Testing | pytest (2037 unit tests), ruff, mypy strict |
+| Testing | pytest (2708 unit tests passing; 2744 with the `[viewer]` extra), ruff, mypy strict |
 
 ## How many tests are there?
 
-2037 unit tests across 114 test files plus 234 frontend vitest tests. Zero type errors, zero lint violations. SC2 integration tests are separate (`pytest -m sc2`) and require a running SC2 client. See [testing.md](testing.md).
+2708 unit tests passing (24 skipped) across 122 test files — 2744 passing and 3 skipped with the optional `[viewer]` extra — plus 284 frontend vitest tests (278 passing, 6 skipped). Zero type errors, zero lint violations. SC2 integration tests are separate (`pytest -m sc2`) and require a running SC2 client. See [testing.md](testing.md).
 
 ## Where do I start if I want to work on this?
 

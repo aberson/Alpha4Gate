@@ -245,6 +245,7 @@ Backed by `ErrorLogBuffer` (50-entry ring in `bots/v0/error_log.py`), surfaced v
 | Action probabilities | `NeuralDecisionEngine._last_probabilities` | Ephemeral (memory) | THE TASK |
 | Lineage registry | `data/lineages.json` | Permanent (whole-file rewrite at every generation boundary since EH.2; extinct records retained with `status="extinct"`, never dropped) | EVOLVE |
 | Baseline opponent registry | `data/baselines.json` | Permanent | EVOLVE |
+| Jev run evidence | `data/jev/runs/<run_id>/` (`metadata.json`, `state.json`, archived `policy.json`, bounded `events.N.jsonl` trace, `replay.SC2Replay`) | Permanent per run; a terminal run is never rewritten | Jev (outside the loops) |
 
 ---
 
@@ -260,11 +261,12 @@ Tabs defined in `frontend/src/App.tsx`. Each tab consumes the endpoints or WebSo
 | Observable | `ObservableTab.tsx` | Exhibition / replay-stream surface (Phase L placeholder) | On-demand | — |
 | Processes | `ProcessMonitor.tsx` + `ResourceGauge.tsx` + `WslProcessesPanel.tsx` + `AlertsPanel.tsx` | `/api/processes`, `/api/system/*`, cleanup endpoints; alerts via `useAlerts` | 5s | Cross-cutting (liveness + alerts) |
 | Help | `HelpTab.tsx` | `/api/operator-commands` | One-time fetch | — |
+| Jev | `JevTab.tsx` (+ `JevGraph.tsx`) | `/api/jev/runs`, `/api/jev/runs/{run_id}`, `/api/jev/runs/{run_id}/policy` | 5s list / 1s selected run | — (independent Jev player) |
 
 Elo is no longer its own tab — `/api/ladder` (`data/bot_ladder.json`) now feeds
 `CompareView` inside the Models tab.
 
-A green dot appears in the nav bar when `advised_run_state.status ∈ {running, paused}` (`App.tsx:86–99`).
+A green dot appears in the nav bar when `advised_run_state.status ∈ {running, paused}` (`App.tsx:68–81`).
 
 ---
 
@@ -299,6 +301,7 @@ Three threads, two queues. All cross-thread communication uses `queue.Queue` (th
 | Advisor tab poll | 3000ms state, 10000ms control | `useAdvisedRun.ts` |
 | Processes tab poll | 5000ms | `ProcessMonitor.tsx` |
 | Alerts recheck | 5000ms | `useAlerts.ts` |
+| Jev tab poll | 1000ms selected run, 5000ms run list | `useJevRun.ts` |
 | WebSocket reconnect | 3000ms | `useWebSocket.ts` |
 
 ### Key file locations
