@@ -897,6 +897,11 @@ def test_invalid_recorder_settings_are_value_errors(
         build(tmp_path)
 
 
+def test_a_trace_segment_number_below_one_is_a_value_error(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        telemetry.read_trace_segment(tmp_path, 0)
+
+
 def test_shared_shapes_have_one_source_across_telemetry_api_bot_and_runner() -> None:
     assert api_module.TERMINAL_RUN_STATUSES is contracts.TERMINAL_RUN_STATUSES
     assert telemetry.ERROR_CODES is contracts.ERROR_CODES

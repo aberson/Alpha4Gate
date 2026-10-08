@@ -1364,6 +1364,19 @@ def test_safe_repr_falls_back_to_the_type_name_for_hostile_objects() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "values",
+    [(["finished"], "win", None), ("finished", {"win": 1}, None), ("failed", None, 7)],
+    ids=["list-status", "dict-result", "int-code"],
+)
+def test_the_run_outcome_check_is_total_over_untrusted_values(
+    values: tuple[object, object, object],
+) -> None:
+    """``is_run_outcome`` judges untrusted documents: unhashable or ill-typed values
+    are not an outcome, never a TypeError."""
+    assert contracts_module.is_run_outcome(*values) is False
+
+
 _HUGE = "k" * 300_000
 
 

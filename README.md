@@ -241,6 +241,7 @@ cd frontend && npm run dev
 | Processes | Live system process monitor, port status, state files, backend restart |
 | Alerts | Severity-filtered alert list with ack/dismiss + unread badge in nav |
 | Help | Renders `documentation/wiki/operator-commands.md` from disk |
+| Jev | Read-only Jev decision graph: run selector, graph with active/waiting nodes, node details, recent trace |
 
 In-app `AlertToast` lives at the App root and shows new alerts as they fire, regardless of which tab is active.
 
@@ -263,6 +264,34 @@ uv run python -m bots.v0.runner --map Simple64
 --serve              # Start dashboard API server only
 --no-claude          # Disable Claude advisor
 ```
+
+### Run the Jev player
+
+Jev (`v1.jev`) is a separate player family: a one-base, four-Gateway Zealot rush whose every gameplay choice comes from an executable decision graph (`bots/jev/v1/policy.json`, interpreted by `src/jev/`) — no PPO and no LLM during the game. Each match writes its evidence to `data/jev/runs/<run_id>/`, which the dashboard's Jev tab (`/?tab=jev`) and the read-only `/api/jev` routes serve.
+
+From the repository root, in PowerShell. Terminal 1, the dashboard backend (it keeps running):
+
+```powershell
+uv run python -m bots.current.runner --serve
+```
+
+Terminal 2, the frontend; then open <http://localhost:3000/?tab=jev>:
+
+```powershell
+cd frontend
+npm run dev
+```
+
+Terminal 3, validate the policy, play one match, then verify that run:
+
+```powershell
+uv run python -m bots.jev.v1 --validate-policy      # validate the packaged policy, print its hash (no SC2)
+uv run python -m bots.jev.v1 --map Simple64 --opponent-race Terran --difficulty 1 --seed 1 --max-game-seconds 900 --max-wall-seconds 1800
+$runId = (Get-ChildItem data\jev\runs -Directory | Sort-Object CreationTime | Select-Object -Last 1).Name  # the newest run's ID
+uv run python scripts\validate_jev.py --run-id $runId --api-base http://localhost:8765   # verify it: disk vs API
+```
+
+Stop a match with Ctrl+C once in its own terminal (the bot leaves cleanly; never kill SC2 processes wholesale). Full smoke and acceptance procedure: [documentation/operator/jev-validation.md](documentation/operator/jev-validation.md).
 
 ### Running without Claude
 
@@ -324,9 +353,11 @@ Alpha4Gate/
 │   └── ...                  # scouting, config, macro, micro, etc.
 ├── bots/v1..v10/            # Promoted snapshots — each a self-contained stack with its own data/
 ├── bots/current/            # Thin pointer package (MetaPathFinder → active version, v10 today)
+├── bots/jev/v1/             # Jev player family: packaged decision-graph policy + manifest
+├── src/jev/                 # Jev runtime, SC2 adapter, runner, run evidence, read-only /api/jev
 ├── src/orchestrator/        # Version registry, snapshots, self-play, Elo ladder, evolve
 ├── tests/                   # 2037 unit tests across 114 files (+ SC2 integration markers)
-├── frontend/                # React + TypeScript dashboard (Vite, 6 tabs)
+├── frontend/                # React + TypeScript dashboard (Vite, 7 tabs)
 ├── scripts/                 # Live test, training analysis, evolve runner, sandbox hook
 ├── documentation/wiki/      # Project wiki (start with index.md)
 ├── documentation/plans/     # Active sub-plans (see documentation/master_plan.md)

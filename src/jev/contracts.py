@@ -94,6 +94,7 @@ __all__ = [
     "PolicyIssue",
     "PolicyNode",
     "RECENT_EVENT_LIMIT",
+    "RUN_OUTCOMES",
     "RUN_RESULTS",
     "RUN_STATUSES",
     "RunMetadata",
@@ -114,6 +115,7 @@ __all__ = [
     "freeze_json",
     "full_match",
     "is_bounded_number",
+    "is_run_outcome",
     "is_valid_run_id",
     "render_lines",
     "render_text",
@@ -204,6 +206,34 @@ RUN_RESULTS: Final[tuple[RunResult, ...]] = get_args(RunResult)
 EVENT_KINDS: Final[tuple[EventKind, ...]] = get_args(EventKind)
 EVENT_STATUSES: Final[tuple[EventStatus, ...]] = get_args(EventStatus)
 ERROR_CODES: Final[tuple[ErrorCode, ...]] = get_args(ErrorCode)
+#: Every (status, result, error code) a RunState may record, as ``jev.runner`` ends
+#: runs. A live run has no result and no error. A finished match has SC2's result,
+#: or ``timeout`` with ``game_timeout`` when the game-time limit ended it. A stop
+#: has neither. A failed run has no result -- with ``match_crashed``,
+#: ``sc2_unavailable``, ``persistence_failed``, or no error when the match ended
+#: without a result -- or ``timeout`` with ``wall_timeout``; when its terminal
+#: evidence could not be written, the run keeps the match's result with
+#: ``persistence_failed``. Check a combination with :func:`is_run_outcome`.
+RUN_OUTCOMES: Final[frozenset[tuple[RunStatus, RunResult | None, ErrorCode | None]]] = frozenset(
+    {
+        ("starting", None, None),
+        ("running", None, None),
+        ("finished", "win", None),
+        ("finished", "loss", None),
+        ("finished", "draw", None),
+        ("finished", "timeout", "game_timeout"),
+        ("stopped", None, None),
+        ("failed", None, None),
+        ("failed", None, "match_crashed"),
+        ("failed", None, "sc2_unavailable"),
+        ("failed", None, "persistence_failed"),
+        ("failed", "timeout", "wall_timeout"),
+        ("failed", "win", "persistence_failed"),
+        ("failed", "loss", "persistence_failed"),
+        ("failed", "draw", "persistence_failed"),
+        ("failed", "timeout", "persistence_failed"),
+    }
+)
 #: A RunState keeps at most this many recent trace events (plan D5).
 RECENT_EVENT_LIMIT: Final = 200
 #: At most this many tasks are active at once, and a RunState lists at most this
@@ -573,6 +603,18 @@ def _thaw(value: Any, depth: int, budget: _WalkBudget) -> Any:
 def thaw_json(value: Any) -> Any:
     """Plain mutable copy of frozen JSON data (``dict`` / ``list``), same budgets."""
     return _thaw(value, 0, _WalkBudget())
+
+
+def is_run_outcome(status: object, result: object, error_code: object) -> bool:
+    """Whether a RunState may record this status, result and error code (:data:`RUN_OUTCOMES`).
+
+    Total: any value that is not a string or None (e.g. from an untrusted
+    document) gives False.
+    """
+    combination = (status, result, error_code)
+    if not all(value is None or type(value) is str for value in combination):
+        return False
+    return combination in RUN_OUTCOMES
 
 
 def is_valid_run_id(value: str) -> bool:

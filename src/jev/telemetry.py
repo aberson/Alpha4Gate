@@ -49,11 +49,15 @@ has all three records. Then:
   runs are never deleted.
 
 **Reading.** :func:`read_run_metadata`, :func:`read_run_state`,
-:func:`read_run_summary` and :func:`read_policy_archive` are the one validation
-boundary for stored records. A record that is not a regular file directly inside
-the run directory, is larger than its cap, is not strict JSON, has an unsupported
-``schema_version``, has a missing, unexpected or ill-typed field, or disagrees
-with its run raises :class:`CorruptRun` (``corrupt_run``); nothing else escapes.
+:func:`read_run_summary`, :func:`read_policy_archive` and
+:func:`read_trace_segment` are the one validation boundary for stored records. A
+record that is not a regular file directly inside the run directory, is larger
+than its cap, is not strict JSON, has an unsupported ``schema_version``, has a
+missing, unexpected or ill-typed field, or disagrees with its run raises
+:class:`CorruptRun` (``corrupt_run``); nothing else escapes. Two defects have
+their own subclasses, so a consumer can tell them apart without reading messages:
+:class:`MissingRecord` (a required record is absent) and
+:class:`PolicyHashMismatch` (a record disagrees with the run's policy hash).
 Messages name the record and the defect from the schema alone, never file
 content. Decoded records are rebuilt as contract dataclasses, so what a reader
 serves is exactly what the contracts' ``to_dict`` produce. Unit tags are decimal
@@ -140,9 +144,11 @@ __all__ = [
     "MAX_TRACE_SEGMENT_BYTES",
     "METADATA_FILE",
     "MIN_STATE_INTERVAL_SECONDS",
+    "MissingRecord",
     "POLICY_ARCHIVE_FILE",
     "POLICY_HASH_RE",
     "PersistenceFailed",
+    "PolicyHashMismatch",
     "REPLAY_FILE",
     "RUN_ROOT_PARTS",
     "RunRecorder",
@@ -151,12 +157,14 @@ __all__ = [
     "STATE_FILE",
     "STATE_SUMMARY_BYTES",
     "TelemetryLimits",
+    "TraceSegment",
     "default_run_root",
     "read_policy_archive",
     "read_run_metadata",
     "read_run_state",
     "read_run_summary",
     "read_source_commit",
+    "read_trace_segment",
     "repository_root",
     "timestamp_seconds",
     "trace_segment_name",
@@ -485,6 +493,10 @@ class RunRecorder:
         self._state_written_at = 0.0
         self._last_state: RunState | None = None
         self._recent: deque[Event] = deque(maxlen=RECENT_EVENT_LIMIT)
+        # The newest event any update() received, traced or not: a terminal state
+        # built without a runtime still accounts for it.
+        self._latest_sequence = 0
+        self._latest_game_seconds = 0.0
         # node id -> (status, deciding child) of the node's last traced event.
         self._node_keys: dict[str, tuple[str, JsonValue]] = {}
         self._summary_second = -1
@@ -565,6 +577,10 @@ class RunRecorder:
         Raises :class:`PersistenceFailed` when the state cannot be written.
         """
         self._require_live()
+        for event in events:
+            if event.sequence > self._latest_sequence:
+                self._latest_sequence = event.sequence
+                self._latest_game_seconds = event.game_seconds
         self._trace_events(events)
         if self._clock() - self._state_written_at >= self._limits.min_state_interval_seconds:
             self._publish(source, "running", None, None)
@@ -580,7 +596,10 @@ class RunRecorder:
         """Record the replay (if burnysc2 saved one) and write the terminal state.
 
         ``source`` is None when the match never got a runtime (e.g. SC2 was
-        unavailable). If the replay reference cannot be written, the terminal state
+        unavailable) or an exception ended it: the terminal state is then the last
+        published one, with ``last_sequence`` and ``game_seconds`` advanced to the
+        newest event :meth:`update` received, so it never lags its own recent events
+        or trace. If the replay reference cannot be written, the terminal state
         is still written, as ``failed`` with ``persistence_failed``: ``result`` keeps
         the match's true outcome, and the message names the error the run had
         ended with, if any. Raises :class:`PersistenceFailed` (with the same note)
@@ -636,11 +655,16 @@ class RunRecorder:
                 error=error,
             )
         else:
-            assert self._last_state is not None  # a completed start() wrote one
+            last = self._last_state
+            assert last is not None  # a completed start() wrote one
+            # The last published snapshot may predate events traced since (state is
+            # rewritten at most twice a second): never lag the trace and recent events.
             snapshot = replace(
-                self._last_state,
+                last,
                 status=status,
                 updated_at=updated_at,
+                game_seconds=max(last.game_seconds, self._latest_game_seconds),
+                last_sequence=max(last.last_sequence, self._latest_sequence),
                 recent_events=recent,
                 result=result,
                 error=error,
@@ -831,6 +855,18 @@ class CorruptRun(Exception):
     def __init__(self, message: str) -> None:
         super().__init__(message)
         self.message = message
+
+
+class MissingRecord(CorruptRun):
+    """A record the run must have is absent (``corrupt_run``, like any stored defect)."""
+
+
+class PolicyHashMismatch(CorruptRun):
+    """A stored record disagrees with the run's policy hash (``corrupt_run``).
+
+    Raised for a state whose ``policy_hash`` differs from the metadata's, and for a
+    policy archive whose canonical hash differs from it.
+    """
 
 
 def _field_names(record: type) -> frozenset[str]:
@@ -1031,7 +1067,8 @@ def _decode_summary(fields: _Fields, metadata: RunMetadata) -> RunSummary:
     )
     identity = (summary.run_id, summary.family, summary.version, summary.policy_hash)
     if identity != (metadata.run_id, metadata.family, metadata.version, metadata.policy_hash):
-        raise CorruptRun(f"{STATE_FILE} does not match {METADATA_FILE}")
+        mismatch = PolicyHashMismatch if summary.policy_hash != metadata.policy_hash else CorruptRun
+        raise mismatch(f"{STATE_FILE} does not match {METADATA_FILE}")
     return summary
 
 
@@ -1222,7 +1259,7 @@ def read_run_state(run_dir: Path, metadata: RunMetadata) -> RunState:
     def read() -> RunState:
         document = _parse_record(run_dir, STATE_FILE, MAX_STATE_BYTES)
         if document is None:
-            raise CorruptRun(f"{STATE_FILE} is missing")
+            raise MissingRecord(f"{STATE_FILE} is missing")
         return _decode_state(document, metadata)
 
     return _guarded(STATE_FILE, read)
@@ -1239,7 +1276,7 @@ def read_run_summary(run_dir: Path, metadata: RunMetadata) -> RunSummary:
     def read() -> RunSummary:
         data = _read_record(run_dir, STATE_FILE, STATE_SUMMARY_BYTES, whole=False)
         if data is None:
-            raise CorruptRun(f"{STATE_FILE} is missing")
+            raise MissingRecord(f"{STATE_FILE} is missing")
         leading = _leading_members(data)
         _require_plain_json(STATE_FILE, leading)
         return _decode_summary(_Fields(STATE_FILE, leading, frozenset(_SUMMARY_KEYS)), metadata)
@@ -1256,7 +1293,7 @@ def read_policy_archive(run_dir: Path, metadata: RunMetadata) -> Policy:
     def read() -> Policy:
         data = _read_record(run_dir, POLICY_ARCHIVE_FILE, MAX_POLICY_BYTES)
         if data is None:
-            raise CorruptRun(f"{POLICY_ARCHIVE_FILE} is missing")
+            raise MissingRecord(f"{POLICY_ARCHIVE_FILE} is missing")
         try:
             document = parse_json_document(
                 data, what=POLICY_ARCHIVE_FILE, max_bytes=MAX_POLICY_BYTES
@@ -1267,7 +1304,57 @@ def read_policy_archive(run_dir: Path, metadata: RunMetadata) -> Policy:
         except PolicyError as exc:
             raise CorruptRun(f"{POLICY_ARCHIVE_FILE} is not a valid Jev policy") from exc
         if digest != metadata.policy_hash:
-            raise CorruptRun(f"{POLICY_ARCHIVE_FILE} does not match the run's policy hash")
+            raise PolicyHashMismatch(f"{POLICY_ARCHIVE_FILE} does not match the run's policy hash")
         return policy
 
     return _guarded(POLICY_ARCHIVE_FILE, read)
+
+
+@dataclass(frozen=True)
+class TraceSegment:
+    """One stored trace segment: its complete events, in file order.
+
+    ``torn_tail`` is True when the file ends in a fragment without a newline: the
+    tail of an interrupted append, which is not an event and is ignored.
+    """
+
+    segment: int
+    events: tuple[Event, ...]
+    torn_tail: bool
+
+
+def _decode_trace_line(what: str, line: bytes, run_id: str) -> Event:
+    try:
+        document = parse_json_document(line, what=what, max_bytes=MAX_TRACE_SEGMENT_BYTES)
+    except PolicyError as exc:  # the strict parser's only exception
+        raise CorruptRun(f"{what} is not a strict JSON object") from exc
+    _require_plain_json(what, document)
+    return _decode_event(what, document, run_id)
+
+
+def read_trace_segment(run_dir: Path, segment: int) -> TraceSegment | None:
+    """Trace segment ``segment`` (``events.N.jsonl``) of ``run_dir``; None if it is absent.
+
+    At most :data:`MAX_TRACE_SEGMENT_BYTES` are read (a larger file is corrupt: the
+    writer rotates before a segment would grow past it). Every complete line must
+    be a strict-JSON event of this run (the directory name), validated like a
+    state's recent events; a final fragment without a newline is reported as
+    ``torn_tail``, never decoded. Raises :class:`CorruptRun` only, and ValueError
+    for a segment number below 1.
+    """
+    if isinstance(segment, bool) or not isinstance(segment, int) or segment < 1:
+        raise ValueError(f"segment must be a positive integer, got {safe_repr(segment)}")
+    name = trace_segment_name(segment)
+
+    def read() -> TraceSegment | None:
+        data = _read_record(run_dir, name, MAX_TRACE_SEGMENT_BYTES)
+        if data is None:
+            return None
+        *lines, tail = data.split(b"\n")
+        events = tuple(
+            _decode_trace_line(f"{name} line {number}", line, run_dir.name)
+            for number, line in enumerate(lines, 1)
+        )
+        return TraceSegment(segment=segment, events=events, torn_tail=bool(tail))
+
+    return _guarded(name, read)

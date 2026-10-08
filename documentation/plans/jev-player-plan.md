@@ -227,7 +227,7 @@ Phase JV owns numeric Steps 201-208, newly reserved in the master plan. All are 
 
 - **Problem:** Provide one documented production workflow for smoke and full-match evidence collection.
 - **Type:** code
-- **Status:** PENDING
+- **Status:** DONE (2026-10-08)
 - **Issue:** #323
 - **Flags:** --reviewers deep
 - **Files:** `scripts/validate_jev.py`, `documentation/operator/jev-validation.md`, `README.md`, `CLAUDE.md`; `tests/test_jev_validation.py`.

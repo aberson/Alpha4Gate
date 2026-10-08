@@ -120,9 +120,11 @@ __all__ = [
     "Sc2Setup",
     "Sc2Unavailable",
     "TerminalSafeArgumentParser",
+    "absolute_path",
     "build_parser",
     "exception_error",
     "main",
+    "make_streams_encoding_safe",
     "run_match",
 ]
 
@@ -657,7 +659,8 @@ def _bounded_int(low: int, high: int) -> Callable[[str], int]:
     return parse
 
 
-def _absolute_path(text: str) -> Path:
+def absolute_path(text: str) -> Path:
+    """argparse type for a path that must be absolute (never relative to the cwd)."""
     path = Path(text)
     if not path.is_absolute():
         raise argparse.ArgumentTypeError(f"expected an absolute path, got {safe_repr(text)}")
@@ -717,7 +720,7 @@ def build_parser(prog: str) -> argparse.ArgumentParser:
     parser.add_argument("--realtime", action="store_true", help="play at real-time speed")
     parser.add_argument(
         "--run-root",
-        type=_absolute_path,
+        type=absolute_path,
         default=None,
         help="write the run's evidence under this absolute directory "
         "(default: <repository>/data/jev/runs)",
@@ -736,7 +739,7 @@ def build_parser(prog: str) -> argparse.ArgumentParser:
     return parser
 
 
-def _make_streams_encoding_safe() -> None:
+def make_streams_encoding_safe() -> None:
     """Never let an unencodable character (e.g. a CJK path on cp1252) crash output."""
     for stream in (sys.stdout, sys.stderr):
         if isinstance(stream, io.TextIOWrapper):
@@ -766,7 +769,7 @@ def main(
 
     ``load_policy`` loads the calling package's policy (``bots.jev.vN``).
     """
-    _make_streams_encoding_safe()
+    make_streams_encoding_safe()
     parser = build_parser(prog)
     args = parser.parse_args(argv)
     if args.policy_file is not None and not args.validate_policy:

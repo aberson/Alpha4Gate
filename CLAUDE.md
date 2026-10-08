@@ -35,14 +35,24 @@ uv run python scripts/baseline.py add anchor-v13 v13  # Seed data/baselines.json
 .\scripts\launch-a4g.ps1 -Tab evolution    # Dashboard only (backend :8765 + frontend :3000)
 ```
 
+```powershell
+uv run python -m bots.jev.v1 --validate-policy  # Jev: validate the packaged policy and print its hash (no SC2)
+uv run python -m bots.jev.v1 --map Simple64 --opponent-race Terran --difficulty 1 --seed 1 --max-game-seconds 900 --max-wall-seconds 1800  # Jev: one match; evidence in data\jev\runs\<run_id>
+$runId = (Get-ChildItem data\jev\runs -Directory | Sort-Object CreationTime | Select-Object -Last 1).Name  # Jev: the newest run's ID
+uv run python scripts\validate_jev.py --run-id $runId --api-base http://localhost:8765  # Jev: verify a run's disk evidence against the API (backend: bots.current.runner --serve)
+```
+
+Jev live smoke/acceptance procedure (start, stop, Step 207/208 checklists, report template): `documentation/operator/jev-validation.md`.
+
 ## Directory layout
 
 - `bots/v0/` — 56 Python modules (bot, decision engine, commands/, learning/). The production bot code.
 - `bots/current/` — thin pointer package (MetaPathFinder alias to `bots/v0/`)
 - `src/orchestrator/` — version registry, contracts, subprocess self-play stubs
+- `src/jev/` + `bots/jev/v1/` — the Jev decision-graph player (Phase JV): runtime, SC2 adapter, runner, run evidence and the read-only `/api/jev` router in `src/jev`; the packaged policy in `bots/jev/v1` (no `VERSION`, so legacy discovery ignores it); runs land in `data/jev/runs/`
 - `src/selfplay_viewer/` — themed pygame container that hosts two SC2 clients (background, stats bar, live W-L overlay). Used by `scripts/selfplay.py` and, since Phase EV, by `scripts/evolve.py --viewer`. Imports pygame lazily inside methods, so the package imports fine without the `[viewer]` extra
 - `tests/` — 114 test files (all import from `bots.v0.*`)
-- `frontend/` — React dashboard, 6 tabs (`AdvisedControlPanel`, `EvolutionTab`, `ModelsTab`, `ObservableTab`, Processes panels, `HelpTab`); tab list is `frontend/src/App.tsx:17-24`
+- `frontend/` — React dashboard, 7 tabs (`AdvisedControlPanel`, `EvolutionTab`, `ModelsTab`, `ObservableTab`, Processes panels, `HelpTab`, `JevTab`); tab list is `frontend/src/App.tsx:18-26`
 - `scripts/` — live-test.sh, analyze_rewards.py, evaluate_model.py, evolve.py, launch-evolve.ps1 / launch-a4g.ps1 (one-click launchers), etc.
 - `documentation/wiki/` — project wiki (start with `index.md` for system diagram + page map)
 - `documentation/master_plan.md` — single spine + plan index (active sub-plan pointers + archived list)
@@ -64,7 +74,7 @@ All production bot code lives in per-version trees `bots/vN/` (Phase 1 bots-v0-m
 All Phase 1 (rule-based) and Phase 2 (deep learning) features complete.
 Five improvement cycles done: army coherence, natural denial, neural training, strategic commands, defensive fortification.
 Wins reliably at difficulty 1-3, struggles at 4-5.
-Active plan: `documentation/master_plan.md` — platform + full-stack versioning + AlphaStar-style PPO upgrades. Always-up Phases 1–4.5 (daemon, evaluator, promotion gate, rollback, then-10-tab dashboard — **6 tabs today**: Advisor, Evolution, Models, Observable, Processes, Help, per `frontend/src/App.tsx:17-24`) are the Baseline; full history in `documentation/archived/always-up-plan.md`.
+Active plan: `documentation/master_plan.md` — platform + full-stack versioning + AlphaStar-style PPO upgrades. Always-up Phases 1–4.5 (daemon, evaluator, promotion gate, rollback, then-10-tab dashboard — **7 tabs today**: Advisor, Evolution, Models, Observable, Processes, Help, Jev, per `frontend/src/App.tsx:18-26`) are the Baseline; full history in `documentation/archived/always-up-plan.md`.
 Master plan Phases A, 0, 1, 2, 3, 4, 5 all COMPLETE. Phase 4 added Elo ladder (`src/orchestrator/ladder.py`), cross-version promotion gate, CLI (`scripts/ladder.py`), `/api/ladder` endpoint, and Ladder dashboard tab (10th). Phase 5 added sandbox enforcement (`scripts/check_sandbox.py` + `.pre-commit-config.yaml`) and wired `check_promotion()` + `[advised-auto]` into `/improve-bot-advised`. Phase 9 (improve-bot-evolve) operational, v0→v1→v2 auto-promoted overnight 2026-04-23; v3→v4 promoted 2026-04-29 after stack-apply unblock (`e7fb758`). Phase 8 (headless Linux training infrastructure) Steps 1-10 SHIPPED 2026-04-29 (Linux CI + SC2PATH resolver + `Dockerfile` + `.dockerignore` + `documentation/wiki/cloud-deployment.md`); Step 11 (24h Linux evolve soak) pending; Step 12 (cloud dry-run) removed. Phase N (winprob heuristic + give-up trigger) COMPLETE 2026-04-27 — `bots/v0/learning/winprob_heuristic.py`, `bots/v0/give_up.py`, `transitions.win_prob` column, every-10-step INFO log, `Alpha4GateBot._maybe_resign`. Live in `bots/v0/` and folded into `bots/v3/`+`v4/` via successive promotions; production runtime via `bots/current` → v13 (authoritative pointer: `bots/current/current.txt`).
 Phase 7 (advised loop stale-policy detection) Steps 1–5 SHIPPED 2026-06-20 (#180–184 closed): `src/orchestrator/staleness.py` (`StalenessReport` + `compute_staleness` reading per-version `training.db` via sqlite-direct, no `bots.*` import + `clamp_soak_hours`) and a `soak` improvement type in `/improve-bot-advised` (staleness-gated extended training soak, hybrid mode, wall-clock-clamped). Step 6 operator validation soak (#280) pending. The suite stood at 1799 tests when Phase 7 shipped; today it is 2037 (2054 with the optional `[viewer]` extra).
 Phase EL (Evolution Lines) Steps EL.1–EL.6 SHIPPED 2026-06-20 (#273–#278 closed): parallel lineages (`src/orchestrator/lineages.py`), frozen-baseline opponent registry + fitness gauntlet (`baselines.py`, `scripts/baseline.py`), behavioural diversity fingerprint (`fingerprint.py` — v1 fingerprint IS the per-baseline win-rate vector), and diversity-driven extinction (`population.py`), plus dashboard lineage/extinction surfacing. Defaults byte-identical (`--lineages 1`, `--fitness-mode parent`, `--population-cap 0`); EL.7 soak (#279) pending — now **runnable**, because EH.1 added `scripts/lineage.py add` to seed the registry. **The in-memory-only known gap is CLOSED by Phase EH** (EH.1 `4eb7836`, EH.2 `5fb4213`): `write_lineages` has production callers, and `run_loop` persists advanced heads plus `status="extinct"` records to `data/lineages.json` at every generation boundary — **but only when the registry was loaded from disk.** A bare run with no registry file still persists nothing, deliberately, so the hop can never create or overwrite an operator-authored registry.
