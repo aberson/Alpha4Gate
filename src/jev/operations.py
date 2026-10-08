@@ -71,6 +71,7 @@ __all__ = [
     "BUILD_ABILITY",
     "Binding",
     "BindingKind",
+    "COMMAND_ABILITIES",
     "COMPARATORS",
     "Comparator",
     "CompiledFilter",
@@ -110,6 +111,7 @@ __all__ = [
     "PYLON_POWER_RADIUS",
     "PredicateOp",
     "Progress",
+    "REQUIRES_POWER",
     "RESOURCE_NAMES",
     "RESOURCE_READERS",
     "RETURN_ABILITY",
@@ -173,6 +175,10 @@ SUPPLY_COST: Final[Mapping[str, int]] = {"Probe": 1, "Zealot": 2}
 FOOTPRINT: Final[Mapping[str, int]] = {"Nexus": 5, "Pylon": 2, "Gateway": 3}
 DEFAULT_FOOTPRINT: Final = 2
 PYLON_POWER_RADIUS: Final = 6.5
+#: Allowed structures that only operate inside Pylon power (every other own
+#: structure -- Nexus, Pylon -- needs none). The SC2 adapter reads SC2's powered
+#: flag for these types only.
+REQUIRES_POWER: Final = frozenset({"Gateway"})
 #: Own entity types a filter on ``own_units`` / ``own_structures`` may name: derived
 #: from the tables above (buildable + trainable + producers + footprinted structures).
 OWN_TYPES: Final = (
@@ -187,6 +193,9 @@ KNOWN_ORDER_ABILITIES: Final = frozenset(
     | set(BUILD_ABILITY.values())
     | set(TRAIN_ABILITY.values())
 )
+#: Abilities a command may carry -- exactly what the action operations below emit
+#: (a worker returns cargo on its own; Jev never orders HARVEST_RETURN).
+COMMAND_ABILITIES: Final = KNOWN_ORDER_ABILITIES - {RETURN_ABILITY}
 
 MAX_PLACEMENT_CANDIDATES: Final = 8
 #: Operation names the runtime's reservation views recognize (used by the registry too).
@@ -335,6 +344,16 @@ class RuntimeView(Protocol):
 
     def gather_assignments(self) -> Mapping[int, int]:
         """Mineral-patch tag -> workers assigned by unacknowledged gather tasks."""
+        ...
+
+    def rejected_sites(self, structure: str) -> frozenset[Point]:
+        """Placement candidates of ``structure`` builds that failed placement.
+
+        The sites a build task tried (target and alternatives) when it failed as
+        rejected or unacknowledged, for as long as that intent cools down. It is
+        task state, so recovery selects a *new* site instead of re-proposing the
+        same rejected ones (D3/D4).
+        """
         ...
 
 
@@ -899,7 +918,8 @@ def placement_candidates(
     """Bounded, deterministic placement candidates around ``near``.
 
     Geometric screening only (footprint overlap with known structures and
-    in-flight builds, mineral clearance, Pylon power); the SC2 adapter tests real
+    in-flight builds, mineral clearance, Pylon power) plus the task-state
+    exclusion of :meth:`RuntimeView.rejected_sites`; the SC2 adapter tests real
     placement legality. Sorted by distance from ``near``, then x, then y.
     """
     obs = view.observation
@@ -919,6 +939,7 @@ def placement_candidates(
         if distance(m.position, near) <= reach + resource_clearance
     ]
     pylons = [p.position for p in obs.own_structures if p.type_name == "Pylon" and p.is_ready]
+    rejected = view.rejected_sites(structure)
     base_x = math.floor(near[0]) + offset
     base_y = math.floor(near[1]) + offset
     span = math.ceil(radius_max) + 1
@@ -927,7 +948,7 @@ def placement_candidates(
         for dy in range(-span, span + 1):
             point = (base_x + dx, base_y + dy)
             d = distance(point, near)
-            if d < radius_min or d > radius_max:
+            if d < radius_min or d > radius_max or point in rejected:
                 continue
             if any(_overlaps(point, size, center, other) for center, other in blockers):
                 continue

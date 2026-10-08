@@ -170,7 +170,7 @@ Phase JV owns numeric Steps 201-208, newly reserved in the master plan. All are 
 
 - **Problem:** Drive a real Jev bot's economic actions entirely through graph-selected operations.
 - **Type:** code
-- **Status:** PENDING
+- **Status:** DONE (2026-10-07)
 - **Issue:** #319
 - **Flags:** --reviewers deep
 - **Files:** `src/jev/sc2_adapter.py`, `bot.py`, `runner.py`, `operations.py`, `runtime.py`; `bots/jev/v1/policy.json`; `tests/test_jev_economy.py`, `tests/test_jev_sc2.py`.

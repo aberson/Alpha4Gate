@@ -147,6 +147,7 @@ ErrorCode = Literal[
     "game_timeout",
     "wall_timeout",
     "sc2_unavailable",
+    "match_crashed",
 ]
 #: Observation fields holding entity records; the only collections a policy may query.
 EntityCollection = Literal[

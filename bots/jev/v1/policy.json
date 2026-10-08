@@ -91,12 +91,12 @@
     },
     {
       "id": "construction",
-      "label": "Construction: supply, power, then Gateways",
+      "label": "Construction: supply, power for Gateways, then Gateways",
       "kind": "selector",
       "children": [
         "construction.supply",
-        "construction.power",
         "construction.repower",
+        "construction.power",
         "construction.gateways"
       ],
       "operation": null,
@@ -110,6 +110,8 @@
         "construction.supply.low",
         "construction.supply.none_warping",
         "construction.supply.none_ordered",
+        "construction.supply.no_power_order",
+        "construction.supply.no_repower_order",
         "construction.supply.site",
         "construction.supply.worker",
         "construction.supply.build"
@@ -157,6 +159,38 @@
       "operation": "task_count_compare",
       "args": {
         "node": "construction.supply.build",
+        "statuses": [
+          "pending",
+          "issued"
+        ],
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "construction.supply.no_power_order",
+      "label": "No unacknowledged power Pylon order",
+      "kind": "condition",
+      "children": [],
+      "operation": "task_count_compare",
+      "args": {
+        "node": "construction.power.build",
+        "statuses": [
+          "pending",
+          "issued"
+        ],
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "construction.supply.no_repower_order",
+      "label": "No unacknowledged replacement Pylon order",
+      "kind": "condition",
+      "children": [],
+      "operation": "task_count_compare",
+      "args": {
+        "node": "construction.repower.build",
         "statuses": [
           "pending",
           "issued"
@@ -234,6 +268,7 @@
       "children": [
         "construction.power.no_pylon",
         "construction.power.no_supply_order",
+        "construction.power.no_repower_order",
         "construction.power.none_ordered",
         "construction.power.site",
         "construction.power.worker",
@@ -267,6 +302,22 @@
       "operation": "task_count_compare",
       "args": {
         "node": "construction.supply.build",
+        "statuses": [
+          "pending",
+          "issued"
+        ],
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "construction.power.no_repower_order",
+      "label": "No unacknowledged replacement Pylon order",
+      "kind": "condition",
+      "children": [],
+      "operation": "task_count_compare",
+      "args": {
+        "node": "construction.repower.build",
         "statuses": [
           "pending",
           "issued"
@@ -438,7 +489,7 @@
     },
     {
       "id": "construction.repower.gateway",
-      "label": "Choose an unpowered Gateway",
+      "label": "Choose a completed, unpowered Gateway",
       "kind": "select",
       "children": [],
       "operation": "select_entities",
@@ -448,6 +499,7 @@
           "types": [
             "Gateway"
           ],
+          "ready": true,
           "powered": false
         },
         "sort": {
@@ -525,6 +577,8 @@
       "kind": "sequence",
       "children": [
         "construction.gateways.below_target",
+        "construction.gateways.none_ordered",
+        "construction.gateways.no_order_carried",
         "construction.gateways.allowed",
         "construction.gateways.site",
         "construction.gateways.worker",
@@ -550,6 +604,42 @@
         "value": {
           "param": "gateway_target"
         }
+      }
+    },
+    {
+      "id": "construction.gateways.none_ordered",
+      "label": "No unacknowledged Gateway order (one placement at a time)",
+      "kind": "condition",
+      "children": [],
+      "operation": "task_count_compare",
+      "args": {
+        "node": "construction.gateways.build",
+        "statuses": [
+          "pending",
+          "issued"
+        ],
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "construction.gateways.no_order_carried",
+      "label": "No probe still carries a Gateway order (a late placement counts toward four)",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_units",
+        "filter": {
+          "types": [
+            "Probe"
+          ],
+          "order_in": [
+            "PROTOSSBUILD_GATEWAY"
+          ]
+        },
+        "op": "==",
+        "value": 0
       }
     },
     {

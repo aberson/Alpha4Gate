@@ -1697,13 +1697,6 @@ def test_cli_usage_errors_are_terminal_safe_and_keep_exit_code_2(tmp_path: Path)
     assert misuse.returncode == 2 and b"requires --validate-policy" in misuse.stderr
 
 
-def test_cli_without_validate_refuses_to_fake_a_match(tmp_path: Path) -> None:
-    proc = _run_cli(cwd=tmp_path)
-    assert proc.returncode == 1  # nonzero, distinct from argparse usage errors (2)
-    assert proc.stderr.strip()
-    assert "Traceback" not in proc.stderr
-
-
 def test_render_text_leaves_no_invisible_code_points_and_keeps_printable_text() -> None:
     unsafe = [
         "\x00",
@@ -2148,8 +2141,8 @@ def test_validation_path_imports_no_sc2_or_model_stack(tmp_path: Path) -> None:
         "import sys\n"
         "from bots.jev.v1.__main__ import main\n"
         "rc = main(['--validate-policy'])\n"
-        "heavy = sorted(m for m in ('sc2', 'torch', 'anthropic', 'bots.current', 'bots.v0') "
-        "if m in sys.modules)\n"
+        "heavy = sorted(m for m in ('sc2', 'torch', 'anthropic', 'bots.current', 'bots.v0', "
+        "'jev.bot', 'jev.sc2_adapter', 'orchestrator') if m in sys.modules)\n"
         "print('HEAVY', heavy)\n"
         "raise SystemExit(rc)\n"
     )

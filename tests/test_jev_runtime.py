@@ -1704,8 +1704,8 @@ def test_scenario_unpowered_gateway_gets_a_pylon_near_it(v1_runtime: JevRuntime)
         )
     )
     events = _node_events(result)
-    assert events["construction.power.no_pylon"].status == "failure"  # a Pylon still exists
     assert events["construction.repower.gateway"].status == "success"
+    assert "construction.power" not in events  # repowering a Gateway is tried first
     (build,) = [c for c in result.commands if c.node_id == "construction.repower.build"]
     assert build.ability == BUILD_ABILITY["Pylon"]
     assert isinstance(build.target, tuple)

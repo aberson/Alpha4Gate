@@ -27,7 +27,13 @@ One :class:`JevRuntime` executes one validated policy for one run:
   (four attempts in all), at least one game second apart, with a five-second
   acknowledgement timeout; construction/training deadlines after acknowledgement;
   movement replans after 30 game seconds without progress; dead actors fail tasks
-  at once; failed intents cool down for ten game seconds with a diagnostic.
+  at once; failed intents cool down for ten game seconds with a diagnostic. While
+  a build intent cools down after failing placement, its candidate sites are
+  excluded from new placement selections, so recovery picks a new site.
+* **Adapter hooks.** The SC2 adapter reports what SC2 did with each command:
+  :meth:`JevRuntime.mark_command_accepted` (still not success) or
+  :meth:`JevRuntime.mark_command_rejected`; :meth:`JevRuntime.task_status` lets it
+  ignore late reports for tasks that have already moved on.
 * **Memory.** Cross-tick memory is task state plus the ``attack_launched`` latch.
   Bindings live only for one root evaluation in one tick.
 
@@ -110,6 +116,7 @@ __all__ = [
     "MAX_CONFIG_INT",
     "NODE_BUDGET_REASON",
     "RUNTIME_NODE_ID",
+    "SITE_EXCLUSION_CAUSES",
     "TickConfig",
     "TickResult",
     "UNACKNOWLEDGED_STATUSES",
@@ -124,6 +131,8 @@ FAILURE_CAUSES: Final[tuple[FailureCause, ...]] = get_args(FailureCause)
 COOLDOWN_CAUSES: Final[frozenset[FailureCause]] = frozenset(
     {"unacknowledged", "rejected", "deadline", "no_progress"}
 )
+#: Build failures that exclude the task's candidate sites while the intent cools down.
+SITE_EXCLUSION_CAUSES: Final[frozenset[FailureCause]] = frozenset({"rejected", "unacknowledged"})
 #: Task states whose command is not yet confirmed: cost committed, actor held.
 UNACKNOWLEDGED_STATUSES: Final[frozenset[TaskStatus]] = frozenset({"pending", "issued"})
 #: Pseudo node id for runtime diagnostics that no policy node originated (it can
@@ -160,13 +169,17 @@ def _is_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _check_point(field: str, point: object) -> None:
-    ok = (
+def _is_point(point: object) -> bool:
+    """An ``(x, y)`` tuple of finite coordinates with |coordinate| <= MAX_COORDINATE."""
+    return (
         isinstance(point, tuple)
         and len(point) == 2
         and all(is_bounded_number(v, MAX_COORDINATE) for v in point)
     )
-    if not ok:
+
+
+def _check_point(field: str, point: object) -> None:
+    if not _is_point(point):
         raise ValueError(
             f"observation {field} must be a finite (x, y) point with |coordinate| <= "
             f"{MAX_COORDINATE:g}, got {safe_repr(point)}"
@@ -453,6 +466,14 @@ class _View:
                 counts[task.target] += 1
         return counts
 
+    def rejected_sites(self, structure: str) -> frozenset[Point]:
+        now = self._observation.game_seconds
+        found: set[Point] = set()
+        for kind, sites, until in self._runtime._rejected_sites.values():
+            if kind == structure and until > now:
+                found.update(sites)
+        return frozenset(found)
+
 
 class JevRuntime:
     """Interpret one validated policy for one run (see module docstring)."""
@@ -509,6 +530,9 @@ class JevRuntime:
         # history deque must not make a task-state condition decrease over time.
         self._terminal_counts: Counter[tuple[str, str]] = Counter()
         self._cooldowns: dict[str, float] = {}
+        # intent key -> (structure, candidate sites, cooldown end) of a build intent
+        # that failed placement; pruned with the cooldowns (bounded by them).
+        self._rejected_sites: dict[str, tuple[str, frozenset[Point], float]] = {}
         self._latches: dict[str, bool] = {latch: False for latch in LATCHES}
         self._last_tick_seconds: float | None = None
         self._last_game_loop = 0
@@ -562,9 +586,7 @@ class JevRuntime:
         targets), so a broken adapter fails visibly instead of corrupting a tick.
         """
         self._check_clock(observation)
-        last = self._last_tick_seconds
-        interval = self._tick_config.min_tick_interval_seconds
-        if last is not None and observation.game_seconds - last < interval - _TIME_EPSILON:
+        if not self.is_due(observation.game_seconds):
             return TickResult(False, observation.game_loop, observation.game_seconds)
         self._last_tick_seconds = observation.game_seconds
         self._last_game_loop = observation.game_loop
@@ -579,6 +601,7 @@ class JevRuntime:
         self._own_structure_tags = frozenset(e.tag for e in observation.own_structures)
         now = observation.game_seconds
         self._cooldowns = {k: v for k, v in self._cooldowns.items() if v > now}
+        self._rejected_sites = {k: v for k, v in self._rejected_sites.items() if v[2] > now}
 
         self._update_tasks(observation)
 
@@ -609,6 +632,18 @@ class JevRuntime:
             events,
             root_status,
         )
+
+    def is_due(self, game_seconds: float) -> bool:
+        """Whether a :meth:`tick` at ``game_seconds`` would run a policy tick.
+
+        Lets a caller skip building an Observation between ticks. A value tick()
+        would reject also reports True, so that tick() raises its ValueError.
+        """
+        last = self._last_tick_seconds
+        if last is None or not is_bounded_number(game_seconds):
+            return True
+        interval = self._tick_config.min_tick_interval_seconds
+        return bool(game_seconds - last >= interval - _TIME_EPSILON)
 
     def _check_clock(self, observation: Observation) -> None:
         if not isinstance(observation, Observation):
@@ -671,6 +706,61 @@ class JevRuntime:
             for index, entity in enumerate(entities):
                 _check_entity(f"{name}[{index}]", entity)
 
+    def task_status(self, task_id: str) -> TaskStatus | None:
+        """Status of an active task; None once it has finished, or for an unknown id."""
+        if not isinstance(task_id, str):  # never hash arbitrary adapter objects
+            return None
+        task = self._active.get(task_id)
+        return None if task is None else task.status
+
+    def mark_command_accepted(self, task_id: str, *, placement: Point | None = None) -> bool:
+        """Adapter hook: SC2 accepted a command. Acceptance is still not success (D4).
+
+        The task stays ``issued`` until the observation acknowledges it. For a build,
+        ``placement`` is the candidate SC2 accepted (the adapter tests legality over
+        the task's candidates, D3): the task is re-pointed at it, keeping the other
+        candidates for retries, and the trace records site and worker.
+
+        Returns True when applied. A report for an unknown task, one no longer
+        awaiting acknowledgement, or a ``placement`` that is not one of the task's
+        candidate points is not applied: it emits a diagnostic (adapter bugs stay
+        visible) and returns False. Events are returned by the next ticked result.
+        """
+        task = self._awaiting_report(task_id, "acceptance", {})
+        if task is None:
+            return False
+        candidates = (task.target, *task.alternatives) if isinstance(task.target, tuple) else ()
+        site: Point | None = None
+        if placement is not None:
+            if _is_point(placement):
+                site = (float(placement[0]), float(placement[1]))
+            if site is None or site not in candidates:
+                self._diagnostic(
+                    task.node_id,
+                    f"command acceptance ignored: placement {safe_repr(placement)} is not a "
+                    f"candidate of task {task.id}",
+                    {"task_id": task.id, "task_status": task.status},
+                )
+                return False
+            task.alternatives = tuple(other for other in candidates if other != site)
+            task.target = site
+        where = "" if site is None else f" at {site[0]:g},{site[1]:g}"
+        task.reason = f"accepted by SC2{where}; awaiting observation"
+        self._emit(
+            task.node_id,
+            task.id,
+            "task",
+            task.status,
+            task.reason,
+            {
+                "intent_key": task.intent_key,
+                "actor_tag": str(task.actor_tag),
+                "attempts": task.attempts,
+                "placement": None if site is None else [site[0], site[1]],
+            },
+        )
+        return True
+
     def mark_command_rejected(self, task_id: str, reason: str) -> bool:
         """Adapter hook: SC2 refused a command. Retries respect the D4 limits.
 
@@ -680,27 +770,8 @@ class JevRuntime:
         buffered and returned by the next ticked result.
         """
         shown_reason = safe_repr(reason)  # adapter text: rendered and capped
-        if not isinstance(task_id, str):  # never hash/compare arbitrary adapter objects
-            self._diagnostic(
-                RUNTIME_NODE_ID,
-                f"command rejection ignored: task id {safe_repr(task_id)} is not a string",
-                {
-                    "task_id": safe_repr(task_id),
-                    "task_status": "unknown",
-                    "rejection": shown_reason,
-                },
-            )
-            return False
-        task = self._active.get(task_id)
-        if task is None or task.status != "issued":
-            finished = next((t for t in self._history if t.id == task_id), task)
-            state = "unknown" if finished is None else finished.status
-            shown_id = safe_repr(task_id)
-            self._diagnostic(
-                RUNTIME_NODE_ID if finished is None else finished.node_id,
-                f"command rejection ignored: task {shown_id} is {state}, not issued",
-                {"task_id": shown_id, "task_status": state, "rejection": shown_reason},
-            )
+        task = self._awaiting_report(task_id, "rejection", {"rejection": shown_reason})
+        if task is None:
             return False
         now = self._last_game_seconds
         if task.attempts <= self._life.max_retries:  # attempts = 1 + retries so far
@@ -711,6 +782,30 @@ class JevRuntime:
         else:
             self._fail(task, "rejected", f"rejected: {shown_reason}; attempts exhausted")
         return True
+
+    def _awaiting_report(
+        self, task_id: object, hook: str, facts: Mapping[str, JsonValue]
+    ) -> _TaskRecord | None:
+        """The issued task an adapter report names, or None after a visible diagnostic."""
+        if not isinstance(task_id, str):  # never hash/compare arbitrary adapter objects
+            self._diagnostic(
+                RUNTIME_NODE_ID,
+                f"command {hook} ignored: task id {safe_repr(task_id)} is not a string",
+                {"task_id": safe_repr(task_id), "task_status": "unknown", **facts},
+            )
+            return None
+        task = self._active.get(task_id)
+        if task is not None and task.status == "issued":
+            return task
+        finished = next((t for t in self._history if t.id == task_id), task)
+        state = "unknown" if finished is None else finished.status
+        shown_id = safe_repr(task_id)
+        self._diagnostic(
+            RUNTIME_NODE_ID if finished is None else finished.node_id,
+            f"command {hook} ignored: task {shown_id} is {state}, not issued",
+            {"task_id": shown_id, "task_status": state, **facts},
+        )
+        return None
 
     def run_state(
         self,
@@ -848,6 +943,16 @@ class JevRuntime:
         if task.failure_cause in COOLDOWN_CAUSES:
             until = self._last_game_seconds + self._life.failure_cooldown_seconds
             self._cooldowns[task.intent_key] = until
+            excluded: list[JsonValue] = []
+            if (
+                task.operation == OP_BUILD
+                and task.failure_cause in SITE_EXCLUSION_CAUSES
+                and isinstance(task.target, tuple)
+            ):
+                sites = (task.target, *task.alternatives)
+                structure = str(task.params.get(PARAM_STRUCTURE, ""))
+                self._rejected_sites[task.intent_key] = (structure, frozenset(sites), until)
+                excluded = [[site[0], site[1]] for site in sites]
             self._diagnostic(
                 task.node_id,
                 f"intent failed ({reason}); cooling down until {until:.2f}s",
@@ -856,6 +961,7 @@ class JevRuntime:
                     "task_id": task.id,
                     "until": until,
                     "failure_cause": task.failure_cause,
+                    "excluded_sites": excluded,
                 },
             )
 
