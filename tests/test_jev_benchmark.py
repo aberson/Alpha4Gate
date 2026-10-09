@@ -6,6 +6,10 @@ by the production :func:`jev.runner.run_match` against the stand-in game of
 behind the real Typesafe client, and the one real child process the end-to-end
 test starts points ``SC2PATH`` at an empty folder, so the production entrypoint
 records ``sc2_unavailable`` before burnysc2 is even imported.
+
+No test here opens the real dashboard: real runs pass ``--no-dashboard`` (explicit
+headless) or a fake dashboard, and an autouse fixture fails any test that would reach
+the default one (the dashboard-first flow itself is tested in ``test_jev_launch.py``).
 """
 
 from __future__ import annotations
@@ -39,6 +43,7 @@ import jev.bot as bot_module
 import jev.decision as decision_module
 import jev.telemetry as telemetry_module
 from jev import benchmark, runner
+from jev.api import STALE_AFTER_SECONDS
 from jev.benchmark import (
     BatchStore,
     BenchmarkLimits,
@@ -69,6 +74,12 @@ from jev.benchmark import (
 from jev.bot import METRIC_SAMPLE_GAP_SECONDS, JevBot, JevController, MatchMetrics
 from jev.contracts import Entity, JsonValue, Observation, is_valid_run_id
 from jev.decision import DecisionConfig, TypesafeProvider
+from jev.launch import (
+    FIRST_OBSERVATION_SILENCE_SECONDS,
+    LAUNCH_HEARTBEAT_SECONDS,
+    LAUNCH_SILENCE_SECONDS,
+    STARTING_SILENCE_SECONDS,
+)
 from jev.policy import load_policy_bundle
 from jev.runner import DIAGNOSTICS_FILE, MatchOptions, run_match
 from jev.telemetry import REPLAY_FILE, EvidenceFiles, read_run_metadata, repository_root
@@ -87,6 +98,16 @@ FAKE_KEY = "benchmark-test-key"  # never a real credential
 # ---------------------------------------------------------------------------
 # Stand-ins: a played match, a hosted service, a child process, a lock probe
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def no_real_dashboard(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail loudly instead of contacting the operator's dashboard on ports 8765/3000."""
+
+    def forbidden(case_count: int) -> Any:
+        raise AssertionError("a benchmark test reached the real dashboard launch")
+
+    monkeypatch.setattr(benchmark, "_default_dashboard", lambda *args: forbidden)
 
 
 class _GameLauncher:
@@ -752,7 +773,28 @@ def test_cli_dry_run_resolves_the_exact_production_command_and_writes_nothing(
     assert first["cwd"].endswith(plan["sources"]["v1"]["snapshot"])
     assert "jev-latest" not in json.dumps(plan)
     assert "--decision-model jev-1.13.0" in out and V1_HASH in out
-    assert "waits for Step 224" in out
+    # Dashboard first by default (plan D7): each child joins the session a real run
+    # creates; the dry run itself opens nothing (no_side_effects forbids any Popen).
+    assert plan["launch"] == "dashboard" and "launch: dashboard" in out
+    assert argv[-2:] == ["--launch-session", "<session_id assigned at start>"]
+    assert "http://localhost:3000/?tab=jev&launch=<session_id>" in out
+    assert "waits for Step 224" not in out
+
+
+@pytest.mark.usefixtures("no_side_effects")
+def test_a_no_dashboard_dry_run_plans_headless_children(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    report = tmp_path / "plan.json"
+    code = benchmark.main(
+        ["--panel", "baseline", "--dry-run", "--no-dashboard", "--json", str(report)],
+        source_root=REPO,
+    )
+    out = capsys.readouterr().out
+    plan = json.loads(report.read_text())
+    assert code == 0 and plan["launch"] == "headless" and "launch: headless" in out
+    assert all("--launch-session" not in case["argv"] for case in plan["cases"])
+    assert "no dashboard is opened" in out
 
 
 def test_the_script_runs_as_a_command(tmp_path: Path) -> None:
@@ -778,8 +820,12 @@ def test_the_script_runs_as_a_command(tmp_path: Path) -> None:
 
 
 def test_official_panels_refuse_to_play_before_launch_integration(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Step 224 enabled play (the frozen baseline now carries the launch hook); a build
+    # without the launch integration keeps refusing before anything is captured.
+    assert benchmark.OFFICIAL_PANEL_PLAY_ENABLED is True
+    monkeypatch.setattr(benchmark, "OFFICIAL_PANEL_PLAY_ENABLED", False)
     child = _FakeChild()
     code = benchmark.main(
         ["--panel", "baseline", "--benchmark-root", str(tmp_path / "bench")],
@@ -1250,8 +1296,7 @@ def test_hosted_budget_counts_the_probe_and_crashed_matches_conservatively(
 def test_cli_baseline_flow_probes_finalizes_plays_and_resumes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The full CLI path with Step 224's gate lifted (fakes for the child and service)."""
-    monkeypatch.setattr(benchmark, "OFFICIAL_PANEL_PLAY_ENABLED", True)
+    """The full CLI path, explicitly headless (fakes for the child and service)."""
     bench, runs = tmp_path / "bench", tmp_path / "runs"
     probed: list[str] = []
 
@@ -1259,7 +1304,7 @@ def test_cli_baseline_flow_probes_finalizes_plays_and_resumes(
         probed.append(config.model)
         return TypesafeProvider(key, config, transport=_service())
 
-    common = ["--benchmark-root", str(bench), "--run-root", str(runs)]
+    common = ["--benchmark-root", str(bench), "--run-root", str(runs), "--no-dashboard"]
     assert benchmark.main(["--panel", "baseline", *common], environ={}) == 1
     assert "missing_configuration" in capsys.readouterr().err and not bench.exists()
 
@@ -1328,21 +1373,23 @@ def test_cli_baseline_flow_probes_finalizes_plays_and_resumes(
     assert "provenance_mismatch" in capsys.readouterr().err
     assert len(child.launches) == 4  # neither rejected resume launched anything
 
-    assert benchmark.main(["--report", batch_dir.name, *common]) == 0
+    with pytest.raises(SystemExit, match="2"):  # a report opens no dashboard to refuse
+        benchmark.main(["--report", batch_dir.name, *common])
+    assert "--no-dashboard applies to --panel and --resume" in capsys.readouterr().err
+    assert benchmark.main(["--report", batch_dir.name, *common[:-1]]) == 0
     assert '"valid_wins": 4' in capsys.readouterr().out
 
 
 def test_a_drifted_probe_stops_before_anything_is_captured_or_played(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(benchmark, "OFFICIAL_PANEL_PLAY_ENABLED", True)
     child = _FakeChild()
 
     def factory(key: str, config: DecisionConfig) -> TypesafeProvider:
         return TypesafeProvider(key, config, transport=_service("jev-latest-alias"))
 
     code = benchmark.main(
-        ["--panel", "baseline", "--benchmark-root", str(tmp_path / "b")],
+        ["--panel", "baseline", "--benchmark-root", str(tmp_path / "b"), "--no-dashboard"],
         environ={KEY: FAKE_KEY},
         launcher=child,
         provider_factory=factory,
@@ -1753,6 +1800,7 @@ def test_staging_runs_the_real_entrypoint_from_its_snapshot(
             "60",
             "--max-wall-seconds",
             "300",
+            "--no-dashboard",
         ],
         environ=environ,
     )
@@ -2450,6 +2498,34 @@ def test_the_guide_documents_every_reason_and_error_code() -> None:
     codes = _literal_values(benchmark.BenchmarkErrorCode)
     assert set(get_args(benchmark.Reason)) <= codes
     assert [code for code in sorted(codes) if f"`{code}`" not in text] == []
+
+
+def test_the_guide_states_the_launch_liveness_table_with_the_codes_bounds() -> None:
+    """Section 11's per-state liveness table cites the code's own bounds and labels."""
+    text = GUIDE.read_text(encoding="utf-8")
+    header = text.index("| Session state |")
+    rows: dict[str, list[str]] = {}
+    for line in text[header:].split("\n\n", 1)[0].splitlines()[2:]:
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        rows[cells[0]] = cells
+    tsx = (REPO / "frontend" / "src" / "components" / "JevTab.tsx").read_text(encoding="utf-8")
+    block = re.search(r"LAUNCH_PHASE_LABELS[^{]*\{(.*?)\};", tsx, re.DOTALL)
+    assert block is not None
+    labels = dict(re.findall(r'(\w+): "([^"]+)"', block[1]))
+    silent, stale = f"**{labels['silent']}**", f"**{labels['stale']}**"
+    # Each state's numbers are exactly its bounds (no stray or outdated bound).
+    expected = {
+        "`preparing`": ({LAUNCH_SILENCE_SECONDS}, silent),
+        "`starting`": ({LAUNCH_HEARTBEAT_SECONDS, STARTING_SILENCE_SECONDS}, silent),
+        "`running`": ({FIRST_OBSERVATION_SILENCE_SECONDS, STALE_AFTER_SECONDS}, stale),
+        "`between_games`": ({LAUNCH_SILENCE_SECONDS}, silent),
+        "`finished`, `failed`, `stopped`": (set(), "no alarm"),
+    }
+    assert set(rows) == set(expected)
+    for state, (bounds, label) in expected.items():
+        numbers = {float(n) for n in re.findall(r"(\d+) seconds", " ".join(rows[state]))}
+        assert numbers == bounds, (state, numbers)
+        assert rows[state][-1] == label, state
 
 
 @pytest.mark.parametrize(

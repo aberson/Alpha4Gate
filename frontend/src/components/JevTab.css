@@ -110,6 +110,62 @@
   background: var(--code-bg);
 }
 
+/* Dashboard-first launch (plan D7): the followed session's phase and controls. */
+.jev-launch {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--jev-waiting);
+  border-radius: 6px;
+  background: var(--code-bg);
+}
+
+.jev-launch-live,
+.jev-launch-finished {
+  border-left-color: var(--jev-active);
+}
+
+.jev-launch-failed,
+.jev-launch-unavailable {
+  border-left-color: var(--jev-failure);
+}
+
+.jev-launch-stale,
+.jev-launch-silent,
+.jev-launch-stopped {
+  border-left-style: dashed;
+  border-left-color: var(--jev-stale);
+}
+
+.jev-launch-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.jev-launch-phase {
+  font-weight: 600;
+}
+
+.jev-launch-detail {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.jev-launch-paused {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.jev-launch-paused .jev-notice {
+  flex: 1 1 280px;
+  margin: 0;
+}
+
 .jev-army-decision-title {
   display: flex;
   flex-wrap: wrap;

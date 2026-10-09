@@ -1,10 +1,22 @@
-import { useMemo, useState } from "react";
-import { useJevRun, type JevLoadError, type JevResource } from "../hooks/useJevRun";
+import { useEffect, useMemo, useState } from "react";
+import {
+  useJevRun,
+  type JevLaunchView,
+  type JevLink,
+  type JevLoadError,
+  type JevResource,
+} from "../hooks/useJevRun";
 import { JevGraph } from "./JevGraph";
 import {
   isTerminalRunStatus,
+  launchLiveness,
+  launchPhase,
   nodeRuntimeLabel,
+  type JevLaunchFacts,
+  type JevLaunchPhase,
+  type JevShownRun,
   type JevEvent,
+  type JevLaunchState,
   type JevNodeRuntime,
   type JevPolicy,
   type JevPolicyNode,
@@ -31,6 +43,14 @@ import "./JevTab.css";
  * stopped writing heartbeats), offline (the dashboard API cannot be
  * reached), or final. Only a live run animates. All stored text renders as
  * plain text, and every list is capped below.
+ *
+ * Opened by a dashboard-first launch (``?tab=jev&launch=<session_id>``, plan
+ * D7) the tab follows that launch session's exact run: it shows Preparing
+ * until the session names its run, acknowledges readiness only after that run
+ * and its archived policy are rendered, then Starting until the game reports
+ * live observations, Live, and Finished with the result; a batch moves on to
+ * the next game in the same tab. Picking another run pauses following until
+ * Resume live. ``?tab=jev&run=<run_id>`` shows exactly that run.
  */
 
 /** Events per node, tasks per node, waiting IDs named, and trace rows shown. */
@@ -137,7 +157,31 @@ function transitions(events: JevEvent[]): Map<JevEvent, string> {
 }
 
 export function JevTab() {
-  const { runs, selectedRunId, selectRun, run, policy } = useJevRun();
+  const {
+    runs,
+    selectedRunId,
+    selectRun,
+    run,
+    policy,
+    runAgeSeconds,
+    link,
+    launch,
+    reportRendered,
+    resumeLive,
+  } = useJevRun();
+  const session = launch?.session.data ?? null;
+  const shown = launch === null ? null : shownLaunchRun(launch, run, runAgeSeconds);
+  // The session's run is still starting: its game process is paused at launch or
+  // SC2 is launching, so a missing heartbeat is expected, not a stopped bot -- as
+  // long as the liveness rule (launchLiveness) still reads the launch as alive.
+  // Such a run is never shown as live.
+  const launchStarting =
+    launch !== null &&
+    session !== null &&
+    shown !== null &&
+    (session.state === "starting" || session.state === "running") &&
+    shown.status === "starting" &&
+    launchLiveness(session, launch.sessionAgeSeconds, shown) === "alive";
   return (
     <div className="jev-tab" data-testid="jev-tab">
       <h2>Jev decision graph</h2>
@@ -145,12 +189,255 @@ export function JevTab() {
         Read-only view of Jev runs: the policy each run archived, and the latest state its game
         process recorded.
       </p>
+      <LinkNotice link={link} />
+      {launch !== null && (
+        <LaunchPanel
+          launch={launch}
+          run={run}
+          runAgeSeconds={runAgeSeconds}
+          selectedRunId={selectedRunId}
+          onResume={resumeLive}
+        />
+      )}
       <RunPicker runs={runs} selectedRunId={selectedRunId} onSelect={selectRun} />
       {selectedRunId !== null && (
-        <RunView key={selectedRunId} runId={selectedRunId} run={run} policy={policy} />
+        <RunView
+          key={selectedRunId}
+          runId={selectedRunId}
+          run={run}
+          policy={policy}
+          launchStarting={launchStarting}
+          onRendered={launch === null ? undefined : reportRendered}
+        />
       )}
     </div>
   );
+}
+
+function LinkNotice({ link }: { link: JevLink }) {
+  if (link.kind !== "invalid") return null;
+  return (
+    <p role="alert" className="jev-notice jev-notice-error" data-testid="jev-link-error">
+      This link names an invalid {link.param === "launch" ? "launch session" : "run"} id, so no
+      run is selected (a link never falls back to another run). Pick a run below.
+    </p>
+  );
+}
+
+const LAUNCH_PHASE_LABELS: Record<JevLaunchPhase, string> = {
+  preparing: "Preparing",
+  waiting: "Waiting for this page",
+  paused: "Following paused",
+  starting: "Starting",
+  live: "Live",
+  stale: "Stale",
+  silent: "Launcher not responding",
+  unavailable: "Launch unavailable",
+  finished: "Finished",
+  failed: "Failed",
+  stopped: "Stopped",
+};
+
+/** The page's facts about its followed launch, for ``launchPhase``. */
+function launchFacts(launch: JevLaunchView): JevLaunchFacts {
+  return {
+    session: launch.session.data,
+    sessionError: launch.session.error !== null,
+    gaveUp: launch.gaveUp,
+    following: launch.following,
+    acknowledgedRunId: launch.acknowledgedRunId,
+    sessionAgeSeconds: launch.sessionAgeSeconds,
+  };
+}
+
+/**
+ * The launch's active run as this page shows it: only while following and holding
+ * that run's state (otherwise null, and the liveness rule makes no claim about it).
+ */
+function shownLaunchRun(
+  launch: JevLaunchView,
+  run: JevResource<JevRunState>,
+  runAgeSeconds: number | null,
+): JevShownRun | null {
+  const activeRunId = launch.session.data?.active_run_id ?? null;
+  if (!launch.following || activeRunId === null || run.data?.run_id !== activeRunId) {
+    return null;
+  }
+  return { status: run.data.status, stale: run.data.stale, ageSeconds: runAgeSeconds };
+}
+
+interface LaunchPanelProps {
+  launch: JevLaunchView;
+  run: JevResource<JevRunState>;
+  runAgeSeconds: number | null;
+  selectedRunId: string | null;
+  onResume: () => void;
+}
+
+/** The followed launch session: its phase, game position, and the following control. */
+function LaunchPanel({ launch, run, runAgeSeconds, selectedRunId, onResume }: LaunchPanelProps) {
+  const session = launch.session.data;
+  const activeRunId = session?.active_run_id ?? null;
+  // Only the session's own run says anything about the launch; never another run.
+  const state =
+    activeRunId !== null && run.data !== null && run.data.run_id === activeRunId
+      ? run.data
+      : null;
+  const phase = launchPhase(launchFacts(launch), shownLaunchRun(launch, run, runAgeSeconds));
+  // While paused the page shows no live verdict, but a launcher that stopped writing
+  // the session is still worth saying (it does not depend on what is on screen).
+  const pausedButSilent =
+    session !== null &&
+    !launch.following &&
+    launchLiveness(session, launch.sessionAgeSeconds, null) === "launcher_silent";
+  // The launcher's last message ("starting SC2") is out of date once the game runs,
+  // and a failure or stop already quotes it in the detail line.
+  const showMessage =
+    session !== null &&
+    session.message !== "" &&
+    phase !== "failed" &&
+    phase !== "stopped" &&
+    !(session.state === "running" && (phase === "live" || phase === "finished"));
+  const decision =
+    state?.recent_events.findLast(
+      (event) => event.node_id === "army" && event.reason === ARMY_DECISION_REASON,
+    ) ?? null;
+  const choice = decision === null ? null : factString(decision.facts, "choice");
+  return (
+    <section
+      className={`jev-launch jev-launch-${phase}`}
+      aria-label="Launch session"
+      data-testid="jev-launch"
+    >
+      <div className="jev-launch-title">
+        <span className="jev-badge jev-launch-phase" data-testid="jev-launch-phase">
+          {LAUNCH_PHASE_LABELS[phase]}
+        </span>
+        {session !== null && (
+          <span className="jev-badge" data-testid="jev-launch-game">
+            Game {session.case_index + 1} of {session.case_count}
+          </span>
+        )}
+        {activeRunId !== null && (
+          <span className="jev-note">
+            run <code data-testid="jev-launch-run">{activeRunId}</code>
+          </span>
+        )}
+      </div>
+      <p className="jev-launch-detail" data-testid="jev-launch-detail">
+        {launchDetail(phase, launch, state, choice, runAgeSeconds)}
+      </p>
+      {showMessage && (
+        <p className="jev-note" data-testid="jev-launch-message">
+          Launcher: {session.message}
+        </p>
+      )}
+      {launch.session.error !== null && (
+        <p role="alert" className="jev-notice jev-notice-error" data-testid="jev-launch-error">
+          {launch.gaveUp
+            ? `Stopped following launch ${launch.sessionId}`
+            : `Could not refresh launch ${launch.sessionId} (attempt ${launch.failures}, retrying)`}
+          : {describeError(launch.session.error)}. No other run is shown in its place.
+        </p>
+      )}
+      {launch.ackError !== null && session?.state === "starting" && (
+        <p role="alert" className="jev-notice jev-notice-error" data-testid="jev-launch-ack-error">
+          Could not tell the launcher this run is shown: {describeError(launch.ackError)}{" "}
+          (retrying).
+        </p>
+      )}
+      {!launch.following && (
+        <div className="jev-launch-paused" data-testid="jev-launch-paused">
+          <p className="jev-notice jev-notice-warning">
+            Following paused: you are viewing{" "}
+            {selectedRunId === null ? "no run" : <code>{selectedRunId.slice(0, 8)}</code>}, not the
+            launch's current game.
+            {session?.state === "starting" &&
+              " The launcher is waiting for this page to show its new game before it starts SC2."}
+          </p>
+          {pausedButSilent && (
+            <p className="jev-notice jev-notice-error" data-testid="jev-launch-paused-silent">
+              The launcher has not updated this launch for{" "}
+              {Math.round(launch.sessionAgeSeconds ?? 0)} s; it may have been closed.
+            </p>
+          )}
+          <button type="button" data-testid="jev-resume-live" onClick={onResume}>
+            Resume live
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+const SESSION_STATE_TEXT: Record<JevLaunchState, string> = {
+  preparing: "being prepared",
+  starting: "waiting for its page",
+  running: "in progress",
+  between_games: "between games",
+  finished: "finished",
+  failed: "failed",
+  stopped: "stopped",
+};
+
+function launchDetail(
+  phase: JevLaunchPhase,
+  launch: JevLaunchView,
+  state: JevRunState | null,
+  choice: string | null,
+  runAgeSeconds: number | null,
+): string {
+  const session = launch.session.data;
+  const game =
+    session === null ? "the game" : `game ${session.case_index + 1} of ${session.case_count}`;
+  switch (phase) {
+    case "preparing":
+      return session?.active_run_id
+        ? `Preparing ${game}: showing its recorded run before SC2 starts.`
+        : `Preparing ${game}: waiting for the launcher to record its run.`;
+    case "waiting":
+      return `The launcher is waiting for this page to show ${game} before it starts SC2.`;
+    case "paused":
+      return `This page shows another run; the launch is at ${game} (${
+        session === null ? "unknown" : SESSION_STATE_TEXT[session.state]
+      }).`;
+    case "starting":
+      return `Starting ${game}: the page shows this run; waiting for SC2 to report its first observation.`;
+    case "live": {
+      if (state === null) return `Live: ${game}.`;
+      const { metadata } = state;
+      return [
+        `Live: game time ${formatSeconds(state.game_seconds)}`,
+        `vs ${metadata.opponent_race} (difficulty ${metadata.difficulty}) on ${metadata.map}`,
+        `${state.active_nodes.length} active decision node(s)`,
+        `army intent ${choice ?? "none yet"}`,
+      ].join(" · ");
+    }
+    case "stale":
+      return state?.status === "starting"
+        ? `SC2 has not reported a first game observation ${Math.round(
+            runAgeSeconds ?? 0,
+          )} s after the run was recorded; the game process may have failed to start it.`
+        : "The game process stopped writing heartbeats; showing its last recorded state.";
+    case "silent":
+      return `The launcher has not updated this launch for ${Math.round(
+        launch.sessionAgeSeconds ?? 0,
+      )} s at ${game}; it may have been closed or have crashed. Showing the last recorded state; nothing here is live.`;
+    case "unavailable":
+      return launch.session.error === null
+        ? `This page stopped following launch ${launch.sessionId}.`
+        : `This launch cannot be followed (${describeError(launch.session.error)}). No run is shown in its place.`;
+    case "finished": {
+      const result = state === null ? null : (state.result ?? state.status);
+      const next =
+        session?.state === "between_games" ? " The next game is being prepared in this tab." : "";
+      return `Finished ${game}${result === null ? "" : `: ${result}`}.${next}`;
+    }
+    case "failed":
+      return `Failed: ${session?.message || "the launcher stopped"}.`;
+    case "stopped":
+      return `Stopped: ${session?.message || "the launch was stopped"}.`;
+  }
 }
 
 interface RunPickerProps {
@@ -199,6 +486,11 @@ function RunPicker({ runs, selectedRunId, onSelect }: RunPickerProps) {
             value={selectedRunId ?? ""}
             onChange={(event) => onSelect(event.target.value)}
           >
+            {selectedRunId === null && (
+              <option value="" disabled>
+                No run selected
+              </option>
+            )}
             {selectedRunId !== null && !listed && (
               <option value={selectedRunId}>{selectedRunId} (no longer listed)</option>
             )}
@@ -231,10 +523,14 @@ interface RunViewProps {
   runId: string;
   run: JevResource<JevRunState>;
   policy: JevResource<JevPolicy>;
+  /** A launch is starting this run: no heartbeat yet is expected, not stale. */
+  launchStarting?: boolean;
+  /** Told once this run's state and its matching archived policy are on screen. */
+  onRendered?: (runId: string, policyHash: string) => void;
 }
 
 /** One run's view; keyed by run ID, so switching runs discards all of its state. */
-function RunView({ runId, run, policy }: RunViewProps) {
+function RunView({ runId, run, policy, launchStarting = false, onRendered }: RunViewProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const state = run.data;
   const events = state?.recent_events ?? NO_EVENTS;
@@ -242,6 +538,18 @@ function RunView({ runId, run, policy }: RunViewProps) {
     () => (state === null ? new Map<string, JevNodeRuntime>() : nodeRuntimes(state)),
     [state],
   );
+  // The graph below is drawn exactly when this holds (same run, matching archive).
+  const renderedHash =
+    state !== null &&
+    state.run_id === runId &&
+    policy.data !== null &&
+    policy.data.policy_hash === state.policy_hash
+      ? state.policy_hash
+      : null;
+  useEffect(() => {
+    // Effects run after the commit: the summary and graph for this run are in the DOM.
+    if (renderedHash !== null) onRendered?.(runId, renderedHash);
+  }, [runId, renderedHash, onRendered]);
 
   if (state === null) {
     if (run.error === null) return <p role="status">Loading run {runId}…</p>;
@@ -251,7 +559,9 @@ function RunView({ runId, run, policy }: RunViewProps) {
       </p>
     );
   }
-  const live = !isTerminalRunStatus(state.status) && !state.stale && run.error === null;
+  // A run still starting under a launch has no game observations yet: never live.
+  const live =
+    !isTerminalRunStatus(state.status) && !state.stale && run.error === null && !launchStarting;
   const archived = policy.data;
   const selectedNode =
     archived?.nodes.find((node) => node.id === selectedNodeId) ?? null;
@@ -297,7 +607,7 @@ function RunView({ runId, run, policy }: RunViewProps) {
 
   return (
     <>
-      <RunSummary state={state} live={live} run={run} />
+      <RunSummary state={state} live={live} run={run} launchStarting={launchStarting} />
       <ArmyDecisionPanel events={events} live={live} />
       {graph}
       <RecentTrace events={events} />
@@ -445,11 +755,14 @@ interface RunSummaryProps {
   state: JevRunState;
   live: boolean;
   run: JevResource<JevRunState>;
+  launchStarting: boolean;
 }
 
-function RunSummary({ state, live, run }: RunSummaryProps) {
+function RunSummary({ state, live, run, launchStarting }: RunSummaryProps) {
   const { metadata, trace } = state;
   const waitingShown = state.waiting_nodes.slice(0, WAITING_NAMED);
+  // Paused at launch (or SC2 still launching) is not a stopped producer.
+  const stale = state.stale && !launchStarting;
   return (
     <section className="jev-run-summary" aria-label="Run summary" data-testid="jev-run-summary">
       <div className="jev-badges">
@@ -461,7 +774,7 @@ function RunSummary({ state, live, run }: RunSummaryProps) {
             Live
           </span>
         )}
-        {state.stale && (
+        {stale && (
           <span className="jev-badge jev-badge-stale" data-testid="jev-stale-badge">
             Stale
           </span>
@@ -477,10 +790,16 @@ function RunSummary({ state, live, run }: RunSummaryProps) {
           </span>
         )}
       </div>
-      {state.stale && (
+      {stale && (
         <p role="status" className="jev-notice jev-notice-warning">
           Stale: this run's game process stopped writing heartbeats without recording a final
           state. Showing its last recorded state; nothing here is live.
+        </p>
+      )}
+      {launchStarting && (
+        <p role="status" className="jev-notice jev-notice-waiting" data-testid="jev-launch-starting">
+          Starting: this run is recorded and its game is being launched; it has no live
+          observations yet.
         </p>
       )}
       {run.error !== null && (

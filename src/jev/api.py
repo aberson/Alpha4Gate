@@ -1,4 +1,4 @@
-"""Read-only Jev run-evidence API (plan section 5, "Read-only API").
+"""Jev run-evidence API (plan section 5, "Read-only API") plus the D7 launch receipt.
 
 :func:`create_router` serves one run root (plan D5) under ``/api/jev``; the
 dashboard app (``bots/v13/api.py``) mounts it on ``<repository>/data/jev/runs``:
@@ -23,6 +23,24 @@ dashboard app (``bots/v13/api.py``) mounts it on ``<repository>/data/jev/runs``:
 * ``GET /api/jev/runs/{run_id}/policy`` -- the archived policy document plus its
   ``policy_hash`` (recomputed from the archive and checked against the run's).
 
+Dashboard-first launch (plan D7, :mod:`jev.launch`), separate from run evidence and
+served from the run root's sibling ``launches`` folder (``launch_root_for``):
+
+* ``GET /api/jev/launches/{session_id}`` -- the launch session (``session.json``).
+* ``POST /api/jev/launches/{session_id}/ready`` -- body ``{run_id, policy_hash}``: the
+  dashboard page acknowledges it rendered the session's exact starting run and that
+  run's archived policy; answers ``{schema_version, ready: true, session_id, run_id}``
+  and writes the session's ``ready.json``. A readiness receipt only: it launches
+  nothing, writes nothing else and controls no game. Only a loopback client on a
+  loopback Host, from an allowed dashboard Origin (``launch_origins``; by default
+  ``http://localhost:3000`` and ``http://127.0.0.1:3000``, which the Vite proxy
+  forwards unchanged) is accepted: a missing or other Origin is refused. CORS is not
+  broadened.
+
+Launch errors use the same envelope with their own codes (never a run error code):
+403 ``launch_forbidden``, 422 ``invalid_launch_request``, 404 ``launch_not_found``,
+409 ``launch_not_ready``, 503 ``corrupt_launch``.
+
 A run's detail reads its metadata and whole state (at most 1 KiB + 8 MiB); its
 policy, the metadata and the archive (at most 1 KiB + 1 MiB).
 
@@ -33,17 +51,19 @@ else, a differently-spelled name, or a directory without metadata is not one),
 503 ``corrupt_run`` for a malformed stored record. Messages are fixed text: they
 never echo the request or file content. Nothing is written, and no JSONL trace is
 ever served. Every read goes through :mod:`jev.telemetry`'s validation boundary.
+The one write is the launch readiness receipt above.
 """
 
 from __future__ import annotations
 
 import itertools
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from pathlib import Path
 from typing import Final
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 from jev.contracts import (
@@ -56,6 +76,17 @@ from jev.contracts import (
     RunState,
     is_valid_run_id,
     safe_repr,
+)
+from jev.launch import (
+    DEFAULT_LAUNCH_ORIGINS,
+    MAX_READY_BODY_BYTES,
+    LaunchError,
+    accept_ready,
+    check_launch_client,
+    launch_root_for,
+    read_session,
+    resolve_child_dir,
+    resolve_root,
 )
 from jev.telemetry import (
     MAX_METADATA_BYTES,
@@ -114,26 +145,17 @@ def _corrupt(exc: CorruptRun) -> _Rejected:
 
 
 def _resolved_root(run_root: Path) -> Path | None:
-    try:
-        root = run_root.resolve(strict=True)
-    except (OSError, RuntimeError):  # missing, unreadable, or a link loop
-        return None
-    return root if root.is_dir() else None
+    return resolve_root(run_root)  # missing, unreadable, a link loop or a file: None
 
 
 def _run_dir(root: Path | None, run_id: str) -> Path:
     """The run directory for a path ID: validated, then resolved strictly inside ``root``."""
     if not is_valid_run_id(run_id):
         raise _Rejected(422, "invalid_run_id", _INVALID_RUN_ID)
-    if root is None:
-        raise _Rejected(404, "run_not_found", _RUN_NOT_FOUND)
-    try:
-        run_dir = (root / run_id).resolve(strict=True)
-    except (OSError, RuntimeError):
-        raise _Rejected(404, "run_not_found", _RUN_NOT_FOUND) from None
     # A link resolving elsewhere, or a name the filesystem matched case-insensitively,
-    # is not this run's directory.
-    if run_dir.parent != root or run_dir.name != run_id or not run_dir.is_dir():
+    # is not this run's directory (the same check guards launch sessions).
+    run_dir = resolve_child_dir(root, run_id)
+    if run_dir is None:
         raise _Rejected(404, "run_not_found", _RUN_NOT_FOUND)
     return run_dir
 
@@ -190,15 +212,39 @@ def _list_runs(run_root: Path) -> dict[str, JsonValue]:
     }
 
 
-def create_router(run_root: Path, *, wall_time: Callable[[], float] = time.time) -> APIRouter:
-    """The read-only ``/api/jev`` router over ``run_root`` (resolved at each request).
+def _launch_rejected(exc: LaunchError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status, content=exc.document())
+
+
+async def _bounded_body(request: Request) -> bytes:
+    """The request body, refused once it grows past :data:`MAX_READY_BODY_BYTES`."""
+    received = bytearray()
+    async for chunk in request.stream():
+        received.extend(chunk)
+        if len(received) > MAX_READY_BODY_BYTES:
+            raise LaunchError("invalid_launch_request", "the request body is too large")
+    return bytes(received)
+
+
+def create_router(
+    run_root: Path,
+    *,
+    wall_time: Callable[[], float] = time.time,
+    launch_origins: Collection[str] = DEFAULT_LAUNCH_ORIGINS,
+) -> APIRouter:
+    """The ``/api/jev`` router over ``run_root`` (resolved at each request).
 
     ``run_root`` must be absolute (never relative to a working directory);
-    ``wall_time`` (POSIX seconds) is the clock ``stale`` is computed against.
-    Raises :class:`ValueError` for a relative root.
+    ``wall_time`` (POSIX seconds) is the clock ``stale`` is computed against;
+    ``launch_origins`` are the browser origins allowed to acknowledge launch
+    readiness (default: the dashboard on port 3000). Launch sessions are read from
+    the run root's sibling ``launches`` folder. Raises :class:`ValueError` for a
+    relative root.
     """
     if not isinstance(run_root, Path) or not run_root.is_absolute():
         raise ValueError(f"run_root must be an absolute Path, got {safe_repr(str(run_root))}")
+    origins = frozenset(launch_origins)
+    launch_root = launch_root_for(run_root)
     router = APIRouter(prefix=API_PREFIX)
 
     @router.get("/runs", response_model=None)
@@ -236,5 +282,33 @@ def create_router(run_root: Path, *, wall_time: Callable[[], float] = time.time)
         document = policy.to_document()
         document["policy_hash"] = metadata.policy_hash
         return document
+
+    @router.get("/launches/{session_id}", response_model=None)
+    def get_launch(session_id: str) -> dict[str, JsonValue] | JSONResponse:
+        try:
+            return read_session(launch_root, session_id).to_dict()
+        except LaunchError as exc:
+            return _launch_rejected(exc)
+
+    @router.post("/launches/{session_id}/ready", response_model=None)
+    async def acknowledge_launch(
+        session_id: str, request: Request
+    ) -> dict[str, JsonValue] | JSONResponse:
+        try:
+            check_launch_client(
+                None if request.client is None else request.client.host,
+                request.headers.get("host"),
+                request.headers.get("origin"),
+                origins,
+            )
+            body = await _bounded_body(request)
+            # Record reads (with their sharing-violation retries), the archive re-hash
+            # and the atomic write block: they run in the threadpool, as the GET routes
+            # do, never on the event loop that serves every other request.
+            return await run_in_threadpool(
+                accept_ready, launch_root, run_root, session_id, body, wall_time=wall_time
+            )
+        except LaunchError as exc:
+            return _launch_rejected(exc)
 
     return router

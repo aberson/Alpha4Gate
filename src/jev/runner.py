@@ -8,7 +8,11 @@ packaged policy loader. Defaults match the plan's launch command::
 
 plus ``--realtime``, ``--run-root`` (an absolute directory for run evidence),
 and ``--validate-policy`` (with optional ``--policy-file``) to validate and exit
-without SC2.
+without SC2. ``--launch-session <session_id>`` (plan D7, used by
+``scripts/launch-jev.ps1`` and the benchmark) joins a dashboard-first launch
+session: once the run is recorded it is published to the session, and SC2 starts
+only after the dashboard page acknowledged rendering it (:mod:`jev.launch`).
+Without it nothing changes: no browser, no wait.
 
 Every match records its evidence (plan D5, :mod:`jev.telemetry`) in a new
 directory ``<run root>/<run_id>/`` -- the run root defaults to
@@ -96,6 +100,14 @@ from jev.contracts import (
     safe_repr,
 )
 from jev.decision import ArmyDecisions, DecisionConfig, TypesafeProvider
+from jev.launch import (
+    LAUNCH_SESSION_FLAG,
+    LaunchError,
+    LaunchSessionWriter,
+    is_valid_session_id,
+    launch_root_for,
+    ready_hook,
+)
 from jev.policy import PolicyBundle, PolicyError, describe_bundle
 from jev.telemetry import (
     EvidenceFiles,
@@ -143,6 +155,7 @@ __all__ = [
     "absolute_path",
     "build_parser",
     "exception_error",
+    "launch_hook",
     "main",
     "make_streams_encoding_safe",
     "match_options_record",
@@ -426,6 +439,7 @@ def run_match(
     run_id: str | None = None,
     clock: Callable[[], float] = time.monotonic,
     evidence_files: EvidenceFiles | None = None,
+    on_recorded: Callable[[str], None] | None = None,
 ) -> MatchOutcome:
     """Prepare and play one match, recording its evidence; never raises for match-level failures.
 
@@ -443,6 +457,14 @@ def run_match(
     ``run_root`` or an invalid ``run_id``; an exception that escapes the match
     itself (e.g. Ctrl+C during the preflight) is re-raised once the run's
     terminal state is written.
+
+    ``on_recorded`` (plan D7, the dashboard-first launch hook) is called with the
+    run ID once the run directory holds its archived policy, ``starting`` state and
+    metadata, before anything can launch SC2; returning lets the match start. If it
+    raises, SC2 is never started: the run is finalized ``stopped``, and an
+    ``Exception`` comes back as a ``stopped`` outcome (exit code
+    :data:`EXIT_FAILURE`) naming the launch failure, while a KeyboardInterrupt (any
+    other ``BaseException``) is re-raised. None (the default) changes nothing.
     """
     launcher = Sc2Launcher() if launcher is None else launcher
     run_id = uuid.uuid4().hex if run_id is None else run_id
@@ -464,6 +486,19 @@ def run_match(
         recorder.start(bundle.policy_bytes)
     except PersistenceFailed as exc:  # no evidence, no match: nothing is launched
         return _not_played(run_id, "persistence_failed", exc.message)
+    except KeyboardInterrupt:  # Ctrl+C while recording: a recorded run still ends stopped
+        if recorder.live:
+            with contextlib.suppress(PersistenceFailed):
+                recorder.finish(None, status="stopped")
+        raise
+    if on_recorded is not None:
+        try:
+            on_recorded(run_id)  # e.g. the launch barrier: blocks until SC2 may start
+        except BaseException as exc:
+            cancelled = _cancel_before_play(files, recorder, options, bundle, exc)
+            if not isinstance(exc, Exception):
+                raise
+            return cancelled
     try:
         outcome, controller = _play(options, bundle, launcher, recorder, clock)
     except BaseException as exc:  # an interrupt or a defect: the run still ends on disk
@@ -499,6 +534,54 @@ class _Ending:
     game_seconds: float | None = None
     commands_accepted: int | None = None
     commands_rejected: int | None = None
+
+
+def _cancel_before_play(
+    files: EvidenceFiles,
+    recorder: RunRecorder,
+    options: MatchOptions,
+    bundle: PolicyBundle,
+    exc: BaseException,
+) -> MatchOutcome:
+    """The ``on_recorded`` hook refused the start: the run ends ``stopped``, unplayed.
+
+    Best effort like :func:`_record_escape`: if even the terminal state cannot be
+    written, the run reads as stale and the caller still learns why.
+    """
+    run_id = recorder.run_dir.name
+    detail = getattr(exc, "message", None)
+    if not isinstance(detail, str):
+        detail = safe_exception_text(exc, MAX_MESSAGE_CHARS)
+    message = render_text(f"stopped before SC2 started: {detail}")[:MAX_MESSAGE_CHARS]
+    with contextlib.suppress(PersistenceFailed):
+        recorder.finish(None, status="stopped")
+    # An escaping interrupt has no exit code of its own here (as in _record_escape).
+    exit_code = EXIT_FAILURE if isinstance(exc, Exception) else None
+    ending = _Ending("stopped", None, None, exit_code=exit_code, game_seconds=0.0)
+    _write_diagnostics(files, recorder, options, bundle, None, ending)
+    return MatchOutcome(
+        run_id=run_id,
+        status="stopped",
+        result=None,
+        error=None,
+        message=message,
+        game_seconds=0.0,
+        commands_accepted=0,
+        commands_rejected=0,
+        exit_code=EXIT_FAILURE,
+    )
+
+
+def launch_hook(run_root: Path, session_id: str, policy_hash: str) -> Callable[[str], None]:
+    """THE ``--launch-session`` hook: join the open launch session beside ``run_root``.
+
+    The returned :func:`run_match` ``on_recorded`` hook publishes the recorded run to
+    the session and returns only after the dashboard acknowledged rendering it (plan
+    D7, :func:`jev.launch.ready_hook`). Raises :class:`jev.launch.LaunchError` when
+    the session is missing, corrupt or already ended.
+    """
+    writer = LaunchSessionWriter.adopt(launch_root_for(run_root), session_id)
+    return ready_hook(writer, policy_hash)
 
 
 def match_options_record(options: MatchOptions) -> dict[str, JsonValue]:
@@ -850,6 +933,14 @@ def _map_name(text: str) -> str:
     return text
 
 
+def _launch_session_id(text: str) -> str:
+    if not is_valid_session_id(text):
+        raise argparse.ArgumentTypeError(
+            f"expected a lowercase UUID4 hex launch session id, got {safe_repr(text)}"
+        )
+    return text
+
+
 def build_parser(prog: str) -> argparse.ArgumentParser:
     parser = TerminalSafeArgumentParser(
         prog=prog,
@@ -910,6 +1001,14 @@ def build_parser(prog: str) -> argparse.ArgumentParser:
         "(default: <repository>/data/jev/runs)",
     )
     parser.add_argument(
+        LAUNCH_SESSION_FLAG,
+        type=_launch_session_id,
+        default=None,
+        metavar="SESSION_ID",
+        help="dashboard-first launch (plan D7): publish the recorded run to this launch "
+        "session and start SC2 only after the dashboard rendered it",
+    )
+    parser.add_argument(
         "--validate-policy",
         action="store_true",
         help="validate the packaged policy and manifest, print the policy hash, and exit",
@@ -960,6 +1059,8 @@ def main(
         parser.error("--policy-file requires --validate-policy")
     if args.run_root is not None and args.validate_policy:
         parser.error("--run-root cannot be used with --validate-policy (nothing is recorded)")
+    if args.launch_session is not None and args.validate_policy:
+        parser.error("--launch-session cannot be used with --validate-policy (nothing is played)")
     try:
         bundle = load_policy(args.policy_file)
     except PolicyError as exc:
@@ -985,6 +1086,31 @@ def main(
         decision_max_requests=args.decision_max_requests,
     )
     run_root = default_run_root() if args.run_root is None else args.run_root
-    outcome = run_match(options, bundle, run_root=run_root, launcher=launcher)
+    hook = None
+    if args.launch_session is not None:
+        try:
+            hook = launch_hook(run_root, args.launch_session, bundle.policy_hash)
+        except LaunchError as exc:  # no session to follow: nothing is recorded or launched
+            print(render_text(f"jev: {exc.code}: {exc.message}"), file=sys.stderr)
+            return EXIT_FAILURE
+    try:
+        outcome = run_match(options, bundle, run_root=run_root, launcher=launcher, on_recorded=hook)
+    except KeyboardInterrupt:
+        if args.launch_session is not None:  # the run is already stopped on disk
+            _stop_launch_session(run_root, args.launch_session)
+        raise
     _report(outcome)
     return outcome.exit_code
+
+
+def _stop_launch_session(run_root: Path, session_id: str) -> None:
+    """Ctrl+C ended this process: end its open launch session ``stopped`` (best effort).
+
+    The barrier already does this while it waits; this covers the rest of the child's
+    part (before the run is recorded, or after SC2 was released). An ended session is
+    kept as it is.
+    """
+    with contextlib.suppress(Exception):
+        LaunchSessionWriter.adopt(launch_root_for(run_root), session_id).end(
+            "stopped", "stopped with Ctrl+C"
+        )

@@ -15,7 +15,14 @@ Usage, from the repository root (PowerShell)::
 
 ``--dry-run`` resolves and prints the exact entrypoint, policy hash, source
 fingerprint, model and options of every case; it makes no service call, launches
-nothing and writes nothing.
+nothing, opens no dashboard and writes nothing.
+
+A real ``--panel`` or ``--resume`` run is dashboard-first (plan D7, Step 224): it
+starts or reuses the dashboard, opens ``http://localhost:3000/?tab=jev&launch=<id>``
+once, and each game starts only after that page rendered its exact run; the same
+tab follows every case. A dashboard that cannot be used stops the run
+(``dashboard_unavailable``); it never falls back to headless. ``--no-dashboard``
+is the explicit headless mode for automation.
 """
 
 from __future__ import annotations

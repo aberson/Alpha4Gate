@@ -65,15 +65,26 @@ count as wins. The first infrastructure failure, authentication failure,
 provenance mismatch, model drift, corrupt evidence, interruption or exhausted
 budget stops the batch. Resuming skips complete cases and never overwrites them;
 a case found ``running`` (its benchmark process ended) is labeled ``interrupted``
-first, and interrupted cases are replayed only with ``--retry-interrupted``.
+first, and interrupted cases -- and ``launch_failed`` ones, which never started SC2
+-- are replayed only with ``--retry-interrupted`` (:data:`RETRYABLE_REASONS`).
 
 **Calibration.** ``--calibrate-run`` scores an existing run archive against an
 explicit expectation with the same logic; archives older than the diagnostic
 summary are scored from their complete trace (``legacy_trace``).
 
-Step 224 adds dashboard-first launch around :meth:`ChildLauncher.run` (see
-:class:`CaseObserver`); until then the official panels resolve and dry-run, but
-refuse to finalize the baseline or play (:data:`OFFICIAL_PANEL_PLAY_ENABLED`).
+**Dashboard first** (plan D7, Step 224). A real invocation opens the dashboard
+before anything is probed, captured or played: :class:`DashboardObserver` starts or
+reuses healthy servers, creates ONE launch session for the invocation
+(:mod:`jev.launch`), opens ``http://localhost:3000/?tab=jev&launch=<session_id>``
+once, and gives every case's child ``--launch-session <session_id>``. Each child
+publishes its recorded run to the session and starts SC2 only after the page
+rendered that exact run; the same tab follows the next case. A dashboard that is
+not healthy, serves another data root, or never acknowledges a run stops the batch
+(``dashboard_unavailable`` before any case, ``launch_failed`` for a case); it never
+falls back to headless. ``--no-dashboard`` is the explicit headless mode;
+``--dry-run`` opens nothing. The frozen v1 baseline is finalized only by a real
+``--panel baseline`` preflight, so it carries the launch hook
+(:data:`OFFICIAL_PANEL_PLAY_ENABLED`).
 """
 
 from __future__ import annotations
@@ -120,6 +131,14 @@ from jev.decision import (
     DecisionError,
     DecisionProvider,
     TypesafeProvider,
+)
+from jev.launch import (
+    DASHBOARD_URL,
+    LAUNCH_SESSION_FLAG,
+    RUN_READY_SECONDS,
+    DashboardLaunch,
+    DashboardUnavailable,
+    LaunchState,
 )
 from jev.policy import PolicyBundle, load_policy_bundle, parse_json_document
 from jev.runner import (
@@ -186,6 +205,8 @@ __all__ = [
     "ChildLaunch",
     "ChildLauncher",
     "CorruptRecord",
+    "DashboardFactory",
+    "DashboardObserver",
     "EXPECTED_RETURNED_MODEL",
     "Evidence",
     "Finding",
@@ -218,6 +239,7 @@ __all__ = [
     "REASON_PRIORITY",
     "RESULTS_FILE",
     "RESULTS_STATUSES",
+    "RETRYABLE_REASONS",
     "RUNTIME_PACKAGE",
     "Reason",
     "ResolvedSource",
@@ -243,6 +265,7 @@ __all__ = [
     "capture_source",
     "child_argv",
     "child_environment",
+    "child_hard_wall_seconds",
     "default_benchmark_root",
     "dry_run_plan",
     "finalize_baseline",
@@ -293,10 +316,10 @@ STOP_GRACE_SECONDS: Final = 90.0
 _WAIT_SLICE_SECONDS: Final = 0.5
 #: The availability probe's total deadline (one tiny request).
 PROBE_TIMEOUT_SECONDS: Final = 10.0
-#: Plan D1/D7: the frozen v1 baseline is finalized only after Step 224 adds the
-#: dashboard-first launch hook, so the frozen source carries it. Until then the
-#: official panels resolve and dry-run but refuse to finalize or play.
-OFFICIAL_PANEL_PLAY_ENABLED: Final = False
+#: Plan D1/D7: the frozen v1 baseline is finalized only once the dashboard-first
+#: launch hook exists (Step 224), so the frozen source carries it. A build without
+#: it (False) refuses to finalize or play an official panel (``launch_integration_pending``).
+OFFICIAL_PANEL_PLAY_ENABLED: Final = True
 
 MAP: Final = "Simple64"
 #: The frozen comparison baseline (plan D1); every other version is a candidate.
@@ -319,6 +342,7 @@ CASE_RESULTS: Final[tuple[CaseResult, ...]] = get_args(CaseResult)
 Reason = Literal[
     "interrupted",
     "infrastructure_failure",
+    "launch_failed",
     "authentication_failed",
     "corrupt_evidence",
     "provenance_mismatch",
@@ -334,12 +358,17 @@ REASON_PRIORITY: Final[tuple[Reason, ...]] = get_args(Reason)
 STOPPING_REASONS: Final[frozenset[str]] = frozenset(REASON_PRIORITY) - {
     "no_accepted_hosted_decision"
 }
+#: Invalid cases a resume replays with ``--retry-interrupted`` (they stay labeled until
+#: then): an interrupted case, and one whose dashboard never acknowledged its run (SC2
+#: was never started and nothing was spent).
+RETRYABLE_REASONS: Final[frozenset[str]] = frozenset({"interrupted", "launch_failed"})
 #: Codes a :class:`BenchmarkError` carries besides the case :data:`Reason` codes.
 BenchmarkErrorCode = (
     Reason
     | Literal[
         "usage",
         "lock_held",
+        "dashboard_unavailable",
         "launch_integration_pending",
         "version_not_packaged",
         "candidate_not_frozen",
@@ -2043,15 +2072,73 @@ class ChildLauncher(Protocol):
 
 
 class CaseObserver(Protocol):
-    """The launch seam (Step 224 dashboard-first launch plugs in here).
+    """The launch seam (:class:`DashboardObserver` is the dashboard-first launch).
 
     ``before_case`` runs before a case's child starts and may append arguments to
-    its command line; ``after_case`` runs once the case is recorded.
+    its command line; ``launch_failure`` runs once the child ended and names why its
+    launch never let SC2 start (None if it did, or never got that far);
+    ``after_case`` runs once the case is recorded; ``finish`` once the invocation
+    ends (``outcome`` None when it ended with an error before any outcome).
     """
 
     def before_case(self, case: CaseSpec, index: int, count: int) -> tuple[str, ...]: ...
 
+    def launch_failure(self, case: CaseSpec, index: int, count: int) -> str | None: ...
+
     def after_case(self, record: CaseRecord, index: int, count: int) -> None: ...
+
+    def finish(
+        self, outcome: BatchOutcome | None, detail: str | None, *, interrupted: bool = False
+    ) -> None: ...
+
+
+class DashboardObserver:
+    """One invocation's dashboard-first launch (plan D7) as a :class:`CaseObserver`.
+
+    Every case's child joins the same launch session (``--launch-session``), so the
+    one dashboard tab follows each exact run; the session records each case's
+    position and, at the end, how the invocation ended.
+    """
+
+    def __init__(self, launch: DashboardLaunch) -> None:
+        self.launch = launch
+
+    @property
+    def session_id(self) -> str:
+        return self.launch.session_id
+
+    def before_case(self, case: CaseSpec, index: int, count: int) -> tuple[str, ...]:
+        try:
+            self.launch.before_case(index, count)
+        except (OSError, ValueError) as exc:  # the case stays pending; nothing launched
+            raise BenchmarkError(
+                "dashboard_unavailable",
+                f"the launch session could not be updated: {safe_exception_text(exc)}",
+            ) from exc
+        return self.launch.child_arguments()
+
+    def launch_failure(self, case: CaseSpec, index: int, count: int) -> str | None:
+        return self.launch.launch_failure()
+
+    def after_case(self, record: CaseRecord, index: int, count: int) -> None:
+        shown = record.result if record.status == "complete" else record.reason
+        summary = f"game {index + 1} of {count} ({record.spec.case_id}): {record.status} {shown}"
+        self.launch.after_case(index, count, summary)
+
+    def finish(
+        self, outcome: BatchOutcome | None, detail: str | None, *, interrupted: bool = False
+    ) -> None:
+        if outcome is None:  # no outcome: Ctrl+C is a stop, anything else a failure
+            state: LaunchState = "stopped" if interrupted else "failed"
+            self.launch.end(state, detail or "the benchmark stopped before playing")
+            return
+        message = f"batch {outcome.status}" + (f": {outcome.detail}" if outcome.detail else "")
+        if outcome.status in ("complete", "incomplete"):
+            self.launch.end("finished", message)
+        elif outcome.status == "stopped":
+            self.launch.end("failed", message)
+        else:  # interrupted, or the budget ran out (resume later)
+            self.launch.end("stopped", message)
 
 
 def terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
@@ -2164,6 +2251,15 @@ class SubprocessLauncher:
                     interrupted=True,
                     tree_terminated=True,
                 )
+
+
+def child_hard_wall_seconds(limits: BenchmarkLimits, *, dashboard: bool) -> float:
+    """THE bound on one case's whole child process tree (the real run and the dry run).
+
+    The match bound, plus the rendered-ready barrier's deadline for a dashboard-first
+    child: waiting for the page is not play.
+    """
+    return float(limits.match_wall_seconds) + (RUN_READY_SECONDS if dashboard else 0.0)
 
 
 def child_environment(
@@ -2965,8 +3061,9 @@ def run_batch(
 ) -> BatchOutcome:
     """Play the batch's remaining cases in order, persisting before and after each.
 
-    Complete cases are skipped and never overwritten; invalid ones too, except an
-    ``interrupted`` case when ``retry_interrupted``. Stops at the first stopping
+    Complete cases are skipped and never overwritten; invalid ones too, except a
+    case with a :data:`RETRYABLE_REASONS` reason when ``retry_interrupted``. Stops at
+    the first stopping
     reason (module docstring) or when the next match could exceed the invocation
     budget. ``probe_requests`` are the service requests the preflight already used
     (``probe`` its answer, recorded with the invocation). Ctrl+C labels only a case
@@ -3013,7 +3110,7 @@ def run_batch(
         if record.status == "complete":
             continue
         if record.status == "invalid" and not (
-            retry_interrupted and record.reason == "interrupted"
+            retry_interrupted and record.reason in RETRYABLE_REASONS
         ):
             continue
         refusal = budget.refusal(spec, clock())
@@ -3160,7 +3257,7 @@ def _run_case(
             hosted=spec.hosted,
             pycache_prefix=store.fresh_pycache_prefix(spec, attempt),
         ),
-        hard_wall_seconds=float(limits.match_wall_seconds),
+        hard_wall_seconds=child_hard_wall_seconds(limits, dashboard=LAUNCH_SESSION_FLAG in extra),
         stdout_path=stdout_path,
         stderr_path=stderr_path,
         on_started=started,
@@ -3174,6 +3271,29 @@ def _run_case(
     if run_id is not None:  # an interrupt while scoring keeps the run attached
         running = replace(running, run_id=run_id)
         save(running)
+    failure = None
+    if observer is not None and not exit_info.interrupted:
+        failure = observer.launch_failure(spec, index, count)
+    if failure is not None:  # the dashboard never released this case: SC2 never started
+        failed = replace(
+            running,
+            status="invalid",
+            result=None,
+            reason="launch_failed",
+            detail=render_text(failure)[:2048],
+        )
+        store.append_attempt(
+            {
+                "event": "launch_failed",
+                "case_id": spec.case_id,
+                "attempt": attempt,
+                "run_id": run_id,
+                "exit_code": exit_info.returncode,
+                "detail": failed.detail,
+            }
+        )
+        save(failed)
+        return failed
     expectation = RunExpectation(
         version=int(spec.version[1:]),
         entrypoint=spec.entrypoint,
@@ -3358,14 +3478,22 @@ def dry_run_plan(
     run_root: Path,
     benchmark_root: Path,
     python: str,
+    dashboard: bool = True,
 ) -> dict[str, JsonValue]:
-    """What a real invocation would run, exactly -- without any call, launch or write."""
+    """What a real invocation would run, exactly -- without any call, launch or write.
+
+    ``dashboard`` is the invocation's launch mode: dashboard-first (each child joins
+    the session the real run creates) or headless (``--no-dashboard``).
+    """
     baselines = benchmark_root / BASELINES_DIR
     cases = panel_cases(panel)
+    session_placeholder = "<session_id assigned at start>"
+    extra = (LAUNCH_SESSION_FLAG, session_placeholder) if dashboard else ()
     planned: list[JsonValue] = []
     for case in cases:
         source = sources[case.version]
         directory = source.snapshot.directory or baselines / source.snapshot.name
+        argv = child_argv(case, limits, PINNED_MODEL, run_root, python=python, extra=extra)
         planned.append(
             {
                 **case.to_dict(),
@@ -3373,16 +3501,24 @@ def dry_run_plan(
                 "policy_hash": source.policy_hash,
                 "source_fingerprint": source.snapshot.fingerprint,
                 "options": match_options_record(case.match_options(limits, PINNED_MODEL)),
-                "argv": list(child_argv(case, limits, PINNED_MODEL, run_root, python=python)),
+                "argv": list(argv),
                 "cwd": str(directory),
                 "env": _planned_environment(case, directory, benchmark_root),
-                "hard_wall_seconds": limits.match_wall_seconds,
+                "hard_wall_seconds": child_hard_wall_seconds(limits, dashboard=dashboard),
             }
         )
     hosted = any(case.hosted for case in cases)
     notes: list[JsonValue] = [
-        "dry run: no service call, no SC2 launch, nothing written",
+        "dry run: no service call, no SC2 launch, no dashboard, nothing written",
     ]
+    if dashboard:
+        notes.append(
+            f"a real run opens the dashboard first, at {DASHBOARD_URL}/?tab=jev&launch="
+            "<session_id>, and starts each game only after that page rendered its exact "
+            "run (--no-dashboard runs headless)"
+        )
+    else:
+        notes.append("--no-dashboard: a real run plays headless; no dashboard is opened")
     if hosted:
         notes.append(
             f"real preflight requires {KEY_ENV} in the environment (not inspected by a dry run) "
@@ -3404,6 +3540,7 @@ def dry_run_plan(
         "schema_version": SCHEMA_VERSION,
         "dry_run": True,
         "panel": panel,
+        "launch": "dashboard" if dashboard else "headless",
         "claim": PANEL_CLAIMS[panel],
         "requested_model": PINNED_MODEL,
         "expected_returned_model": EXPECTED_RETURNED_MODEL,
@@ -3482,7 +3619,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--retry-interrupted",
         action="store_true",
-        help="with --resume: replay cases labeled interrupted",
+        help="with --resume: replay cases labeled interrupted or launch_failed",
+    )
+    parser.add_argument(
+        "--no-dashboard",
+        action="store_true",
+        help="play headless: open no dashboard and start each game without waiting for it "
+        "(default: dashboard first, plan D7)",
     )
     for name, flag in _LIMIT_FLAGS.items():
         parser.add_argument(
@@ -3588,6 +3731,63 @@ class _Context:
     clock: Callable[[], float]
     wall_time: Callable[[], float]
     observer: CaseObserver | None
+    #: Opens the dashboard-first launch for a given case count (None: headless).
+    dashboard: DashboardFactory | None
+
+
+#: Opens one invocation's dashboard-first launch for its case count; raises
+#: :class:`jev.launch.DashboardUnavailable` when the dashboard cannot be used.
+DashboardFactory = Callable[[int], CaseObserver]
+
+
+def _default_dashboard(
+    source_root: Path, run_root: Path, environ: Mapping[str, str]
+) -> DashboardFactory:
+    def open_dashboard(case_count: int) -> CaseObserver:
+        launch = DashboardLaunch.open(
+            run_root,
+            case_count=case_count,
+            environ=environ,
+            source_root=source_root,
+            out=_print,
+        )
+        return DashboardObserver(launch)
+
+    return open_dashboard
+
+
+def _open_observer(context: _Context, case_count: int) -> CaseObserver | None:
+    """The invocation's observer, opened before anything is probed, captured or played.
+
+    Dashboard mode never falls back to headless: a dashboard that cannot be used
+    stops the invocation with ``dashboard_unavailable``.
+    """
+    if context.observer is not None:
+        return context.observer
+    if context.dashboard is None:
+        return None
+    try:
+        return context.dashboard(case_count)
+    except DashboardUnavailable as exc:
+        raise BenchmarkError(
+            "dashboard_unavailable",
+            f"{exc.message} (nothing was played; --no-dashboard runs headless)",
+        ) from exc
+
+
+def _close_observer(observer: CaseObserver | None, exc: BaseException) -> None:
+    """The invocation ended before any outcome: close its launch session visibly."""
+    if observer is None:
+        return
+    interrupted = isinstance(exc, KeyboardInterrupt)
+    if isinstance(exc, BenchmarkError):
+        detail = f"{exc.code}: {exc.message}"
+    elif interrupted:
+        detail = "interrupted with Ctrl+C; no game was running"
+    else:
+        detail = f"stopped: {safe_exception_text(exc)}"
+    with contextlib.suppress(Exception):
+        observer.finish(None, detail, interrupted=interrupted)
 
 
 def _print(text: str, *, error: bool = False) -> None:
@@ -3621,8 +3821,13 @@ def main(
     clock: Callable[[], float] = time.monotonic,
     wall_time: Callable[[], float] = time.time,
     observer: CaseObserver | None = None,
+    dashboard: DashboardFactory | None = None,
 ) -> int:
     """The ``scripts/benchmark_jev.py`` command; returns the exit code.
+
+    A real ``--panel``/``--resume`` run is dashboard-first unless ``--no-dashboard``:
+    ``dashboard`` (default: :class:`DashboardObserver` over the local dashboard)
+    opens it; an explicit ``observer`` replaces both (tests).
 
     Exit codes: 0 batch complete / dry run resolved / calibration valid; 1 failure,
     invalid or stopped batch; 2 usage error; 3 invocation budget exhausted (resume
@@ -3632,6 +3837,15 @@ def main(
     parser = build_parser()
     args = parser.parse_args(argv)
     root = repository_root() if source_root is None else source_root
+    run_root = (
+        (default_run_root() if source_root is None else root.joinpath(*RUN_ROOT_PARTS))
+        if args.run_root is None
+        else args.run_root
+    )
+    chosen_environ = os.environ if environ is None else environ
+    factory: DashboardFactory | None = None
+    if not args.no_dashboard:
+        factory = dashboard or _default_dashboard(root, run_root, chosen_environ)
     context = _Context(
         source_root=root,
         benchmark_root=(
@@ -3639,12 +3853,8 @@ def main(
             if args.benchmark_root is None
             else args.benchmark_root
         ),
-        run_root=(
-            (default_run_root() if source_root is None else root.joinpath(*RUN_ROOT_PARTS))
-            if args.run_root is None
-            else args.run_root
-        ),
-        environ=os.environ if environ is None else environ,
+        run_root=run_root,
+        environ=chosen_environ,
         launcher=SubprocessLauncher(clock=clock) if launcher is None else launcher,
         provider_factory=provider_factory,
         process_probe=SystemProcessProbe() if process_probe is None else process_probe,
@@ -3652,9 +3862,12 @@ def main(
         clock=clock,
         wall_time=wall_time,
         observer=observer,
+        dashboard=factory,
     )
     if args.retry_interrupted and args.resume is None:
         parser.error("--retry-interrupted requires --resume")
+    if args.no_dashboard and args.panel is None and args.resume is None:
+        parser.error("--no-dashboard applies to --panel and --resume")
     if args.dry_run and args.panel is None and args.resume is None:
         parser.error("--dry-run applies to --panel and --resume")
     try:
@@ -3699,6 +3912,7 @@ def _run(args: argparse.Namespace, context: _Context) -> int:
             run_root=context.run_root,
             benchmark_root=context.benchmark_root,
             python=context.python,
+            dashboard=not args.no_dashboard,
         )
         _print_plan(plan)
         return EXIT_OK if _write_json(args.json_path, plan) else EXIT_FAILURE
@@ -3712,38 +3926,48 @@ def _run(args: argparse.Namespace, context: _Context) -> int:
     cases = panel_cases(panel)
     hosted = any(case.hosted for case in cases)
     key = _service_key(context.environ) if hosted else None
-    # Fail fast without writing anything, then spend the one probe request, and only
-    # then capture (and, for the baseline, finalize) the frozen source.
+    # Fail fast without writing anything; open the dashboard (plan D7: before anything
+    # is spent or frozen); then spend the one probe request, and only then capture
+    # (and, for the baseline, finalize) the frozen source -- so the finalized v1
+    # baseline always includes the launch hook this build runs with.
     resolve_sources(panel, source_root=context.source_root, baselines_dir=baselines, capture=False)
-    probe = _probe_or_raise(key, context) if key is not None else None
-    sources = resolve_sources(
-        panel,
-        source_root=context.source_root,
-        baselines_dir=baselines,
-        capture=True,
-        now=context.wall_time,
-    )
-    if panel == "baseline":
-        finalize_baseline(baselines, sources["v1"].snapshot, now=context.wall_time)
-        sources["v1"] = replace(sources["v1"], state="finalized")
-    manifest = build_manifest(
-        panel,
-        sources,
-        limits,
-        batch_id=uuid.uuid4().hex,
-        source_commit=read_source_commit(context.source_root),
-        created_at=utc_timestamp(context.wall_time()),
-    )
-    store = BatchStore.create(
-        context.benchmark_root, manifest, probe=context.process_probe, wall_time=context.wall_time
-    )
+    observer = _open_observer(context, len(cases))
+    try:
+        probe = _probe_or_raise(key, context) if key is not None else None
+        sources = resolve_sources(
+            panel,
+            source_root=context.source_root,
+            baselines_dir=baselines,
+            capture=True,
+            now=context.wall_time,
+        )
+        if panel == "baseline":
+            finalize_baseline(baselines, sources["v1"].snapshot, now=context.wall_time)
+            sources["v1"] = replace(sources["v1"], state="finalized")
+        manifest = build_manifest(
+            panel,
+            sources,
+            limits,
+            batch_id=uuid.uuid4().hex,
+            source_commit=read_source_commit(context.source_root),
+            created_at=utc_timestamp(context.wall_time()),
+        )
+        store = BatchStore.create(
+            context.benchmark_root,
+            manifest,
+            probe=context.process_probe,
+            wall_time=context.wall_time,
+        )
+    except BaseException as exc:
+        _close_observer(observer, exc)
+        raise
     _print(
         f"jev benchmark: batch {manifest.batch_id} panel={panel} cases={len(cases)} "
         f"dir={store.batch_dir}"
     )
     if probe is not None:
         store.append_attempt({"event": "probe", "case_id": None, **probe.to_dict()})
-    return _play(store, sources, context, args, probe)
+    return _play(store, sources, context, args, probe, observer)
 
 
 def _freeze(version: str, context: _Context) -> int:
@@ -3797,6 +4021,7 @@ def _resume(args: argparse.Namespace, context: _Context, requested: Mapping[str,
             run_root=context.run_root,
             benchmark_root=context.benchmark_root,
             python=context.python,
+            dashboard=not args.no_dashboard,
         )
         plan["resume"] = manifest.batch_id
         _print_plan(plan)
@@ -3809,9 +4034,11 @@ def _resume(args: argparse.Namespace, context: _Context, requested: Mapping[str,
         probe=context.process_probe,
         wall_time=context.wall_time,
     )
+    observer: CaseObserver | None = None
     try:
         if store.manifest != manifest:
             raise ProvenanceMismatch(f"{MANIFEST_FILE} changed while resuming")
+        observer = _open_observer(context, len(manifest.cases))
         probe = _probe_or_raise(key, context) if key is not None else None
         if probe is not None:
             store.append_attempt({"event": "probe", "case_id": None, **probe.to_dict()})
@@ -3825,11 +4052,13 @@ def _resume(args: argparse.Namespace, context: _Context, requested: Mapping[str,
             }
         )
         store.release()
+        _close_observer(observer, exc)
         raise
-    except BaseException:
+    except BaseException as exc:
         store.release()
+        _close_observer(observer, exc)
         raise
-    return _play(store, sources, context, args, probe)
+    return _play(store, sources, context, args, probe, observer)
 
 
 def _check_resume_options(manifest: BatchManifest, requested: Mapping[str, int]) -> None:
@@ -3892,11 +4121,18 @@ def _play(
     context: _Context,
     args: argparse.Namespace,
     probe: ProbeResult | None,
+    observer: CaseObserver | None,
 ) -> int:
     try:
-        outcome = _play_locked(store, sources, context, args, probe)
+        outcome = _play_locked(store, sources, context, args, probe, observer)
+    except BaseException as exc:
+        _close_observer(observer, exc)
+        raise
     finally:
         store.release()
+    if observer is not None:
+        with contextlib.suppress(Exception):
+            observer.finish(outcome, outcome.detail)
     card = scorecard(outcome.cases)
     for case in outcome.cases:
         _print(
@@ -3930,6 +4166,7 @@ def _play_locked(
     context: _Context,
     args: argparse.Namespace,
     probe: ProbeResult | None,
+    observer: CaseObserver | None,
 ) -> BatchOutcome:
     return run_batch(
         store,
@@ -3941,7 +4178,7 @@ def _play_locked(
         retry_interrupted=bool(args.retry_interrupted),
         probe_requests=0 if probe is None else 1,
         probe=probe,
-        observer=context.observer,
+        observer=observer,
         clock=context.clock,
         process_probe=context.process_probe,
     )
@@ -3992,6 +4229,7 @@ def _print_plan(plan: Mapping[str, JsonValue]) -> None:
                 )
                 _print(f"    snapshot: {source['snapshot_dir']}")
     _print(f"  run root: {plan['run_root']}")
+    _print(f"  launch: {plan['launch']}")
     cases = plan["cases"]
     if isinstance(cases, list):
         for index, case in enumerate(cases, 1):

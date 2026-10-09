@@ -8,6 +8,9 @@ writes a run directory under a temporary run root, and the real router
 ``test_jev_sc2.py``. The router tests then attack the path-ID, link and
 stored-record boundaries, and the mount tests check the dashboard app
 (``bots/v13/api.py``) gained exactly the Jev routes and nothing else changed.
+The launch-session routes (plan D7, Step 224) are attacked the same way: client,
+Host and Origin checks, malformed bodies and IDs, wrong runs, stale or corrupt
+records, links out of the launch root, and idempotent acknowledgment.
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from bots.jev.v1 import load_policy
@@ -42,7 +45,14 @@ from jev.api import (
     create_router,
 )
 from jev.bot import JevBot, JevController
-from jev.contracts import RunMetadata
+from jev.contracts import ErrorCode, RunMetadata
+from jev.launch import (
+    LAUNCH_ERROR_CODES,
+    LAUNCH_ERROR_STATUS,
+    LaunchSessionWriter,
+    launch_root_for,
+    read_ready,
+)
 from jev.policy import PolicyBundle
 from jev.runner import EXIT_FAILURE, MatchOptions, Sc2Launcher, run_match
 from jev.runtime import JevRuntime
@@ -865,3 +875,360 @@ def test_legacy_version_discovery_excludes_the_jev_family() -> None:
     versions = registry.list_versions()
     assert "jev" not in versions
     assert registry.current_version() in versions  # discovery itself still works
+
+
+# ---------------------------------------------------------------------------
+# Launch sessions (plan D7): GET the session, POST the rendered-ready receipt
+# ---------------------------------------------------------------------------
+
+#: The page's origin through the Vite proxy (which forwards Origin unchanged).
+ORIGIN = "http://localhost:3000"
+LAUNCH_HEADERS = {"Origin": ORIGIN}
+
+
+def _launch_client(run_root: Path) -> TestClient:
+    """A loopback client on the dashboard's loopback host, as the proxy connects."""
+    app = FastAPI()
+    app.include_router(create_router(run_root))
+    return TestClient(app, base_url="http://localhost:3000", client=("127.0.0.1", 50123))
+
+
+def _starting_session(run_root: Path) -> tuple[LaunchSessionWriter, str]:
+    """A launch session whose starting run is recorded (archive written, not played)."""
+    writer = LaunchSessionWriter.create(launch_root_for(run_root), case_count=2)
+    recorder = RunRecorder(run_root, _metadata(), roots=BUNDLE.policy.roots)
+    recorder.start(BUNDLE.policy_bytes)
+    run_id = recorder.run_dir.name
+    writer.publish("starting", active_run_id=run_id, message="waiting")
+    return writer, run_id
+
+
+def _ready(client: TestClient, session_id: str, body: object, **headers: str) -> Any:
+    sent = {**LAUNCH_HEADERS, **headers}
+    return client.post(f"/api/jev/launches/{session_id}/ready", json=body, headers=sent)
+
+
+def test_the_jev_route_table_is_the_runs_plus_the_launch_session_routes(tmp_path: Path) -> None:
+    assert _route_table(create_router(tmp_path).routes) == {
+        ("GET", "/api/jev/runs"),
+        ("GET", "/api/jev/runs/{run_id}"),
+        ("GET", "/api/jev/runs/{run_id}/policy"),
+        ("GET", "/api/jev/launches/{session_id}"),
+        ("POST", "/api/jev/launches/{session_id}/ready"),
+    }
+
+
+def test_a_launch_session_is_served_from_beside_the_run_root(tmp_path: Path) -> None:
+    root = tmp_path / "runs"
+    writer, run_id = _starting_session(root)
+    assert (root.parent / "launches" / writer.session_id / "session.json").is_file()
+    response = _launch_client(root).get(f"/api/jev/launches/{writer.session_id}")
+    assert response.status_code == 200
+    assert response.json() == {
+        "schema_version": 1,
+        "session_id": writer.session_id,
+        "active_run_id": run_id,
+        "state": "starting",
+        "case_index": 0,
+        "case_count": 2,
+        "updated_at": response.json()["updated_at"],
+        "message": "waiting",
+    }
+
+
+def test_readiness_is_accepted_for_the_exact_starting_run_and_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "runs"
+    writer, run_id = _starting_session(root)
+    client = _launch_client(root)
+    body = {"run_id": run_id, "policy_hash": BUNDLE.policy_hash}
+    first = _ready(client, writer.session_id, body)
+    expected = {
+        "schema_version": 1,
+        "ready": True,
+        "session_id": writer.session_id,
+        "run_id": run_id,
+    }
+    assert (first.status_code, first.json()) == (200, expected)
+    ready = read_ready(launch_root_for(root), writer.session_id)
+    assert ready is not None and ready.matches(writer.session_id, run_id, BUNDLE.policy_hash)
+    stamp = ready.updated_at
+    # The same acknowledgment again -- also once the launcher released the game.
+    assert _ready(client, writer.session_id, body).json() == expected
+    writer.publish("running", message="started")
+    again = _ready(client, writer.session_id, body)
+    assert (again.status_code, again.json()) == (200, expected)
+    receipt = read_ready(launch_root_for(root), writer.session_id)
+    assert receipt is not None and receipt.updated_at == stamp  # never rewritten
+
+
+@pytest.mark.parametrize(
+    ("client_host", "base_url", "headers"),
+    [
+        ("127.0.0.1", "http://localhost:3000", {"Origin": ""}),
+        ("127.0.0.1", "http://localhost:3000", {"Origin": "https://evil.example"}),
+        ("127.0.0.1", "http://localhost:3000", {"Origin": "http://localhost:3001"}),
+        ("127.0.0.1", "http://localhost:3000", {"Origin": "null"}),
+        ("192.168.1.20", "http://localhost:3000", {}),
+        ("127.0.0.1", "http://evil.example:3000", {}),
+        ("127.0.0.1", "http://192.168.1.20:8765", {}),
+    ],
+    ids=[
+        "missing-origin",
+        "cross-origin",
+        "other-port",
+        "opaque-origin",
+        "remote-client",
+        "rebound-host",
+        "lan-host",
+    ],
+)
+def test_readiness_from_outside_the_dashboard_page_is_403(
+    tmp_path: Path, client_host: str, base_url: str, headers: dict[str, str]
+) -> None:
+    root = tmp_path / "runs"
+    writer, run_id = _starting_session(root)
+    app = FastAPI()
+    app.include_router(create_router(root))
+    client = TestClient(app, base_url=base_url, client=(client_host, 50123))
+    sent = {**LAUNCH_HEADERS, **headers}
+    if sent.get("Origin") == "":
+        del sent["Origin"]
+    response = client.post(
+        f"/api/jev/launches/{writer.session_id}/ready",
+        json={"run_id": run_id, "policy_hash": BUNDLE.policy_hash},
+        headers=sent,
+    )
+    assert (response.status_code, response.json()["error"]["code"]) == (403, "launch_forbidden")
+    assert read_ready(launch_root_for(root), writer.session_id) is None
+    assert "access-control-allow-origin" not in response.headers  # CORS is not broadened
+
+
+def test_the_backend_and_ipv6_loopbacks_and_an_allowed_origin_list_are_accepted(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "runs"
+    writer, run_id = _starting_session(root)
+    app = FastAPI()
+    app.include_router(create_router(root, launch_origins={"http://127.0.0.1:5173"}))
+    client = TestClient(app, base_url="http://localhost:8765", client=("::1", 50123))
+    body = {"run_id": run_id, "policy_hash": BUNDLE.policy_hash}
+    path = f"/api/jev/launches/{writer.session_id}/ready"
+    host = {"Host": "[::1]:8765"}  # the backend's own IPv6 loopback name
+    refused = client.post(path, json=body, headers={**host, **LAUNCH_HEADERS})  # not listed
+    assert refused.status_code == 403
+    allowed = {**host, "Origin": "http://127.0.0.1:5173"}
+    accepted = client.post(path, json=body, headers=allowed)
+    assert accepted.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"run_id": "RUN"},
+        {"policy_hash": "a" * 64},
+        {"run_id": None, "policy_hash": "a" * 64},
+        {"run_id": uuid.uuid4().hex.upper(), "policy_hash": "a" * 64},
+        {"run_id": uuid.uuid1().hex, "policy_hash": "a" * 64},
+        {"run_id": uuid.uuid4().hex, "policy_hash": "A" * 64},
+        {"run_id": uuid.uuid4().hex, "policy_hash": "a" * 63},
+        {"run_id": uuid.uuid4().hex, "policy_hash": "a" * 64, "launch": True},
+        [],
+        "x" * 2000,
+    ],
+    ids=[
+        "empty",
+        "no-hash",
+        "no-run",
+        "null-run",
+        "uppercase-run",
+        "not-uuid4",
+        "uppercase-hash",
+        "short-hash",
+        "extra-field",
+        "array",
+        "oversized",
+    ],
+)
+def test_a_malformed_readiness_body_is_422_and_writes_nothing(tmp_path: Path, body: object) -> None:
+    root = tmp_path / "runs"
+    writer, _ = _starting_session(root)
+    response = _ready(_launch_client(root), writer.session_id, body)
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_launch_request"
+    assert read_ready(launch_root_for(root), writer.session_id) is None
+
+
+def test_a_readiness_body_that_is_not_json_is_422(tmp_path: Path) -> None:
+    root = tmp_path / "runs"
+    writer, _ = _starting_session(root)
+    response = _launch_client(root).post(
+        f"/api/jev/launches/{writer.session_id}/ready",
+        content=b"run_id=x&policy_hash=y",
+        headers={**LAUNCH_HEADERS, "Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert (response.status_code, response.json()["error"]["code"]) == (
+        422,
+        "invalid_launch_request",
+    )
+
+
+@pytest.mark.parametrize(
+    ("raw_id", "status", "code"),
+    [
+        (uuid.uuid4().hex.upper(), 422, "invalid_launch_request"),
+        (uuid.uuid1().hex, 422, "invalid_launch_request"),
+        ("%2e%2e", 422, "invalid_launch_request"),
+        ("..%5Cruns", 422, "invalid_launch_request"),
+        (_MISSING, 404, "launch_not_found"),
+    ],
+    ids=["uppercase", "not-uuid4", "encoded-dots", "backslash", "missing"],
+)
+def test_session_ids_that_are_not_launch_sessions_are_rejected(
+    tmp_path: Path, raw_id: str, status: int, code: str
+) -> None:
+    root = tmp_path / "runs"
+    _, run_id = _starting_session(root)
+    client = _launch_client(root)
+    got = client.get(f"/api/jev/launches/{raw_id}")
+    posted = _ready(client, raw_id, {"run_id": run_id, "policy_hash": BUNDLE.policy_hash})
+    for response in (got, posted):
+        assert (response.status_code, response.json()["error"]["code"]) == (status, code)
+        assert raw_id not in response.text
+    assert not (root.parent / "launches" / raw_id).exists()  # nothing is ever created
+
+
+def test_a_session_folder_link_that_resolves_outside_the_launch_root_is_not_a_session(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "runs"
+    elsewhere = tmp_path / "elsewhere" / "runs"
+    outside, run_id = _starting_session(elsewhere)
+    launches = root.parent / "launches"
+    launches.mkdir(parents=True)
+    _link_dir(launches / outside.session_id, elsewhere.parent / "launches" / outside.session_id)
+    client = _launch_client(root)
+    response = client.get(f"/api/jev/launches/{outside.session_id}")
+    assert (response.status_code, response.json()["error"]["code"]) == (404, "launch_not_found")
+    posted = _ready(
+        client, outside.session_id, {"run_id": run_id, "policy_hash": BUNDLE.policy_hash}
+    )
+    assert posted.status_code == 404
+    assert read_ready(elsewhere.parent / "launches", outside.session_id) is None
+
+
+def test_readiness_for_another_run_hash_or_a_session_not_starting_is_409(tmp_path: Path) -> None:
+    root = tmp_path / "runs"
+    writer, run_id = _starting_session(root)
+    other = _finished_run(root)  # a real recorded run that is not the session's
+    client = _launch_client(root)
+    variant = _variant_bundle(tmp_path)
+    for body in (
+        {"run_id": other, "policy_hash": BUNDLE.policy_hash},
+        {"run_id": run_id, "policy_hash": variant.policy_hash},
+        {"run_id": uuid.uuid4().hex, "policy_hash": BUNDLE.policy_hash},
+    ):
+        response = _ready(client, writer.session_id, body)
+        assert (response.status_code, response.json()["error"]["code"]) == (409, "launch_not_ready")
+    for state in ("between_games", "failed", "stopped", "finished"):
+        writer.publish(state, message=state)  # type: ignore[arg-type]
+        body = {"run_id": run_id, "policy_hash": BUNDLE.policy_hash}
+        assert _ready(client, writer.session_id, body).status_code == 409
+    assert read_ready(launch_root_for(root), writer.session_id) is None
+
+
+def test_a_preparing_session_and_an_unrecorded_run_are_not_ready(tmp_path: Path) -> None:
+    root = tmp_path / "runs"
+    writer = LaunchSessionWriter.create(launch_root_for(root))
+    client = _launch_client(root)
+    body = {"run_id": uuid.uuid4().hex, "policy_hash": BUNDLE.policy_hash}
+    assert _ready(client, writer.session_id, body).status_code == 409
+    # A session naming a run whose archive is missing (or altered) is not ready either.
+    writer.publish("starting", active_run_id=body["run_id"], message="")
+    assert _ready(client, writer.session_id, body).status_code == 409
+
+
+def test_an_archive_altered_after_recording_is_never_acknowledged(tmp_path: Path) -> None:
+    root = tmp_path / "runs"
+    writer, run_id = _starting_session(root)
+    archive = root / run_id / POLICY_ARCHIVE_FILE
+    archive.write_bytes(_variant_bundle(tmp_path).policy_bytes)
+    body = {"run_id": run_id, "policy_hash": BUNDLE.policy_hash}
+    response = _ready(_launch_client(root), writer.session_id, body)
+    assert (response.status_code, response.json()["error"]["code"]) == (409, "launch_not_ready")
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b'{"schema_version": 1',
+        json.dumps({"schema_version": 2}).encode(),
+        b"x" * 5000,
+        json.dumps(
+            {
+                "schema_version": 1,
+                "session_id": uuid.uuid4().hex,
+                "active_run_id": None,
+                "state": "preparing",
+                "case_index": 0,
+                "case_count": 1,
+                "updated_at": "2026-10-08T12:00:00.000+00:00",
+                "message": "",
+            }
+        ).encode(),
+    ],
+    ids=["truncated", "schema-2", "oversized", "another-session"],
+)
+def test_a_corrupt_session_record_is_503_corrupt_launch(tmp_path: Path, content: bytes) -> None:
+    root = tmp_path / "runs"
+    writer, run_id = _starting_session(root)
+    (launch_root_for(root) / writer.session_id / "session.json").write_bytes(content)
+    client = _launch_client(root)
+    response = client.get(f"/api/jev/launches/{writer.session_id}")
+    assert (response.status_code, response.json()["error"]["code"]) == (503, "corrupt_launch")
+    posted = _ready(
+        client, writer.session_id, {"run_id": run_id, "policy_hash": BUNDLE.policy_hash}
+    )
+    assert posted.status_code == 503
+
+
+def test_launch_errors_never_use_the_run_error_codes() -> None:
+    run_codes = set(get_args(ErrorCode))
+    assert not run_codes & set(LAUNCH_ERROR_CODES)
+    assert {LAUNCH_ERROR_STATUS[code] for code in LAUNCH_ERROR_CODES} == {403, 422, 404, 409, 503}
+
+
+def test_the_run_routes_still_take_no_writes(tmp_path: Path) -> None:
+    root = tmp_path / "runs"
+    _, run_id = _starting_session(root)
+    client = _launch_client(root)
+    for path in ("/api/jev/runs", f"/api/jev/runs/{run_id}", f"/api/jev/runs/{run_id}/policy"):
+        assert client.post(path, json={}, headers=LAUNCH_HEADERS).status_code == 405
+        assert client.put(path, json={}, headers=LAUNCH_HEADERS).status_code == 405
+
+
+def test_the_readiness_receipt_is_handled_off_the_event_loop_and_still_validated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import jev.api as api_module
+
+    root = tmp_path / "runs"
+    writer, run_id = _starting_session(root)
+    threads: list[str] = []
+    accept = api_module.accept_ready
+
+    def recording(*args: Any, **kwargs: Any) -> Any:
+        try:
+            asyncio.get_running_loop()
+            threads.append("event loop")
+        except RuntimeError:  # no loop in this thread: a threadpool worker
+            threads.append("worker")
+        return accept(*args, **kwargs)
+
+    monkeypatch.setattr(api_module, "accept_ready", recording)
+    client = _launch_client(root)
+    assert _ready(client, writer.session_id, {"run_id": run_id}).status_code == 422
+    ok = _ready(client, writer.session_id, {"run_id": run_id, "policy_hash": BUNDLE.policy_hash})
+    assert ok.status_code == 200 and threads == ["worker", "worker"]

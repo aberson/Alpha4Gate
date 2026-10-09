@@ -474,7 +474,7 @@ the steps numerically and bypass 224's dependency before live tests.
 ### Step 224: Open the exact live game before starting SC2
 - **Problem:** Let the operator watch every test from startup without selecting a tab or run manually.
 - **Type:** code
-- **Status:** BLOCKED (2026-10-09)
+- **Status:** DONE (2026-10-09)
 - **Issue:** #329
 - **Flags:** --reviewers full --ui
 - **Start-cmd:** bash scripts/start-dev.sh
