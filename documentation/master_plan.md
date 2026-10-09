@@ -2406,3 +2406,5 @@ Append-only — do not edit prior entries.
   over SQLite `opponent_matches` table.
 - *2026-04-13* — (from alphastar plan) PR `feat/lstm-kl-imitation`
   (498f405) awaiting Phase A validation.
+
+Jev continuation (2026-10-09): staging and hosted smoke passed; operator stopped the remaining Step 213 baseline after v1 was frozen and authorized improvements. Step 213 stays pending/deferred. Next build: Steps 214-221, `--resume 214`, stop before 222; no further paid games. See [validation](plans/jev-v2-validation.md).

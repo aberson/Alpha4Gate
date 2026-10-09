@@ -104,3 +104,31 @@ run contracts remain unchanged. Thirteen step fields, dependency order, source
 paths and zero active-plan numbering collisions verified. No new blockers/gaps.
 
 READY
+
+## 2026-10-09 continuation wrap (revision 4)
+
+Completion gate: 2 of 13 build units (steps/phases) complete; 11 still unbuilt -- running full check, focused on unbuilt units.
+
+?1 Schemas and data structures ? pass; section 5 and D5/D7 unchanged.
+?2 Identifiers ? pass; freeze, run, batch and issue IDs recorded in validation.
+?3 Acronyms and tool names ? pass; existing definitions retained.
+?4 Stack decisions with rationale ? pass; no new stack.
+?5 Unresolved decisions ? pass; P7 explicitly resolves baseline deferral.
+?6 API contracts ? pass; no contract changed by this continuation.
+?7 Development process ? pass; resume 214, code through 221, stop before 222.
+?8 Quickstart / how to run ? pass; installed v1 and staging/hosted launch exercised.
+?9 Referenced external files ? pass; new build deliverables remain labeled; live report now exists.
+?10 Scope and constraints ? pass; no further paid games during this build span.
+?11 Operator/code step-shape integrity (Blocker if violated) ? pass.
+?12 Conditional steps must declare a Condition: predicate (Blocker) ? N/A: no conditional steps.
+?13 Substrate-smoke step present when the plan touches deployment seams (Significant Gap) ? pass; smoke observed, v2 live gates remain 222/223.
+
+Blocker: None.
+Gap: None for building 214-221; the deferred empirical checks are explicitly retained.
+Minor: None.
+
+Fresh host must use the same repository/data snapshot or copy the verified frozen
+source intact; source control alone does not contain ignored benchmark evidence.
+This readiness verdict does not mark Step 213 DONE.
+
+READY

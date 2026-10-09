@@ -1,7 +1,8 @@
 # Phase J2: Adaptive Jev player
 
 Status: IN PROGRESS (2026-10-09): code Steps 212 and 224 DONE (#328, #329 closed;
-see Build progress); next is operator Step 213 (#330). Approved for preparation
+see Build progress). Operator deferred the remaining Step 213 baseline on 2026-10-09
+after staging and hosted smoke passed; next build starts at Step 214 (#331). Approved for preparation
 2026-10-08, including dashboard-first launch and automatic exact-game selection. Steps
 212-224 follow JI's 209-211; no prior step is renumbered. Step 224 is ordered
 between 212 and 213 because the first baseline tests must use this launch flow.
@@ -459,7 +460,9 @@ API routes. Update API route-table tests and hook cancellation/out-of-order test
 
 ## 7. Build Steps
 
-Execution order is 212, 224, 213, then 214-223. Step IDs are stable; do not sort
+Execution order was 212, 224, 213, then 214-223. On 2026-10-09 the operator
+stopped the baseline and authorized proceeding after v1 was frozen. Resume at 214;
+213 remains pending/deferred, not DONE. Step IDs are stable; do not sort
 the steps numerically and bypass 224's dependency before live tests.
 
 ### Step 212: Establish reproducible Jev benchmarks
@@ -507,12 +510,13 @@ the steps numerically and bypass 224's dependency before live tests.
 ### Step 213: Observe the harder-opponent baseline
 - **Problem:** Identify the current rush's failure modes against stronger opponents.
 - **Type:** operator
-- **Status:** PENDING
+- **Status:** PENDING (operator-deferred 2026-10-09; not a passed baseline)
 - **Issue:** #330
 - **Files:** data/jev/benchmarks/ and data/jev/runs/ (generated evidence), documentation/plans/jev-v2-validation.md (observation report).
 - **Produces:** Six baseline outcomes, replay/run IDs, metric coverage and ranked gameplay findings.
 - **Done when:** Dashboard opens on the exact starting run before SC2 launches, visibly changes to Live as play begins, and follows the next case without menu interaction; real service probe and >=60-second production smoke pass before completing the six-case baseline in D6; all outcomes and interruptions are recorded; failures are classified as execution, information, composition, strategy or infrastructure. Missing prerequisites keep this step pending.
 - **Depends on:** 224
+- **Operator decision (2026-10-09):** "you can stop the test and let's proceed with improvements." Staging and hosted smoke passed; v1 frozen as `v1-b53039a693cadf75`. Baseline batch `94ac2c35b17f4cbaa80020b1c859ba00` has one interrupted case and five pending, zero completed outcomes. Same-tab multi-game following and harder-opponent findings remain unverified. Do not resume paid testing without a new request. See [validation](jev-v2-validation.md).
 
 <!-- autofix-applied: 2026-10-08 -->
 ### Step 214: Make the v2 opening spend and reinforce reliably
@@ -524,7 +528,8 @@ the steps numerically and bypass 224's dependency before live tests.
 - **Files:** bots/jev/v2/ (new package), src/jev/operations.py, src/jev/runtime.py, tests/test_jev_v2.py (new), tests/test_jev_economy.py, tests/test_jev_army.py.
 - **Produces:** Versioned v2 opening, supply planning and group reinforcement/recovery graph.
 - **Done when:** Production controller fixtures demonstrate first launch at four Zealots, completion of four Gateways, no duplicate Pylon commitments, bounded repeated failures and grouped replacements; v1 policy hash unchanged; both entrypoints validate from an installed wheel.
-- **Depends on:** 213
+- **Depends on:** 224
+- **Readiness:** Operator explicitly deferred completion of 213 on 2026-10-09. Frozen v1 fingerprint `b53039a693cadf756e6cec4fc44c10534bcd9194079410a98b59a9e441bb1bfd` exists; verify its manifest/snapshot before edits and never modify it. Staging and hosted smoke passed. This authorizes implementation, not stronger-play acceptance. Resume with `--resume 214` and stop before 222.
 
 ### Step 215: Scout with bounded, honest enemy memory
 - **Problem:** Give v2 fresh observed information for later plan choices.
@@ -793,6 +798,7 @@ Building 212 and 224 made no SC2 match, no hosted Typesafe call and no new run a
 | P4 | P | Beat harder opponents through measured improvement | operator-picked |
 | P5 | P | Automated evolution and themed embedding remain later work | operator-picked |
 | P6 | P | Open the dashboard first on the exact test game; automatically follow live play | operator-picked 2026-10-08 |
+| P7 | P | Stop testing after live smoke and frozen v1; defer remaining baseline and proceed to improvements | operator-picked 2026-10-09 |
 | D1 | D | New v2 package, immutable v1 executable comparison | active default |
 | D2 | D | Persistent plans; four typed question families; one shared request cap | active default |
 | D3 | D | Four-Gateway opening, one scout, bounded reservations/recovery | active default |
@@ -805,3 +811,17 @@ Planning evidence: local producers read on 2026-10-08, installed burnysc2 Diffic
 enum verified (3=Medium, 4=MediumHard, 5=Hard), and linked primary API references
 checked. Defaults can be adjusted by ID before issue sync. No v2 gameplay or
 performance claim is made by this document.
+
+### Operator update - 2026-10-09 after live smoke
+
+Staging and the separate hosted smoke passed; the hosted smoke won at 262.5 game
+seconds with 27 accepted Typesafe responses. Operator confirmed automatic launch
+and >=60 seconds of live hosted decisions, then stopped the baseline and chose
+to proceed with improvements. This supersedes earlier instructions requiring all
+six Step 213 outcomes before Step 214. The frozen executable v1 snapshot exists,
+so subsequent shared-runtime changes cannot alter its identity. Keep #330 open
+and Step 213 pending/deferred; do not claim a six-case baseline or verified
+multi-game browser following. Next automated span: 214-221 (#331-#338), then stop
+before operator 222 (#339). No additional paid games in this build span.
+
+See [validation](jev-v2-validation.md) and [handoff](jev-v2-handoff.md).

@@ -442,3 +442,5 @@ Special thanks to my friends for their support:
 Also thanks to all the creators and companies who made the mountain of tools this is built on (and anyone else I forgot).
 
 </details>
+
+Jev continuation (2026-10-09): staging and hosted smoke passed; operator stopped the remaining Step 213 baseline after v1 was frozen and authorized improvements. Step 213 stays pending/deferred. Next build: Steps 214-221, `--resume 214`, stop before 222; no further paid games. See [validation](documentation/plans/jev-v2-validation.md).

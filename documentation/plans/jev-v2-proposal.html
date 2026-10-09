@@ -1,8 +1,8 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Jev v2 proposal</title><style>body{--bg:#f5f2eb;--fg:#253731;--card:#fffdf8;--muted:#556c62;--line:#c6d1c7;--accent:#176e60;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,sans-serif;margin:0}main{max-width:1040px;margin:auto;padding:34px 24px}h1{font-size:36px;line-height:1.15}h2{margin-top:30px}section,header{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px;margin:18px 0}a{color:var(--accent)}small,.muted{color:var(--muted)}li{margin:9px 0}table{border-collapse:collapse;width:100%}td,th{text-align:left;vertical-align:top;padding:10px;border-bottom:1px solid var(--line)}code{overflow-wrap:anywhere}dl{display:grid;grid-template-columns:60px 1fr;gap:8px}dt{font-weight:bold}dd{margin:0}.default{border-left:4px solid var(--accent);padding-left:16px;margin:20px 0}@media(prefers-color-scheme:dark){body{--bg:#17221e;--fg:#e6eee8;--card:#202d27;--muted:#b0c1b6;--line:#4b6557;--accent:#8ad9bb}}@media print{body{--bg:white;--fg:black;--card:white;--muted:#333;--line:#aaa;--accent:#164f43;font-size:11pt}main{padding:0}section,header{break-inside:avoid;border-radius:0}a{color:inherit}button{display:none}}</style></head><body><main>
-<header><p>Alpha4Gate / Phase J2 / Publication 3 / 2026-10-08</p><h1>From a working rush to an adaptive player</h1><p>Approved direction with dashboard-first launch added; planning proposal. No v2 implementation or stronger-play acceptance claimed.</p><p><a href="jev-v2-plan.md">Canonical build plan</a> &middot; <a href="../jev-v2-progress.html">Progress inventory</a></p></header>
+<header><p>Alpha4Gate / Phase J2 / Publication 4 / 2026-10-09</p><h1>From a working rush to an adaptive player</h1><p>Approved direction with dashboard-first launch added; planning proposal. No v2 implementation or stronger-play acceptance claimed.</p><p><a href="jev-v2-plan.md">Canonical build plan</a> &middot; <a href="../jev-v2-progress.html">Progress inventory</a></p></header>
 <section><h2>What I heard</h2><p>Keep the four-Gateway identity, then develop a player that scouts, expands and adapts against harder opponents. Jev owns the whole decision process: strategic choices, execution choices and the graph that carries them through. Make those decisions visible live. The test must open the correct dashboard game before SC2 starts; no menu navigation should be necessary.</p></section>
-<section><h2>Why this shape</h2><p>The current executor can only build Pylons and Gateways and train Probes and Zealots. V2 needs real gas, expansion and tech actions before the hosted model can usefully choose them. We will measure baseline weaknesses first and preserve its executable source.</p></section>
-<section><h2>Phase timeline</h2><p>This is build order, not a time forecast. All steps are pending.</p><ol>
+<section><h2>Why this shape</h2><p>The current executor can only build Pylons and Gateways and train Probes and Zealots. V2 needs real gas, expansion and tech actions before the hosted model can usefully choose them. The executable v1 source is frozen. The operator deferred the remaining baseline after successful live smoke and chose to proceed with improvements.</p></section>
+<section><h2>Phase timeline</h2><p>This is build order, not a time forecast. Steps 212 and 224 are complete. Step 213 is operator-deferred after live smoke and the v1 freeze; resume at 214.</p><ol>
 <li><strong>212: Establish reproducible Jev benchmarks</strong> <small>(code)</small></li>
 <li><strong>224: Open the exact live game before starting SC2</strong> <small>(code)</small></li>
 <li><strong>213: Observe the harder-opponent baseline</strong> <small>(operator)</small></li>
@@ -16,7 +16,7 @@
 <li><strong>221: Visualize active plans and execution paths</strong> <small>(code)</small></li>
 <li><strong>222: Prove the full v2 decision cycle in SC2</strong> <small>(operator)</small></li>
 <li><strong>223: Evaluate harder-opponent improvement</strong> <small>(wait)</small></li>
-</ol><p><strong>Afterwards:</strong> run <code>/plan-expedite --plan documentation/plans/jev-v2-plan.md</code> in Alpha4Gate to sync the reviewed plan; after READY run <code>/build-phase --plan documentation/plans/jev-v2-plan.md</code>.</p></section>
+</ol><p><strong>Afterwards:</strong> run <code>/plan-expedite --plan documentation/plans/jev-v2-plan.md</code> in Alpha4Gate to sync the reviewed plan; after READY run <code>/build-phase --plan documentation/plans/jev-v2-plan.md --resume 214</code>.</p></section>
 <section><h2>Operator choices</h2><dl>
 <dt id="P1">P1</dt><dd>Adaptive four-Gateway opening with expansion and limited tech</dd>
 <dt id="P2">P2</dt><dd>Jev owns strategic and execution decisions; Typesafe participates at both levels</dd>
@@ -24,7 +24,7 @@
 <dt id="P4">P4</dt><dd>Measure progress against harder opponents</dd>
 <dt id="P5">P5</dt><dd>Keep evolution and themed SC2 embedding for later</dd>
 <dt id="P6">P6</dt><dd>Open the dashboard first on the exact game and follow every test automatically</dd>
-</dl></section>
+<dt id="P7">P7</dt><dd>Stop testing and proceed with improvements after live smoke; retain the incomplete baseline as deferred evidence (operator-picked 2026-10-09).</dd></dl></section>
 <section><h2>Agent defaults</h2>
 <article class="default" id="D1"><h3>D1: New v2 package with frozen v1 executable baseline</h3><p><strong>Why:</strong> A shared-runtime change must not silently change the comparison opponent.</p><p><strong>Tweak:</strong> Version packaging and baseline custody</p></article>
 <article class="default" id="D2"><h3>D2: Persistent plans with four question families and one shared 450-request cap</h3><p><strong>Why:</strong> Strategic direction and execution choices need bounded, traceable ownership.</p><p><strong>Tweak:</strong> Question cadence, confidence, timeout and priorities</p></article>

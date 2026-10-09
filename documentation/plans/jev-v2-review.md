@@ -114,3 +114,33 @@ Auto-applied 1 fixes:
   - Missing launch error contract: D7 / Step 224.
 
 Auto-applied 1 fixes. Plan is ready for `/plan-wrap` and `/repo-sync`.
+
+## 2026-10-09 continuation review (revision 4)
+
+[!] Detected non-blank Issue fields ? repo-sync appears to have already run. Findings applied to plan.md will require corresponding `gh issue edit` updates (N+1 rework). See `feedback_plan_review_before_repo_sync.md`.
+
+Reviewing as: feature plan. Sections 17?21 apply.
+
+Rechecked the 27-check coverage above against the changed continuation. Source
+checkpoint `115a9c5`: `contracts.py:767/812` still defines Entity/Observation,
+`decision.py:250` ArmyDecisions, `bot.py:567` JevController and `runner.py:433`
+run_match. Existing benchmark and launch modules now supply the previously
+planned prerequisites. No new operation, API or schema design was introduced
+by the operator's sequencing change. The remaining shared-runtime steps retain
+deep review; Step 221 retains full/UI review and launch/URL fields.
+
+All 13 step records have Problem, Type, Status, Issue, Files, Produces, Done when
+and Depends on. IDs unique; no TBD. No conditional step or mixed code/operator
+acceptance was introduced. Runtime source is clean, policy validates, and
+production verify_snapshot rehashed the frozen v1 to
+`b53039a693cadf756e6cec4fc44c10534bcd9194079410a98b59a9e441bb1bfd`.
+
+Blockers: None for the operator-authorized 214-221 span.
+Significant gaps: No new design gap; incomplete baseline and multi-game browser
+observation remain explicitly deferred evidence, not accepted performance.
+Missing items: None beyond the listed unbuilt deliverables.
+Nice-to-haves: None added.
+
+The one sequencing change is operator-authored P7, not an agent autofix.
+Step 213 stays pending; Step 214 depends on completed 224 and verified freeze.
+Auto-applied 0 fixes. Plan is ready for `/plan-wrap` and `/repo-sync`.
