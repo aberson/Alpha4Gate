@@ -462,7 +462,7 @@ the steps numerically and bypass 224's dependency before live tests.
 ### Step 212: Establish reproducible Jev benchmarks
 - **Problem:** Measure the current player through the production runner with immutable provenance.
 - **Type:** code
-- **Status:** BLOCKED (2026-10-08)
+- **Status:** DONE (2026-10-08)
 - **Issue:** #328
 - **Flags:** --reviewers deep
 - **Files:** src/jev/benchmark.py (new), scripts/benchmark_jev.py (new), src/jev/bot.py, src/jev/runner.py, tests/test_jev_benchmark.py (new), documentation/operator/jev-v2-validation.md (new).

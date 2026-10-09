@@ -13,7 +13,7 @@ import time
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Final, Protocol
 
 if TYPE_CHECKING:
     import httpx
@@ -30,6 +30,15 @@ QUESTION = (
     "of visible enemies does not imply safety. Choose only an offered option. "
     "Local code handles targets, movement, production and resources."
 )
+#: Coordinator reason codes that consumers classify (one source of truth for
+#: ``jev.bot.MatchMetrics`` and ``jev.benchmark``).
+ACCEPTED_REASON: Final = "accepted"
+LOW_CONFIDENCE_REASON: Final = "low_confidence"
+STALE_ANSWER_REASON: Final = "stale_answer"
+EXPIRED_REASON: Final = "expired_or_changed_state"
+STALE_REASONS: Final = frozenset({STALE_ANSWER_REASON, EXPIRED_REASON})
+#: Refusals that disable further requests for the match.
+AUTH_FAILURE_REASONS: Final = frozenset({"http_401", "http_403"})
 CRITERIA = {
     "attack": "Press the enemy and reinforce the rush.",
     "defend": "Fight visible ground threats near our home structures.",
@@ -303,15 +312,15 @@ class ArmyDecisions:
                     or now - self.sent > self.config.max_wall_age
                     or obs.game_seconds - self.game_sent > self.config.max_game_age
                 ):
-                    self.reason = "stale_answer"
+                    self.reason = STALE_ANSWER_REASON
                 elif answer.confidence < self.config.min_confidence:
-                    self.reason = "low_confidence"
+                    self.reason = LOW_CONFIDENCE_REASON
                 else:
                     self.accepted = (answer, self.sent, self.game_sent, signature)
-                    self.reason = "accepted"
+                    self.reason = ACCEPTED_REASON
             except (Exception, asyncio.CancelledError) as exc:
                 self.reason = str(exc) if isinstance(exc, DecisionError) else "request_failed"
-                if self.reason in ("http_401", "http_403"):
+                if self.reason in AUTH_FAILURE_REASONS:
                     self.disabled = True
                 self.accepted = None
             self.task = None
@@ -326,7 +335,7 @@ class ArmyDecisions:
                 mode = answer.choice
             else:
                 self.accepted = None
-                self.reason = "expired_or_changed_state"
+                self.reason = EXPIRED_REASON
         if (
             not self.disabled
             and self.task is None

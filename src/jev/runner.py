@@ -36,6 +36,18 @@ result ``timeout`` -- status ``finished`` for the game clock (the match ran its
 allotted game time), ``failed`` for the wall clock (the host could not play it in
 time); the wall-clock limit counts from the first game step.
 
+After the terminal state, the runner also writes :data:`DIAGNOSTICS_FILE` into the
+run directory (plan D6): the run's executable identity (manifest entrypoint,
+policy hash and source path, the runtime checkout it executed from), its exact
+match options, its outcome and the controller's cumulative observation-only
+metrics (:class:`jev.bot.MatchMetrics`). The dashboard API never reads it, and
+it is outside the version-1 RunState/Event envelope, which is unchanged. For the
+run itself it is best effort: a write that fails never changes the outcome or the
+exit code, and prints one ``jev: diagnostics not written: ...`` line to stderr.
+The benchmark (``jev.benchmark``) requires it: a benchmark case whose run lacks it
+is invalid (``corrupt_evidence``), because its provenance cannot be verified.
+Calibrating an older archive scores it from its trace instead.
+
 Exit codes: :data:`EXIT_OK` for a finished win/loss/draw and a valid policy;
 :data:`EXIT_FAILURE` for an invalid policy, unavailable SC2, a crash
 (``match_crashed``, even when burnysc2 reported the crash as a Defeat or exited
@@ -56,6 +68,7 @@ import asyncio
 import contextlib
 import io
 import itertools
+import json
 import os
 import re
 import signal
@@ -72,6 +85,7 @@ from jev.contracts import (
     MAX_MESSAGE_CHARS,
     ErrorCode,
     JevError,
+    JsonValue,
     RunMetadata,
     RunResult,
     RunStatus,
@@ -103,12 +117,17 @@ __all__ = [
     "DEFAULT_MAX_WALL_SECONDS",
     "DEFAULT_OPPONENT_RACE",
     "DEFAULT_SEED",
+    "DIAGNOSTICS_FIELDS",
+    "DIAGNOSTICS_FILE",
+    "DIAGNOSTICS_KIND",
+    "DIAGNOSTICS_SCHEMA_VERSION",
     "EXIT_FAILURE",
     "EXIT_OK",
     "EXIT_STOPPED",
     "EXIT_TIMEOUT",
     "EXIT_USAGE",
     "MAP_NAME_RE",
+    "MAX_DIAGNOSTICS_BYTES",
     "MAX_DIFFICULTY",
     "MAX_LIMIT_SECONDS",
     "MAX_SEED",
@@ -126,6 +145,7 @@ __all__ = [
     "exception_error",
     "main",
     "make_streams_encoding_safe",
+    "match_options_record",
     "run_match",
 ]
 
@@ -145,6 +165,28 @@ MAX_SEED: Final = 2**32 - 1
 MAX_LIMIT_SECONDS: Final = 86_400
 #: A map is a file stem looked up under the SC2 Maps folder: no path separators.
 MAP_NAME_RE: Final = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
+
+#: The run's cumulative diagnostic summary (module docstring), beside state.json.
+DIAGNOSTICS_FILE: Final = "diagnostics.json"
+DIAGNOSTICS_KIND: Final = "jev_match_diagnostics"
+DIAGNOSTICS_SCHEMA_VERSION: Final = 1
+#: The summary's fields, in order: what the writer produces and the benchmark requires.
+DIAGNOSTICS_FIELDS: Final = (
+    "schema_version",
+    "kind",
+    "run_id",
+    "entrypoint",
+    "family",
+    "version",
+    "policy_hash",
+    "policy_source",
+    "runtime_root",
+    "options",
+    "outcome",
+    "metrics",
+)
+#: The summary is compact (counts and a few bounded maps); larger is a defect.
+MAX_DIAGNOSTICS_BYTES: Final = 64 * 1024
 
 EXIT_OK: Final = 0
 EXIT_FAILURE: Final = 1
@@ -410,11 +452,12 @@ def run_match(
             run_id, "sc2_unavailable",
             "TYPESAFE_API_KEY is required for --decision-provider typesafe",
         )
+    files = EvidenceFiles() if evidence_files is None else evidence_files
     recorder = RunRecorder(
         run_root,
         _run_metadata(run_id, options, bundle),
         roots=bundle.policy.roots,
-        files=evidence_files,
+        files=files,
         clock=clock,
     )
     try:
@@ -425,8 +468,118 @@ def run_match(
         outcome, controller = _play(options, bundle, launcher, recorder, clock)
     except BaseException as exc:  # an interrupt or a defect: the run still ends on disk
         _record_escape(recorder, exc)
+        stopped = isinstance(exc, KeyboardInterrupt | asyncio.CancelledError)
+        escaped = (
+            _Ending("stopped", None, None) if stopped else _Ending("failed", None, "match_crashed")
+        )
+        _write_diagnostics(files, recorder, options, bundle, None, escaped)
         raise
-    return _finish(recorder, controller, outcome)
+    outcome = _finish(recorder, controller, outcome)
+    ending = _Ending(
+        outcome.status,
+        outcome.result,
+        None if outcome.error is None else outcome.error.code,
+        exit_code=outcome.exit_code,
+        game_seconds=outcome.game_seconds,
+        commands_accepted=outcome.commands_accepted,
+        commands_rejected=outcome.commands_rejected,
+    )
+    _write_diagnostics(files, recorder, options, bundle, controller, ending)
+    return outcome
+
+
+@dataclass(frozen=True)
+class _Ending:
+    """How the run ended, as the diagnostic summary records it."""
+
+    status: RunStatus
+    result: RunResult | None
+    error_code: ErrorCode | None
+    exit_code: int | None = None
+    game_seconds: float | None = None
+    commands_accepted: int | None = None
+    commands_rejected: int | None = None
+
+
+def match_options_record(options: MatchOptions) -> dict[str, JsonValue]:
+    """THE JSON form of a match's options (diagnostics writer and benchmark checks)."""
+    return {
+        "map_name": options.map_name,
+        "opponent_race": options.opponent_race,
+        "difficulty": options.difficulty,
+        "seed": options.seed,
+        "max_game_seconds": options.max_game_seconds,
+        "max_wall_seconds": options.max_wall_seconds,
+        "realtime": options.realtime,
+        "decision_provider": options.decision_provider,
+        "decision_model": options.decision_model,
+        "decision_max_requests": options.decision_max_requests,
+    }
+
+
+def _write_diagnostics(
+    files: EvidenceFiles,
+    recorder: RunRecorder,
+    options: MatchOptions,
+    bundle: PolicyBundle,
+    controller: JevController | None,
+    ending: _Ending,
+) -> None:
+    """Best-effort :data:`DIAGNOSTICS_FILE` (module docstring); never changes the outcome.
+
+    A write that fails leaves the run without it and prints one stderr line; only an
+    interrupt escapes. The run itself is unaffected, but a benchmark case without the
+    file is invalid (``corrupt_evidence``, which stops its batch).
+    """
+    try:
+        if controller is None:
+            metrics: JsonValue = {"status": "unavailable", "reason": "the match never started"}
+            end_seconds = 0.0
+        else:
+            end_seconds = controller.game_seconds
+            try:
+                metrics = controller.metrics.summary(end_game_seconds=end_seconds)
+            except Exception as exc:  # a summary defect keeps the rest of the record
+                failure = exception_error("match_crashed", exc).message
+                metrics = {"status": "failed", "failure": failure}
+        game_seconds = end_seconds if ending.game_seconds is None else ending.game_seconds
+        document: dict[str, JsonValue] = {
+            "schema_version": DIAGNOSTICS_SCHEMA_VERSION,
+            "kind": DIAGNOSTICS_KIND,
+            "run_id": recorder.run_dir.name,
+            "entrypoint": bundle.manifest.entrypoint,
+            "family": bundle.policy.family,
+            "version": bundle.policy.version,
+            "policy_hash": bundle.policy_hash,
+            "policy_source": bundle.source,
+            "runtime_root": str(repository_root()),
+            "options": match_options_record(options),
+            "outcome": {
+                "status": ending.status,
+                "result": ending.result,
+                "error_code": ending.error_code,
+                "exit_code": ending.exit_code,
+                "game_seconds": game_seconds,
+                "commands_accepted": ending.commands_accepted,
+                "commands_rejected": ending.commands_rejected,
+            },
+            "metrics": metrics,
+        }
+        text = json.dumps(document, ensure_ascii=True, allow_nan=False, separators=(",", ":"))
+        data = text.encode("ascii")
+        if len(data) > MAX_DIAGNOSTICS_BYTES:
+            _diagnostics_skipped(f"{len(data)} bytes exceeds {MAX_DIAGNOSTICS_BYTES}")
+            return
+        files.write(recorder.run_dir / DIAGNOSTICS_FILE, data)
+    except Exception as exc:  # best effort: never turns an outcome into a failure
+        _diagnostics_skipped(f"{safe_repr(type(exc).__name__)}: {safe_exception_text(exc)}")
+
+
+def _diagnostics_skipped(why: str) -> None:
+    """One bounded stderr line naming why ``diagnostics.json`` was not written."""
+    with contextlib.suppress(Exception):
+        line = render_text(f"jev: diagnostics not written: {why}")[:MAX_MESSAGE_CHARS]
+        print(line, file=sys.stderr)
 
 
 def _record_escape(recorder: RunRecorder, exc: BaseException) -> None:
