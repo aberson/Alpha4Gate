@@ -12,7 +12,7 @@ LLMs (large language models) author the policy and supporting code between games
 
 Proposal: `documentation/plans/jev-player-proposal.html`
 
-This document is the implementation source of truth. Agent-selected details are recorded separately from operator choices in the Appendix. Proposed interfaces below do not exist yet.
+This document is the implementation source of truth. Agent-selected details are recorded separately from operator choices in the Appendix. The section 5 interfaces shipped in Steps 201-206 (`src/jev/*`, `bots/jev/v1/*`, the `/api/jev` router mounted on `bots/v13/api.py`, the dashboard Jev tab); later phases added `src/jev/decision.py` (Phase JI) and `src/jev/benchmark.py` / `src/jev/launch.py` (Phase J2).
 
 ## 2. Existing Context
 
@@ -76,7 +76,7 @@ Read-only dependencies: `src/orchestrator/registry.py`, `src/orchestrator/contra
 | `bots/jev/v1/policy.json` / `manifest.json` | Executable rush policy and immutable identity/schema metadata |
 | `frontend/src/components/JevTab.tsx`, `JevGraph.tsx`, `JevTab.css` | Run selector, graph, inspection panel and trace; imported by App |
 | `frontend/src/hooks/useJevRun.ts` / `frontend/src/types/jev.ts` | Typed polling and contract validation; used by JevTab |
-| `tests/test_jev_*.py` / `frontend/src/components/Jev*.test.tsx` | Behavioral coverage described in section 9 |
+| `tests/test_jev_*.py` / `frontend/src/components/Jev*.test.tsx` / `frontend/src/hooks/useJevRun.test.ts` | Behavioral coverage described in section 9 |
 | `scripts/validate_jev.py` / `documentation/operator/jev-validation.md` | Production-path smoke/report tooling and repeatable live procedure |
 
 ### Contract summaries
@@ -88,7 +88,7 @@ Schema version is integer `1` for all new documents; reject unsupported versions
 | Policy | `schema_version`, `family="jev"`, `version=1`, `roots: string[]`, `parameters: object`, `nodes: Node[]`; roots are ordered behavior lanes |
 | Node | `id`, `label`, `kind`, `children: string[]`, `operation: string|null`, `args: object`; kinds `sequence`, `selector`, `condition`, `select`, `action`, `wait`; operation-specific typed arguments |
 | Manifest | `schema_version`, `family`, `version`, `entrypoint="bots.jev.v1"`, `policy_file="policy.json"`; load policy relative to package, never caller cwd |
-| Observation | `game_loop`, `game_seconds`, `minerals`, `supply_used`, `supply_cap`, `own_units`, `own_structures`, `visible_enemies`, `remembered_enemy_structures`, `start_location`, `enemy_start_locations`, `expansion_locations`; entity record contains tag/type/position/health/build_progress/orders; own production structures also contain readiness, idle and powered flags |
+| Observation | `game_loop`, `game_seconds`, `minerals`, `supply_used`, `supply_cap`, `own_units`, `own_structures`, `visible_enemies`, `remembered_enemy_structures`, `start_location`, `enemy_start_locations`, `expansion_locations`, `map_center`, `mineral_fields`; entity record contains tag/type/position/health/shield (health+shield = `durability`)/build_progress/orders/is_structure/is_flying; own production structures also contain readiness, idle and powered flags |
 | Task | `id`, `node_id`, `intent_key`, `actor_tag`, `target`, `status`, `created_game_seconds`, `deadline_game_seconds`, `attempts`, `last_progress_game_seconds`, `reason`; status `pending`, `issued`, `running`, `succeeded`, `failed`, `cancelled`; target is entity tag or `[x,y]` according to operation |
 | Event | `schema_version`, `run_id`, `sequence`, `game_loop`, `game_seconds`, `node_id`, `task_id|null`, `kind`, `status`, `reason`, `facts: object`, `action: object|null`; kind `node`, `command`, `task`, `diagnostic`; action specifies ability, actor tags and target |
 | RunState | `schema_version`, `run_id`, `family`, `version`, `policy_hash`, `status`, `updated_at`, `game_seconds`, `last_sequence`, `active_nodes`, `waiting_nodes`, `tasks`, `recent_events`, `result|null`, `error|null`; status `starting`, `running`, `finished`, `stopped`, `failed`; result `win`, `loss`, `draw`, `timeout` |
@@ -147,13 +147,13 @@ Reuse React, SVG and installed `d3-hierarchy` for the structural forest beneath 
 
 ### D6: Launch and acceptance boundaries
 
-New command: `uv run python -m bots.jev.v1 --map Simple64 --opponent-race Terran --difficulty 1 --seed 1 --max-game-seconds 900 --max-wall-seconds 1800`. CLI supports `--realtime`, `--run-root`, `--validate-policy` (validate and exit without SC2). Defaults match this command. Resolve map/install through existing burnysc2 setup; fail early if unavailable. Runner invokes one built-in-AI match, no daemon, no automatic restart. Register cancellation with the same main-thread game lifecycle used by burnysc2; Ctrl+C requests clean leave and records stopped. Do not blanket-kill SC2 processes. Return nonzero for crash, timeout or infrastructure failure; ordinary win/loss returns zero with explicit result.
+New command: `uv run python -m bots.jev.v1 --map Simple64 --opponent-race Terran --difficulty 1 --seed 1 --max-game-seconds 900 --max-wall-seconds 1800`. CLI supports `--realtime`, `--run-root`, `--validate-policy` (validate and exit without SC2) and `--policy-file PATH` (only with `--validate-policy`: validate a candidate policy document instead of the packaged one). Later phases added `--decision-provider`/`--decision-model`/`--decision-max-requests` (Phase JI) and `--launch-session` (Phase J2 Step 224); see those plans. Defaults match this command. Resolve map/install through existing burnysc2 setup; fail early if unavailable. Runner invokes one built-in-AI match, no daemon, no automatic restart. Register cancellation with the same main-thread game lifecycle used by burnysc2; Ctrl+C requests clean leave and records stopped. Do not blanket-kill SC2 processes. Return nonzero for crash, timeout or infrastructure failure; ordinary win/loss returns zero with explicit result.
 
 One manually invoked match is not a new unattended evolution service. Nevertheless the polling/telemetry/task lifecycles require real observation: Step 207 runs a short production smoke and Step 208 observes three full sequential games. Closing the dashboard must not stop gameplay. No win-rate claim from three games; wins are recorded, not required for functional acceptance.
 
 ## 7. Build Steps
 
-Phase JV owns numeric Steps 201-208, newly reserved in the master plan. All are pending. Issue fields populated by repo-sync on 2026-10-07 (umbrella #317). Execute in order through build-step review gates; each step has a production caller and its own acceptance. Re-read source anchors before edits. Runtime-review startup below is from repository root; honor the existing Windows backend/worktree launch constraints and never reuse a stale backend as evidence of a changed checkout.
+Phase JV owns numeric Steps 201-208. Steps 201-206 are DONE (2026-10-07/08, #318-#323 closed); operator Steps 207/208 (#324/#325) are pending as Manual UAT M1/M2. Issue fields populated by repo-sync on 2026-10-07 (umbrella #317). Execute in order through build-step review gates; each step has a production caller and its own acceptance. Re-read source anchors before edits. Runtime-review startup below is from repository root; honor the existing Windows backend/worktree launch constraints and never reuse a stale backend as evidence of a changed checkout.
 
 ### Step 201: Validate and execute a bounded policy
 
@@ -188,11 +188,11 @@ Phase JV owns numeric Steps 201-208, newly reserved in the master plan. All are 
 - **Status:** DONE (2026-10-08)
 - **Issue:** #320
 - **Flags:** --reviewers deep
-- **Files:** `bots/jev/v1/policy.json`; `src/jev/operations.py`, `sc2_adapter.py`, `runtime.py`, `runner.py`; `tests/test_jev_army.py`.
+- **Files:** `bots/jev/v1/policy.json`; `src/jev/operations.py`, `sc2_adapter.py`, `runtime.py`, `runner.py`, `bot.py`, `contracts.py`; `tests/test_jev_army.py`, `tests/test_jev_runtime.py`, `tests/test_jev_sc2.py`.
 - **Produces:** Full v1 policy and terminal-result lifecycle.
 - **Done when:** Production-runtime scenarios launch with four ready Zealots before all Gateways complete, reinforce below four after attack latches, interrupt/resume for defense, invalidate dead targets, search after clearing the enemy start, and terminate within CLI time limits. Import/call audit finds no legacy gameplay, PPO inference or LLM client in Jev's gameplay call graph.
 - **Depends on:** 202
-- **Build note (build-phase orchestrator decision, 2026-10-08):** D3's "A destroyed Nexus ends economy recovery" is read as: once no Nexus exists, the recovery lanes stop — probe training, Gateway rebuilds and power-Pylon replacement. Surviving Gateways may keep training Zealots from banked minerals, and the army keeps defending, searching and attacking until SC2 ends the match or a time limit expires. Unreachable targets are abandoned through bounded recovery (D4): a give-up is attributed per target, not per actor, so staggered attackers cannot keep a stuck target alive indefinitely.
+- **Build note (build-phase orchestrator decision, 2026-10-08):** D3's "A destroyed Nexus ends economy recovery" is read as: once no Nexus exists, the recovery lanes stop — probe training, Gateway rebuilds and power-Pylon replacement. Surviving Gateways may keep training Zealots from banked minerals, and the army keeps defending, searching and attacking until SC2 ends the match or a time limit expires. Unreachable targets are abandoned through bounded recovery (D4): a give-up is attributed per target, not per actor, so staggered attackers cannot keep a stuck target alive indefinitely. Leaving is bounded: at most `MAX_LEAVE_ATTEMPTS` (3) attempts, then `LeaveFailed` is raised out of `on_step` so burnysc2 ends the game loop. `Entity` gained `shield` and the health+shield `durability` property that measures fight progress. Demotion (D4) of a unit target lapses only when the unit comes back into sight after leaving it, or when the node's search cycle completes; the seen-elsewhere lapse applies to structures only, so a continuously visible unit stays demoted (`src/jev/runtime.py:52-62`).
 
 <!-- autofix-applied: 2026-10-07 -->
 ### Step 204: Expose inspectable run evidence
@@ -204,7 +204,7 @@ Phase JV owns numeric Steps 201-208, newly reserved in the master plan. All are 
 - **Flags:** --reviewers deep --ui
 - **Start-cmd:** bash scripts/start-dev.sh
 - **URL:** http://localhost:3000/
-- **Files:** `src/jev/telemetry.py`, `api.py`, `runner.py`, `bot.py`; `bots/v13/api.py`; `tests/test_jev_telemetry.py`, `tests/test_jev_api.py`.
+- **Files:** `src/jev/telemetry.py`, `api.py`, `runner.py`, `bot.py`, `contracts.py` (`TraceStats`, `RunSummary`, `RunState.tasks_omitted`/`trace`, `run_not_found`), `runtime.py` (`max_active_tasks` defaults to the shared `MAX_ACTIVE_TASKS`); `bots/v13/api.py`; `tests/test_jev_telemetry.py`, `tests/test_jev_api.py`, `tests/test_jev_army.py`, `tests/test_jev_economy.py`, `tests/test_jev_sc2.py`.
 - **Produces:** Atomic run snapshots, bounded trace, archived policy, read-only route mount and replay/result references.
 - **Done when:** Real writer/reader/router integration preserves graph hash and large unit tags, serves two isolated run directories correctly, bounds history/rotation, exposes stale/crashed producer evidence, rejects path traversal, and tolerates partial JSONL tail without corrupting state. Existing API responses remain unchanged. Legacy version discovery excludes Jev. Capture a browser dashboard smoke with the actual telemetry-written fixture served through the Vite `/api/jev` proxy, checking response schema/hash and existing dashboard navigation; the new graph screen arrives in Step 205.
 - **Depends on:** 203
@@ -232,10 +232,11 @@ Phase JV owns numeric Steps 201-208, newly reserved in the master plan. All are 
 - **Status:** DONE (2026-10-08)
 - **Issue:** #323
 - **Flags:** --reviewers deep
-- **Files:** `scripts/validate_jev.py`, `documentation/operator/jev-validation.md`, `README.md`, `CLAUDE.md`; `tests/test_jev_validation.py`.
+- **Files:** `scripts/validate_jev.py`, `documentation/operator/jev-validation.md`, `README.md`, `CLAUDE.md`; `tests/test_jev_validation.py`; shared-runtime edits: `src/jev/contracts.py` (`RUN_OUTCOMES`, `is_run_outcome`), `src/jev/telemetry.py` (`MissingRecord`, `PolicyHashMismatch`, `TraceSegment`, `read_trace_segment`), `src/jev/runner.py` (`absolute_path` and `make_streams_encoding_safe` made public); `tests/test_jev_policy.py`, `tests/test_jev_telemetry.py`.
 - **Produces:** `validate_jev.py --run-id UUIDHEX --api-base http://localhost:8765` verifier that compares disk/API hashes, sequence and result without mocks; operational guide, acceptance report template and updated launch docs.
 - **Done when:** Verifier returns nonzero on mismatched hash, missing policy, malformed terminal result or stale running state; it accepts a real writer-produced fixture through actual HTTP routes. Guide contains all install/start/stop commands, Step 207/208 checks, evidence locations and cleanup instructions. Full relevant backend/frontend gates pass.
 - **Depends on:** 205
+- **Build note (2026-10-08):** the terminal state now advances `last_sequence` and `game_seconds` to the newest event `update()` received, so a run that ends on an exception never lags its trace.
 
 ### Step 207: Observe the live pipeline smoke
 
@@ -319,7 +320,7 @@ Stop only the processes started for this workflow. Ctrl+C targets the Jev foregr
 | D5 | D | Atomic disk snapshots, bounded JSONL, read-only SVG dashboard | Proposed default; tweak inspection/retention |
 | D6 | D | Solo Simple64/Terran/easy smoke then three games; wins not required | Proposed default; tweak benchmark/acceptance |
 
-Next pipeline: plan-review -> plan-redline -> plan-wrap -> repo-sync -> build-phase. Review and wrap occur before issue creation. Use `/plan-expedite --plan documentation/plans/jev-player-plan.md` for pre-build preparation in `C:\Users\x\dev\Alpha4Gate`, followed by `/build-phase --plan documentation/plans/jev-player-plan.md` only after READY and issue population. This planning task does not launch matches or start implementation.
+Next: operator Manual UAT M1 (Step 207, #324), then M2 (Step 208, #325), using the Manual UAT section below and `documentation/operator/jev-validation.md`; then `/repo-update` to close Phase JV. The plan and automated build pipeline already completed Steps 201-206, so do not re-run `/plan-expedite` or `/build-phase` on this plan. Model-backed play continues in Phase JI (complete) and Phase J2 (`jev-v2-plan.md`); J2 evidence does not close 207/208.
 
 ## Manual UAT
 

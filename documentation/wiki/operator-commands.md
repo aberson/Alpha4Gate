@@ -237,7 +237,10 @@ PS> .\scripts\launch-evolve.ps1 -Hours 8          # evolve run (--viewer) + dash
   `advisor` | `evolution` | `models` | `observable` | `processes` | `help` | `jev`.
   It does **not** start a game. (Distinct from `scripts/start-dev.sh`, which
   is the `build-step --ui` capture harness and kills the backend when its
-  foreground exits.)
+  foreground exits.) `-NoBrowser` starts or reuses the servers without opening
+  a tab; `-NoWait` starts them as hidden helper windows and returns at once
+  without waiting or prompting (both are used by `launch-jev.ps1` and
+  `benchmark_jev.py`).
 - **`scripts/launch-evolve.ps1`** — the command behind the dev-observatory
   **run-evolution** button. Starts `uv run --extra viewer python
   scripts/evolve.py --hours <N> --viewer` in its own console window, then
@@ -294,6 +297,24 @@ PS> uv run python scripts\validate_jev.py --run-id $runId --api-base http://loca
   cleanly. Never kill SC2 processes wholesale.
 - Full smoke and acceptance procedure:
   [documentation/operator/jev-validation.md](../operator/jev-validation.md).
+
+Dashboard-first launches and benchmarks (Phase J2):
+
+```powershell
+PS> .\scripts\launch-jev.ps1 -Version v1                                  # dashboard-first single match (Typesafe by default; -DecisionProvider scripted for local); pass -Version v1 until v2 is packaged
+PS> uv run python scripts\benchmark_jev.py --panel baseline --dry-run     # resolve exact entrypoint/policy hash/model; no service call, no UI, writes nothing
+PS> uv run python scripts\benchmark_jev.py --resume <batch_id>            # resume a batch; complete cases are never overwritten
+```
+
+- Dashboard-first: both open `/?tab=jev&launch=<session_id>` and start SC2
+  only after the page has rendered that exact run; an unhealthy dashboard
+  stops the launch (no headless fallback; `--no-dashboard` is the explicit
+  headless benchmark mode).
+- Typesafe: `--decision-provider typesafe --realtime` on `bots.jev.v1`; needs
+  `TYPESAFE_API_KEY` (or, for `launch-jev.ps1`, the saved encrypted key), and
+  `launch-jev.ps1` hands the key to the game process only.
+- Benchmark panels, limits, scoring and resume:
+  [documentation/operator/jev-v2-validation.md](../operator/jev-v2-validation.md).
 
 ### Headless (no SC2 client) — Phase 8 Docker worker
 
@@ -658,13 +679,13 @@ SC2 alone leaves the daemon hanging.
 
 ```powershell
 PS> uv sync                                              # install/refresh deps
-PS> uv run pytest -q                                     # 2744 pass, 3 skipped with [viewer] (2708 pass, 24 skipped without)
+PS> uv run pytest -q                                     # 2974 pass, 9 skipped with [viewer] (6 skips = opt-in JEV_BROWSER_TESTS real-browser tests)
 PS> uv run pytest -m sc2                                 # SC2 integration tests (needs SC2 running)
 PS> uv run pytest tests/test_evolve.py -q                # one file
 PS> uv run pytest tests/test_evolve.py::TestX -q         # one class
 PS> uv run ruff check .
-PS> uv run mypy src bots --strict                        # 821 source files
-PS> cd frontend; npm run test                            # 284 vitest (278 pass, 6 skipped)
+PS> uv run mypy src bots --strict                        # 824 source files
+PS> cd frontend; npm run test                            # 365 vitest (359 pass, 6 skipped)
 PS> cd frontend; npm run lint
 ```
 

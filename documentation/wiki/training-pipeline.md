@@ -386,7 +386,7 @@ Background thread that triggers training runs autonomously (`learning/daemon.py`
 | `watchdog_poll_seconds` | 5 |
 | `watchdog_error_threshold` | 5 |
 
-**API surface** — `/api/training/daemon` (status), `/api/training/triggers` (trigger evaluation). See [monitoring.md](monitoring.md) for the Loop tab and LoopStatus component.
+**API surface** — `/api/training/daemon` (status), `/api/training/triggers` (trigger evaluation). The dashboard reads `/api/training/daemon` only through `useDaemonStatus` → `useAlerts` (daemon-state alerts); a running daemon also appears as a `training-daemon` card, with its state shown as Phase, in the Models tab's Live Runs grid (`/api/runs/active`). The Loop tab and its LoopStatus component were removed in the 2026-04-29 dashboard refactor — see [monitoring.md](monitoring.md).
 
 ### Curriculum system
 

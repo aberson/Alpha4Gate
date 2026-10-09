@@ -1,7 +1,8 @@
 # Phase J2: Adaptive Jev player
 
-Status: APPROVED FOR PREPARATION (2026-10-08), including dashboard-first launch
-and automatic exact-game selection. Implementation has not started. Steps
+Status: IN PROGRESS (2026-10-09): code Steps 212 and 224 DONE (#328, #329 closed;
+see Build progress); next is operator Step 213 (#330). Approved for preparation
+2026-10-08, including dashboard-first launch and automatic exact-game selection. Steps
 212-224 follow JI's 209-211; no prior step is renumbered. Step 224 is ordered
 between 212 and 213 because the first baseline tests must use this launch flow.
 
@@ -47,11 +48,12 @@ gate from implementation completeness; a completed experiment can report failure
 - `telemetry.py`, `api.py`, and `frontend/src/{types/jev.ts,hooks/useJevRun.ts,
   components/JevTab.tsx,components/JevGraph.tsx}` expose archived policy, live
   snapshots and recent events. Polling is one second; active nodes pulse green.
-- JI's full realtime service match won against difficulty 1 with actual model
+- Phase JI (Typesafe Jev integration, Steps 209-211): its full realtime service match won against difficulty 1 with actual model
   `jev-1.13.0`. This is connectivity evidence, not harder-opponent evidence.
   See [JI validation](jev-typesafe-validation.md). Its source changes remain
   uncommitted at planning time on top of `4ea560e`; preserve them before an
-  isolated build. Do not start from HEAD alone and silently omit JI.
+  isolated build. Do not start from HEAD alone and silently omit JI. (Build note
+  2026-10-08: JI was committed in `a3bcb7d` before Step 212, so HEAD includes it.)
 
 Reuse Python >=3.12, uv (package runner), burnysc2 (SC2 API client), httpx (HTTP),
 FastAPI (read-only backend), React/TypeScript and Vite (dashboard). No new runtime
@@ -161,7 +163,8 @@ Only the adapter maps normalized ability names to burnysc2 enums.
 ### D1. Preserve the working baseline
 
 V1's policy bytes and default scripted behavior remain unchanged during J2. Step
-212 prepares immutable source capture; 224 finalizes the JI-enabled baseline after
+212 prepares immutable source capture; the first real `--panel baseline` preflight
+(start of Step 213, after 224 shipped the launch hook) finalizes the JI-enabled baseline after
 observation-only metrics and launch instrumentation, before the first baseline
 game and before v2 shared-runtime edits. Completed baseline cases are never
 rebased onto later source. Production workers run from the
@@ -469,6 +472,14 @@ the steps numerically and bypass 224's dependency before live tests.
 - **Produces:** Frozen v1 source capture, sequential bounded benchmark CLI, scorecard/metrics, resume and operator procedure.
 - **Done when:** Dry-run resolves exact production entrypoint/policy/model/options; real archive calibration rejects provenance mismatches; interrupted/resumed batches preserve completed cases; no implicit service/config fallback; focused tests and required checks pass. Actual SC2 play is Step 213.
 - **Depends on:** JI 209-211 source/evidence present, including uncommitted JI files.
+- **Build notes (2026-10-08, `9b2136e`):**
+  - Also touched `src/jev/decision.py` (not in Files). The coordinator reason codes (`ACCEPTED_REASON`, `LOW_CONFIDENCE_REASON`, `STALE_ANSWER_REASON`, `EXPIRED_REASON`, `STALE_REASONS`, `AUTH_FAILURE_REASONS`) are now single-sourced there for `jev.bot.MatchMetrics` and `jev.benchmark`, with behavior unchanged. Later decision work (Steps 219/220) should reuse these constants rather than re-spell the strings.
+  - CLI shipped beyond section 9's contract: `--panel staging` (one scripted, non-realtime v1 game; substrate check only, never evidence); `--report BATCH_ID`; `--calibrate-run RUN_DIR` with `--expect-*`; `--retry-interrupted` (with `--resume`; replays `interrupted`/`launch_failed` cases); `--freeze-candidate VERSION` (the write-once candidate freeze the held-out and attribution panels require; refuses `v1`); `--json PATH`; `--run-root`; `--benchmark-root`. Lower-only limits: `--max-games`, `--invocation-wall-seconds`, `--invocation-requests`, `--max-game-seconds`, `--max-wall-seconds`, `--max-requests`. Exit codes 0/1/2/3/130 (`documentation/operator/jev-v2-validation.md` section 10).
+  - Storage: frozen sources live in `data/jev/benchmarks/baselines/<vN>-<first 16 hex of fingerprint>/` with a `snapshot.json`; `<vN>.baseline.json` is the write-once finalized pointer. The manifest adds `panel` and per-version `sources` to the section 5 shape. Case records add `realtime`, `detail`, `attempts`, `spent`, `unrecorded_attempts`, `child_pid` and `child_started`.
+  - Every run now also writes `data/jev/runs/<run_id>/diagnostics.json` from `src/jev/runner.py` (cumulative D6 metrics plus `runtime_root`).
+  - Calibration: JI archive `aa57512dd51745c2bcf7fb47e2c15f23` scores a VALID win against its own expectation (61 calls; 57 accepted, 4 stale) and INVALID `provenance_mismatch` against the `jev-1.13.0` pin.
+  - The JI prerequisite was committed in `a3bcb7d` before this step; no uncommitted JI files remained.
+  - Reviewed by `/review-deep` (6 lenses) over 4 iterations; the 4th was operator-authorized.
 
 <!-- autofix-applied: 2026-10-08 -->
 ### Step 224: Open the exact live game before starting SC2
@@ -483,6 +494,15 @@ the steps numerically and bypass 224's dependency before live tests.
 - **Produces:** D7 session URLs, dashboard readiness barrier, single-tab batch following, launcher and finalized frozen baseline.
 - **Done when:** Production runner hook plus real recorder/API/browser roundtrip proves the exact archived policy and run are rendered before a test launcher may start SC2; sequential runs follow the same session without reopening tabs; unrelated new runs cannot steal selection; failure/timeout stops launch visibly; manual history browsing pauses following until Resume live; legacy no-parameter hook/launcher behavior remains compatible. Browser tests cover cold startup, reused servers, stale readiness, bad session/run IDs, wrong served root and stop-before-start. Step 213 must then prove the ordering with actual SC2 and the real user-visible browser, not only a fake game launcher.
 - **Depends on:** 212
+- **Build notes (2026-10-09, `28dc15d`):**
+  - Also touched (not in Files): `frontend/src/components/JevTab.css` (`.jev-launch*` status and paused-banner styles) and `tests/test_jev_benchmark.py` (dashboard-first benchmark default, `--no-dashboard` dry run).
+  - Frozen baseline: this step did not finalize it. `jev.benchmark` finalizes v1 in the first non-dry-run `--panel baseline` preflight. The order is resolve, open the dashboard, probe, capture and write `data/jev/benchmarks/baselines/v1.baseline.json`, then game 1, so the snapshot carries `src/jev/launch.py` and the runner hook. The "finalized frozen baseline" in Produces therefore lands at the start of Step 213. Run Step 213 before any Step 214 edit to the v1 runtime source set (`src/jev/`, `bots/jev/v1/`, the `bots`/`bots.jev` package markers, `src/orchestrator/__init__.py` and `paths.py`, `pyproject.toml`, `uv.lock`); otherwise the baseline would capture v2-era shared runtime.
+  - Surfaces beyond D7's list: runner `--launch-session <session_id>`; `python -m jev.launch` (what `scripts/launch-jev.ps1` calls); `launch-jev.ps1 -OpponentRace` (default `Terran`); benchmark error `dashboard_unavailable` (before any case) and case reason `launch_failed` (replayed by `--resume <batch_id> --retry-interrupted`); hidden-server logs `logs/dashboard-backend.log` and `logs/dashboard-frontend.log`.
+  - `launch-jev.ps1 -Version` defaults to `v2` as D7 specifies, but only Step 214 packages `bots.jev.v2`. Until then pass `-Version v1`. With `v2` it currently exits with "not packaged; nothing was started".
+  - Deadline deviation from D7: server readiness runs `wait_for_dashboard` (60 s) and then `verify_session_served` with its own 60 s window (`src/jev/launch.py`), so a slow cold start can take about two minutes. The per-run rendered-ready barrier is 60 s as specified.
+  - Liveness: the barrier re-publishes `starting` every 5 s. The page shows "Launcher not responding" after 20 s of silence in `starting`, or 120 s in `preparing`/`between_games`. It shows "Stale" for a run whose game process stopped heartbeating. A paused page during a running game quotes the launcher's last message.
+  - The six real-browser tests (`tests/test_jev_launch.py::TestRealBrowser`) are opt-in (`JEV_BROWSER_TESTS=1`, `uv run --with playwright`) and are not in CI; all 6 passed at `28dc15d`.
+  - Reviewed by 8 reviewers (5 code, 3 runtime with real-stack evidence) over 4 iterations; the 4th was operator-authorized.
 
 ### Step 213: Observe the harder-opponent baseline
 - **Problem:** Identify the current rush's failure modes against stronger opponents.
@@ -621,7 +641,7 @@ not hidden build prerequisites.
 | Service version changes | Confounded comparison | Pin and verify returned model; hold instead of silently substituting |
 | Ground composition meets cloak/advanced tech | Legitimate strategic losses | Record capability limitation; defer new tech to evidence-led next phase |
 | Shared runtime regresses v1 | Invalid comparison | Frozen executable baseline plus v1 regression suite and old archive smoke |
-| Current JI changes are uncommitted | Fresh worktree misses prerequisite | Explicit source checkpoint/snapshot before building; never sweep unrelated files |
+| Current JI changes are uncommitted | Fresh worktree misses prerequisite | Explicit source checkpoint/snapshot before building; never sweep unrelated files; resolved 2026-10-08 by `a3bcb7d` |
 
 ## 9. Testing Strategy and Operator Quickstart
 
@@ -667,6 +687,8 @@ $jevSecret.Dispose()
 
 After Step 224, the normal visible single-match launch is
 `powershell -File scripts/launch-jev.ps1 -Version v2 -DecisionProvider typesafe`.
+Until Step 214 packages `bots.jev.v2`, use `-Version v1` (Step 213); `-Version v2`
+currently exits with "bots.jev.v2 is not packaged; nothing was started".
 It starts the dashboard first, selects the exact run and waits for rendered
 readiness before opening SC2. Benchmark invocations use the same flow by default.
 This replaces the need to start a page and find the run in its menu.
@@ -674,14 +696,17 @@ This replaces the need to start a page and find the run in its menu.
 For low-level diagnosis only, start the dashboard separately using
 `bash scripts/start-dev.sh` and visit http://localhost:3000/?tab=jev. Reuse healthy
 servers; do not kill unrelated processes. The raw single-match command below
-does not promise automatic UI selection (use the launcher for attended tests):
+does not promise automatic UI selection (use the launcher for attended tests;
+before Step 214 substitute `bots.jev.v1`):
 
 ```powershell
 uv run python -m bots.jev.v2 --decision-provider typesafe --decision-model jev-1.13.0 --decision-max-requests 450 --realtime --map Simple64 --opponent-race Terran --difficulty 3 --seed 11 --max-game-seconds 900 --max-wall-seconds 1200
 ```
 
 Step 212 adds the following CLI contract, integrated with D7 by Step 224
-(not runnable before implementation):
+(implemented in `9b2136e` and `28dc15d`; the procedure, limits and exit codes are in
+`documentation/operator/jev-v2-validation.md`, and
+`uv run python scripts/benchmark_jev.py --help` lists every option):
 `uv run python scripts/benchmark_jev.py --panel baseline --dry-run`, then remove
 `--dry-run` to play. Panels are `baseline`, `heldout-a`, `heldout-b`, `attribution`;
 each is exactly six games defined by D6, with heldout-a seed101 and heldout-b
@@ -690,7 +715,14 @@ seed202. `--resume <batch_id>` requires the original fingerprint/options/model;
 above and can only be lowered for initial execution. Baseline source snapshot
 creation/finalization is an explicit part of `--panel baseline` preflight, after
 Step 224 launch integration and before any game.
-Step 212 documents the exact staging run command for substrate checks.
+`--panel staging` is a one-game, scripted, non-realtime v1 substrate check and never
+counts as performance evidence. Held-out and attribution panels play frozen sources
+only. Once the v2 candidate is final, and before its first held-out game (D6), freeze
+it once with `uv run python scripts/benchmark_jev.py --freeze-candidate v2`. The
+freeze is write-once (`data/jev/benchmarks/baselines/v2.baseline.json`) and refuses
+`v1`; without it those panels stop with `candidate_not_frozen`.
+`--resume <batch_id> --retry-interrupted` replays `interrupted`/`launch_failed`
+cases. `--no-dashboard` is the explicit headless mode.
 
 Stop a foreground match with Ctrl+C once; benchmark propagates stop to its
 owned match and writes interrupted status. Let burnysc2 clean up its SC2 client;
@@ -705,6 +737,49 @@ Commands for verification from root: `uv run pytest`, `uv run ruff check .`,
 backend runs in Python. No deployment step or external issue mutation is part
 of this planning turn. Plan review, proposal and wrap precede issue sync;
 build-phase starts only after repo-sync has filled the Issue fields.
+
+## Build progress
+
+Updated 2026-10-09. Evidence cutoff: commit `28dc15d` (2026-10-09 09:36 -0700) on branch `master-plan/phase-ev`, not merged to `master`. 2 of 13 steps are complete (code Steps 212 and 224). Code Steps 214-221 and live gates 213, 222 and 223 remain. Umbrella issue #327 stays open.
+
+| Step | Issue | Commit | What shipped |
+|---|---|---|---|
+| 212 Establish reproducible Jev benchmarks | #328 closed | `9b2136e` (2026-10-08) | `src/jev/benchmark.py` + `scripts/benchmark_jev.py`: a sequential, bounded benchmark of the production runner. Panels `baseline`, `heldout-a`, `heldout-b`, `attribution`, plus a one-game scripted `staging` check. `--dry-run` resolves the exact entrypoint, policy hash, source fingerprint, model `jev-1.13.0` and options with no service call. Frozen v1 source capture and verify use an explicit allowlist and reject bytecode caches. Batch lock, `--resume` and `--retry-interrupted` never overwrite completed cases. The D6 scorecard labels unknown metrics. Calibrated against the real JI archive `aa57512d...` (61 calls; 57 accepted, 4 stale). Also `--freeze-candidate VERSION`, observation-only metrics in `src/jev/bot.py`, `diagnostics.json` from `src/jev/runner.py`, and coordinator reason codes single-sourced in `src/jev/decision.py` |
+| 224 Open the exact live game before starting SC2 | #329 closed | `28dc15d` (2026-10-09) | `src/jev/launch.py` launch sessions (`data/jev/launches/<session_id>/session.json` + `ready.json`; codes `launch_forbidden` 403, `invalid_launch_request` 422, `launch_not_found` 404, `launch_not_ready` 409, `corrupt_launch` 503). `run_match(on_recorded=...)` rendered-ready barrier and runner `--launch-session`. `GET /api/jev/launches/{session_id}` and a loopback, same-origin `POST /api/jev/launches/{session_id}/ready`. Jev tab exact selection by `?tab=jev&launch=<id>` and `?tab=jev&run=<id>`, with Preparing/Starting/Live/Finished, Following paused + Resume live, Web Worker session polling and launcher-liveness notices. `scripts/launch-jev.ps1`; `scripts/launch-a4g.ps1 -NoBrowser -NoWait`. The benchmark is dashboard-first by default (`--no-dashboard` is explicit) |
+
+Both steps first checkpointed BLOCKED on an exhausted review budget (`5242871`, `bd154b5`). Each completed after an operator-authorized 4th review iteration. Step 212 was reviewed by `/review-deep` (6 lenses); Step 224 by 8 reviewers (5 code, 3 runtime with real-stack evidence). Review evidence is local and gitignored (`.build-step/jev-v2-212/`, `.build-step/jev-v2-224/`).
+
+Gates at `28dc15d` (full suites, not subsets):
+
+| Gate | Result at `28dc15d` | At session start (`a3bcb7d`) |
+|---|---|---|
+| `uv run pytest` (addopts `-m 'not sc2'`; main venv has the `[viewer]` extra) | 2974 passed, 9 skipped, 2 deselected (the 9 skips are 3 pre-existing plus 6 opt-in real-browser tests) | 2774 passed, 3 skipped |
+| vitest | 359 passed, 6 skipped across 26 files | 283 passed, 6 skipped |
+| mypy `--strict` | clean, 824 source files | - |
+| ruff | clean | - |
+| eslint | 0 errors (1 pre-existing warning, `useAlerts.ts:149`) | - |
+| vite build | ok | - |
+| real-browser suite (`JEV_BROWSER_TESTS=1`) | 6/6 | - |
+
+Building 212 and 224 made no SC2 match, no hosted Typesafe call and no new run archive. The dashboard still has 7 tabs.
+
+### Fresh-context notes for Step 213 (#330, operator)
+
+1. The frozen v1 baseline does not exist yet. The first non-dry-run `--panel baseline` preflight finalizes it: resolve, open the dashboard, probe, capture and write `data/jev/benchmarks/baselines/v1.baseline.json`, then game 1. Run Step 213 before any Step 214 edit to the v1 runtime source set (`src/jev/`, `bots/jev/v1/`, package markers, `src/orchestrator/__init__.py` and `paths.py`, `pyproject.toml`, `uv.lock`).
+2. `bots.jev.v2` is not packaged until Step 214, so run `scripts/launch-jev.ps1` with `-Version v1`.
+3. Order: `documentation/operator/jev-v2-validation.md` section 12, Stages 1-4, each passing before the next starts (the dry-run, key and baseline details are there):
+   - Stage 1: prerequisites and `--panel baseline --dry-run`; v1 shows `capture_pending`.
+   - Stage 2: `--panel staging` (required by the guide; scripted, no key; a failure stops Step 213).
+   - Stage 3: the hosted smoke (note 4).
+   - Stage 4: load the key (section 9 above), then `--panel baseline`, with the dashboard window kept visible.
+   - Then `Remove-Item Env:TYPESAFE_API_KEY`.
+4. Smoke: Step 213 requires a ">=60-second production smoke" before the six-case baseline completes. The guide's Stage 3 runs it as one attended hosted v1 match at Terran difficulty 1, seed 1 (`powershell -File scripts/launch-jev.ps1 -Version v1 -DecisionProvider typesafe -Difficulty 1 -Seed 1`): one paid match outside the batch, and not one of the six baseline cases (the launcher's defaults, Terran difficulty 3 seed 11, would replay baseline case 1). Counting the first baseline case, watched live for >=60 s, is an alternative only if Step 213's report in `documentation/plans/jev-v2-validation.md` records that choice.
+5. Watch items:
+   - A `provenance_mismatch` naming "unexpected folders" comes from the post-case `verify_snapshot` (`src/jev/benchmark.py:1163`, called at `:3311` after the child exits); each child runs with its working directory inside the snapshot (`:3253`), so any folder it creates there fails the case.
+   - Server readiness can take up to two 60 s windows (see the Step 224 build notes).
+   - A paused page during a running game quotes the launcher's last message.
+   - Real-browser tests are opt-in and not in CI.
+6. Held-out and attribution panels (Step 223) need `--freeze-candidate v2` once the candidate is final and before its first held-out game. Without it they stop with `candidate_not_frozen`.
 
 ## Appendix
 

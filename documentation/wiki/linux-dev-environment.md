@@ -100,8 +100,8 @@ These three commands are the Phase 8 Step 6 done-when. All must succeed against 
 
 ```bash
 cd /mnt/c/Users/x/dev/Alpha4Gate
-uv run pytest --collect-only 2>&1 | tail -3   # pytest can find dev deps + collect ~2732 tests (no [viewer] extra; 2 deselected)
-uv run mypy src bots --strict 2>&1 | tail -3  # 178 files, no issues
+uv run pytest --collect-only 2>&1 | tail -3   # pytest can find dev deps + collect the full suite (no [viewer] extra; 2 deselected; re-measure the count on the WSL venv)
+uv run mypy src bots --strict 2>&1 | tail -3  # 824 source files, no issues
 uv run ruff check .                            # All checks passed
 ```
 

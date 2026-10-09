@@ -2,7 +2,7 @@
 
 What's tested, how to run it, and what's not covered.
 
-> **At a glance:** 2708 unit tests passing (24 skipped, 2 deselected) across 122 files; 2744 passing (3 skipped, 2 deselected) with the optional `[viewer]` extra; collected in ~13s. Heavy mocking of SC2 BotAI via MagicMock/AsyncMock — no SC2 client needed for unit tests. Integration tests require a running SC2 client and are marked `@pytest.mark.sc2`. No `conftest.py` — fixtures are inline. The suite covers the full autonomous loop (daemon, promotion, rollback, evaluator, advised-run bridge) plus the evolve substrate (orchestrator, pool, fitness/regression gates, evolve worker, sandbox hook, lineage registry + CLI, baseline gauntlet, diversity fingerprint, extinction, posterior gate stats), the Phase 8 Linux substrate (SC2PATH resolver), and the Jev player (policy validation, runtime, economy, army, SC2 adapter, telemetry, API, live-validation verifier). Frontend has its own 284-test vitest suite (278 passing, 6 skipped) — see [frontend.md](frontend.md).
+> **At a glance:** 2974 unit tests passing (9 skipped, 2 deselected) across 125 files with the optional `[viewer]` extra (the no-viewer figure was last measured at 2708 passing before Phase J2 and has not been re-measured); 6 of the skips are opt-in real-browser launch tests (`$env:JEV_BROWSER_TESTS = "1"`); collected in ~13s. Heavy mocking of SC2 BotAI via MagicMock/AsyncMock — no SC2 client needed for unit tests. Integration tests require a running SC2 client and are marked `@pytest.mark.sc2`. No `conftest.py` — fixtures are inline. The suite covers the full autonomous loop (daemon, promotion, rollback, evaluator, advised-run bridge) plus the evolve substrate (orchestrator, pool, fitness/regression gates, evolve worker, sandbox hook, lineage registry + CLI, baseline gauntlet, diversity fingerprint, extinction, posterior gate stats), the Phase 8 Linux substrate (SC2PATH resolver), and the Jev player (policy validation, runtime, economy, army, SC2 adapter, telemetry, API, live-validation verifier, Typesafe decision coordinator, benchmark harness, dashboard-first launch sessions). Frontend has its own 365-test vitest suite (359 passing, 6 skipped) — see [frontend.md](frontend.md).
 
 ## Purpose & Design
 
@@ -129,10 +129,10 @@ Plus `pyproject.toml` config for pytest, mypy, ruff.
 
 **Linting:** ruff with rules E, F, I, UP, B. Line length 100.
 
-**Frontend tests:** vitest (284 tests: 278 passing, 6 skipped). Run via `cd frontend && npm test`.
+**Frontend tests:** vitest (365 tests: 359 passing, 6 skipped). Run via `cd frontend && npm test`.
 
 | File | Purpose |
 |------|---------|
-| `tests/test_*.py` | 122 Python test modules |
+| `tests/test_*.py` | 125 Python test modules |
 | `frontend/src/**/*.test.{ts,tsx}` | Frontend tests (vitest) |
 | `pyproject.toml` | pytest, mypy, ruff configuration |

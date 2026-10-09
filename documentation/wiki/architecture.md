@@ -229,6 +229,25 @@ bots/v0/
     └── hyperparams.py      # PPO config loader
 ```
 
+Jev (a separate player family; runtime in `src/jev/` imported as `jev`, policy
+packages in `bots/jev/vN/`):
+
+```
+src/jev/
+├── contracts.py    # Typed Jev records (schema version 1)
+├── policy.py       # Strict policy loading, validation, canonical policy hash
+├── operations.py   # The one allowlisted operation registry
+├── runtime.py      # Deterministic, bounded Jev interpreter
+├── sc2_adapter.py  # Visible-state adapter between burnysc2 and the runtime
+├── bot.py          # burnysc2 lifecycle: one match driven by the policy graph
+├── decision.py     # Typesafe structured army decision (non-blocking)
+├── runner.py       # Single-match runner + CLI (writes diagnostics.json)
+├── telemetry.py    # Run-evidence writer/reader (data/jev/runs)
+├── api.py          # /api/jev router: run evidence + launch readiness receipt
+├── launch.py       # Dashboard-first launch sessions + rendered-ready barrier
+└── benchmark.py    # Reproducible, resumable benchmarks (data/jev/benchmarks)
+```
+
 ### Key file locations
 
 | File | Purpose |

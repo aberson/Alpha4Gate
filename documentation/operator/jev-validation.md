@@ -6,6 +6,12 @@ three-match acceptance of [the Phase JV plan](../plans/jev-player-plan.md). Ever
 below is real and runs in **Windows PowerShell** from the repository root
 (e.g. `C:\Users\<you>\dev\Alpha4Gate`) unless a step says otherwise.
 
+Jev v2 (Phase J2) adds two attended-test tools, documented in [the Jev v2 validation
+guide](jev-v2-validation.md). One is the reproducible benchmark `scripts/benchmark_jev.py`
+(Step 212). The other is the dashboard-first launcher `scripts/launch-jev.ps1` (Step 224),
+which opens the Jev tab on the exact run and starts SC2 only after the page has rendered
+it. Steps 207/208 and the Typesafe section 13 still use the commands below.
+
 What runs where:
 
 | Terminal | Process | Stops with |

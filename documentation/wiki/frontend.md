@@ -8,7 +8,7 @@ unified improvements timeline, system health, and alert triage.
 > polling (3–10s, with exceptions below); the in-app alert engine runs
 > client-side over the polled snapshots. All frontend code is domain-agnostic
 > — it renders whatever JSON the backend sends. Unit tests run under
-> vitest + jsdom (284 tests — 278 passing, 6 skipped — across 26 files).
+> vitest + jsdom (365 tests — 359 passing, 6 skipped — across 26 files).
 
 ## Purpose & Design
 
@@ -31,7 +31,7 @@ consolidated into the Models tab's Lineage timeline (`LineageView` /
 | **Observable** | ObservableTab | Exhibition / replay-stream surface (Phase L placeholder) | On-demand | — |
 | **Processes** | ProcessMonitor + ResourceGauge + WslProcessesPanel + AlertsPanel | `/api/processes` + `/api/system/*` (separate router); alerts via the `useAlerts` hook | 5s poll | Cross-cutting (liveness + alerts) |
 | **Help** | HelpTab | `/api/operator-commands` (reads `documentation/wiki/operator-commands.md` from disk) | One-time fetch | — |
-| **Jev** | JevTab (JevGraph) | `/api/jev/runs` + `/api/jev/runs/{run_id}` + `/api/jev/runs/{run_id}/policy` (read-only, served from `data/jev/runs`) | 5s run-list poll + 1s selected-run poll; archived policy retried on the 1s poll until it first loads, then never refetched (immutable); 4s request timeout | — (independent Jev player, outside both loops) |
+| **Jev** | JevTab (JevGraph) | `/api/jev/runs` + `/api/jev/runs/{run_id}` + `/api/jev/runs/{run_id}/policy` (read-only, served from `data/jev/runs`); with `?launch=<session_id>` also `GET /api/jev/launches/{session_id}` and the readiness receipt `POST /api/jev/launches/{session_id}/ready`, sent after the launched run is rendered and retried on each session poll until accepted (writes only `data/jev/launches/<session_id>/ready.json`; loopback client and Host, dashboard Origin `http://localhost:3000` or `http://127.0.0.1:3000` only) | 5s run-list poll + 1s selected-run poll; archived policy retried on the 1s poll until it first loads, then never refetched (immutable); 4s request timeout; with `?launch=`, the launch session polled every 1s from a Web Worker timer and again on visibilitychange | — (independent Jev player, outside both loops) |
 
 The Advisor tab is the single source of truth for advised-loop state — it
 reads `data/advised_run_state.json` via `/api/advised/state` and writes
@@ -87,7 +87,15 @@ policy shown as a graph, node details (the policy definition from the archived
 policy, latest evaluations, command events, and tasks with deadlines), and the
 recent trace, which labels each status change as a runtime transition. Each
 snapshot is labeled live, stale, offline, or final, and only a live run
-animates. Pulls from `useJevRun`.
+animates. Pulls from `useJevRun`. Opened by a dashboard-first launch
+(`/?tab=jev&launch=<session_id>`, from `scripts/launch-jev.ps1` or
+`scripts/benchmark_jev.py`), it follows that launch session's exact run: Preparing
+until the session names its run, then (after the page has rendered that run and its
+archived policy and acknowledged it) Starting, Live and Finished; a benchmark batch
+moves to the next game in the same tab. Picking another run pauses following until
+**Resume live**. A launcher that stops writing its session shows **Launcher not
+responding**. An **Army decision** panel shows the configured provider and whether
+each decision came from the Typesafe model or the scripted fallback.
 
 **JevGraph:** `d3-hierarchy` SVG tree of the archived policy forest with active
 and waiting node status. Supports pan, zoom, and collapse, and is a
@@ -116,7 +124,12 @@ stop / reset-loop confirmations).
 | `useDaemonStatus()` | Daemon + training-status polling | 5s poll of `/api/training/daemon` + `/api/training/status`. Currently only consumed by `useAlerts` for daemon-state alert rules — the dashboard refactor removed the Loop tab driver. |
 | `useAlerts()` | Client-side alert engine | 5s poll of training + advised + promotions endpoints, runs `alertRules.ts` over the snapshot, persists via `alertStorage.ts`. |
 | `useSystemInfo()` | Host resource snapshots | Backs ResourceGauge + WslProcessesPanel; reads the `/api/system/*` router. |
-| `useJevRun()` | Jev run list + selected run + archived policy | 5s list poll, 1s selected-run poll, 4s abort timeout per request. The policy is retried on the 1s poll until it first loads, then never refetched. Selects the newest run when none is selected yet (the first non-empty list response) and keeps that selection until the user picks another, so it does not switch to runs started later; clears its timers and aborts requests on unmount. |
+| `useVersions()` | Version registry | `/api/versions` via `useApi`. Consumed by ModelsTab, VersionInspector, CompareView, ObservableTab. |
+| `useVersionDetail(v)` | Per-version detail | `/api/versions/{v}/{config,training-history,actions,improvements,weight-dynamics}` via `useApi`. Consumed by VersionInspector, CompareView, ForensicsView. |
+| `useLineage()` | Lineage DAG | `/api/lineage` via `useApi`. Consumed by LineageView. |
+| `useRunsActive()` | In-flight runs | 2s poll of `/api/runs/active` via `useApi`. Consumed by LiveRunsGrid. |
+| `useGameForensics()` | Per-game forensics | `/api/versions/{v}/forensics/{game_id}` via `useApi`. Consumed by ForensicsView. |
+| `useJevRun()` | Jev run list + selected run + archived policy | 5s list poll, 1s selected-run poll, 4s abort timeout per request. The policy is retried on the 1s poll until it first loads, then never refetched. Selects the newest run when none is selected yet (the first non-empty list response) and keeps that selection until the user picks another, so it does not switch to runs started later. With `?run=<run_id>` it shows exactly that run; with `?launch=<session_id>` (which wins over `run`) it polls the session every 1s and follows its active run, never guessing the newest; it POSTs `/api/jev/launches/{id}/ready` once the run and policy are rendered, and an invalid ID selects nothing. It clears its timers and aborts requests on unmount. |
 
 ### Polling intervals
 
@@ -129,7 +142,8 @@ stop / reset-loop confirmations).
 | ProcessMonitor / ResourceGauge / WslProcessesPanel | 5000ms | `useApi` / `useSystemInfo` |
 | AlertToast / AlertsPanel (via `useAlerts`) | 5000ms | setInterval + fetch, rules evaluated client-side |
 | HelpTab | one-time fetch on mount | `useApi` (no `pollMs`) |
-| JevTab | 1000ms selected run / 5000ms run list | `useJevRun` (setInterval + fetch with AbortController) |
+| JevTab | 1000ms selected run / 5000ms run list / 1000ms launch session (`?launch=` only; Web Worker ticker plus visibilitychange, so a hidden page keeps following) | `useJevRun` (setInterval + fetch with AbortController) |
+| ModelsTab (LiveRunsGrid) | 2000ms | `useRunsActive` (`useApi` with `pollMs: 2000`) |
 | Everything else | One-time | useEffect fetch on mount |
 
 ---
@@ -141,7 +155,8 @@ stop / reset-loop confirmations).
 **Routing:** Tab-based via `useState<Tab>(initialTab)` — no React Router, just conditional
 rendering based on active tab. The `/?tab=<name>` deep link (case-insensitive, one of the 7
 `TAB_NAMES`) picks the initial tab; an unknown or absent value falls back to `advisor`.
-Operators open the Jev tab with `/?tab=jev`.
+Operators open the Jev tab with `/?tab=jev`; `/?tab=jev&run=<run_id>` selects an exact
+run and `/?tab=jev&launch=<session_id>` follows a dashboard-first launch session.
 
 **Frontend is domain-agnostic:** Components render whatever JSON the API returns. Unit
 type names, strategic states, and command vocabulary come from the backend. No SC2
@@ -205,6 +220,13 @@ as `*.test.tsx` / `*.test.ts`. Run with `npm test -- --run` or `npm run test:run
 | `frontend/src/hooks/useAlerts.ts` | Client-side alert engine + persistence |
 | `frontend/src/hooks/useSystemInfo.ts` | Host resource snapshots backing the Processes tab |
 | `frontend/src/hooks/useJevRun.ts` | Jev run list + selected run + archived policy polling |
+| `frontend/src/hooks/useVersions.ts` | Version registry (`/api/versions`) |
+| `frontend/src/hooks/useVersionDetail.ts` | Per-version config / training history / actions / improvements / weight dynamics |
+| `frontend/src/hooks/useLineage.ts` | Lineage DAG (`/api/lineage`) |
+| `frontend/src/hooks/useRunsActive.ts` | In-flight runs, 2s poll (`/api/runs/active`) |
+| `frontend/src/hooks/useGameForensics.ts` | Per-game forensics (`/api/versions/{v}/forensics/{game_id}`) |
+| `frontend/src/hooks/useBuildOrders.ts` | (orphan — used only by the unmounted BuildOrderEditor) |
+| `frontend/src/hooks/useGameState.ts` | (orphan — no consumer) |
 | `frontend/src/lib/alertRules.ts` | Alert rule definitions and evaluator |
 | `frontend/src/lib/alertStorage.ts` | `localStorage` persistence for alerts |
 | `frontend/src/lib/idbCache.ts` | IndexedDB cache used by `useApi` |
