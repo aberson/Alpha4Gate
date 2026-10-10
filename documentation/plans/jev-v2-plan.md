@@ -622,7 +622,7 @@ the steps numerically and bypass 224's dependency before live tests.
 ### Step 218: Produce and control a mixed army
 - **Problem:** Transition beyond ground-only Zealots using a bounded tech plan.
 - **Type:** code
-- **Status:** PENDING
+- **Status:** BLOCKED (2026-10-10)
 - **Issue:** #335
 - **Flags:** --reviewers deep
 - **Files:** src/jev/contracts.py, src/jev/operations.py, src/jev/runtime.py, src/jev/sc2_adapter.py, src/jev/plans.py, bots/jev/v2/policy.json, tests/test_jev_macro.py, tests/test_jev_army.py, tests/test_jev_v2.py.
