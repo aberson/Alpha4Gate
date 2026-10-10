@@ -10,9 +10,12 @@
    the adapter's enemy-structure memory -- the full visible-state
    :class:`~jev.contracts.Observation` is built only when the runtime will tick,
    which is also the only time it checks acknowledgements;
-4. on a tick, builds that Observation through
-   :class:`~jev.sc2_adapter.Sc2Adapter`, ticks :class:`~jev.runtime.JevRuntime`
-   and hands the graph-selected commands to the adapter, which issues them;
+4. on a tick, first has the adapter answer the SC2 path queries the previous
+   tick's graph asked for (:meth:`~jev.runtime.JevRuntime.path_requests`, an
+   asynchronous preparation; a v1 policy never asks), then builds that Observation
+   through :class:`~jev.sc2_adapter.Sc2Adapter`, ticks
+   :class:`~jev.runtime.JevRuntime` and hands the graph-selected commands to the
+   adapter, which issues them;
 5. hands the step's runtime events to the run's
    :class:`~jev.telemetry.RunRecorder`, which traces them and refreshes the run
    state at most twice per wall-clock second -- on every live step, ticked or
@@ -276,6 +279,8 @@ class MatchMetrics:
         self._latencies: list[float] = []
         self._last_answer_id: int | None = None
         self._last_pending_id: int | None = None
+        # Plans (plan J2 Step 217): None until a runtime with a plan store reports.
+        self._plan_aborts: int | None = None
 
     @property
     def failure(self) -> str | None:
@@ -366,6 +371,11 @@ class MatchMetrics:
         self._last_structures = frozenset(s.tag for s in observation.own_structures)
 
     # -- decisions ------------------------------------------------------------
+
+    def record_plans(self, aborts: int | None) -> None:
+        """The runtime's count of aborted plans so far (None: it runs no plans)."""
+        if self._failure is None and aborts is not None:
+            self._plan_aborts = max(self._plan_aborts or 0, aborts)
 
     def record_decision(self, facts: Mapping[str, JsonValue]) -> None:
         """Count requests, answers, failures, models, latency and tokens from one poll.
@@ -506,11 +516,16 @@ class MatchMetrics:
         else:
             record["workers"] = {"status": "unavailable", "final": None, "max": None, "mean": None}
         record["unit_losses"] = self._losses(usable)
-        record["plan_aborts"] = {
-            "status": "unavailable",
-            "value": None,
-            "reason": "this runtime has no plan store",
-        }
+        if self._plan_aborts is None:  # a policy without persistent plans (v1)
+            record["plan_aborts"] = {
+                "status": "unavailable",
+                "value": None,
+                "reason": "this runtime has no plan store",
+            }
+        elif not usable:
+            record["plan_aborts"] = {"status": "unavailable", "value": None}
+        else:
+            record["plan_aborts"] = {"status": "measured", "value": self._plan_aborts}
         record["decisions"] = self._decision_summary()
         return record
 
@@ -751,6 +766,9 @@ class JevController:
             self.adapter.remember(self._game, port)
             self._publish(())
             return None
+        requests = self.runtime.path_requests()  # plan J2 Step 217; never for v1
+        if requests:
+            await self.adapter.query_paths(port, requests)
         observation = self.adapter.observe(self._game, port)
         facts: dict[str, JsonValue]
         if self._decisions is not None:
@@ -783,6 +801,7 @@ class JevController:
         """Feed the observation-only accumulators; a defect there disables them only."""
         try:
             self.metrics.record_decision(facts)
+            self.metrics.record_plans(self.runtime.plan_aborts())
             self.metrics.sample(
                 observation, attack_launched=self.runtime.latches.get("attack_launched", False)
             )

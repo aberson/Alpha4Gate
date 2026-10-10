@@ -878,6 +878,7 @@ _PORT_CASES: dict[str, tuple[object, AbilityId]] = {
     "PROTOSSBUILD_PYLON": ((24.0, 34.0), AbilityId.PROTOSSBUILD_PYLON),
     "PROTOSSBUILD_GATEWAY": ((26.5, 34.5), AbilityId.PROTOSSBUILD_GATEWAY),
     "PROTOSSBUILD_ASSIMILATOR": ("unit", AbilityId.PROTOSSBUILD_ASSIMILATOR),  # on a geyser
+    "PROTOSSBUILD_NEXUS": ((60.5, 60.5), AbilityId.PROTOSSBUILD_NEXUS),  # an expansion site
     "NEXUSTRAIN_PROBE": (None, AbilityId.NEXUSTRAIN_PROBE),
     "GATEWAYTRAIN_ZEALOT": (None, AbilityId.GATEWAYTRAIN_ZEALOT),
     "MOVE": ((40.0, 40.0), AbilityId.MOVE_MOVE),  # burnysc2's own Unit.move convention

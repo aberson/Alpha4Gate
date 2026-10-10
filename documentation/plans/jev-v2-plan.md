@@ -586,13 +586,38 @@ the steps numerically and bypass 224's dependency before live tests.
 ### Step 217: Carry out a recoverable natural expansion
 - **Problem:** Complete a second base through an inspectable persistent plan.
 - **Type:** code
-- **Status:** PENDING
+- **Status:** DONE (2026-10-10)
 - **Issue:** #334
 - **Flags:** --reviewers deep
 - **Files:** src/jev/plans.py (new), src/jev/runtime.py, src/jev/operations.py, src/jev/sc2_adapter.py, bots/jev/v2/policy.json, tests/test_jev_plans.py (new), tests/test_jev_macro.py.
 - **Produces:** Path-checked site selection, single resource/actor reservation and bounded expansion recovery.
 - **Done when:** Controller fixtures reach second Nexus acknowledgement and transfer workers; lost worker, unreachable/blocked site, threat, missing budget and timeout each reach a visible recovery/abort outcome; every abort releases holds; no third Nexus or duplicate plan; second-base defense becomes eligible.
 - **Depends on:** 216
+- **Build notes (2026-10-10):**
+  - **Plan store:** new `src/jev/plans.py`, built to the section 5 `PlanRecord` spec. It has `PlanKind`, the one-macro-plus-one-army slot rule, a stable `plan_id`, and an inspectable stage, blocker and outcome.
+  - **v2 graph:** gains an 8th root lane, `expansion`, ahead of production. The v2 policy hash is `2cae1292…` (198 nodes); v1 is unchanged, and a 700-step v1 trace over three worlds is byte-identical.
+  - **Site choice:** nearest reachable unoccupied, via burnysc2 `client.query_pathing` asked from the start location.
+    - A fallback is allowed only up to 1.5x the nearest path, and the rank and path distance are recorded.
+    - An unknown site is not safe: the new defaulted `Observation.location_vision` (`contracts.LocationVision`) and the `expansion.scouted` gate make the Nexus wait for fresh vision.
+    - A refused site is dropped at once and the plan re-chooses.
+  - **Holds:** the plan holds one worker plus the Nexus cost and hands it to the build. Every abort releases all holds.
+  - **Recovery limits:** a site the plan aborted over is avoided for 120 s, and after 3 aborts the expand kind is disabled for the match (`abort_limit`). `set_site` recovers on the old site before committing the new one.
+  - **Transfer and defense:**
+    - Workers transfer once the natural Nexus is ready.
+    - `second_base_defense` is derived each tick from whether our Nexus stands at the site.
+    - `army.defend` has a second-base branch.
+  - **Also touched:**
+    - `src/jev/contracts.py`: `expansion_paths`, `location_vision`.
+    - `src/jev/policy.py`: `start_plan` argument validation, one per root lane.
+    - `src/jev/bot.py`: path answers are requested only when the policy asks; a v2 `plan_aborts` metric.
+    - Test inventories: the scouting-budget minimum moves from 7 to 8.
+  - **Telemetry change:** the abort fact `avoided_site` is now the list `avoided_sites`.
+  - **For Step 219:** the expansion start is a local trigger (launch done, 4 Gateways, gas placed, 8 ready Zealots, safe home), and Step 219 replaces it.
+  - **Known gaps:**
+    - The worker target stays at 16, and there's no Assimilator at the natural.
+    - The second base is defended only under defend or scripted mode.
+    - Live path-query behaviour is unverified; Step 222 should watch it.
+  - Reviewed by `/review-deep` (6 lenses) over 3 iterations. Evidence in `.build-step/jev-v2-217/` (gitignored).
 
 ### Step 218: Produce and control a mixed army
 - **Problem:** Transition beyond ground-only Zealots using a bounded tech plan.

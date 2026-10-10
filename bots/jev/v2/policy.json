@@ -6,6 +6,7 @@
     "economy",
     "supply",
     "construction",
+    "expansion",
     "scouting",
     "production",
     "army",
@@ -32,7 +33,17 @@
     "scout_safe_within": 5,
     "workers_per_gas": 3,
     "assimilator_target": 1,
-    "geyser_radius": 10
+    "geyser_radius": 10,
+    "base_target": 2,
+    "expand_army_size": 8,
+    "expansion_clearance": 6,
+    "expansion_arrive_within": 4,
+    "expansion_threat_radius": 12,
+    "expansion_threat_age": 30,
+    "expansion_scout_age": 2,
+    "expansion_max_path_ratio": 1.5,
+    "natural_transfer_workers": 6,
+    "natural_defense_radius": 15
   },
   "nodes": [
     {
@@ -1430,6 +1441,657 @@
       }
     },
     {
+      "id": "expansion",
+      "label": "Expansion: one persistent plan takes the natural (two bases at most); its stages are the nodes below",
+      "kind": "sequence",
+      "children": [
+        "expansion.home",
+        "expansion.plan",
+        "expansion.stages"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "expansion.home",
+      "label": "A finished Nexus stands (no expansion without a home base)",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Nexus"
+          ],
+          "ready": true
+        },
+        "op": ">=",
+        "value": 1
+      }
+    },
+    {
+      "id": "expansion.plan",
+      "label": "The expansion plan in progress, else start one once eligible",
+      "kind": "selector",
+      "children": [
+        "expansion.plan.open",
+        "expansion.start"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "expansion.plan.open",
+      "label": "An expansion plan is open (active or waiting)",
+      "kind": "condition",
+      "children": [],
+      "operation": "plan_status_is",
+      "args": {
+        "plan": "expansion.start.go",
+        "statuses": [
+          "active",
+          "waiting"
+        ]
+      }
+    },
+    {
+      "id": "expansion.start",
+      "label": "Start a plan once the opening and gas are placed, the army launched and grown, and home is safe",
+      "kind": "sequence",
+      "children": [
+        "expansion.start.launched",
+        "expansion.start.opening",
+        "expansion.start.gas",
+        "expansion.start.army",
+        "expansion.start.one_base",
+        "expansion.start.home_safe",
+        "expansion.start.go"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "expansion.start.launched",
+      "label": "The first attack has launched (D3: macro plans only after the launch)",
+      "kind": "condition",
+      "children": [],
+      "operation": "latch_is_set",
+      "args": {
+        "latch": "attack_launched"
+      }
+    },
+    {
+      "id": "expansion.start.opening",
+      "label": "The Gateway target is placed (any build progress)",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Gateway"
+          ]
+        },
+        "op": ">=",
+        "value": {
+          "param": "gateway_target"
+        }
+      }
+    },
+    {
+      "id": "expansion.start.gas",
+      "label": "The gas prerequisite is placed (D2 fallback: prerequisites before expanding)",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "gas_building": true
+        },
+        "op": ">=",
+        "value": {
+          "param": "assimilator_target"
+        }
+      }
+    },
+    {
+      "id": "expansion.start.army",
+      "label": "Enough ready combat units to hold while the probe walks (D2 fallback: eight)",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_units",
+        "filter": {
+          "types": [
+            "Zealot"
+          ],
+          "ready": true
+        },
+        "op": ">=",
+        "value": {
+          "param": "expand_army_size"
+        }
+      }
+    },
+    {
+      "id": "expansion.start.one_base",
+      "label": "Fewer Nexuses than the base target (any build progress): never a third",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Nexus"
+          ]
+        },
+        "op": "<",
+        "value": {
+          "param": "base_target"
+        }
+      }
+    },
+    {
+      "id": "expansion.start.home_safe",
+      "label": "No visible ground threat near the main (home defense comes first)",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "visible_enemies",
+        "filter": {
+          "flying": false,
+          "structure": false,
+          "within": {
+            "point": "start_location",
+            "distance": {
+              "param": "defense_radius"
+            }
+          }
+        },
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "expansion.start.go",
+      "label": "Open the expansion plan (one at a time; refused while one is open or cooling down)",
+      "kind": "action",
+      "children": [],
+      "operation": "start_plan",
+      "args": {
+        "kind": "expand"
+      }
+    },
+    {
+      "id": "expansion.stages",
+      "label": "Carry the plan stage by stage; the plan records the first stage not yet done",
+      "kind": "sequence",
+      "children": [
+        "expansion.site",
+        "expansion.prebuild",
+        "expansion.construct",
+        "expansion.transfer.base",
+        "expansion.transfer.patches",
+        "expansion.transfer.workers",
+        "expansion.transfer.go",
+        "expansion.complete"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "expansion.site",
+      "label": "The natural: the plan's site, else the nearest reachable unoccupied expansion by SC2 pathing, never one farther than the path ratio allows (committed to the plan)",
+      "kind": "select",
+      "children": [],
+      "operation": "select_expansion",
+      "args": {
+        "plan": "expansion.start.go",
+        "candidates": 8,
+        "clearance": {
+          "param": "expansion_clearance"
+        },
+        "max_path_ratio": {
+          "param": "expansion_max_path_ratio"
+        },
+        "bind": "natural"
+      }
+    },
+    {
+      "id": "expansion.prebuild",
+      "label": "Until the Nexus stands: stay safe, keep one worker, scout the site, then build",
+      "kind": "selector",
+      "children": [
+        "expansion.prebuild.placed",
+        "expansion.prebuild.steps"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "expansion.prebuild.placed",
+      "label": "The plan's Nexus stands (any build progress): construction is under way",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Nexus"
+          ]
+        },
+        "op": ">=",
+        "value": {
+          "param": "base_target"
+        }
+      }
+    },
+    {
+      "id": "expansion.prebuild.steps",
+      "label": "Home safe, the plan's worker, the site safe, the Nexus's minerals held, the worker walks there, the site in sight (unknown is not safe), then the build",
+      "kind": "sequence",
+      "children": [
+        "expansion.home_safe",
+        "expansion.worker",
+        "expansion.site_safe",
+        "expansion.reserve",
+        "expansion.move",
+        "expansion.scouted",
+        "expansion.build"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "expansion.home_safe",
+      "label": "Home safe, else defense comes first: the plan waits and holds no minerals",
+      "kind": "selector",
+      "children": [
+        "expansion.home_safe.clear",
+        "expansion.home_safe.wait"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "expansion.home_safe.clear",
+      "label": "No visible ground threat near the main",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "visible_enemies",
+        "filter": {
+          "flying": false,
+          "structure": false,
+          "within": {
+            "point": "start_location",
+            "distance": {
+              "param": "defense_radius"
+            }
+          }
+        },
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "expansion.home_safe.wait",
+      "label": "Wait: home is threatened (supply and defense preempt the macro hold)",
+      "kind": "action",
+      "children": [],
+      "operation": "plan_wait",
+      "args": {
+        "plan": "expansion.start.go",
+        "reason": "home_threatened"
+      }
+    },
+    {
+      "id": "expansion.site_safe",
+      "label": "No threat seen at the site lately (rechecked every tick, so again once the worker sees it), or the build is already in flight; else pull the worker back and wait",
+      "kind": "selector",
+      "children": [
+        "expansion.site_safe.clear",
+        "expansion.site_safe.issued",
+        "expansion.site_safe.delay"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "expansion.site_safe.clear",
+      "label": "No enemy that could hurt the build was seen near the site within the threat age",
+      "kind": "condition",
+      "children": [],
+      "operation": "sighting_count_compare",
+      "args": {
+        "filter": {
+          "within": {
+            "point": "$natural",
+            "distance": {
+              "param": "expansion_threat_radius"
+            }
+          },
+          "any_of": [
+            {
+              "structure": false,
+              "exclude_types": [
+                "SCV",
+                "MULE",
+                "Drone",
+                "Probe",
+                "Larva",
+                "Egg",
+                "Overlord",
+                "OverlordTransport",
+                "Overseer",
+                "Observer",
+                "Medivac",
+                "WarpPrism",
+                "Changeling",
+                "AdeptPhaseShift"
+              ]
+            },
+            {
+              "types": [
+                "Bunker",
+                "PhotonCannon",
+                "SpineCrawler",
+                "PlanetaryFortress"
+              ]
+            }
+          ]
+        },
+        "max_age": {
+          "param": "expansion_threat_age"
+        },
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "expansion.site_safe.issued",
+      "label": "The build command is already in flight: SC2's answer decides it (only an unissued plan holds back)",
+      "kind": "condition",
+      "children": [],
+      "operation": "task_count_compare",
+      "args": {
+        "node": "expansion.build",
+        "statuses": [
+          "pending",
+          "issued"
+        ],
+        "op": ">=",
+        "value": 1
+      }
+    },
+    {
+      "id": "expansion.site_safe.delay",
+      "label": "Threat at the site: the worker comes home, then the plan waits (the delay is bounded by the plan's deadlines)",
+      "kind": "sequence",
+      "children": [
+        "expansion.site_safe.home",
+        "expansion.site_safe.retreat",
+        "expansion.site_safe.wait"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "expansion.site_safe.home",
+      "label": "Safety: the home rally point",
+      "kind": "select",
+      "children": [],
+      "operation": "select_point",
+      "args": {
+        "from": "start_location",
+        "toward": "map_center",
+        "distance": {
+          "param": "rally_distance"
+        },
+        "bind": "expansion_home"
+      }
+    },
+    {
+      "id": "expansion.site_safe.retreat",
+      "label": "Bring the plan's worker home, away from the threat (takes it off its walk)",
+      "kind": "action",
+      "children": [],
+      "operation": "move",
+      "args": {
+        "units": "$expander",
+        "target": "$expansion_home",
+        "arrive_within": {
+          "param": "expansion_arrive_within"
+        },
+        "preempt": true
+      }
+    },
+    {
+      "id": "expansion.site_safe.wait",
+      "label": "Wait: the site is threatened (bounded by the plan's deadlines)",
+      "kind": "action",
+      "children": [],
+      "operation": "plan_wait",
+      "args": {
+        "plan": "expansion.start.go",
+        "reason": "site_threatened"
+      }
+    },
+    {
+      "id": "expansion.reserve",
+      "label": "Hold the Nexus's minerals each tick while the plan is safe (production after this lane cannot spend them; supply and construction before it may preempt)",
+      "kind": "action",
+      "children": [],
+      "operation": "plan_reserve",
+      "args": {
+        "plan": "expansion.start.go",
+        "structure": "Nexus"
+      }
+    },
+    {
+      "id": "expansion.worker",
+      "label": "The plan's one worker, else the nearest free mining or idle probe to the site (never the scout or a gas worker), claimed for the plan",
+      "kind": "select",
+      "children": [],
+      "operation": "select_plan_actor",
+      "args": {
+        "plan": "expansion.start.go",
+        "filter": {
+          "types": [
+            "Probe"
+          ],
+          "gathering_gas": false,
+          "any_of": [
+            {
+              "idle": true
+            },
+            {
+              "order_in": [
+                "HARVEST_GATHER",
+                "HARVEST_RETURN"
+              ]
+            }
+          ]
+        },
+        "sort": {
+          "by": "distance",
+          "from": "$natural"
+        },
+        "not_assigned_to": "scouting.move",
+        "bind": "expander"
+      }
+    },
+    {
+      "id": "expansion.move",
+      "label": "Walk the worker to the site: it scouts the site before minerals are committed",
+      "kind": "action",
+      "children": [],
+      "operation": "move",
+      "args": {
+        "units": "$expander",
+        "target": "$natural",
+        "arrive_within": {
+          "param": "expansion_arrive_within"
+        }
+      }
+    },
+    {
+      "id": "expansion.scouted",
+      "label": "The site is in our own sight now (unknown is not safe): the build waits for fresh vision, so the site's safety is rechecked on it",
+      "kind": "condition",
+      "children": [],
+      "operation": "plan_site_seen",
+      "args": {
+        "plan": "expansion.start.go",
+        "max_age": {
+          "param": "expansion_scout_age"
+        }
+      }
+    },
+    {
+      "id": "expansion.build",
+      "label": "Build the Nexus at the site once the reservation covers it (SC2 checks placement; never a third base)",
+      "kind": "action",
+      "children": [],
+      "operation": "build_expansion",
+      "args": {
+        "structure": "Nexus",
+        "worker": "$expander",
+        "site": "$natural"
+      }
+    },
+    {
+      "id": "expansion.construct",
+      "label": "Acknowledged (the Nexus stands: second-base defense applies); workers transfer only once it is ready, since they cannot return cargo to an unfinished Nexus",
+      "kind": "wait",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Nexus"
+          ],
+          "ready": true
+        },
+        "op": ">=",
+        "value": {
+          "param": "base_target"
+        }
+      }
+    },
+    {
+      "id": "expansion.transfer.base",
+      "label": "The new base: the ready Nexus farthest from the main",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Nexus"
+          ],
+          "ready": true
+        },
+        "sort": {
+          "by": "distance",
+          "from": "start_location",
+          "order": "desc"
+        },
+        "limit": 1,
+        "bind": "natural_base"
+      }
+    },
+    {
+      "id": "expansion.transfer.patches",
+      "label": "Visible mineral patches at the new base, nearest first",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "mineral_fields",
+        "filter": {
+          "within": {
+            "point": "$natural_base",
+            "distance": 12
+          }
+        },
+        "sort": {
+          "by": "distance",
+          "from": "$natural_base"
+        },
+        "limit": 8,
+        "bind": "natural_patches"
+      }
+    },
+    {
+      "id": "expansion.transfer.workers",
+      "label": "Free probes mining at the main (never the scout or a gas worker), by tag",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_units",
+        "filter": {
+          "types": [
+            "Probe"
+          ],
+          "gathering_gas": false,
+          "order_in": [
+            "HARVEST_GATHER",
+            "HARVEST_RETURN"
+          ],
+          "within": {
+            "point": "start_location",
+            "distance": 12
+          }
+        },
+        "sort": {
+          "by": "tag"
+        },
+        "limit": 200,
+        "exclude_busy": true,
+        "not_assigned_to": "scouting.move",
+        "bind": "movers"
+      }
+    },
+    {
+      "id": "expansion.transfer.go",
+      "label": "Transfer workers to the ready second Nexus until it holds the transfer count",
+      "kind": "action",
+      "children": [],
+      "operation": "transfer_workers",
+      "args": {
+        "workers": "$movers",
+        "minerals": "$natural_patches",
+        "per_patch": {
+          "param": "workers_per_patch"
+        },
+        "count": {
+          "param": "natural_transfer_workers"
+        }
+      }
+    },
+    {
+      "id": "expansion.complete",
+      "label": "Complete the plan: two bases mine (its holds are released)",
+      "kind": "action",
+      "children": [],
+      "operation": "plan_complete",
+      "args": {
+        "plan": "expansion.start.go"
+      }
+    },
+    {
       "id": "scouting",
       "label": "Scouting: one Probe visits enemy and expansion sites; retreats when threatened",
       "kind": "selector",
@@ -1952,12 +2614,11 @@
     },
     {
       "id": "army.defend",
-      "label": "Defend the main against nearby ground threats",
+      "label": "Defend the main, and the second base once it stands, against nearby ground threats",
       "kind": "sequence",
       "children": [
         "army.defend.mode",
-        "army.defend.threat",
-        "army.defend.target",
+        "army.defend.where",
         "army.defend.zealots",
         "army.defend.attack"
       ],
@@ -2047,6 +2708,107 @@
           "param": "army_arrive_within"
         },
         "preempt": true
+      }
+    },
+    {
+      "id": "army.defend.where",
+      "label": "A ground threat near the main, else near the second base once its Nexus stands",
+      "kind": "selector",
+      "children": [
+        "army.defend.main",
+        "army.defend.natural"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "army.defend.main",
+      "label": "The main: the nearest ground threat within the defense radius",
+      "kind": "sequence",
+      "children": [
+        "army.defend.threat",
+        "army.defend.target"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "army.defend.natural",
+      "label": "The second base: eligible once a second Nexus stands (any build progress)",
+      "kind": "sequence",
+      "children": [
+        "army.defend.natural.base",
+        "army.defend.natural.threat",
+        "army.defend.natural.target"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "army.defend.natural.base",
+      "label": "Both Nexuses, the second base first (fails while only one stands)",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Nexus"
+          ]
+        },
+        "sort": {
+          "by": "distance",
+          "from": "start_location",
+          "order": "desc"
+        },
+        "limit": {
+          "param": "base_target"
+        },
+        "min_count": {
+          "param": "base_target"
+        },
+        "bind": "natural_nexus"
+      }
+    },
+    {
+      "id": "army.defend.natural.threat",
+      "label": "Visible ground enemy within the second base's defense radius",
+      "kind": "condition",
+      "children": [],
+      "operation": "threat_within",
+      "args": {
+        "point": "$natural_nexus",
+        "distance": {
+          "param": "natural_defense_radius"
+        }
+      }
+    },
+    {
+      "id": "army.defend.natural.target",
+      "label": "Nearest ground threat to the second base, tie by tag, unless defense gave up on it",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "visible_enemies",
+        "filter": {
+          "flying": false,
+          "structure": false,
+          "within": {
+            "point": "$natural_nexus",
+            "distance": {
+              "param": "natural_defense_radius"
+            }
+          }
+        },
+        "sort": {
+          "by": "distance",
+          "from": "$natural_nexus"
+        },
+        "limit": 1,
+        "skip_demoted_by": "army.defend.attack",
+        "bind": "threat"
       }
     },
     {
@@ -2527,6 +3289,7 @@
       "children": [
         "reserve.launched",
         "reserve.safe",
+        "reserve.natural_safe",
         "reserve.point",
         "reserve.zealots",
         "reserve.gather"
@@ -2559,6 +3322,96 @@
             "point": "start_location",
             "distance": {
               "param": "defense_radius"
+            }
+          }
+        },
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "reserve.natural_safe",
+      "label": "No second base, or no visible ground threat near it (defense takes every Zealot)",
+      "kind": "selector",
+      "children": [
+        "reserve.natural_safe.one_base",
+        "reserve.natural_safe.clear"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "reserve.natural_safe.one_base",
+      "label": "Fewer Nexuses than the base target",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Nexus"
+          ]
+        },
+        "op": "<",
+        "value": {
+          "param": "base_target"
+        }
+      }
+    },
+    {
+      "id": "reserve.natural_safe.clear",
+      "label": "The second base has no visible ground threat",
+      "kind": "sequence",
+      "children": [
+        "reserve.natural_safe.base",
+        "reserve.natural_safe.none"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "reserve.natural_safe.base",
+      "label": "Both Nexuses, the second base first",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Nexus"
+          ]
+        },
+        "sort": {
+          "by": "distance",
+          "from": "start_location",
+          "order": "desc"
+        },
+        "limit": {
+          "param": "base_target"
+        },
+        "min_count": {
+          "param": "base_target"
+        },
+        "bind": "natural_nexus"
+      }
+    },
+    {
+      "id": "reserve.natural_safe.none",
+      "label": "No visible ground enemy within the second base's defense radius",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "visible_enemies",
+        "filter": {
+          "flying": false,
+          "structure": false,
+          "within": {
+            "point": "$natural_nexus",
+            "distance": {
+              "param": "natural_defense_radius"
             }
           }
         },

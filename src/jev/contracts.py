@@ -41,6 +41,18 @@ Phase J2 additions (Step 216, defaulted likewise):
 * :class:`Entity` ``carrying_vespene`` -- an own unit carries gas back (SC2's carry
   buff), so a gas worker on its return trip is still known as one. Default False.
 
+Phase J2 addition (Step 217, defaulted likewise):
+
+* ``expansion_paths`` -- SC2's ground path distance from ``start_location`` to each
+  expansion location the adapter has queried (:class:`PathFact`; ``None`` is SC2's
+  "no path"). A location without a fact has not been queried yet: it is not yet
+  eligible, never implicitly reachable. The adapter queries only what the graph
+  asks for (at most eight candidates per map) and caches the static answers.
+* ``location_vision`` -- for each of those queried expansion locations, whether it
+  is in the bot's own vision now and when it last was (:class:`LocationVision`,
+  SC2's own visibility answer, refreshed every game step). Plan D4: unknown is not
+  safe, so a site never seen, or not seen lately, is not yet safe to build on.
+
 Binding rule (the ONE model shared by validator and interpreter): selection
 bindings are root-local and live for one root evaluation in one tick. A node's
 binding effects commit only if the node SUCCEEDS; a node that fails -- a select
@@ -88,6 +100,7 @@ __all__ = [
     "LOCATION_SOURCES",
     "Latch",
     "LocationSource",
+    "LocationVision",
     "MAX_ABS_NUMBER",
     "MAX_ACTIVE_TASKS",
     "MAX_COORDINATE",
@@ -111,6 +124,7 @@ __all__ = [
     "Observation",
     "Order",
     "POINT_KEYWORDS",
+    "PathFact",
     "Point",
     "PointKeyword",
     "Policy",
@@ -874,6 +888,33 @@ class EnemySighting:
 
 
 @dataclass(frozen=True)
+class PathFact:
+    """SC2's ground path distance from the start location to one map location.
+
+    ``distance`` is None when SC2 found no path (unreachable). Plan D4: Euclidean
+    distance only orders the bounded candidates; only this fact proves a site
+    reachable, and a location without one is not yet eligible.
+    """
+
+    location: Point
+    distance: float | None
+
+
+@dataclass(frozen=True)
+class LocationVision:
+    """The bot's own vision of one watched map location (SC2's visibility answer).
+
+    ``visible`` is whether it is in sight in the observation that carries the record;
+    ``last_seen_game_seconds`` the latest game time it was (None: never since the
+    adapter began watching it). Never derived from hidden state.
+    """
+
+    location: Point
+    visible: bool
+    last_seen_game_seconds: float | None
+
+
+@dataclass(frozen=True)
 class Observation:
     """Normalized visible game state for one interpreter tick."""
 
@@ -896,6 +937,11 @@ class Observation:
     #: The gas bank and the visible vespene geysers (plan J2 Step 216).
     vespene: int = 0
     vespene_geysers: tuple[Entity, ...] = ()
+    #: Queried path distances from the start location to expansion locations, by
+    #: location (plan J2 Step 217; see the module docstring).
+    expansion_paths: tuple[PathFact, ...] = ()
+    #: Own vision of those locations, by location (plan J2 Step 217).
+    location_vision: tuple[LocationVision, ...] = ()
 
     # Collection / location / point names ARE field names (one source of truth:
     # the Literal-derived tuples), so lookup is by field, never a re-listed branch.

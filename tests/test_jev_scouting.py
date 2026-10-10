@@ -89,6 +89,8 @@ PROBE_SELECTIONS = (
     "construction.gateways.worker",
     "construction.gas.worker",
     "economy.gas.saturate.workers",
+    "expansion.worker",
+    "expansion.transfer.workers",
 )
 _EPSILON = 1e-6
 #: 8.6 east of the enemy natural, 16.5 from the enemy start and 12.4 from the
@@ -345,8 +347,8 @@ def test_economy_never_reclaims_the_scout_between_its_tasks() -> None:
     probe_picks = {
         node.id
         for node in policy.nodes
-        if node.operation == "select_entities"
-        and node.args["collection"] == "own_units"
+        if node.operation in ("select_entities", "select_plan_actor")  # a plan's worker too
+        and node.args.get("collection", "own_units") == "own_units"
         and "Probe" in node.args.get("filter", {}).get("types", [])
         and node.id.split(".")[0] != "scouting"
     }
@@ -691,7 +693,7 @@ def _evaluations(result: TickResult, lanes: dict[str, str]) -> dict[str, int]:
     return counts
 
 
-@pytest.mark.parametrize("budget", [7, 8, 12, 20, 40, 256])
+@pytest.mark.parametrize("budget", [8, 9, 12, 20, 40, 256])  # 8 roots: the least legal
 def test_scouting_never_consumes_the_evaluation_budget_of_later_lanes(budget: int) -> None:
     """Every lane, scouting included, gets at most its fair share of what is left;
     the lanes after scouting are always evaluated, at any legal budget."""

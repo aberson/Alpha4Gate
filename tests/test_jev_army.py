@@ -1478,6 +1478,7 @@ _GAMEPLAY_MODULES = frozenset(
         "jev.bot",
         "jev.sc2_adapter",
         "jev.runtime",
+        "jev.plans",
         "jev.operations",
         "jev.policy",
         "jev.contracts",
@@ -1674,6 +1675,7 @@ def test_runtime_modules_after_playing_steps_have_no_legacy_rl_or_llm_dependency
         "jev.bot",
         "jev.sc2_adapter",
         "jev.runtime",
+        "jev.plans",
         "sc2.bot_ai",
         "orchestrator.paths",
     } <= loaded

@@ -70,6 +70,24 @@ that names neither, such as v1, never records them):
   so a lane can back off after repeated failures instead of retrying new
   intents forever.
 
+Persistent plans (Jev v2, plan J2 Step 217; :mod:`jev.plans`): ``start_plan``
+opens a plan for its root lane (one at a time per slot, never a duplicate), and
+the lane's nodes are its stages. ``plan_status_is`` reads it; ``select_expansion``
+chooses (and commits) the plan's site -- the nearest *reachable* unoccupied
+expansion location by SC2 path distance (:class:`~jev.contracts.PathFact`):
+Euclidean distance only orders at most :data:`MAX_EXPANSION_CANDIDATES`
+candidates, and a candidate without a path fact is not yet eligible (the
+selection asks the adapter to query it) -- a site farther than ``max_path_ratio``
+times the nearest reachable one is never taken; ``plan_site_seen`` requires fresh
+own vision of the site (unknown is not safe); ``select_plan_actor`` keeps the plan's
+one worker or claims a free one; ``plan_wait`` holds the plan still on a named
+blocker; ``build_expansion`` builds the plan's Nexus at its site (never a third:
+:data:`MAX_BASES`); ``transfer_workers`` moves workers to the new base;
+``plan_complete`` ends the plan; ``plan_reserve`` holds the plan's next
+structure's cost each tick (a reservation the plan's own build then takes over:
+transferred, never charged twice). Their failures carry fixed reason codes
+(:data:`jev.plans.PLAN_CODES`), so the plan records why it waits.
+
 There are deliberately no strategy helpers (``manage_economy``, ``rush``,
 ``expand_now``, ``distribute_workers`` ...): the node arguments carry every
 criterion, tie-break and limit, so the graph is the policy.
@@ -112,6 +130,14 @@ from jev.contracts import (
     is_bounded_number,
     safe_repr,
 )
+from jev.plans import (
+    PLAN_KINDS,
+    PLAN_STATUSES,
+    WAIT_CODES,
+    PlanCode,
+    PlanKind,
+    PlanRecord,
+)
 
 __all__ = [
     "ATTACK_ABILITY",
@@ -133,6 +159,8 @@ __all__ = [
     "CompiledFilter",
     "DEFAULT_FOOTPRINT",
     "ENTITY_SORT_METRICS",
+    "EXPANSION_BUILD_ABILITY",
+    "EXPANSION_STRUCTURE",
     "FILTER_KEYS",
     "FOOTPRINT",
     "GAS_BUILD_ABILITY",
@@ -147,7 +175,9 @@ __all__ = [
     "LOCATION_SORT_KEYS",
     "Lifecycle",
     "MAX_ANY_OF",
+    "MAX_BASES",
     "MAX_ELAPSED_SECONDS",
+    "MAX_EXPANSION_CANDIDATES",
     "MAX_FILTER_DEPTH",
     "MAX_FILTER_NAMES",
     "MAX_GAS_HARVESTERS",
@@ -163,10 +193,13 @@ __all__ = [
     "MOVE_ABILITY",
     "OPERATIONS",
     "OP_BUILD",
+    "OP_BUILD_EXPANSION",
     "OP_BUILD_GAS",
     "OP_GATHER",
     "OP_GATHER_GAS",
     "OP_RELEASE_GAS",
+    "OP_START_PLAN",
+    "OP_TRANSFER_WORKERS",
     "OWN_TYPES",
     "OpOutcome",
     "OperationSpec",
@@ -179,6 +212,7 @@ __all__ = [
     "POINT_MATCH_TOLERANCE",
     "PRODUCER_TYPE",
     "PYLON_POWER_RADIUS",
+    "PlanEffect",
     "PredicateOp",
     "Progress",
     "REQUIRES_POWER",
@@ -216,6 +250,7 @@ __all__ = [
     "decode_site",
     "distance",
     "entity_matches",
+    "expansion_candidates",
     "format_point",
     "gas_slots",
     "is_gas_worker",
@@ -241,8 +276,10 @@ ATTACK_ABILITY: Final = "ATTACK"
 HARVEST_ABILITIES: Final = frozenset({GATHER_ABILITY, RETURN_ABILITY})
 
 #: Structures Jev may build *at a point* (placement candidates the SC2 adapter tests)
-#: -> generic SC2 build ability. No Nexus: one base (D3) is enforced by the
-#: allowlist itself. A gas structure is never a point build: see GAS_BUILD_ABILITY.
+#: -> generic SC2 build ability. No Nexus here: a Nexus is built only by
+#: ``build_expansion`` at a plan's path-checked site (EXPANSION_BUILD_ABILITY), so
+#: no placement selection can propose one. A gas structure is never a point build:
+#: see GAS_BUILD_ABILITY.
 BUILD_ABILITY: Final[Mapping[str, str]] = {
     "Pylon": "PROTOSSBUILD_PYLON",
     "Gateway": "PROTOSSBUILD_GATEWAY",
@@ -251,6 +288,15 @@ BUILD_ABILITY: Final[Mapping[str, str]] = {
 #: a vespene geyser *unit*: the command targets the geyser's tag (burnysc2's
 #: ``Unit.build_gas``), never a point, and only ``build_gas`` emits them.
 GAS_BUILD_ABILITY: Final[Mapping[str, str]] = {"Assimilator": "PROTOSSBUILD_ASSIMILATOR"}
+#: The base structure Jev v2 may build -> generic SC2 build ability (plan J2 Step 217):
+#: only ``build_expansion`` emits it, at an expansion plan's site, and never a third.
+EXPANSION_BUILD_ABILITY: Final[Mapping[str, str]] = {"Nexus": "PROTOSSBUILD_NEXUS"}
+EXPANSION_STRUCTURE: Final = "Nexus"
+#: D3/D4: at most two Nexuses, completed or in progress (no third base).
+MAX_BASES: Final = 2
+#: D4: path-query at most this many expansion candidates (nearest first by Euclidean
+#: distance from home); the adapter caches each static answer for the match.
+MAX_EXPANSION_CANDIDATES: Final = 8
 #: Every race's gas extraction structure type (SC2 names a rich-geyser variant
 #: separately). The ``gas_building`` filter flag reads this set, so a policy names
 #: its gas buildings without listing type names.
@@ -280,6 +326,7 @@ MINERAL_COST: Final[Mapping[str, int]] = {
     "Pylon": 100,
     "Gateway": 150,
     "Assimilator": 75,
+    "Nexus": 400,
 }
 VESPENE_COST: Final[Mapping[str, int]] = {
     "Probe": 0,
@@ -287,6 +334,7 @@ VESPENE_COST: Final[Mapping[str, int]] = {
     "Pylon": 0,
     "Gateway": 0,
     "Assimilator": 0,
+    "Nexus": 0,
 }
 SUPPLY_COST: Final[Mapping[str, int]] = {"Probe": 1, "Zealot": 2}
 #: Supply each supply-providing structure adds once complete (SC2 game data).
@@ -314,6 +362,7 @@ KNOWN_ORDER_ABILITIES: Final = frozenset(
     {GATHER_ABILITY, RETURN_ABILITY, MOVE_ABILITY, ATTACK_ABILITY}
     | set(BUILD_ABILITY.values())
     | set(GAS_BUILD_ABILITY.values())
+    | set(EXPANSION_BUILD_ABILITY.values())
     | set(TRAIN_ABILITY.values())
 )
 #: Abilities a command may carry -- exactly what the action operations below emit
@@ -344,6 +393,9 @@ OP_GATHER: Final = "gather"
 OP_BUILD_GAS: Final = "build_gas"
 OP_GATHER_GAS: Final = "gather_gas"
 OP_RELEASE_GAS: Final = "release_gas"
+OP_BUILD_EXPANSION: Final = "build_expansion"
+OP_TRANSFER_WORKERS: Final = "transfer_workers"
+OP_START_PLAN: Final = "start_plan"
 #: Why a gather task's target can no longer be gathered from (D4: visible outcome).
 GATHER_TARGET_LOST_REASON: Final = (
     "gather target lost: no longer an own gas building or a visible mineral field"
@@ -587,23 +639,60 @@ class RuntimeView(Protocol):
         """
         ...
 
+    def plan(self, node_id: str) -> PlanRecord | None:
+        """The latest plan started by ``start_plan`` node ``node_id`` (open or
+        finished); None before it ever started one, or while no policy node starts
+        plans (see :mod:`jev.plans`)."""
+        ...
+
+
+@dataclass(frozen=True)
+class PlanEffect:
+    """A plan write an operation asks the runtime for (applied only when its node
+    succeeds): ``start`` a plan for the node itself (of ``kind``), commit a ``site``
+    (``replaced``: why a previous one was given up), claim an ``actor``, hold a
+    ``reserve`` of ``minerals``/``vespene`` this tick, or ``complete`` the plan named
+    by ``plan`` (a start node id)."""
+
+    action: Literal["start", "site", "actor", "reserve", "complete"]
+    plan: str = ""
+    kind: PlanKind | None = None
+    point: Point | None = None
+    tag: int | None = None
+    replaced: PlanCode | None = None
+    minerals: int = 0
+    vespene: int = 0
+    #: A site's SC2 path distance and its rank among the reachable candidates.
+    path: float | None = None
+    rank: int | None = None
+
 
 @dataclass(frozen=True)
 class OpOutcome:
-    """Predicate result: ``ok`` maps to success (condition) or done-waiting (wait)."""
+    """Predicate result: ``ok`` maps to success (condition) or done-waiting (wait).
+    ``code`` is a plan reason code a failure means (None: generic)."""
 
     ok: bool
     reason: str
     facts: Mapping[str, JsonValue] = field(default_factory=dict)
+    code: PlanCode | None = None
 
 
 @dataclass(frozen=True)
 class Selection:
-    """Selection result; ``binding`` is None when fewer than ``min_count`` matched."""
+    """Selection result; ``binding`` is None when fewer than ``min_count`` matched.
+
+    Plan selections may also carry a plan reason ``code``, the ``effect`` to apply on
+    success and ``queries``: expansion locations whose SC2 path distance the
+    adapter must query before the next tick (missing answers mean not yet eligible).
+    """
 
     binding: Binding | None
     reason: str
     facts: Mapping[str, JsonValue] = field(default_factory=dict)
+    code: PlanCode | None = None
+    effect: PlanEffect | None = None
+    queries: tuple[Point, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -629,6 +718,10 @@ class Intent:
 
 @dataclass(frozen=True)
 class ActionPlan:
+    """What an action wants. Besides intents: a ``latch`` write, a plan ``effect``
+    (no command; success unless refused), or ``wait_reason`` (the node waits:
+    running, no command). ``code`` is the plan reason code of the outcome."""
+
     intents: tuple[Intent, ...] = ()
     blocked: tuple[tuple[int, str], ...] = ()
     failure_reason: str | None = None
@@ -636,6 +729,9 @@ class ActionPlan:
     hold_reservation: bool = False
     preempt: bool = False
     facts: Mapping[str, JsonValue] = field(default_factory=dict)
+    effect: PlanEffect | None = None
+    wait_reason: str | None = None
+    code: PlanCode | None = None
 
 
 @dataclass(frozen=True)
@@ -709,6 +805,7 @@ ArgType = Literal[
     "target",
     "bind",
     "node",
+    "plan",
 ]
 
 
@@ -2037,6 +2134,456 @@ def _release_gas(view: RuntimeView, args: Args) -> ActionPlan:
 
 
 # ---------------------------------------------------------------------------
+# Persistent plans and the natural expansion (Jev v2, plan J2 Step 217)
+# ---------------------------------------------------------------------------
+
+
+def _plan_kind(name: str) -> PlanKind:
+    for kind in PLAN_KINDS:
+        if kind == name:
+            return kind
+    raise ValueError(f"unknown plan kind {safe_repr(name)}")
+
+
+def _open_plan(view: RuntimeView, args: Args) -> tuple[str, PlanRecord | None]:
+    """The plan a node's ``plan`` argument names, if it is open."""
+    key = _arg_str(args, "plan")
+    record = view.plan(key)
+    return key, record if record is not None and record.is_open else None
+
+
+def _plan_status_is(view: RuntimeView, args: Args) -> OpOutcome:
+    key = _arg_str(args, "plan")
+    statuses = frozenset(_str_list(args["statuses"]))
+    record = view.plan(key)
+    if record is None:
+        return OpOutcome(False, f"{key} has started no plan", {"plan": key, "plan_status": None})
+    ok = record.status in statuses
+    verdict = "is" if ok else "is not"
+    return OpOutcome(
+        ok,
+        f"plan {record.plan_id} is {record.status} at {record.stage_node_id}; "
+        f"{verdict} in {sorted(statuses)}",
+        {
+            "plan": key,
+            "plan_id": record.plan_id,
+            "plan_status": record.status,
+            "stage_node_id": record.stage_node_id,
+            "reason_code": record.reason_code,
+        },
+    )
+
+
+def expansion_candidates(observation: Observation, *, clearance: float, limit: int) -> list[Point]:
+    """THE bounded expansion candidates (D4): the map's expansion locations that are
+    neither home nor a known enemy start (more than ``clearance`` from both), nearest
+    the start location first by Euclidean distance (then x, then y), at most
+    ``limit``. Euclidean order only bounds which candidates are path-queried; it
+    never proves one reachable."""
+    home = observation.start_location
+    enemies = observation.enemy_start_locations
+    points = [
+        point
+        for point in observation.expansion_locations
+        if distance(point, home) > clearance
+        and all(distance(point, enemy) > clearance for enemy in enemies)
+    ]
+    points.sort(key=lambda p: (distance(p, home), p[0], p[1]))
+    return points[:limit]
+
+
+def _near_any(point: Point, entities: Sequence[Entity], radius: float) -> bool:
+    return any(distance(entity.position, point) <= radius for entity in entities)
+
+
+def _select_expansion(view: RuntimeView, args: Args) -> Selection:
+    """The plan's site: its committed one while no enemy structure stands on it,
+    else the nearest *reachable* unoccupied candidate by SC2 path distance --
+    bounded (D4, :mod:`jev.plans` "Site").
+
+    Occupied: an own or enemy structure (visible, or remembered and not disproven
+    by vision) within ``clearance``. A site SC2 refused, or an earlier plan was
+    aborted over, is avoided (the plan's ``avoided_sites``). A candidate whose path
+    is not yet known is not eligible: while any is unknown the selection fails
+    ``path_pending`` and asks for the queries (one tick), so the nearest by path is
+    never chosen early. Bound: the chosen site's path is at most ``max_path_ratio``
+    times the nearest reachable candidate's (whatever that one's state), so when
+    the natural is unavailable a nearby alternative may be taken but never a far
+    base -- the selection fails visibly instead. The choice carries its path
+    distance and its rank among all reachable candidates (0: the nearest).
+    """
+    key, record = _open_plan(view, args)
+    if record is None:
+        return Selection(None, f"{key} has no open plan", {"plan": key}, code="blocked")
+    limit = _arg_int(args, "candidates")
+    clearance = _arg_num(args, "clearance")
+    ratio = _arg_num(args, "max_path_ratio")
+    obs = view.observation
+    enemy_structures: tuple[Entity, ...] = (
+        *(e for e in obs.visible_enemies if e.is_structure),
+        *obs.remembered_enemy_structures,
+    )
+    committed = record.site
+    replaced: PlanCode | None = None
+    facts: dict[str, JsonValue] = {"plan_id": record.plan_id}
+    if committed is not None and committed not in record.avoided_sites:
+        if not _near_any(committed, enemy_structures, clearance):
+            facts.update(
+                {
+                    "site": [committed[0], committed[1]],
+                    "committed": True,
+                    "path_distance": record.site_path_distance,
+                    "path_rank": record.site_path_rank,
+                }
+            )
+            binding = Binding("points", points=(committed,))
+            return Selection(binding, f"the plan's site {format_point(committed)}", facts)
+        replaced = "site_occupied"  # an enemy took it: a recovery attempt, then re-choose
+    candidates = expansion_candidates(obs, clearance=clearance, limit=limit)
+    paths = {fact.location: fact.distance for fact in obs.expansion_paths}
+    # Every reachable candidate by path, whatever its state: the rank and the bound.
+    reachable = sorted(
+        (known, point) for point in candidates if (known := paths.get(point)) is not None
+    )
+    nearest = reachable[0][0] if reachable else None
+    refused = view.rejected_sites(EXPANSION_STRUCTURE)
+    standing = (*obs.own_structures, *enemy_structures)
+    skipped: Counter[str] = Counter()
+    pending: list[Point] = []
+    eligible: list[tuple[float, Point]] = []
+    for point in candidates:
+        if point == committed or _near_any(point, standing, clearance):
+            skipped["occupied"] += 1
+        elif point in refused:
+            skipped["refused"] += 1
+        elif point in record.avoided_sites:
+            skipped["avoided"] += 1
+        elif point not in paths:
+            pending.append(point)
+        else:
+            path = paths[point]
+            if path is None:
+                skipped["unreachable"] += 1
+            else:
+                eligible.append((path, point))
+    eligible.sort(key=lambda item: (item[0], item[1][0], item[1][1]))
+    bound = None if nearest is None else nearest * ratio
+    in_bound = [item for item in eligible if bound is not None and item[0] <= bound]
+    facts.update(
+        {
+            "candidates": len(candidates),
+            "pending": len(pending),
+            "eligible": len(eligible),
+            "beyond_bound": len(eligible) - len(in_bound),
+            "nearest_path": None if nearest is None else round(nearest, 2),
+            "path_bound": None if bound is None else round(bound, 2),
+            "skipped": {name: skipped[name] for name in sorted(skipped)},
+        }
+    )
+    if pending:
+        return Selection(
+            None,
+            f"waiting for SC2 path distances to {len(pending)} candidate(s)",
+            facts,
+            code="path_pending",
+            queries=tuple(pending),
+        )
+    if not in_bound:
+        code: PlanCode
+        if not candidates:
+            code, reason = "no_site", "no expansion location besides home and enemy starts"
+        elif skipped["unreachable"] == len(candidates):
+            code, reason = "site_unreachable", f"no path to any of {len(candidates)} candidate(s)"
+        elif skipped["refused"] or skipped["avoided"]:
+            code, reason = "site_blocked", "every reachable site near enough is blocked"
+        else:
+            code, reason = "site_occupied", "every reachable site near enough is occupied"
+        if eligible:
+            far = eligible[0][0]
+            reason += (
+                f"; the nearest free one is {far:.1f} by path, beyond {ratio:g}x the nearest "
+                "reachable: not taken"
+            )
+        return Selection(None, reason, facts, code=code)
+    path, site = in_bound[0]
+    rank = next(index for index, (_, point) in enumerate(reachable) if point == site)
+    facts.update(
+        {
+            "site": [site[0], site[1]],
+            "path_distance": round(path, 2),
+            "path_rank": rank,
+            "alternatives": len(in_bound) - 1,
+            "committed": False,
+        }
+    )
+    effect = PlanEffect("site", plan=key, point=site, replaced=replaced, path=path, rank=rank)
+    return Selection(
+        Binding("points", points=(site,)),
+        f"site {format_point(site)}: reachable by path ({path:.1f}, rank {rank})",
+        facts,
+        effect=effect,
+    )
+
+
+def _plan_site_seen(view: RuntimeView, args: Args) -> OpOutcome:
+    """D4 "unknown is not safe": the open plan's site was in the bot's own sight at
+    most ``max_age`` game seconds ago (:class:`~jev.contracts.LocationVision`, SC2's
+    visibility answer). Never seen, or seen too long ago, fails ``site_unscouted``,
+    so a build waits for fresh vision and its safety is rechecked on it."""
+    key, record = _open_plan(view, args)
+    max_age = _arg_num(args, "max_age")
+    if record is None or record.site is None:
+        return OpOutcome(False, f"{key} has no open plan site", {"plan": key}, "site_unscouted")
+    site = record.site
+    obs = view.observation
+    vision = next((v for v in obs.location_vision if v.location == site), None)
+    seen = None if vision is None else vision.last_seen_game_seconds
+    facts: dict[str, JsonValue] = {
+        "site": [site[0], site[1]],
+        "visible": vision is not None and vision.visible,
+        "last_seen_game_seconds": seen,
+        "max_age": max_age,
+    }
+    if seen is None:
+        reason = f"site {format_point(site)} never seen: unknown is not safe"
+        return OpOutcome(False, reason, facts, "site_unscouted")
+    age = max(0.0, obs.game_seconds - seen)
+    facts["age"] = round(age, 2)
+    if age > max_age:
+        reason = f"site {format_point(site)} last seen {age:.1f}s ago: stale, not safe"
+        return OpOutcome(False, reason, facts, "site_unscouted")
+    return OpOutcome(True, f"site {format_point(site)} in sight {age:.1f}s ago", facts)
+
+
+def _select_plan_actor(view: RuntimeView, args: Args) -> Selection:
+    """The plan's one actor while it lives; else the first own unit matching the
+    filter that no task, plan or this tick holds (not one ``not_assigned_to`` names),
+    claimed for the plan on success (D3 single ownership)."""
+    key, record = _open_plan(view, args)
+    if record is None:
+        return Selection(None, f"{key} has no open plan", {"plan": key}, code="blocked")
+    units = view.observation.own_units
+    held = record.actor_tag
+    if held is not None:
+        for unit in units:
+            if unit.tag == held:
+                binding = Binding("units", entities=(unit,))
+                return Selection(
+                    binding, f"the plan's worker {held}", {"tags": [str(held)], "held": True}
+                )
+    filt = view.node_filter()
+    candidates = [
+        unit
+        for unit in units
+        if entity_matches(unit, filt, view) and not view.actor_is_busy(unit.tag)
+    ]
+    facts: dict[str, JsonValue] = {"held": False}
+    not_assigned_to = args.get("not_assigned_to")
+    if isinstance(not_assigned_to, str):
+        members = view.assigned(not_assigned_to)
+        kept = [unit for unit in candidates if unit.tag not in members]
+        facts["assigned_elsewhere"] = len(candidates) - len(kept)
+        candidates = kept
+    chosen = _sort_entities(candidates, _arg_obj(args, "sort"), view)[:1]
+    facts["matched"] = len(candidates)
+    if not chosen:
+        return Selection(None, "no free unit for the plan", facts, code="no_worker")
+    unit = chosen[0]
+    facts["tags"] = [str(unit.tag)]
+    return Selection(
+        Binding("units", entities=(unit,)),
+        f"claim {unit.tag} for plan {record.plan_id}",
+        facts,
+        effect=PlanEffect("actor", plan=key, tag=unit.tag),
+    )
+
+
+def _start_plan(view: RuntimeView, args: Args) -> ActionPlan:
+    kind = _plan_kind(_arg_str(args, "kind"))
+    return ActionPlan(effect=PlanEffect("start", kind=kind), facts={"plan_kind": kind})
+
+
+def _plan_wait(view: RuntimeView, args: Args) -> ActionPlan:
+    key, record = _open_plan(view, args)
+    if record is None:
+        return ActionPlan(failure_reason=f"{key} has no open plan")
+    reason = _arg_str(args, "reason")
+    code: PlanCode = "waiting"
+    for wait_code in WAIT_CODES:
+        if wait_code == reason:
+            code = wait_code
+    return ActionPlan(
+        wait_reason=f"plan {record.plan_id} waits: {reason}",
+        code=code,
+        facts={"plan_id": record.plan_id, "reason_code": reason},
+    )
+
+
+def _plan_reserve(view: RuntimeView, args: Args) -> ActionPlan:
+    """Hold the plan's next structure's cost (D3), up to what is available after the
+    lanes before this one: nothing while the plan's build is in flight (its task
+    carries the commitment) or once its structure stands. Always succeeds: the
+    plan's other stages (its worker's walk) proceed while it saves."""
+    key, record = _open_plan(view, args)
+    if record is None:
+        return ActionPlan(failure_reason=f"{key} has no open plan")
+    structure = _arg_str(args, "structure")
+    need_minerals, need_vespene = MINERAL_COST[structure], VESPENE_COST[structure]
+    ordered = record.build_in_flight or record.acknowledged_game_seconds is not None
+    minerals = vespene = 0
+    if not ordered:
+        minerals = max(0, min(need_minerals, view.available_minerals()))
+        vespene = max(0, min(need_vespene, view.available_vespene()))
+    facts: dict[str, JsonValue] = {
+        "plan_id": record.plan_id,
+        "structure": structure,
+        "held_minerals": minerals,
+        "held_vespene": vespene,
+        "need_minerals": need_minerals,
+        "need_vespene": need_vespene,
+        "committed_to_build": ordered,
+    }
+    short = not ordered and (minerals < need_minerals or vespene < need_vespene)
+    return ActionPlan(
+        effect=PlanEffect("reserve", plan=key, minerals=minerals, vespene=vespene),
+        facts=facts,
+        code="budget_short" if short else None,
+    )
+
+
+def _plan_complete(view: RuntimeView, args: Args) -> ActionPlan:
+    key, record = _open_plan(view, args)
+    if record is None:
+        return ActionPlan(failure_reason=f"{key} has no open plan")
+    return ActionPlan(effect=PlanEffect("complete", plan=key), facts={"plan_id": record.plan_id})
+
+
+def _base_sites(view: RuntimeView, structure: str, other_than: Point) -> int:
+    """Distinct sites of ``structure`` other than ``other_than``: standing (any build
+    progress), ordered by a task, or carried by a worker's order no task tracks."""
+    obs = view.observation
+    ability = EXPANSION_BUILD_ABILITY[structure]
+    sites = [s.position for s in obs.own_structures if s.type_name == structure]
+    sites += [site for kind, site in view.in_flight_builds() if kind == structure]
+    for unit in obs.own_units:
+        order = unit.orders[0] if unit.orders else None
+        if order is not None and order.ability == ability and isinstance(order.target, tuple):
+            sites.append(order.target)
+    distinct: list[Point] = []
+    for site in sites:
+        if distance(site, other_than) <= POINT_MATCH_TOLERANCE:
+            continue
+        if not any(distance(site, seen) <= POINT_MATCH_TOLERANCE for seen in distinct):
+            distinct.append(site)
+    return len(distinct)
+
+
+def _build_expansion(view: RuntimeView, args: Args) -> ActionPlan:
+    """The first bound worker builds a Nexus at the first bound site (the plan's,
+    exactly: no alternatives); SC2 checks placement through the adapter. Never a
+    third base: refused while :data:`MAX_BASES` - 1 Nexus sites stand or are ordered
+    elsewhere. Already standing at the site: satisfied, nothing is sent. It never
+    holds minerals itself: the plan's ``plan_reserve`` stage does, and this build
+    takes that reservation over when it issues."""
+    structure = _arg_str(args, "structure")
+    bound_workers = _binding(view, _arg_str(args, "worker")).entities
+    workers, blocked = _own_actors(view, bound_workers, structures=False, worker=True)
+    sites = _binding(view, _arg_str(args, "site")).points[:1]
+    if not workers or not sites:
+        reason = blocked[0][1] if blocked else "worker or site binding empty"
+        return ActionPlan(failure_reason=reason)
+    worker, site = workers[0], sites[0]
+    facts: dict[str, JsonValue] = {
+        "structure": structure,
+        "worker": str(worker.tag),
+        "site": [site[0], site[1]],
+    }
+    standing = [
+        s
+        for s in view.observation.own_structures
+        if s.type_name == structure and distance(s.position, site) <= POINT_MATCH_TOLERANCE
+    ]
+    semantic = f"{structure}@{format_point(site)}"
+    ability = EXPANSION_BUILD_ABILITY[structure]
+    if standing:
+        intent = Intent(worker.tag, semantic, ability, site, satisfied=True)
+        return ActionPlan(intents=(intent,), facts=facts)
+    elsewhere = _base_sites(view, structure, site)
+    facts["bases_elsewhere"] = elsewhere
+    if elsewhere + 1 > MAX_BASES:
+        return ActionPlan(
+            failure_reason=(
+                f"{elsewhere} {structure} site(s) stand or are ordered elsewhere: "
+                f"never more than {MAX_BASES} bases"
+            ),
+            facts=facts,
+            code="base_cap",
+        )
+    intent = Intent(
+        actor_tag=worker.tag,
+        semantic=semantic,
+        ability=ability,
+        target=site,
+        minerals=MINERAL_COST[structure],
+        params={PARAM_STRUCTURE: structure},
+        vespene=VESPENE_COST[structure],
+    )
+    facts.update({"minerals": intent.minerals, "vespene": intent.vespene})
+    return ActionPlan(intents=(intent,), facts=facts)
+
+
+def _transfer_workers(view: RuntimeView, args: Args) -> ActionPlan:
+    """Bring the bound patches up to ``count`` workers: each one gathering there
+    (or ordered there by an unacknowledged task) counts; the deficit is filled from
+    the bound workers not already there, not gathering gas and not held, by tag,
+    each to the least-loaded patch up to ``per_patch``."""
+    bound_workers = _binding(view, _arg_str(args, "workers")).entities
+    workers, blocked = _own_actors(view, bound_workers, structures=False, worker=True)
+    mineral_tags = {m.tag for m in view.observation.mineral_fields}
+    patches = [
+        p for p in _binding(view, _arg_str(args, "minerals")).entities if p.tag in mineral_tags
+    ]
+    per_patch = _arg_int(args, "per_patch")
+    count = _arg_int(args, "count")
+    if not patches:
+        return ActionPlan(failure_reason="no mineral patch bound", blocked=tuple(blocked))
+    patch_tags = {p.tag for p in patches}
+    load = _patch_loads(view, patches)
+    there = [
+        unit
+        for unit in view.observation.own_units
+        if unit.type_name == WORKER_TYPE and _gather_target(unit) in patch_tags
+    ]
+    total = sum(load[tag] for tag in patch_tags)
+    deficit = max(0, count - total)
+    intents = [Intent(u.tag, str(u.tag), GATHER_ABILITY, None, satisfied=True) for u in there]
+    sent = 0
+    for worker in sorted(workers, key=lambda w: w.tag):
+        if sent >= deficit:
+            break
+        if (
+            _gather_target(worker) in patch_tags
+            or is_gas_worker(worker, view)
+            or view.actor_is_busy(worker.tag)
+        ):
+            continue
+        patch = _least_loaded_patch(patches, load, per_patch, worker)
+        load[patch.tag] += 1
+        intents.append(Intent(worker.tag, str(worker.tag), GATHER_ABILITY, patch.tag))
+        sent += 1
+    facts: dict[str, JsonValue] = {
+        "count": count,
+        "workers_there": total,
+        "transferred": sent,
+        "per_patch": per_patch,
+    }
+    if not intents:
+        reason = f"no free worker to bring {len(patch_tags)} patch(es) up to {count}"
+        return ActionPlan(failure_reason=reason, blocked=tuple(blocked), facts=facts)
+    return ActionPlan(intents=tuple(intents), facts=facts)
+
+
+# ---------------------------------------------------------------------------
 # Lifecycle checks (observation-confirmed; command issuance is never success)
 # ---------------------------------------------------------------------------
 
@@ -2303,6 +2850,8 @@ _ACTION_OUTCOMES: Final[frozenset[NodeStatus]] = frozenset(NODE_STATUSES)
 _DECISIVE_OUTCOMES: Final[frozenset[NodeStatus]] = _ACTION_OUTCOMES - {"running"}
 _NEVER_FAILS_OUTCOMES: Final[frozenset[NodeStatus]] = _ACTION_OUTCOMES - {"failure"}
 _ALWAYS_SUCCEEDS_OUTCOMES: Final[frozenset[NodeStatus]] = _ACTION_OUTCOMES - {"failure", "running"}
+#: A plan_wait holds still (running) or finds no open plan (failure); it never succeeds.
+_WAIT_OUTCOMES: Final[frozenset[NodeStatus]] = _ACTION_OUTCOMES - {"success"}
 
 _SPECS: Final[tuple[OperationSpec, ...]] = (
     PredicateOp(
@@ -2631,6 +3180,141 @@ _SPECS: Final[tuple[OperationSpec, ...]] = (
         _ACTION_OUTCOMES,
         _HARVEST_LIFECYCLE,
     ),
+    PredicateOp(
+        "plan_status_is",
+        "Whether the latest plan a start_plan node started is in one of the given statuses "
+        "(active or waiting: open; completed; aborted); false before it ever started one",
+        {
+            "plan": ArgSpec("plan"),
+            "statuses": ArgSpec("enum_list", choices=PLAN_STATUSES),
+        },
+        _plan_status_is,
+    ),
+    SelectOp(
+        "select_expansion",
+        "The open plan's site: its committed site while no enemy structure stands on it, "
+        "else the nearest reachable unoccupied expansion location by SC2 path distance "
+        "(Euclidean order only bounds the candidates; one without a path answer is not "
+        "yet eligible and is queried) -- committed to the plan on success",
+        {
+            "plan": ArgSpec("plan"),
+            "candidates": ArgSpec(
+                "int",
+                required=False,
+                minimum=1,
+                maximum=MAX_EXPANSION_CANDIDATES,
+                default=MAX_EXPANSION_CANDIDATES,
+            ),
+            "clearance": ArgSpec(
+                "number", required=False, minimum=1.0, maximum=20.0, default=6.0, param=True
+            ),
+            "max_path_ratio": ArgSpec(
+                "number", required=False, minimum=1.0, maximum=4.0, default=1.5, param=True
+            ),
+            "bind": _BIND,
+        },
+        "points",
+        _select_expansion,
+    ),
+    PredicateOp(
+        "plan_site_seen",
+        "Whether the open plan's site was in the bot's own sight at most max_age game "
+        "seconds ago (unknown is not safe: never seen, or seen too long ago, fails)",
+        {
+            "plan": ArgSpec("plan"),
+            "max_age": ArgSpec("number", minimum=0.0, maximum=MAX_ELAPSED_SECONDS, param=True),
+        },
+        _plan_site_seen,
+    ),
+    SelectOp(
+        "select_plan_actor",
+        "The open plan's one actor while it lives; else the first own unit matching the "
+        "filter (sorted) that no task, plan or this tick holds, claimed for the plan",
+        {
+            "plan": ArgSpec("plan"),
+            "filter": ArgSpec("filter", required=False),
+            "sort": ArgSpec("sort", required=False, choices=SORT_KEYS),
+            "not_assigned_to": ArgSpec("node", required=False, tracks="assignments"),
+            "bind": _BIND,
+        },
+        "units",
+        _select_plan_actor,
+    ),
+    ActionOp(
+        OP_START_PLAN,
+        "Open a persistent plan of this kind for this node's root lane (no game command); "
+        "refused while its slot holds an open plan, cools down after an abort, or the "
+        "kind is disabled for the match",
+        {"kind": ArgSpec("enum", choices=PLAN_KINDS)},
+        _start_plan,
+        _DECISIVE_OUTCOMES,
+        None,
+    ),
+    ActionOp(
+        "plan_wait",
+        "Hold the open plan still on a named blocker (no game command): running, the plan "
+        "waiting with this reason code",
+        {"plan": ArgSpec("plan"), "reason": ArgSpec("enum", choices=WAIT_CODES)},
+        _plan_wait,
+        _WAIT_OUTCOMES,
+        None,
+    ),
+    ActionOp(
+        "plan_reserve",
+        "Hold the open plan's next structure's minerals and vespene this tick, up to what "
+        "the lanes before it left (no game command; nothing once its build is in flight); "
+        "the plan's own build takes the hold over, never charging it twice",
+        {
+            "plan": ArgSpec("plan"),
+            "structure": ArgSpec(
+                "enum",
+                choices=(
+                    *EXPANSION_BUILD_ABILITY,
+                    *BUILD_ABILITY,
+                    *GAS_BUILD_ABILITY,
+                ),
+            ),
+        },
+        _plan_reserve,
+        _DECISIVE_OUTCOMES,
+        None,
+    ),
+    ActionOp(
+        "plan_complete",
+        "Complete the open plan, releasing its holds (no game command)",
+        {"plan": ArgSpec("plan")},
+        _plan_complete,
+        _DECISIVE_OUTCOMES,
+        None,
+    ),
+    ActionOp(
+        OP_BUILD_EXPANSION,
+        "Order the first bound worker to build a Nexus at the first bound site (the plan's "
+        "path-checked site; SC2 checks placement); refused while another base already "
+        "stands or is ordered elsewhere (never a third)",
+        {
+            "structure": ArgSpec("enum", choices=tuple(EXPANSION_BUILD_ABILITY)),
+            "worker": ArgSpec("entities"),
+            "site": ArgSpec("points"),
+        },
+        _build_expansion,
+        _ACTION_OUTCOMES,
+        _BUILD_LIFECYCLE,
+    ),
+    ActionOp(
+        OP_TRANSFER_WORKERS,
+        "Bring the bound patches up to count workers from the bound workers not already "
+        "there, not gathering gas and not held, each to the least-loaded patch",
+        {
+            "workers": ArgSpec("entities"),
+            "minerals": ArgSpec("entities"),
+            "per_patch": ArgSpec("int", minimum=1, maximum=3, param=True),
+            "count": ArgSpec("int", minimum=1, maximum=MAX_SELECTION, param=True),
+        },
+        _transfer_workers,
+        _ACTION_OUTCOMES,
+        _HARVEST_LIFECYCLE,
+    ),
 )
 
 OPERATIONS: Final[Mapping[str, OperationSpec]] = {spec.name: spec for spec in _SPECS}
@@ -2687,10 +3371,12 @@ class _ArgContext:
         parameters: Mapping[str, JsonValue],
         node_kinds: Mapping[str, NodeKind],
         collection: str | None,
+        node_operations: Mapping[str, str | None] | None = None,
     ) -> None:
         self.parameters = parameters
         self.node_kinds = node_kinds
         self.collection = collection
+        self.node_operations = node_operations
 
 
 def _check_bounds(path: str, spec: ArgSpec, value: int | float) -> list[ArgIssue]:
@@ -2917,9 +3603,18 @@ def _check_value(path: str, spec: ArgSpec, value: JsonValue, ctx: _ArgContext) -
         return [
             ("invalid_arg", f"argument '{path}' must be a binding name, got {safe_repr(value)}")
         ]
-    # kind == "node"
+    # kind == "node" or "plan"
     if not isinstance(value, str):
         return [("invalid_arg", f"argument '{path}' must be a node id, got {safe_repr(value)}")]
+    if kind == "plan" and ctx.node_operations is not None and value in ctx.node_operations:
+        if ctx.node_operations[value] != OP_START_PLAN:
+            return [
+                (
+                    "invalid_arg",
+                    f"argument '{path}' must reference a {OP_START_PLAN} node; "
+                    f"'{value}' runs {safe_repr(ctx.node_operations[value])}",
+                )
+            ]
     target_kind = ctx.node_kinds.get(value)
     if target_kind is None:
         return [
@@ -2944,11 +3639,21 @@ def validate_operation_args(
     *,
     parameters: Mapping[str, JsonValue],
     node_kinds: Mapping[str, NodeKind],
+    node_operations: Mapping[str, str | None] | None = None,
 ) -> list[ArgIssue]:
-    """Return ``(code, message)`` issues for ``args`` against the operation's spec."""
+    """Return ``(code, message)`` issues for ``args`` against the operation's spec.
+
+    With ``node_operations`` (node id -> its operation), a ``plan`` argument must
+    name a ``start_plan`` node (without it, only an action node).
+    """
     spec = OPERATIONS[operation]
     collection = args.get("collection")
-    ctx = _ArgContext(parameters, node_kinds, collection if isinstance(collection, str) else None)
+    ctx = _ArgContext(
+        parameters,
+        node_kinds,
+        collection if isinstance(collection, str) else None,
+        node_operations,
+    )
     issues: list[ArgIssue] = []
     issues.extend(
         _unknown_key_issues(f"operation '{operation}' has", set(args) - set(spec.args), "argument")

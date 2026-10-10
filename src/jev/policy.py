@@ -10,8 +10,10 @@ every problem, each naming the offending node ID where one exists, and
 unsupported schema version, duplicate node IDs, missing child/root references,
 nodes with more than one parent, cycles, unreachable nodes, depth/size bounds,
 arity per kind, unknown operations, operation/kind mismatch, typed operation
-arguments, parameter references, unhandled outcomes (siblings a composite can
-never reach), and unbound or mistyped root-local binding references.
+arguments (a ``plan`` argument names a ``start_plan`` node), parameter references,
+at most one ``start_plan`` node per root lane (a plan's lane is its scope, see
+:mod:`jev.plans`), unhandled outcomes (siblings a composite can never reach), and
+unbound or mistyped root-local binding references.
 
 :func:`policy_hash` is the one canonical hash: SHA-256 over sorted-key compact
 JSON. Every producer and consumer imports it from here.
@@ -71,6 +73,7 @@ from jev.contracts import (
 )
 from jev.operations import (
     MAX_ISSUES_PER_FIELD,
+    OP_START_PLAN,
     OPERATIONS,
     BindingKind,
     binding_inputs,
@@ -945,6 +948,9 @@ def _structure_issues(
 
 def _node_issues(policy: Policy, index: Mapping[str, PolicyNode], log: IssueLog) -> None:
     node_kinds: dict[str, NodeKind] = {node_id: node.kind for node_id, node in index.items()}
+    node_operations: dict[str, str | None] = {
+        node_id: node.operation for node_id, node in index.items()
+    }
     for node in index.values():
         if log.limit_reached():
             return
@@ -979,7 +985,11 @@ def _node_issues(policy: Policy, index: Mapping[str, PolicyNode], log: IssueLog)
             )
             continue
         for code, message in validate_operation_args(
-            node.operation, node.args, parameters=policy.parameters, node_kinds=node_kinds
+            node.operation,
+            node.args,
+            parameters=policy.parameters,
+            node_kinds=node_kinds,
+            node_operations=node_operations,
         ):
             log.add(code, message, node.id)
     referenced: set[str] = set()
@@ -993,6 +1003,26 @@ def _node_issues(policy: Policy, index: Mapping[str, PolicyNode], log: IssueLog)
             "unused_parameter",
             f"{len(unused) - MAX_ISSUES_PER_FIELD} more parameter(s) are not referenced",
         )
+
+
+def _plan_lane_issues(policy: Policy, index: Mapping[str, PolicyNode], log: IssueLog) -> None:
+    """At most one ``start_plan`` node per root lane: the lane is the plan's scope
+    (its actor, reservation and stages). O(V + E)."""
+    for root in policy.roots:
+        starts: list[str] = []
+        stack = [root]
+        while stack:
+            node = index[stack.pop()]
+            stack.extend(node.children)
+            if node.operation == OP_START_PLAN:
+                starts.append(node.id)
+        for extra in sorted(starts)[1:]:
+            log.add(
+                "invalid_plan",
+                f"root lane '{root}' already starts plans at '{sorted(starts)[0]}'; "
+                "a lane holds at most one start_plan node",
+                extra,
+            )
 
 
 def _outcome_issues(policy: Policy, index: Mapping[str, PolicyNode], log: IssueLog) -> None:
@@ -1158,6 +1188,7 @@ def policy_issues(policy: Policy) -> list[PolicyIssue]:
     structural = log.has_code(_STRUCTURAL_CODES)
     _node_issues(policy, index, log)
     if not structural and not log.limit_reached():
+        _plan_lane_issues(policy, index, log)
         _outcome_issues(policy, index, log)
         _binding_issues(policy, index, log)
     return log.result()

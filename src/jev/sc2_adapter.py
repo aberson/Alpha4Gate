@@ -40,6 +40,21 @@ burnysc2 ``BotAI`` into the :class:`~jev.contracts.Observation` contract:
   ``is_carrying_vespene``, every race's carry-gas buff, rich geysers included).
 * ``start_location`` / ``enemy_start_locations`` / ``expansion_locations_list`` /
   ``game_info.map_center``: map metadata (D3 permits it), read once.
+* ``expansion_paths`` (plan J2 Step 217): SC2's ground path distance from the start
+  location to each expansion location the graph asked about
+  (:meth:`JevRuntime.path_requests`), queried through
+  :meth:`GamePort.pathing_distance` by :meth:`Sc2Adapter.query_paths` in the
+  controller's asynchronous step before the tick, at most
+  :data:`~jev.operations.MAX_EXPANSION_CANDIDATES` per map, and cached for the
+  match (static map paths, plan D4). SC2's "no path" is ``None``; a location never
+  answered has no fact, so it is not yet eligible -- the adapter never assumes a
+  path. The production port asks burnysc2's ``Client.query_pathing`` from the start
+  location, as burnysc2's own ``BotAI.get_next_expansion`` does.
+* ``location_vision`` (plan J2 Step 217): for each of those queried locations,
+  whether it is in the bot's own sight now (:meth:`GamePort.is_visible`, SC2's
+  answer, asked at most once per position per step) and the latest game time it
+  was, refreshed on every step -- :meth:`Sc2Adapter.remember` between ticks too, so
+  a glimpse is never lost. Unknown is not safe (D4): never seen is ``None``.
 
 Between policy ticks the controller needs only the clock
 (:meth:`Sc2Adapter.game_seconds`) and the enemy memories
@@ -65,9 +80,10 @@ owns in the current observation, uses a Jev command ability, and targets a
 visible mineral field or an own finished gas building with gas left (gather), a
 visible vespene geyser (a gas build: the geyser *unit* is the target, as
 burnysc2's ``Unit.build_gas`` sends it -- never a point and never a placement
-query), a visible enemy (unit attack) or a point. For a point build, the API tests
-placement legality over the graph-selected candidates (at most
-:data:`~jev.operations.MAX_PLACEMENT_CANDIDATES`) and the first legal one is used.
+query), a visible enemy (unit attack) or a point. For a point build -- a Pylon, a Gateway or
+an expansion plan's Nexus -- the API tests placement legality over the
+graph-selected candidates (at most :data:`~jev.operations.MAX_PLACEMENT_CANDIDATES`)
+and the first legal one is used.
 Issuing is never success (D4): SC2's acceptance is reported with
 :meth:`~jev.runtime.JevRuntime.mark_command_accepted` and the runtime still waits
 for observation (an acceptance the runtime does not apply is recorded as
@@ -103,8 +119,10 @@ from jev.contracts import (
     CommandSpec,
     EnemySighting,
     Entity,
+    LocationVision,
     Observation,
     Order,
+    PathFact,
     Point,
     Target,
     full_match,
@@ -116,9 +134,11 @@ from jev.operations import (
     ATTACK_ABILITY,
     BUILD_ABILITY,
     COMMAND_ABILITIES,
+    EXPANSION_BUILD_ABILITY,
     GAS_BUILD_ABILITY,
     GAS_STRUCTURE_TYPES,
     GATHER_ABILITY,
+    MAX_EXPANSION_CANDIDATES,
     MAX_PLACEMENT_CANDIDATES,
     MOVE_ABILITY,
     REQUIRES_POWER,
@@ -159,7 +179,10 @@ MAX_ACTION_ERRORS: Final = 1024
 #: placement (its acceptance report was not applied), so nothing awaits it.
 CommandOutcome = Literal["accepted", "rejected", "ignored"]
 
-_BUILD_ABILITIES: Final = frozenset(BUILD_ABILITY.values())
+#: Point builds: placement legality is tested over the candidates (a Nexus too).
+_BUILD_ABILITIES: Final = frozenset(BUILD_ABILITY.values()) | frozenset(
+    EXPANSION_BUILD_ABILITY.values()
+)
 _GAS_BUILD_ABILITIES: Final = frozenset(GAS_BUILD_ABILITY.values())
 _TRAIN_ABILITIES: Final = frozenset(TRAIN_ABILITY.values())
 #: burnysc2's own ``Unit.move`` issues MOVE_MOVE; every other Jev command ability
@@ -192,6 +215,10 @@ class GamePort(Protocol):
 
     async def leave(self) -> None:
         """Leave the game (a clean stop or time limit)."""
+        ...
+
+    async def pathing_distance(self, start: Point, end: Point) -> float | None:
+        """SC2's ground path distance from ``start`` to ``end``; None: no path."""
         ...
 
 
@@ -404,6 +431,15 @@ def _read_map(game: Any) -> _MapMetadata:
     )
 
 
+def _path_reply(value: object, where: str) -> float | None:
+    """A pathing reply: None or a non-positive distance is SC2's "no path"; anything
+    else must be a finite number (a malformed reply raises ValueError)."""
+    if value is None:
+        return None
+    distance = _number(value, where)
+    return distance if distance > 0 else None
+
+
 def _by_tag(found: Mapping[int, tuple[Entity, Any]]) -> tuple[Entity, ...]:
     return tuple(found[tag][0] for tag in sorted(found))
 
@@ -470,6 +506,11 @@ class Sc2Adapter:
         # Actor tag -> its last command SC2 accepted, until the runtime moves on.
         self._awaiting: dict[int, CommandRecord] = {}
         self._records: deque[CommandRecord] = deque(maxlen=MAX_COMMAND_RECORDS)
+        # Expansion location -> SC2's path distance from the start location (None: no
+        # path), static for the map: each asked at most once, at most the cap.
+        self._paths: dict[Point, float | None] = {}
+        # Those locations -> the latest game time they were in own sight (None: never).
+        self._seen: dict[Point, float | None] = {}
         self._game_loop = 0
         self._accepted = 0
         self._rejected = 0
@@ -487,6 +528,11 @@ class Sc2Adapter:
     @property
     def accepted_count(self) -> int:
         return self._accepted
+
+    @property
+    def paths(self) -> tuple[PathFact, ...]:
+        """The cached path answers, by location (what every Observation carries)."""
+        return tuple(PathFact(point, self._paths[point]) for point in sorted(self._paths))
 
     @property
     def rejected_count(self) -> int:
@@ -517,8 +563,10 @@ class Sc2Adapter:
         visible = _vision(port)
         remembered = self._remember(enemies, visible)  # keeps structures only, as observe()
         sightings = self._sight(enemies, now, visible)
+        seen, _ = self._look(visible, now)
         self._remembered = remembered
         self._sightings = sightings
+        self._seen = seen
 
     @_reads_game_state
     def observe(self, game: Any, port: GamePort) -> Observation:
@@ -544,6 +592,7 @@ class Sc2Adapter:
         remembered = self._remember(enemies, visible)
         game_seconds = game_loop / GAME_LOOPS_PER_SECOND
         sightings = self._sight(enemies, game_seconds, visible)
+        seen, vision = self._look(visible, game_seconds)
         observation = Observation(
             game_loop=game_loop,
             game_seconds=game_seconds,
@@ -564,10 +613,13 @@ class Sc2Adapter:
             enemy_sightings=tuple(sightings[tag] for tag in sorted(sightings)),
             vespene=_count(game.vespene, "vespene"),
             vespene_geysers=_by_tag(geysers),
+            expansion_paths=self.paths,
+            location_vision=vision,
         )
         self._map = map_data
         self._remembered = remembered
         self._sightings = sightings
+        self._seen = seen
         self._actors = actors
         self._minerals = {tag: raw for tag, (_, raw) in minerals.items()}
         self._enemies = {tag: raw for tag, (_, raw) in enemies.items()}
@@ -577,6 +629,21 @@ class Sc2Adapter:
         }
         self._game_loop = game_loop
         return observation
+
+    def _look(
+        self, visible: Callable[[Point], bool], now: float
+    ) -> tuple[dict[Point, float | None], tuple[LocationVision, ...]]:
+        """The watched locations' vision after this step: each queried location is
+        looked at (the step's shared ``visible`` answers) and its last-seen time
+        refreshed while in sight. O(watched), at most the path-query cap."""
+        seen: dict[Point, float | None] = {}
+        records: list[LocationVision] = []
+        for point in sorted(self._seen):
+            in_sight = visible(point)
+            last = now if in_sight else self._seen[point]
+            seen[point] = last
+            records.append(LocationVision(point, in_sight, last))
+        return seen, tuple(records)
 
     def _remember(
         self, enemies: Mapping[int, tuple[Entity, Any]], visible: Callable[[Point], bool]
@@ -626,6 +693,31 @@ class Sc2Adapter:
             )[:MAX_ENEMY_SIGHTINGS]
             sightings = {s.entity.tag: s for s in newest}
         return sightings
+
+    async def query_paths(self, port: GamePort, points: Sequence[Point]) -> int:
+        """Ask SC2 for the path distance from the start location to each requested
+        point not yet answered (plan D4). Only the map's expansion locations are
+        asked, at most :data:`~jev.operations.MAX_EXPANSION_CANDIDATES` per match in
+        all; nothing before the first observation (no map yet). Answers are cached
+        and carried by every later Observation. Returns how many were asked; a
+        malformed reply raises :class:`ValueError`, a port failure propagates.
+        """
+        map_data = self._map
+        if map_data is None:
+            return 0
+        allowed = set(map_data.expansion_locations)
+        asked = 0
+        for raw in points:
+            point = _command_point(raw)
+            if point is None or point not in allowed or point in self._paths:
+                continue
+            if len(self._paths) >= MAX_EXPANSION_CANDIDATES:
+                break
+            reply = await port.pathing_distance(map_data.start_location, point)
+            self._paths[point] = _path_reply(reply, "pathing reply")
+            self._seen.setdefault(point, None)  # watched from now on (location_vision)
+            asked += 1
+        return asked
 
     # -- commands --------------------------------------------------------------
 
@@ -927,3 +1019,11 @@ class BotAIPort:
 
     async def leave(self) -> None:
         await self._bot.client.leave()
+
+    async def pathing_distance(self, start: Point, end: Point) -> float | None:
+        """burnysc2's ``Client.query_pathing`` from the start point (it reports SC2's
+        "no path" as None, which ``BotAI.get_next_expansion`` relies on too)."""
+        from sc2.position import Point2
+
+        reply = await self._bot.client.query_pathing(Point2(start), Point2(end))
+        return None if reply is None else float(reply)

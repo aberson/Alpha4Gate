@@ -49,6 +49,7 @@ from jev.contracts import Entity, Event, Observation, Point
 from jev.operations import (
     BUILD_ABILITY,
     COMMAND_ABILITIES,
+    EXPANSION_BUILD_ABILITY,
     GAS_BUILD_ABILITY,
     GAS_DEPLETED_REASON,
     GAS_FOOTPRINT,
@@ -959,9 +960,10 @@ def test_a_gas_structure_is_never_a_point_build() -> None:
 
 
 def test_cost_tables_have_one_entry_per_buildable_and_trainable_type() -> None:
-    every = {*BUILD_ABILITY, *GAS_BUILD_ABILITY, *TRAIN_ABILITY}
+    every = {*BUILD_ABILITY, *GAS_BUILD_ABILITY, *EXPANSION_BUILD_ABILITY, *TRAIN_ABILITY}
     assert set(MINERAL_COST) == set(VESPENE_COST) == every
     assert MINERAL_COST["Assimilator"] == 75 and VESPENE_COST["Assimilator"] == 0
+    assert MINERAL_COST["Nexus"] == 400 and VESPENE_COST["Nexus"] == 0  # SC2 5.0 game data
     assert operations.VESPENE_COST is VESPENE_COST  # the intents read this very table
 
 
@@ -1002,13 +1004,13 @@ def test_frozen_v1_reads_no_gas_and_v2_owns_the_gas_lanes() -> None:
     probe_picks = [
         n
         for n in v2.nodes
-        if n.operation == "select_entities"
-        and n.args["collection"] == "own_units"
+        if n.operation in ("select_entities", "select_plan_actor")  # an expansion's worker too
+        and n.args.get("collection", "own_units") == "own_units"
         and "Probe" in n.args.get("filter", {}).get("types", [])
         and "assigned_to" not in n.args  # the scout itself, not a new pick
         and n.id != "economy.idle_probes"  # idle only: never a gathering probe
     ]
-    assert len(probe_picks) == 7
+    assert len(probe_picks) == 9  # Step 217: the expansion worker and its transfer
     for node in probe_picks:  # every builder, scout and gas pick leaves gas workers alone
         assert node.args["filter"]["gathering_gas"] is False, node.id
 

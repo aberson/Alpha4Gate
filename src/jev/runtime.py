@@ -59,6 +59,20 @@ One :class:`JevRuntime` executes one validated policy for one run:
   :data:`~jev.operations.MAX_TRACKED_FINISHES` tasks. The enemy sighting memory
   is not runtime state: the adapter keeps it and every Observation carries it
   (validated like the other observation fields).
+* **Persistent plans (Jev v2, plan J2 Step 217).** Only for a policy with a
+  ``start_plan`` node (v1 has none, so none of this runs for it) the runtime owns a
+  :class:`~jev.plans.PlanStore`. A plan's lane is the root holding its start node;
+  after evaluating that lane each tick the runtime reports the leaf that decided
+  the lane's status (its *frontier*, with the leaf's reason code) as the plan's
+  stage. A plan's actor is busy for every other lane (selections skip it and their
+  intents on it are refused); what the lane holds (``plan_reserve``) is the plan's
+  reservation, which its own build takes over; its build task's creation,
+  acknowledgement and failure, and its walk's give-up, drive the plan's recovery
+  attempts. An abort releases every
+  hold at once -- including this tick's held minerals -- and cancels the lane's
+  tasks that have not started a structure, so no retry survives an abandoned
+  branch. Selections may ask for SC2 path queries (:meth:`JevRuntime.path_requests`),
+  which the controller has the adapter answer before the next tick.
 * **Bounded recovery from unreachable targets (D4).** A task that gives up
   makes its intent a fresh task on retry (the order SC2 still carries never
   counts as already done). For every action node a ``demotions`` argument
@@ -91,7 +105,7 @@ from __future__ import annotations
 import itertools
 from collections import Counter, deque
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Final, Literal, get_args
 
@@ -119,9 +133,11 @@ from jev.contracts import (
     EventStatus,
     JevError,
     JsonValue,
+    LocationVision,
     NodeStatus,
     Observation,
     Order,
+    PathFact,
     Point,
     Policy,
     PolicyNode,
@@ -136,12 +152,16 @@ from jev.contracts import (
     safe_repr,
 )
 from jev.operations import (
+    EXPANSION_STRUCTURE,
     MAX_TRACKED_FINISHES,
     OP_BUILD,
+    OP_BUILD_EXPANSION,
     OP_BUILD_GAS,
     OP_GATHER,
     OP_GATHER_GAS,
     OP_RELEASE_GAS,
+    OP_START_PLAN,
+    OP_TRANSFER_WORKERS,
     OPERATIONS,
     PARAM_STRUCTURE,
     PARAM_TARGET_TAG,
@@ -151,6 +171,7 @@ from jev.operations import (
     CompiledFilter,
     Intent,
     Lifecycle,
+    PlanEffect,
     PredicateOp,
     SelectOp,
     TaskSubject,
@@ -162,6 +183,7 @@ from jev.operations import (
     resolve_args,
     tracked_nodes,
 )
+from jev.plans import BuildFailure, PlanCode, PlanRecord, PlanStore
 from jev.policy import policy_hash, validate_policy
 
 __all__ = [
@@ -207,7 +229,11 @@ SITE_EXCLUSION_CAUSES: Final[frozenset[FailureCause]] = frozenset({"rejected", "
 UNACKNOWLEDGED_STATUSES: Final[frozenset[TaskStatus]] = frozenset({"pending", "issued"})
 #: Operations whose tasks send a worker to gather (minerals or gas): their
 #: unacknowledged tasks count toward a resource's workers.
-_GATHER_OPERATIONS: Final = frozenset({OP_GATHER, OP_GATHER_GAS, OP_RELEASE_GAS})
+_GATHER_OPERATIONS: Final = frozenset(
+    {OP_GATHER, OP_GATHER_GAS, OP_RELEASE_GAS, OP_TRANSFER_WORKERS}
+)
+#: Operations whose tasks build at a point target (their site and alternatives).
+_POINT_BUILD_OPERATIONS: Final = frozenset({OP_BUILD, OP_BUILD_EXPANSION})
 #: Pseudo node id for runtime diagnostics that no policy node originated (it can
 #: never collide with an authored id: authored ids must match NODE_ID_RE).
 RUNTIME_NODE_ID: Final = "@runtime"
@@ -319,6 +345,72 @@ def _check_entity(path: str, entity: object) -> None:
                 f"observation {where} order target must be a tag, point or None, "
                 f"got {safe_repr(target)}"
             )
+
+
+def _check_paths(observation: Observation) -> None:
+    """``expansion_paths``: a bounded tuple of PathFact records, one per location, each
+    with a finite point and a finite non-negative distance or None (no path)."""
+    paths = observation.expansion_paths
+    if not isinstance(paths, tuple):
+        raise ValueError("observation expansion_paths must be a tuple of PathFact records")
+    if len(paths) > MAX_OBSERVED_LOCATIONS:
+        raise ValueError(
+            f"observation expansion_paths has {len(paths)} entries; "
+            f"limit is {MAX_OBSERVED_LOCATIONS}"
+        )
+    seen: set[Point] = set()
+    for index, fact in enumerate(paths):
+        path = f"expansion_paths[{index}]"
+        if not isinstance(fact, PathFact):
+            raise ValueError(f"observation {path} must be a PathFact, got {safe_repr(fact)}")
+        _check_point(f"{path}.location", fact.location)
+        distance_value = fact.distance
+        if distance_value is not None and (
+            not is_bounded_number(distance_value) or distance_value < 0
+        ):
+            raise ValueError(
+                f"observation {path}.distance must be None or a finite number >= 0, "
+                f"got {safe_repr(distance_value)}"
+            )
+        if fact.location in seen:
+            raise ValueError(f"observation {path} repeats location {safe_repr(fact.location)}")
+        seen.add(fact.location)
+
+
+def _check_vision(observation: Observation) -> None:
+    """``location_vision``: a bounded tuple of LocationVision records, one per
+    location: a finite point, a bool, and a last-seen time that is None or a finite
+    game time no later than the observation's (set whenever it is visible)."""
+    records = observation.location_vision
+    if not isinstance(records, tuple):
+        raise ValueError("observation location_vision must be a tuple of LocationVision records")
+    if len(records) > MAX_OBSERVED_LOCATIONS:
+        raise ValueError(
+            f"observation location_vision has {len(records)} entries; "
+            f"limit is {MAX_OBSERVED_LOCATIONS}"
+        )
+    seen: set[Point] = set()
+    for index, record in enumerate(records):
+        path = f"location_vision[{index}]"
+        if not isinstance(record, LocationVision):
+            raise ValueError(
+                f"observation {path} must be a LocationVision, got {safe_repr(record)}"
+            )
+        _check_point(f"{path}.location", record.location)
+        if not isinstance(record.visible, bool):
+            raise ValueError(f"observation {path}.visible must be a bool")
+        last = record.last_seen_game_seconds
+        if last is None:
+            if record.visible:
+                raise ValueError(f"observation {path} is visible but never seen")
+        elif not is_bounded_number(last) or not 0 <= last <= observation.game_seconds:
+            raise ValueError(
+                f"observation {path}.last_seen_game_seconds must be None or a game time "
+                f"in 0..{observation.game_seconds:g}, got {safe_repr(last)}"
+            )
+        if record.location in seen:
+            raise ValueError(f"observation {path} repeats location {safe_repr(record.location)}")
+        seen.add(record.location)
 
 
 def _check_sightings(observation: Observation) -> None:
@@ -448,6 +540,8 @@ class _TaskRecord:
     target_damage: float = 0.0  # the entity target's own share of damage_dealt
     tracked_tag: int | None = None
     failure_cause: FailureCause | None = None
+    #: The plan open in this task's lane when it was created (plan J2 Step 217).
+    plan_id: str | None = None
 
     def committed(self) -> bool:
         """True while the task's cost is promised but not yet observed as spent."""
@@ -476,7 +570,7 @@ class _TaskRecord:
     def build_sites(self) -> tuple[Point, ...]:
         """The sites a build task tried: a point build's candidates, a gas build's
         geyser position; () for any other task."""
-        if self.operation == OP_BUILD and isinstance(self.target, tuple):
+        if self.operation in _POINT_BUILD_OPERATIONS and isinstance(self.target, tuple):
             return (self.target, *self.alternatives)
         if self.operation == OP_BUILD_GAS:
             site = decode_site(self.params)
@@ -555,9 +649,16 @@ class _RootFrame:
 
 @dataclass(frozen=True)
 class _NodeResult:
+    """A node's status. ``leaf``/``detail``/``code``: the leaf that decided it (the
+    *frontier*: for a composite, the deciding child's), that leaf's own reason and
+    its plan reason code -- internal, read only for plan lanes."""
+
     status: NodeStatus
     reason: str
     waiting: bool = False
+    leaf: str = ""
+    code: PlanCode | None = None
+    detail: str = ""
 
 
 class _View:
@@ -583,10 +684,12 @@ class _View:
         return self._frame.bindings.get(name)
 
     def available_minerals(self) -> int:
-        return self._runtime._available_minerals(self._observation)
+        own = self._runtime._plan_lane_hold(self._frame.root_id)[0]  # the plan's own hold
+        return self._runtime._available_minerals(self._observation) + own
 
     def available_vespene(self) -> int:
-        return self._runtime._available_vespene(self._observation)
+        own = self._runtime._plan_lane_hold(self._frame.root_id)[1]
+        return self._runtime._available_vespene(self._observation) + own
 
     def available_supply(self) -> int:
         return self._runtime._available_supply(self._observation)
@@ -613,14 +716,20 @@ class _View:
 
     def actor_is_busy(self, tag: int) -> bool:
         runtime = self._runtime
-        return tag in runtime._reserved_actors or runtime._holder_of(tag) is not None
+        if tag in runtime._reserved_actors or runtime._holder_of(tag) is not None:
+            return True
+        return runtime._plan_owner_elsewhere(tag, self._frame.root_id) is not None
+
+    def plan(self, node_id: str) -> PlanRecord | None:
+        plans = self._runtime._plans
+        return None if plans is None else plans.record(node_id)
 
     def in_flight_builds(self) -> tuple[tuple[str, Point], ...]:
         found: list[tuple[str, Point]] = []
         for task in self._runtime._active.values():
             if not task.committed():
                 continue
-            if task.operation == OP_BUILD and isinstance(task.target, tuple):
+            if task.operation in _POINT_BUILD_OPERATIONS and isinstance(task.target, tuple):
                 found.append((str(task.params.get(PARAM_STRUCTURE, "")), task.target))
             elif task.operation == OP_BUILD_GAS:
                 site = decode_site(task.params)
@@ -782,6 +891,26 @@ class JevRuntime:
         self._waiting_nodes: set[str] = set()
         self._own_unit_tags: frozenset[int] = frozenset()
         self._own_structure_tags: frozenset[int] = frozenset()
+        # Persistent plans (jev.plans): only for a policy with a start_plan node.
+        self._plans: PlanStore | None = None
+        self._plan_lanes: dict[str, str] = {}  # lane root -> its start_plan node
+        self._plan_rank: dict[str, int] = {}  # plan-lane node -> pre-order position
+        self._path_requests: dict[Point, None] = {}
+        self._tick_spends: list[tuple[str, str]] = []  # (root, node) of new commitments
+        starts = [n.id for n in policy.nodes if n.operation == OP_START_PLAN]
+        if starts:
+            self._plans = PlanStore(run_id)
+            for root in policy.roots:
+                order: list[str] = []
+                stack = [root]
+                while stack:
+                    node_id = stack.pop()
+                    order.append(node_id)
+                    stack.extend(reversed(policy.node(node_id).children))
+                lane_starts = [node_id for node_id in order if node_id in starts]
+                if lane_starts:  # validation allows one start_plan per root lane
+                    self._plan_lanes[root] = lane_starts[0]
+                    self._plan_rank.update((node_id, i) for i, node_id in enumerate(order))
 
     def _tracked_nodes(self, memory: TrackedMemory) -> frozenset[str]:
         return frozenset(
@@ -840,6 +969,24 @@ class JevRuntime:
         claimed = self._claimed_at.get(node_id)
         return None if claimed is None else max(0.0, self._last_game_seconds - claimed)
 
+    def plans(self) -> tuple[PlanRecord, ...]:
+        """Kept plan records: recently finished, then open (empty without plans)."""
+        return () if self._plans is None else self._plans.records()
+
+    def plan(self, node_id: str) -> PlanRecord | None:
+        """The latest plan ``start_plan`` node ``node_id`` started, if any."""
+        return None if self._plans is None else self._plans.record(node_id)
+
+    def plan_aborts(self) -> int | None:
+        """Plans aborted so far this run; None for a policy that starts no plans."""
+        return None if self._plans is None else self._plans.aborts
+
+    def path_requests(self) -> tuple[Point, ...]:
+        """Expansion locations the last tick's selections need SC2 path distances
+        for (plan D4: missing answers mean not yet eligible). The controller has the
+        adapter query them before the next tick; empty for a policy that asks none."""
+        return tuple(self._path_requests)
+
     def set_army_decision(self, mode: str | None, facts: dict[str, JsonValue]) -> None:
         """Supply the coordinator's decision for the next graph evaluation."""
         if mode not in (None, "attack", "defend", "regroup"):
@@ -897,6 +1044,8 @@ class JevRuntime:
         self._cooldowns = {k: v for k, v in self._cooldowns.items() if v > now}
         self._rejected_sites = {k: v for k, v in self._rejected_sites.items() if v[2] > now}
 
+        self._path_requests = {}
+        self._tick_spends = []
         self._update_tasks(observation)
         self._lapse_give_ups(observation)
         if self._army_mode is not None:
@@ -904,6 +1053,8 @@ class JevRuntime:
                 mode = self._army_task_modes.get(task.node_id)
                 if mode is not None and mode != self._army_mode:
                     self._finish(task, "cancelled", f"army intent changed to {self._army_mode}")
+        if self._plans is not None:
+            self._plan_begin_tick(observation)
 
         remaining_evals = self._tick_config.max_node_evaluations
         remaining_commands = self._tick_config.max_commands
@@ -921,7 +1072,12 @@ class JevRuntime:
             root_status[root_id] = result.status
             remaining_evals -= frame.evals_used
             remaining_commands -= frame.commands_used
+            if root_id in self._plan_lanes:
+                self._plan_after_lane(root_id, result, now)
 
+        if self._plans is not None:
+            self._plans.summarize(now)
+            self._apply_plan_outcomes()
         events = tuple(self._events)
         self._events = []
         return TickResult(
@@ -1006,6 +1162,8 @@ class JevRuntime:
             for index, entity in enumerate(entities):
                 _check_entity(f"{name}[{index}]", entity)
         _check_sightings(observation)
+        _check_paths(observation)
+        _check_vision(observation)
 
     def task_status(self, task_id: str) -> TaskStatus | None:
         """Status of an active task; None once it has finished, or for an unknown id."""
@@ -1244,6 +1402,8 @@ class JevRuntime:
         if self._by_intent.get(task.intent_key) == task.id:
             del self._by_intent[task.intent_key]
         self._history.append(task)
+        if self._plans is not None and task.plan_id is not None:
+            self._plan_task_finished(task, status)
         self._terminal_counts[(task.node_id, status)] += 1
         if task.node_id in self._finish_nodes:
             finishes = self._finishes.get(task.node_id)
@@ -1500,6 +1660,11 @@ class JevRuntime:
                     task.target = ack.target
                 task.reason = "acknowledged by observation"
                 self._task_event(task)
+                if task.operation == OP_BUILD_EXPANSION and task.plan_id is not None:
+                    key = self._plan_key(task)
+                    if key is not None and self._plans is not None:
+                        self._plans.build_acknowledged(key, task.node_id, now)
+                        self._apply_plan_outcomes()
             if task.status == "running":
                 self._advance_running(task, observation, now)
 
@@ -1637,7 +1802,9 @@ class JevRuntime:
             # and the diagnostic above carries its budget reason and lane.
             self._node_status[node_id] = "running"
             self._waiting_nodes.add(node_id)
-            return _NodeResult("running", NODE_BUDGET_REASON, waiting=True)
+            return _NodeResult(
+                "running", NODE_BUDGET_REASON, waiting=True, leaf=node_id, detail=NODE_BUDGET_REASON
+            )
         frame.evals_used += 1
         node = self._policy.node(node_id)
         facts: dict[str, JsonValue] = {}
@@ -1648,6 +1815,8 @@ class JevRuntime:
             result = self._evaluate_composite(node, frame, observation, facts)
         else:
             result = self._evaluate_leaf(node, frame, observation, facts)
+            if frame.root_id in self._plan_lanes:  # the frontier is read for plan lanes only
+                result = replace(result, leaf=node.id, detail=result.reason)
         if result.status == "failure":
             frame.bindings = entry_bindings
         self._node_status[node.id] = result.status
@@ -1664,6 +1833,7 @@ class JevRuntime:
         facts: dict[str, JsonValue],
     ) -> _NodeResult:
         advance: NodeStatus = "success" if node.kind == "sequence" else "failure"
+        last: _NodeResult | None = None
         for child in node.children:
             child_result = self._evaluate(child, frame, observation)
             if child_result.status != advance:
@@ -1672,10 +1842,15 @@ class JevRuntime:
                     child_result.status,
                     f"child {child} returned {child_result.status}",
                     child_result.waiting,
+                    child_result.leaf,
+                    child_result.code,
+                    child_result.detail,
                 )
+            last = child_result
+        leaf, code, detail = ("", None, "") if last is None else (last.leaf, last.code, last.detail)
         if advance == "success":
-            return _NodeResult("success", "all children succeeded")
-        return _NodeResult("failure", "all children failed")
+            return _NodeResult("success", "all children succeeded", False, leaf, code, detail)
+        return _NodeResult("failure", "all children failed", False, leaf, code, detail)
 
     def _evaluate_leaf(
         self,
@@ -1693,17 +1868,24 @@ class JevRuntime:
             if outcome.ok:
                 return _NodeResult("success", outcome.reason)
             if node.kind == "wait":
-                return _NodeResult("running", f"waiting: {outcome.reason}", waiting=True)
-            return _NodeResult("failure", outcome.reason)
+                return _NodeResult(
+                    "running", f"waiting: {outcome.reason}", waiting=True, code=outcome.code
+                )
+            return _NodeResult("failure", outcome.reason, code=outcome.code)
         if isinstance(spec, SelectOp):
             selection = spec.evaluate(view, args)
             facts.update(selection.facts)
             name = str(args["bind"])
             facts["bind"] = name
-            if selection.binding is None:
-                return _NodeResult("failure", selection.reason)  # bindings untouched
+            for point in selection.queries[:MAX_OBSERVED_LOCATIONS]:
+                if len(self._path_requests) < MAX_OBSERVED_LOCATIONS:
+                    self._path_requests[point] = None
+            if selection.binding is None:  # bindings untouched
+                return _NodeResult("failure", selection.reason, code=selection.code)
             frame.bindings[name] = selection.binding
-            return _NodeResult("success", selection.reason)
+            if selection.effect is not None:  # a site or actor claim: never refused
+                self._apply_effect(node, frame, selection.effect, observation.game_seconds)
+            return _NodeResult("success", selection.reason, code=selection.code)
         return self._run_action(node, spec, frame, view, facts)
 
     def _run_action(
@@ -1716,6 +1898,13 @@ class JevRuntime:
     ) -> _NodeResult:
         plan = spec.plan(view, self._args[node.id])
         facts.update(plan.facts)
+        if plan.effect is not None:
+            refused, reason = self._apply_effect(
+                node, frame, plan.effect, view.observation.game_seconds
+            )
+            return _NodeResult("failure" if refused else "success", reason, code=plan.code)
+        if plan.wait_reason is not None:
+            return _NodeResult("running", plan.wait_reason, waiting=True, code=plan.code)
         if plan.latch is not None:
             already = self._latches[plan.latch]
             self._latches[plan.latch] = True
@@ -1726,6 +1915,8 @@ class JevRuntime:
         active = issued = satisfied = 0
         blocked = [reason for _, reason in plan.blocked]
         waiting_reason: str | None = None
+        code: PlanCode | None = plan.code
+        plan_lane = frame.root_id in self._plan_lanes
         for intent in plan.intents:
             key = f"{node.id}|{intent.semantic}"
             if key in self._by_intent:
@@ -1741,19 +1932,32 @@ class JevRuntime:
             refusal = self._refusal(node, frame, view, key, intent, plan.preempt, now)
             if refusal is not None:
                 blocked.append(refusal)
+                if plan_lane and key in self._rejected_sites:
+                    code = "site_blocked"  # cooling down after a refused placement
                 continue
             shortfall = self._shortfall(view, intent)
             if shortfall is not None:
                 if plan.hold_reservation:
-                    self._held_minerals += max(0, min(intent.minerals, view.available_minerals()))
+                    held_minerals = max(0, min(intent.minerals, view.available_minerals()))
+                    self._held_minerals += held_minerals
                     self._held_supply += max(0, min(intent.supply, view.available_supply()))
+                    held = 0
                     if intent.vespene:  # a gas cost shows what it holds (D5 facts)
                         held = max(0, min(intent.vespene, view.available_vespene()))
                         self._held_vespene += held
                         facts["held_vespene"] = held
+                    if plan_lane:  # the plan's reservation this tick (jev.plans)
+                        facts["held_minerals"] = held_minerals
+                        self._plan_hold(frame.root_id, held_minerals, held)
+                        code = "budget_short"
+                    elif self._plans is not None:
+                        self._tick_spends.append((frame.root_id, node.id))
                     waiting_reason = f"waiting for {shortfall}; holding reservation"
                 else:
                     blocked.append(f"insufficient {shortfall}")
+                    if plan_lane:
+                        code = "budget_short"
+                        facts["shortfall"] = shortfall
                 break  # priority order: later intents must not jump the queue
             if frame.commands_used >= frame.command_allowance:
                 self._command_budget_breach(node.id, frame)
@@ -1777,15 +1981,19 @@ class JevRuntime:
             {"active": active, "issued": issued, "satisfied": satisfied, "blocked": len(blocked)}
         )
         if waiting_reason is not None:
-            return _NodeResult("running", waiting_reason, waiting=True)
+            return _NodeResult("running", waiting_reason, waiting=True, code=code)
         if active:
-            return _NodeResult("running", f"{active} task(s) in progress ({issued} issued now)")
+            if spec.name == OP_BUILD_EXPANSION:
+                code = "issued"
+            return _NodeResult(
+                "running", f"{active} task(s) in progress ({issued} issued now)", code=code
+            )
         if blocked:
-            return _NodeResult("failure", blocked[0])
+            return _NodeResult("failure", blocked[0], code=code)
         if plan.failure_reason is not None:
-            return _NodeResult("failure", plan.failure_reason)
+            return _NodeResult("failure", plan.failure_reason, code=code)
         if not plan.intents:
-            return _NodeResult("failure", "nothing to act on")
+            return _NodeResult("failure", "nothing to act on", code=code)
         return _NodeResult("success", f"{satisfied} actor(s) already in the intended state")
 
     def _refusal(
@@ -1806,6 +2014,9 @@ class JevRuntime:
         holder = self._holder_of(intent.actor_tag)
         if holder is not None and not (preempt and holder.root_id == frame.root_id):
             return f"actor {intent.actor_tag} held by task {holder.id} ({holder.node_id})"
+        owner = self._plan_owner_elsewhere(intent.actor_tag, frame.root_id)
+        if owner is not None:
+            return f"actor {intent.actor_tag} held by plan {owner[0]} ({owner[1]})"
         return None
 
     def _assign(self, actor_tag: int, node_id: str) -> None:
@@ -1872,4 +2083,217 @@ class JevRuntime:
         self._by_intent[key] = task.id
         self._gave_up_keys.pop(key, None)
         self._assign(task.actor_tag, node.id)
+        if self._plans is not None:
+            self._plan_task_created(task)
         self._dispatch(task, frame)
+
+    # -- persistent plans (jev.plans; never reached without a start_plan node) ------------
+
+    def _plan_owner_elsewhere(self, tag: int, root_id: str) -> tuple[str, str] | None:
+        """``(plan id, start node)`` of the open plan owning ``tag``, unless the plan
+        is ``root_id``'s own (its lane may command its actor)."""
+        if self._plans is None:
+            return None
+        owner = self._plans.actor_owner(tag)
+        if owner is None or owner[2] == root_id:
+            return None
+        return owner[0], owner[1]
+
+    def _plan_key(self, task: _TaskRecord) -> str | None:
+        """The start node of the open plan ``task`` was created for (None once that
+        plan has ended: a later plan never inherits another plan's task)."""
+        key = self._plan_lanes.get(task.root_id)
+        if key is None or self._plans is None:
+            return None
+        record = self._plans.record(key)
+        if record is None or not record.is_open or record.plan_id != task.plan_id:
+            return None
+        return key
+
+    def _plan_hold(self, root_id: str, minerals: int, vespene: int) -> None:
+        if self._plans is not None:
+            key = self._plans.open_in_lane(root_id)
+            if key is not None:
+                self._plans.hold(key, minerals, vespene)
+
+    def _plan_lane_hold(self, root_id: str) -> tuple[int, int]:
+        """What the open plan of lane ``root_id`` holds this tick: its own lane may
+        spend it (its build takes the reservation over); (0, 0) otherwise."""
+        if self._plans is None:
+            return (0, 0)
+        key = self._plans.open_in_lane(root_id)
+        return (0, 0) if key is None else self._plans.tick_hold(key)
+
+    def _plan_begin_tick(self, observation: Observation) -> None:
+        plans = self._plans
+        if plans is None:
+            return
+        busy: dict[str, bool] = {}
+        for key, _ in plans.open_plans():
+            record = plans.record(key)
+            plan_id = None if record is None else record.plan_id
+            busy[key] = any(task.plan_id == plan_id for task in self._active.values())
+        plans.begin_tick(observation.game_seconds, self._own_unit_tags, busy)
+        bases = [
+            s.position for s in observation.own_structures if s.type_name == EXPANSION_STRUCTURE
+        ]
+
+        def stands(site: Point) -> bool:
+            return any(distance(base, site) <= POINT_MATCH_TOLERANCE for base in bases)
+
+        plans.observe_sites(stands)  # second_base_defense follows the live state
+        self._apply_plan_outcomes()
+
+    def _plan_after_lane(self, root_id: str, result: _NodeResult, now: float) -> None:
+        plans = self._plans
+        if plans is None:
+            return
+        key = plans.open_in_lane(root_id)
+        if key is None:
+            return
+        stage = result.leaf or root_id
+        record = plans.record(key)
+        plan_id = None if record is None else record.plan_id
+        # A generic wait (no plan code) while the lane's own task progresses -- the
+        # structure under construction -- is progress, not a blocker.
+        busy = any(task.plan_id == plan_id for task in self._active.values())
+        waiting = result.waiting and (result.code is not None or not busy)
+        code: PlanCode
+        if result.code is not None:
+            code = result.code
+        elif result.status == "failure":
+            code = "blocked"
+        elif waiting:
+            code = "waiting"
+        else:
+            code = "in_progress"
+        spent = tuple(node for root, node in self._tick_spends if root != root_id)
+        plans.after_lane(
+            key,
+            stage=stage,
+            rank=self._plan_rank.get(stage, -1),
+            failed=result.status == "failure",
+            waiting=waiting,
+            code=code,
+            reason=result.detail or result.reason,
+            now=now,
+            spent_before=spent,
+        )
+        self._apply_plan_outcomes()
+
+    def _apply_effect(
+        self, node: PolicyNode, frame: _RootFrame, effect: PlanEffect, now: float
+    ) -> tuple[bool, str]:
+        """Apply a plan operation's effect: ``(refused, reason)``."""
+        plans = self._plans
+        if plans is None:
+            return True, "this policy starts no plans"
+        refused, reason = False, f"plan {effect.action} applied"
+        if effect.action == "start":
+            if effect.kind is None:
+                return True, "start_plan without a kind"
+            record, reason = plans.start(node.id, frame.root_id, effect.kind, now)
+            refused = record is None
+        elif effect.action == "site" and effect.point is not None:
+            plans.set_site(
+                effect.plan,
+                effect.point,
+                now,
+                replaced=effect.replaced,
+                path_distance=effect.path,
+                path_rank=effect.rank,
+            )
+        elif effect.action == "actor" and effect.tag is not None:
+            plans.claim_actor(effect.plan, effect.tag)
+        elif effect.action == "reserve":
+            if plans.open_in_lane(frame.root_id) == effect.plan:  # only its own lane holds
+                self._held_minerals += effect.minerals
+                self._held_vespene += effect.vespene
+                plans.hold(effect.plan, effect.minerals, effect.vespene)
+                reason = f"holding {effect.minerals} minerals, {effect.vespene} vespene"
+            else:
+                refused, reason = True, "only the plan's own lane holds its reservation"
+        elif effect.action == "complete":
+            refusal = plans.complete(effect.plan, now)
+            refused = refusal is not None
+            reason = refusal if refusal is not None else "plan completed"
+        self._apply_plan_outcomes()
+        return refused, reason
+
+    def _plan_task_created(self, task: _TaskRecord) -> None:
+        plans = self._plans
+        if plans is None:
+            return
+        if task.minerals or task.vespene:
+            self._tick_spends.append((task.root_id, task.node_id))
+        key = self._plan_lanes.get(task.root_id)
+        if key is None:
+            return
+        record = plans.record(key)
+        if record is None or not record.is_open:
+            return
+        task.plan_id = record.plan_id
+        if task.operation == OP_BUILD_EXPANSION:
+            # Transfer: the task now commits the cost, so the plan's hold this tick is
+            # returned (never both); build_committed zeroes it.
+            held_minerals, held_vespene = plans.tick_hold(key)
+            self._held_minerals = max(0, self._held_minerals - held_minerals)
+            self._held_vespene = max(0, self._held_vespene - held_vespene)
+            plans.build_committed(key, task.node_id, task.id, task.minerals, task.vespene)
+            self._apply_plan_outcomes()
+
+    def _plan_task_finished(self, task: _TaskRecord, status: TaskStatus) -> None:
+        plans = self._plans
+        key = self._plan_key(task)
+        if plans is None or key is None:
+            return
+        now = self._last_game_seconds
+        acknowledged = task.acknowledged_at is not None
+        cause = task.failure_cause
+        if task.operation == OP_BUILD_EXPANSION:
+            if status == "succeeded":
+                plans.build_completed(key, task.node_id, now)
+            else:
+                # Classified with the runtime's own named cause sets (one source).
+                failure: BuildFailure
+                if cause is None:
+                    failure = "cancelled"
+                elif cause in SITE_EXCLUSION_CAUSES:
+                    failure = "refused"
+                elif cause in ABANDON_CAUSES:
+                    failure = "stalled"
+                else:
+                    failure = "lost"
+                plans.build_failed(key, failure, acknowledged, task.reason, now)
+        elif status == "failed" and task.lifecycle.tracks_movement and cause != "lost":
+            plans.move_failed(key, task.reason, now)  # a lost walker is begin_tick's
+        self._apply_plan_outcomes()
+
+    def _apply_plan_outcomes(self) -> None:
+        """Emit the store's plan events, then apply what aborts and completions
+        released: this tick's held amounts return to the bank at once, and an
+        aborted lane's tasks are cancelled -- except an acknowledged build, whose
+        structure already stands and continues (D4)."""
+        plans = self._plans
+        if plans is None:
+            return
+        while True:
+            events = plans.drain_events()
+            released = plans.drain_released()
+            if not events and not released:
+                return
+            for event in events:
+                self._emit(
+                    event.node_id, None, "diagnostic", event.status, event.reason, event.facts
+                )
+            for item in released:
+                self._held_minerals = max(0, self._held_minerals - item.minerals)
+                self._held_vespene = max(0, self._held_vespene - item.vespene)
+                if not item.cancel_tasks:
+                    continue
+                for task in list(self._active.values()):
+                    if task.plan_id != item.plan_id:
+                        continue
+                    if task.status == "running" and task.lifecycle.deadline_kind == "build":
+                        continue
+                    self._finish(task, "cancelled", f"plan {item.plan_id} aborted")
