@@ -48,7 +48,11 @@ One :class:`JevRuntime` executes one validated policy for one run:
   :data:`REFUSAL_CAUSES` failure once its retries are spent), or when the node
   finds an actor already there (count and latest game time, at most
   :data:`MAX_TRACKED_VISITS` locations per node). Bindings live only for one
-  root evaluation in one tick.
+  root evaluation in one tick. Two memories exist only for policies that read
+  them (:mod:`jev.operations`): per own entity, the action node that most
+  recently took charge of it (assignments, pruned to the tick's own entities),
+  and per node a ``recent_task_count_compare`` names, the finish time and status
+  of its latest :data:`~jev.operations.MAX_TRACKED_FINISHES` tasks.
 * **Bounded recovery from unreachable targets (D4).** A task that gives up
   makes its intent a fresh task on retry (the order SC2 still carries never
   counts as already done). For every action node a ``demotions`` argument
@@ -124,6 +128,7 @@ from jev.contracts import (
     safe_repr,
 )
 from jev.operations import (
+    MAX_TRACKED_FINISHES,
     OP_BUILD,
     OP_GATHER,
     OPERATIONS,
@@ -562,6 +567,14 @@ class _View:
     def demoted(self, node_id: str) -> frozenset[int]:
         return self._runtime.demoted_targets(node_id)
 
+    def assigned(self, node_id: str) -> frozenset[int]:
+        return self._runtime.assigned_to(node_id)
+
+    def recent_task_count(self, node_id: str, statuses: frozenset[str], within: float) -> int:
+        now = self._observation.game_seconds
+        finishes = self._runtime._finishes.get(node_id, ())
+        return sum(1 for at, status in finishes if status in statuses and now - at < within)
+
 
 class JevRuntime:
     """Interpret one validated policy for one run (see module docstring)."""
@@ -612,6 +625,12 @@ class JevRuntime:
         # Visits and demotions are kept only for the nodes some operation reads them for.
         self._visit_nodes = self._tracked_nodes("visits")
         self._demotion_nodes = self._tracked_nodes("demotions")
+        # Assignments are per entity and kept only while some argument reads them;
+        # finishes only for the nodes a recent_task_count_compare names.
+        self._track_assignments = bool(self._tracked_nodes("assignments"))
+        self._assignments: dict[int, str] = {}
+        self._finish_nodes = self._tracked_nodes("finishes")
+        self._finishes: dict[str, deque[tuple[float, TaskStatus]]] = {}
         # node id -> map location -> Visit, least recent first (insertion order).
         self._visits: dict[str, dict[Point, Visit]] = {}
         # This tick's start and expansion locations: the points visits are kept for.
@@ -713,6 +732,14 @@ class JevRuntime:
         records = self._give_ups.get(node_id, {})
         return frozenset(tag for tag, record in records.items() if record.demoted_at is not None)
 
+    def assigned_to(self, node_id: str) -> frozenset[int]:
+        """Own entities whose latest assignment is action node ``node_id``.
+
+        Empty unless the policy reads assignments (``assigned_to`` /
+        ``not_assigned_to``); see :mod:`jev.operations` for what takes charge.
+        """
+        return frozenset(tag for tag, node in self._assignments.items() if node == node_id)
+
     def set_army_decision(self, mode: str | None, facts: dict[str, JsonValue]) -> None:
         """Supply the coordinator's decision for the next graph evaluation."""
         if mode not in (None, "attack", "defend", "regroup"):
@@ -763,6 +790,8 @@ class JevRuntime:
         self._tick_observation = observation
         own = self._own_unit_tags | self._own_structure_tags
         self._gave_up_keys = {k: a for k, a in self._gave_up_keys.items() if a in own}
+        if self._assignments:  # bounded by the tick's own entities
+            self._assignments = {t: n for t, n in self._assignments.items() if t in own}
         now = observation.game_seconds
         self._cooldowns = {k: v for k, v in self._cooldowns.items() if v > now}
         self._rejected_sites = {k: v for k, v in self._rejected_sites.items() if v[2] > now}
@@ -1109,6 +1138,11 @@ class JevRuntime:
             del self._by_intent[task.intent_key]
         self._history.append(task)
         self._terminal_counts[(task.node_id, status)] += 1
+        if task.node_id in self._finish_nodes:
+            finishes = self._finishes.get(task.node_id)
+            if finishes is None:
+                finishes = self._finishes[task.node_id] = deque(maxlen=MAX_TRACKED_FINISHES)
+            finishes.append((self._last_game_seconds, status))
         # A give-up speaks for the army only when the whole target stalled (per target).
         abandoned = task.failure_cause in ABANDON_CAUSES or (
             task.failure_cause in REFUSAL_CAUSES
@@ -1593,10 +1627,13 @@ class JevRuntime:
             key = f"{node.id}|{intent.semantic}"
             if key in self._by_intent:
                 active += 1
+                if self._track_assignments:  # this node's own task holds the actor
+                    self._assign(self._active[self._by_intent[key]].actor_tag, node.id)
                 continue
             if intent.satisfied and key not in self._gave_up_keys:
                 satisfied += 1
                 self._record_visit(node.id, intent.target)  # an actor is already there
+                self._assign_if_free(intent.actor_tag, node.id)
                 continue
             refusal = self._refusal(node, frame, view, key, intent, plan.preempt, now)
             if refusal is not None:
@@ -1664,6 +1701,19 @@ class JevRuntime:
             return f"actor {intent.actor_tag} held by task {holder.id} ({holder.node_id})"
         return None
 
+    def _assign(self, actor_tag: int, node_id: str) -> None:
+        """``node_id`` took charge of ``actor_tag`` (kept only if the policy reads it)."""
+        if self._track_assignments:
+            self._assignments[actor_tag] = node_id
+
+    def _assign_if_free(self, actor_tag: int, node_id: str) -> None:
+        """An actor found in ``node_id``'s intended state joins it unless another
+        node's task holds it (that node is still in charge)."""
+        if self._track_assignments:
+            holder = self._holder_of(actor_tag)
+            if holder is None or holder.node_id == node_id:
+                self._assignments[actor_tag] = node_id
+
     @staticmethod
     def _shortfall(view: _View, intent: Intent) -> str | None:
         if intent.minerals and intent.minerals > view.available_minerals():
@@ -1706,4 +1756,5 @@ class JevRuntime:
         self._active[task.id] = task
         self._by_intent[key] = task.id
         self._gave_up_keys.pop(key, None)
+        self._assign(task.actor_tag, node.id)
         self._dispatch(task, frame)

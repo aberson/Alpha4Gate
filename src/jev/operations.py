@@ -8,9 +8,10 @@ typed arguments and (for selections) its permitted binding output. The validator
 Three categories:
 
 * **Predicates** (``condition`` and ``wait`` nodes): count comparisons, resources
-  and supply, threat distance, task state (task counts and which map locations a
-  node visited), the ``attack_launched`` latch (set or still clear) and game
-  time. Powered/idle/ready checks are filter keys on the counted collection.
+  and supply, planned supply (see :func:`planned_supply`), threat distance, task
+  state (task counts, recent task outcomes and which map locations a node
+  visited), the ``attack_launched`` latch (set or still clear) and game time.
+  Powered/idle/ready checks are filter keys on the counted collection.
 * **Selections** (``select`` nodes): filter/sort/limit over an observation
   collection, map locations (optionally least recently visited first, which
   cycles through them), a derived point, or bounded placement candidates. The
@@ -35,6 +36,22 @@ consecutive rounds is *demoted* (:meth:`RuntimeView.demoted`), and a selection
 with ``skip_demoted_by`` passes over it -- to the next structure, memory or
 the search -- until the demotion lapses (see :mod:`jev.runtime`).
 
+Two further memories are kept only when a policy reads them (Jev v2; a policy
+that names neither, such as v1, never records them):
+
+* **Assignments.** When any ``assigned_to`` / ``not_assigned_to`` argument names
+  a node, the runtime remembers, per own entity, the action node that most
+  recently took charge of it: created a task for it, holds it with an active
+  task, or found it already in that node's intended state while no other node's
+  task held it (:meth:`RuntimeView.assigned`). A unit therefore stays in a group
+  after its task ends until another node takes charge of it, so a selection can
+  tell an army group from reinforcements without a distance guess.
+* **Finishes.** For every action node a ``recent_task_count_compare`` names, the
+  game times and terminal statuses of its latest
+  :data:`MAX_TRACKED_FINISHES` finished tasks (:meth:`RuntimeView.recent_task_count`),
+  so a lane can back off after repeated failures instead of retrying new
+  intents forever.
+
 There are deliberately no strategy helpers (``manage_economy``, ``rush``,
 ``expand_now``, ``distribute_workers`` ...): the node arguments carry every
 criterion, tie-break and limit, so the graph is the policy.
@@ -49,6 +66,7 @@ from dataclasses import dataclass, field
 from typing import Final, Literal, Protocol, get_args
 
 from jev.contracts import (
+    ACTIVE_TASK_STATUSES,
     ENTITY_COLLECTIONS,
     LATCHES,
     LOCATION_SOURCES,
@@ -69,6 +87,7 @@ from jev.contracts import (
     Point,
     PointKeyword,
     Target,
+    TaskStatus,
     freeze_json,
     full_match,
     is_bounded_number,
@@ -112,6 +131,8 @@ __all__ = [
     "MAX_PLACEMENT_RADIUS",
     "MAX_QUERY_DISTANCE",
     "MAX_SELECTION",
+    "MAX_SUPPLY",
+    "MAX_TRACKED_FINISHES",
     "MINERAL_COST",
     "MOVE_ABILITY",
     "OPERATIONS",
@@ -139,11 +160,16 @@ __all__ = [
     "SORT_ORDERS",
     "SORT_SPEC_KEYS",
     "SUPPLY_COST",
+    "SUPPLY_MEASURES",
+    "SUPPLY_PROVIDED",
     "SelectOp",
     "Selection",
     "SortKey",
     "SortOrder",
+    "SupplyMeasure",
+    "SupplyPlan",
     "TARGET_LOST_REASON",
+    "TERMINAL_TASK_STATUSES",
     "TRACKED_MEMORIES",
     "TRAIN_ABILITY",
     "TaskSubject",
@@ -162,6 +188,7 @@ __all__ = [
     "operation_node_kinds",
     "parameter_references",
     "placement_candidates",
+    "planned_supply",
     "resolve_args",
     "resolve_point",
     "tracked_nodes",
@@ -195,6 +222,10 @@ PRODUCER_TYPE: Final[Mapping[str, str]] = {"Probe": "Nexus", "Zealot": "Gateway"
 WORKER_TYPE: Final = "Probe"
 MINERAL_COST: Final[Mapping[str, int]] = {"Probe": 50, "Zealot": 100, "Pylon": 100, "Gateway": 150}
 SUPPLY_COST: Final[Mapping[str, int]] = {"Probe": 1, "Zealot": 2}
+#: Supply each supply-providing structure adds once complete (SC2 game data).
+SUPPLY_PROVIDED: Final[Mapping[str, int]] = {"Nexus": 15, "Pylon": 8}
+#: SC2's supply ceiling: no supply structure raises the cap above it.
+MAX_SUPPLY: Final = 200
 #: Square footprint edge length (cells) for placement overlap checks.
 FOOTPRINT: Final[Mapping[str, int]] = {"Nexus": 5, "Pylon": 2, "Gateway": 3}
 DEFAULT_FOOTPRINT: Final = 2
@@ -220,6 +251,23 @@ KNOWN_ORDER_ABILITIES: Final = frozenset(
 #: Abilities a command may carry -- exactly what the action operations below emit
 #: (a worker returns cargo on its own; Jev never orders HARVEST_RETURN).
 COMMAND_ABILITIES: Final = KNOWN_ORDER_ABILITIES - {RETURN_ABILITY}
+#: Build ability -> the supply structure it starts (a worker still carrying one).
+_SUPPLY_BUILDS: Final[Mapping[str, str]] = {
+    ability: structure
+    for structure, ability in BUILD_ABILITY.items()
+    if structure in SUPPLY_PROVIDED
+}
+#: Producer type -> supply of the most expensive unit it trains (its next unit).
+_NEXT_UNIT_SUPPLY: Final[Mapping[str, int]] = {
+    producer: max(SUPPLY_COST[unit] for unit, owner in PRODUCER_TYPE.items() if owner == producer)
+    for producer in sorted(set(PRODUCER_TYPE.values()))
+}
+#: Terminal task statuses (the ones a finished task can have).
+TERMINAL_TASK_STATUSES: Final[tuple[TaskStatus, ...]] = tuple(
+    status for status in TASK_STATUSES if status not in ACTIVE_TASK_STATUSES
+)
+#: Finished tasks remembered per node a ``recent_task_count_compare`` names.
+MAX_TRACKED_FINISHES: Final = 64
 
 MAX_PLACEMENT_CANDIDATES: Final = 8
 #: Operation names the runtime's reservation views recognize (used by the registry too).
@@ -415,6 +463,22 @@ class RuntimeView(Protocol):
         """
         ...
 
+    def assigned(self, node_id: str) -> frozenset[int]:
+        """Own entity tags whose latest assignment is action node ``node_id``.
+
+        Kept only while some ``assigned_to`` / ``not_assigned_to`` argument names a
+        node (empty otherwise); the module docstring says what takes charge.
+        """
+        ...
+
+    def recent_task_count(self, node_id: str, statuses: frozenset[str], within: float) -> int:
+        """Tasks of ``node_id`` that finished in ``statuses`` less than ``within``
+        game seconds ago (of its latest :data:`MAX_TRACKED_FINISHES` finished tasks).
+
+        Kept for every node a ``recent_task_count_compare`` names (0 for any other).
+        """
+        ...
+
 
 @dataclass(frozen=True)
 class OpOutcome:
@@ -535,8 +599,13 @@ ArgType = Literal[
 
 
 #: Runtime memories an operation can read about an action node's tasks.
-TrackedMemory = Literal["visits", "demotions"]
+TrackedMemory = Literal["visits", "demotions", "assignments", "finishes"]
 TRACKED_MEMORIES: Final[tuple[TrackedMemory, ...]] = get_args(TrackedMemory)
+#: What a ``planned_supply_compare`` measures (see :func:`planned_supply`): the
+#: planned free supply, or how far the planned cap can still grow before
+#: :data:`MAX_SUPPLY` (so a policy never spells out SC2's ceiling itself).
+SupplyMeasure = Literal["free", "ceiling_room"]
+SUPPLY_MEASURES: Final[tuple[SupplyMeasure, ...]] = get_args(SupplyMeasure)
 
 
 @dataclass(frozen=True)
@@ -859,6 +928,101 @@ def _resource_compare(view: RuntimeView, args: Args) -> OpOutcome:
     )
 
 
+@dataclass(frozen=True)
+class SupplyPlan:
+    """The supply plan of one evaluation (see :func:`planned_supply`)."""
+
+    available: int  # free supply after in-flight training and this tick's holds
+    pending: int  # supply of supply structures warping in, ordered or carried
+    cap: int  # the cap once they complete, at most MAX_SUPPLY
+    demand: int  # one next unit for every ready (powered) producer
+    free: int  # the planned free supply: available + counted pending - demand
+
+    def facts(self) -> dict[str, JsonValue]:
+        return {
+            "available": self.available,
+            "pending": self.pending,
+            "planned_cap": self.cap,
+            "demand": self.demand,
+            "planned_free": self.free,
+        }
+
+
+def planned_supply(view: RuntimeView, *, producer_demand: bool) -> SupplyPlan:
+    """Plan D3 supply planning, from observed state and the runtime's commitments.
+
+    * ``available`` -- :meth:`RuntimeView.available_supply`: free supply minus the
+      supply of training commands not yet confirmed (SC2 counts queued training in
+      ``supply_used`` once confirmed) and this tick's reservations;
+    * ``pending`` -- the supply :data:`SUPPLY_PROVIDED` structures will add:
+      every own one still warping in, every build task not yet confirmed by its
+      structure (:meth:`RuntimeView.in_flight_builds`), and a worker still carrying
+      such a build order no task accounts for (its late placement still counts);
+    * ``cap`` -- the observed cap plus ``pending``, at most :data:`MAX_SUPPLY`;
+    * ``demand`` -- with ``producer_demand``, the supply of one next unit for every
+      ready producer (powered, where power is required), so supply is planned a
+      production cycle ahead instead of after every producer is blocked.
+
+    ``free = available + (cap - observed cap) - demand``. Each pending structure is
+    counted once, so repeated ticks never plan a second structure for a deficit
+    one already covers.
+    """
+    obs = view.observation
+    available = view.available_supply()
+    warping = sum(
+        SUPPLY_PROVIDED[s.type_name]
+        for s in obs.own_structures
+        if s.type_name in SUPPLY_PROVIDED and s.build_progress < 1.0
+    )
+    ordered = [(kind, site) for kind, site in view.in_flight_builds() if kind in SUPPLY_PROVIDED]
+    carried = 0
+    for unit in obs.own_units:
+        order = unit.orders[0] if unit.orders else None
+        kind = _SUPPLY_BUILDS.get(order.ability) if order is not None else None
+        if kind is None or order is None or not isinstance(order.target, tuple):
+            continue
+        site = order.target
+        if any(k == kind and distance(s, site) <= POINT_MATCH_TOLERANCE for k, s in ordered):
+            continue  # its task accounts for it
+        if any(
+            s.type_name == kind and distance(s.position, site) <= POINT_MATCH_TOLERANCE
+            for s in obs.own_structures
+        ):
+            continue  # already placed (counted as warping in or complete)
+        carried += SUPPLY_PROVIDED[kind]
+    pending = warping + sum(SUPPLY_PROVIDED[kind] for kind, _ in ordered) + carried
+    cap = min(MAX_SUPPLY, obs.supply_cap + pending)
+    demand = 0
+    if producer_demand:
+        demand = sum(
+            _NEXT_UNIT_SUPPLY[s.type_name]
+            for s in obs.own_structures
+            if s.type_name in _NEXT_UNIT_SUPPLY
+            and s.is_ready
+            and (s.is_powered or s.type_name not in REQUIRES_POWER)
+        )
+    free = available + max(0, cap - obs.supply_cap) - demand
+    return SupplyPlan(available, pending, cap, demand, free)
+
+
+def _planned_supply_compare(view: RuntimeView, args: Args) -> OpOutcome:
+    measure = _arg_str(args, "measure")
+    op = _arg_str(args, "op")
+    expected = _arg_int(args, "value")
+    plan = planned_supply(view, producer_demand=_arg_bool(args, "producer_demand"))
+    actual = plan.free if measure == "free" else MAX_SUPPLY - plan.cap
+    ok = compare(actual, op, expected)
+    verdict = "holds" if ok else "does not hold"
+    facts: dict[str, JsonValue] = {
+        "measure": measure,
+        "actual": actual,
+        "op": op,
+        "value": expected,
+        **plan.facts(),
+    }
+    return OpOutcome(ok, f"planned supply {measure} {actual} {op} {expected} {verdict}", facts)
+
+
 def _threat_within(view: RuntimeView, args: Args) -> OpOutcome:
     origin = resolve_point(view, _arg_str(args, "point"))
     radius = _arg_num(args, "distance")
@@ -902,6 +1066,23 @@ def _task_count_compare(view: RuntimeView, args: Args) -> OpOutcome:
         ok,
         f"tasks of {node_id} in {sorted(statuses)}: {count} {op} {expected} {verdict}",
         {"node": node_id, "count": count, "op": op, "value": expected},
+    )
+
+
+def _recent_task_count_compare(view: RuntimeView, args: Args) -> OpOutcome:
+    node_id = _arg_str(args, "node")
+    statuses = frozenset(_str_list(args["statuses"]))
+    within = _arg_num(args, "within")
+    op = _arg_str(args, "op")
+    expected = _arg_int(args, "value")
+    count = view.recent_task_count(node_id, statuses, within)
+    ok = compare(count, op, expected)
+    verdict = "holds" if ok else "does not hold"
+    return OpOutcome(
+        ok,
+        f"tasks of {node_id} {sorted(statuses)} in the last {within:g}s: "
+        f"{count} {op} {expected} {verdict}",
+        {"node": node_id, "count": count, "within": within, "op": op, "value": expected},
     )
 
 
@@ -980,6 +1161,16 @@ def _select_entities(view: RuntimeView, args: Args) -> Selection:
     if exclude_busy:
         candidates = [e for e in candidates if not view.actor_is_busy(e.tag)]
     facts: dict[str, JsonValue] = {}
+    assigned_to = args.get("assigned_to")
+    if isinstance(assigned_to, str):
+        members = view.assigned(assigned_to)
+        candidates = [e for e in candidates if e.tag in members]
+    not_assigned_to = args.get("not_assigned_to")
+    if isinstance(not_assigned_to, str):
+        members = view.assigned(not_assigned_to)
+        kept = [e for e in candidates if e.tag not in members]
+        facts["assigned_elsewhere"] = len(candidates) - len(kept)
+        candidates = kept
     skip_by = args.get("skip_demoted_by")
     if isinstance(skip_by, str):
         demoted = view.demoted(skip_by)
@@ -1598,6 +1789,34 @@ _SPECS: Final[tuple[OperationSpec, ...]] = (
         _task_count_compare,
     ),
     PredicateOp(
+        "recent_task_count_compare",
+        "Compare how many tasks of an action node finished in the given terminal "
+        "states within the last 'within' game seconds (of its latest "
+        f"{MAX_TRACKED_FINISHES} finished tasks): bounds repeated failures",
+        {
+            "node": ArgSpec("node", tracks="finishes"),
+            "statuses": ArgSpec("enum_list", choices=TERMINAL_TASK_STATUSES),
+            "within": ArgSpec("number", minimum=1.0, maximum=3600.0, param=True),
+            "op": _COMPARATOR,
+            "value": ArgSpec("int", minimum=0, maximum=MAX_TRACKED_FINISHES, param=True),
+        },
+        _recent_task_count_compare,
+    ),
+    PredicateOp(
+        "planned_supply_compare",
+        "Compare planned supply: free supply after in-flight training and holds, plus "
+        "supply structures warping in or ordered, minus each ready producer's next unit "
+        "(measure 'free'); or how far the cap, once those structures complete, can still "
+        "grow before SC2's supply ceiling (measure 'ceiling_room')",
+        {
+            "measure": ArgSpec("enum", choices=SUPPLY_MEASURES),
+            "op": _COMPARATOR,
+            "value": ArgSpec("int", minimum=0, maximum=MAX_SUPPLY, param=True),
+            "producer_demand": ArgSpec("bool", required=False, default=True),
+        },
+        _planned_supply_compare,
+    ),
+    PredicateOp(
         "visit_count_compare",
         "Compare how many times an action node visited a map location (a task "
         "arrived at or gave up on it, or an actor was already there)",
@@ -1649,6 +1868,8 @@ _SPECS: Final[tuple[OperationSpec, ...]] = (
             ),
             "exclude_busy": ArgSpec("bool", required=False, default=False),
             "skip_demoted_by": ArgSpec("node", required=False, tracks="demotions"),
+            "assigned_to": ArgSpec("node", required=False, tracks="assignments"),
+            "not_assigned_to": ArgSpec("node", required=False, tracks="assignments"),
             "bind": _BIND,
         },
         "units",

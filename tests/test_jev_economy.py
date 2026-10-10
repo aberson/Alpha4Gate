@@ -24,6 +24,7 @@ from typing import Any
 
 import pytest
 from bots.jev.v1 import load_policy
+from bots.jev.v2 import load_policy as load_v2_policy
 from s2clientprotocol import common_pb2, data_pb2, raw_pb2, sc2api_pb2
 from sc2.data import ActionResult, Alliance, Attribute, DisplayType, Result
 from sc2.game_data import GameData
@@ -45,6 +46,7 @@ from jev.operations import (
     TRAIN_ABILITY,
     distance,
 )
+from jev.policy import PolicyBundle
 from jev.runner import MatchOptions, MatchOutcome, run_match
 from jev.sc2_adapter import GAME_LOOPS_PER_SECOND, MAX_COMMAND_RECORDS, BotAIPort
 
@@ -373,8 +375,12 @@ def _world(
     stacked: bool = False,
     extra: tuple[_Body, ...] = (),
     place_after: float | None = 2.0,
+    world_type: type[_World] | None = None,
 ) -> _World:
-    """One Nexus, eight visible patches and twelve probes, plus ``extra`` bodies."""
+    """One Nexus, eight visible patches and twelve probes, plus ``extra`` bodies.
+
+    ``world_type`` builds a :class:`_World` subclass instead (one that adds
+    mechanics, e.g. income or movement, for a longer scenario)."""
     bodies = [_Body(NEXUS, "Nexus", START)]
     patches = [3000 + i for i in range(8)]
     bodies += [
@@ -387,7 +393,8 @@ def _world(
             [(AbilityId.HARVEST_GATHER_PROBE, patches[i % 8], 0.0)] if mining else []
         )
         bodies.append(_Body(tag, "Probe", position, orders=orders))
-    return _World([*bodies, *extra], minerals=minerals, supply=supply, place_after=place_after)
+    make = _World if world_type is None else world_type
+    return make([*bodies, *extra], minerals=minerals, supply=supply, place_after=place_after)
 
 
 # ---------------------------------------------------------------------------
@@ -430,13 +437,18 @@ class _Launcher:
 
 
 def _play(
-    world: _World, steps: int, before_step: _Hook | None = None
+    world: _World,
+    steps: int,
+    before_step: _Hook | None = None,
+    *,
+    bundle: PolicyBundle | None = None,
 ) -> tuple[MatchOutcome, JevController, _Launcher]:
+    """Play ``world`` through the production runner (the packaged v1 policy unless
+    ``bundle`` names another packaged version)."""
     launcher = _Launcher(world, steps, before_step)
+    chosen = load_policy() if bundle is None else bundle
     with tempfile.TemporaryDirectory() as run_root:  # the evidence is not under test here
-        outcome = run_match(
-            MatchOptions(), load_policy(), launcher=launcher, run_root=Path(run_root)
-        )
+        outcome = run_match(MatchOptions(), chosen, launcher=launcher, run_root=Path(run_root))
     assert launcher.controller is not None
     return outcome, launcher.controller, launcher
 
@@ -821,3 +833,292 @@ def test_four_gateway_cap_holds_with_ample_minerals_and_nothing_else_is_built() 
     assert below[-1].status == "failure"
     trainers = {c.unit.tag for _, c in _sent(world, "GATEWAYTRAIN_ZEALOT")}
     assert {5100, 5101, 5102} <= trainers  # continuous Zealots from every idle Gateway
+
+
+# ---------------------------------------------------------------------------
+# Jev v2 (Phase J2 Step 214): planned supply, four Gateways, bounded failures
+# ---------------------------------------------------------------------------
+
+#: Every v2 node that builds a Pylon (opening, buffer and re-power).
+V2_PYLON_NODES = ("supply.first.build", "supply.buffer.build", "construction.repower.build")
+
+
+def _pylon_tasks_awaiting(controller: JevController) -> list[Task]:
+    """Pylon build tasks whose cost is committed (command not yet confirmed)."""
+    return [
+        task
+        for task in controller.runtime.active_tasks()
+        if task.node_id in V2_PYLON_NODES and task.status in ("pending", "issued")
+    ]
+
+
+class V2Watch(_Trace):
+    """Keeps every event and asserts, before every step, that no two Pylon orders are
+    ever committed at once (plan D3: no duplicate Pylons from repeated ticks)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.supply_used: dict[int, int] = {}
+
+    def __call__(self, world: _World, controller: JevController, index: int) -> None:
+        super().__call__(world, controller, index)
+        self.supply_used[world.state.game_loop] = world.supply_used
+        assert len(_pylon_tasks_awaiting(controller)) <= 1
+
+    def node_events(self, node_id: str) -> list[Event]:
+        found = [self.events[seq] for seq in sorted(self.events)]
+        return [e for e in found if e.kind == "node" and e.node_id == node_id]
+
+
+def test_v2_one_pylon_order_watch_covers_every_pylon_builder() -> None:
+    """V2Watch's invariant is only as good as its node list: every v2 Pylon builder."""
+    builders = {
+        node.id
+        for node in load_v2_policy().policy.nodes
+        if node.operation == "build" and node.args["structure"] == "Pylon"
+    }
+    assert builders == set(V2_PYLON_NODES)
+
+
+def test_v2_opening_pylon_waits_for_its_supply_then_comes_from_the_opening_node() -> None:
+    """D3: the opening Pylon at the configured supply (14), then nothing more is needed."""
+    world = _world(minerals=400)
+    watch = V2Watch()
+    _, controller, _ = _play(world, steps=80, before_step=watch, bundle=load_v2_policy())
+    ((loop, pylon),) = _sent(world, "PROTOSSBUILD_PYLON")  # one Pylon in ~28 game seconds
+    assert watch.supply_used[loop] >= 14
+    assert max(s for at, s in watch.supply_used.items() if at < loop) < 14  # not earlier
+    assert _record_node(controller, loop, pylon) == "supply.first.build"
+    buffer = watch.node_events("supply.buffer.low")
+    assert buffer and {e.status for e in buffer} == {"failure"}  # the plan covers the rest
+    assert world.overspent == []
+
+
+def test_v2_a_walking_or_warping_pylon_is_never_duplicated_by_repeated_ticks() -> None:
+    """The buffer Pylon is ordered once; while its probe walks and while it warps in, the
+    supply plan counts its 8 supply, so later ticks never order a second one."""
+    pylon = _Body(5000, "Pylon", (24.0, 34.0))
+    world = _world(minerals=500, supply=(20, 23), extra=(pylon,), place_after=5.0)
+    watch = V2Watch()
+    _, controller, _ = _play(world, steps=56, before_step=watch, bundle=load_v2_policy())
+    ((loop, build),) = _sent(world, "PROTOSSBUILD_PYLON")  # ~20 s: walked, placed, warping
+    assert _record_node(controller, loop, build) == "supply.buffer.build"
+    warping = [b for b in world.own("Pylon") if b.progress < 1.0]
+    assert len(warping) == 1  # placed, still warping in when the run ends
+    later = [e for e in watch.node_events("supply.buffer.low") if e.game_loop > loop]
+    assert later and {e.status for e in later} == {"failure"}
+    assert {e.facts["pending"] for e in later} == {8}  # ordered, then warping: counted once
+    assert world.overspent == []
+
+
+_POWERED_GATES = ((21.5, 37.5), (26.5, 37.5), (34.5, 37.5), (39.5, 37.5))
+
+
+def test_v2_a_large_supply_deficit_plans_successive_pylons_and_no_more() -> None:
+    """Four ready Gateways and a Nexus each need their next unit's supply (9 in all):
+    with one free supply the plan orders a Pylon, then -- once that one is placed and
+    the plan is still short -- exactly one more, never a third or two at once."""
+    pylons = (_Body(5000, "Pylon", (24.0, 34.0)), _Body(5001, "Pylon", (37.0, 34.0)))
+    gates = tuple(
+        _Body(5100 + i, "Gateway", site, orders=[(AbilityId.GATEWAYTRAIN_ZEALOT, None, 0.1)])
+        for i, site in enumerate(_POWERED_GATES)
+    )
+    world = _world(minerals=1000, supply=(30, 31), extra=(*pylons, *gates), place_after=1.0)
+    world.bodies[NEXUS].orders = [(AbilityId.NEXUSTRAIN_PROBE, None, 0.1)]
+    world.refresh()
+    watch = V2Watch()
+    _, controller, _ = _play(world, steps=42, before_step=watch, bundle=load_v2_policy())
+    (first_loop, first), (second_loop, second) = _sent(world, "PROTOSSBUILD_PYLON")
+    assert _record_node(controller, first_loop, first) == "supply.buffer.build"
+    assert _record_node(controller, second_loop, second) == "supply.buffer.build"
+    assert (first.target.x, first.target.y) != (second.target.x, second.target.y)
+    assert len([b for b in world.own("Pylon") if b.tag not in (5000, 5001)]) == 2
+    low = watch.node_events("supply.buffer.low")
+    (at_second,) = [e for e in low if e.game_loop == second_loop]
+    assert (at_second.facts["pending"], at_second.facts["demand"]) == (8, 9)  # first counted
+    after = [e for e in low if e.game_loop > second_loop]
+    assert after and {e.status for e in after} == {"failure"}  # covered: no third
+
+
+def test_v2_a_late_pylon_order_still_carried_counts_as_planned_supply() -> None:
+    """The buffer Pylon's order is never confirmed (four attempts, then the task fails),
+    but its probe keeps carrying it. The plan counts that carried order, so no
+    replacement is ordered; SC2 finally places it."""
+    pylon = _Body(5000, "Pylon", (24.0, 34.0))
+    world = _world(minerals=1000, supply=(20, 23), extra=(pylon,))
+    held: list[tuple[float, float]] = []
+
+    def hold_the_first_pylon_site(site: tuple[float, float]) -> float | None:
+        pylons = _sent(world, "PROTOSSBUILD_PYLON")  # the command being received is last
+        if not held and pylons and (pylons[0][1].target.x, pylons[0][1].target.y) == site:
+            held.append(site)
+        return None if held and site == held[0] else 1.0  # any other site is quick
+
+    world.place_delay = hold_the_first_pylon_site
+    watch = V2Watch()
+
+    def release_late(world: _World, controller: JevController, index: int) -> None:
+        watch(world, controller, index)
+        if index == 84:  # ~30 game seconds: well after the task failed (~20 s)
+            world.place_carried_order(held[0])
+
+    _, controller, _ = _play(world, steps=96, before_step=release_late, bundle=load_v2_policy())
+    failed = [t for t in _tasks(controller, "supply.buffer.build") if t.status == "failed"]
+    assert [t.reason for t in failed] == ["unacknowledged after 4 attempts"]
+    pylon_sites = {(c.target.x, c.target.y) for _, c in _sent(world, "PROTOSSBUILD_PYLON")}
+    assert pylon_sites == {held[0]}  # no replacement while the order was carried
+    failed_at = max(
+        e.game_loop
+        for e in watch.events.values()
+        if e.kind == "task" and e.status == "failed" and e.node_id == "supply.buffer.build"
+    )
+    carried = [
+        e
+        for e in watch.node_events("supply.buffer.low")
+        if failed_at < e.game_loop < 84 * STEP_LOOPS
+    ]
+    assert carried and {(e.status, e.facts["pending"]) for e in carried} == {("failure", 8)}
+    assert len(world.own("Pylon")) == 2
+
+
+def test_v2_four_gateways_go_up_without_waiting_for_the_first_wave() -> None:
+    """V2 spends on all four Gateways as soon as power and minerals allow, one
+    placement at a time (v1 waits for four Zealots before Gateways two to four)."""
+    pylons = (_Body(5000, "Pylon", (24.0, 34.0)), _Body(5001, "Pylon", (37.0, 34.0)))
+    world = _world(minerals=3000, supply=(14, 31), extra=pylons, place_after=1.0)
+    _, controller, launcher = _play(world, steps=30, before_step=V2Watch(), bundle=load_v2_policy())
+    assert launcher.bot is not None
+    _assert_graph_attributed(world, controller, launcher.bot)
+    builds = _sent(world, "PROTOSSBUILD_GATEWAY")
+    assert len(builds) == 4 and len(world.own("Gateway")) == 4
+    loops = [loop for loop, _ in builds]
+    assert loops == sorted(set(loops))  # one placement at a time
+    assert world.own("Zealot") == []  # no Zealot was needed first
+    for loop, build in builds:
+        assert _record_node(controller, loop, build) == "construction.gateways.build"
+    assert world.overspent == []
+
+
+@pytest.mark.parametrize(
+    ("destroyed", "repowered_gate"),
+    [((5001,), _SECOND_GATE), ((5000, 5001), _FIRST_GATE)],
+    ids=["one-of-two-pylons", "every-pylon"],
+)
+def test_v2_lost_power_is_replaced_next_to_the_unpowered_gateway(
+    destroyed: tuple[int, ...], repowered_gate: tuple[float, float]
+) -> None:
+    """V2 keeps v1's power recovery: with Gateways standing, a lost Pylon is replaced
+    next to the unpowered Gateway (the opening-Pylon branch stays out of it)."""
+    world = _two_powered_gateways()
+    world.minerals = 1000  # v2 also starts Gateway three: power must not wait on it
+
+    def destroy_pylons(world: _World, controller: JevController, index: int) -> None:
+        if index == 3:
+            for tag in destroyed:
+                world.kill(tag)
+
+    watch = V2Watch()
+
+    def both(world: _World, controller: JevController, index: int) -> None:
+        destroy_pylons(world, controller, index)
+        watch(world, controller, index)
+
+    _, controller, _ = _play(world, steps=8, before_step=both, bundle=load_v2_policy())
+    ((loop, build),) = _sent(world, "PROTOSSBUILD_PYLON")
+    assert loop == 3 * STEP_LOOPS  # repowered as soon as the loss was seen
+    assert _record_node(controller, loop, build) == "construction.repower.build"
+    assert distance((build.target.x, build.target.y), repowered_gate) <= PYLON_POWER_RADIUS
+
+
+@pytest.mark.parametrize(
+    ("gateway_progress", "beside_gateway"),
+    [(1.0, True), (0.5, False)],
+    ids=["completed-gateways", "warping-gateways"],
+)
+def test_v2_supply_recovers_once_affordable_after_every_pylon_is_lost(
+    gateway_progress: float, beside_gateway: bool
+) -> None:
+    """After the opening, losing every Pylon (Gateways standing) leaves the supply plan
+    short. The buffer lane holds its reservation until minerals allow, then plans a
+    Pylon at once -- beside the first unpowered completed Gateway, so one Pylon
+    restores power and supply, else near the main -- one order, never a duplicate."""
+    pylons = (_Body(5000, "Pylon", (24.0, 34.0)), _Body(5001, "Pylon", (37.0, 34.0)))
+    gates = tuple(
+        _Body(5100 + i, "Gateway", site, progress=gateway_progress)
+        for i, site in enumerate(_POWERED_GATES)
+    )
+    world = _world(minerals=0, supply=(14, 31), extra=(*pylons, *gates), place_after=1.0)
+    loss_step, affordable_step = 3, 8
+    watch = V2Watch()
+
+    def lose_every_pylon_then_income(world: _World, controller: JevController, index: int) -> None:
+        if index == loss_step:
+            world.kill(5000)
+            world.kill(5001)  # the cap falls from 31 to 15
+        if index == affordable_step:
+            world.minerals = 1000
+        watch(world, controller, index)
+
+    _, controller, _ = _play(
+        world, steps=40, before_step=lose_every_pylon_then_income, bundle=load_v2_policy()
+    )
+    ((loop, build),) = _sent(world, "PROTOSSBUILD_PYLON")  # one order restores the plan
+    assert loop == affordable_step * STEP_LOOPS  # at once, the first tick it is affordable
+    assert _record_node(controller, loop, build) == "supply.buffer.build"
+    held = [
+        e
+        for e in watch.node_events("supply.buffer.build")
+        if loss_step * STEP_LOOPS <= e.game_loop < loop
+    ]
+    assert held and {e.reason for e in held} == {"waiting for minerals; holding reservation"}
+    site = (build.target.x, build.target.y)
+    if beside_gateway:
+        assert distance(site, _POWERED_GATES[0]) <= PYLON_POWER_RADIUS
+    else:
+        assert 6.0 <= distance(site, START) <= 12.0  # no completed Gateway: near the main
+    later = [e for e in watch.node_events("supply.buffer.low") if e.game_loop > loop]
+    assert later and {e.status for e in later} == {"failure"}  # covered: nothing more
+    assert {e.facts["pending"] for e in later} == {8}
+    assert world.overspent == []
+
+
+def test_v2_repeated_build_failures_back_off_and_release_the_reservation() -> None:
+    """Every Gateway placement is illegal. Each intent is bounded (four attempts, D4);
+    after three failed Gateway tasks within the failure window the lane backs off
+    without holding minerals, so production spends them; it resumes afterwards."""
+    pylon = _Body(5000, "Pylon", (24.0, 34.0))
+    world = _world(minerals=150, supply=(14, 23), mining=False, extra=(pylon,))
+    answer = world.can_place
+
+    async def no_gateway_site(ability: AbilityId, positions: list[Point2]) -> list[bool]:
+        verdicts = await answer(ability, positions)
+        if ability == AbilityId.PROTOSSBUILD_GATEWAY:
+            return [False for _ in verdicts]
+        return verdicts
+
+    world.can_place = no_gateway_site  # type: ignore[method-assign]
+    watch = V2Watch()
+    _, controller, _ = _play(world, steps=150, before_step=watch, bundle=load_v2_policy())
+    failed = [t for t in _tasks(controller, "construction.gateways.build") if t.status == "failed"]
+    assert len(failed) == 3  # then the back-off, then a held reservation: no fourth
+    assert all(t.attempts == 4 and "attempts exhausted" in t.reason for t in failed)
+    failures = sorted(
+        e.game_loop
+        for e in watch.events.values()
+        if e.kind == "task" and e.status == "failed" and e.node_id == "construction.gateways.build"
+    )
+    backoff = watch.node_events("construction.gateways.backoff")
+    backed_off = [e for e in backoff if e.status == "failure"]
+    assert backed_off and {e.facts["count"] for e in backed_off} == {3}
+    assert min(e.game_loop for e in backed_off) > failures[-1]
+    window_end = failures[0] + 30 * GAME_LOOPS_PER_SECOND
+    assert max(e.game_loop for e in backed_off) < window_end + STEP_LOOPS  # ends with the window
+    probes = [loop for loop, _ in _sent(world, "NEXUSTRAIN_PROBE")]
+    assert probes and failures[-1] < probes[0] < window_end  # the released minerals were spent
+    resumed = [
+        e
+        for e in watch.node_events("construction.gateways.build")
+        if e.game_loop > window_end and e.status == "running"
+    ]
+    assert resumed and "holding reservation" in resumed[-1].reason  # no new failure
+    assert world.overspent == []

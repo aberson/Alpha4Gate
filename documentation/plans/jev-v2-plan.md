@@ -522,7 +522,7 @@ the steps numerically and bypass 224's dependency before live tests.
 ### Step 214: Make the v2 opening spend and reinforce reliably
 - **Problem:** Execute the four-Gateway opening without avoidable supply stalls or isolated reinforcements.
 - **Type:** code
-- **Status:** PENDING
+- **Status:** DONE (2026-10-09)
 - **Issue:** #331
 - **Flags:** --reviewers deep
 - **Files:** bots/jev/v2/ (new package), src/jev/operations.py, src/jev/runtime.py, tests/test_jev_v2.py (new), tests/test_jev_economy.py, tests/test_jev_army.py.
@@ -530,6 +530,12 @@ the steps numerically and bypass 224's dependency before live tests.
 - **Done when:** Production controller fixtures demonstrate first launch at four Zealots, completion of four Gateways, no duplicate Pylon commitments, bounded repeated failures and grouped replacements; v1 policy hash unchanged; both entrypoints validate from an installed wheel.
 - **Depends on:** 224
 - **Readiness:** Operator explicitly deferred completion of 213 on 2026-10-09. Frozen v1 fingerprint `b53039a693cadf756e6cec4fc44c10534bcd9194079410a98b59a9e441bb1bfd` exists; verify its manifest/snapshot before edits and never modify it. Staging and hosted smoke passed. This authorizes implementation, not stronger-play acceptance. Resume with `--resume 214` and stop before 222.
+- **Build notes (2026-10-09):**
+  - `bots/jev/v2` is packaged (policy hash `283d14a9…`, 109 nodes). v1 is byte-identical (`510a72df…`), and the frozen snapshot `v1-b53039a693cadf75` was verified before edits.
+  - Also touched `src/jev/bot.py` (not in Files): `SUPPLY_CEILING = MAX_SUPPLY`. The 200 ceiling is now single-sourced in `src/jev/operations.py` (`MAX_SUPPLY`, `SupplyMeasure`/`SUPPLY_MEASURES`, `ceiling_room`), and v2's `policy.json` no longer spells it.
+  - Planned supply keeps working after the opening and recovers from zero Pylons, placing the Pylon next to an unpowered Gateway.
+  - Stale after this step: CLAUDE.md, the operator guide and §9 above still say v2 is unpackaged; `src/jev/benchmark.py:16` and `:491` say "(today bots.jev.v2)".
+  - Reviewed by `/review-deep` (6 lenses) over 2 iterations. Evidence in `.build-step/jev-v2-214/` (gitignored).
 
 ### Step 215: Scout with bounded, honest enemy memory
 - **Problem:** Give v2 fresh observed information for later plan choices.

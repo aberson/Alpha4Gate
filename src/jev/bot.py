@@ -77,7 +77,14 @@ from jev.decision import (
     STALE_REASONS,
     ArmyDecisions,
 )
-from jev.operations import MINERAL_COST, PRODUCER_TYPE, REQUIRES_POWER, SUPPLY_COST, WORKER_TYPE
+from jev.operations import (
+    MAX_SUPPLY,
+    MINERAL_COST,
+    PRODUCER_TYPE,
+    REQUIRES_POWER,
+    SUPPLY_COST,
+    WORKER_TYPE,
+)
 from jev.policy import PolicyBundle
 from jev.runner import MatchLimits, exception_error
 from jev.runtime import JevRuntime, TickResult
@@ -139,8 +146,9 @@ METRICS_SCHEMA_VERSION: Final = 1
 #: Plan D6: accumulators sample at most this far apart in game time. A longer gap
 #: between two samples is missing coverage, never a zero bank or zero idle time.
 METRIC_SAMPLE_GAP_SECONDS: Final = 1.0
-#: SC2's supply ceiling: a full army is maxed out, not supply blocked.
-SUPPLY_CEILING: Final = 200
+#: SC2's supply ceiling: a full army is maxed out, not supply blocked (the one
+#: definition lives in :mod:`jev.operations`, which plans supply against it).
+SUPPLY_CEILING: Final = MAX_SUPPLY
 #: Own tags the loss counter remembers (far above any real match); more makes the
 #: loss metric incomplete rather than unbounded.
 MAX_METRIC_TAGS: Final = 8192

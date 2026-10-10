@@ -47,6 +47,7 @@ from typing import Any
 
 import pytest
 from bots.jev.v1 import load_policy
+from bots.jev.v2 import load_policy as load_v2_policy
 from s2clientprotocol import common_pb2, data_pb2, raw_pb2, sc2api_pb2
 from sc2.data import ActionResult, Alliance, Attribute, DisplayType, Result
 from sc2.game_data import GameData
@@ -60,6 +61,7 @@ from jev import runner
 from jev.bot import MAX_LEAVE_ATTEMPTS, JevBot, JevController
 from jev.contracts import Event
 from jev.operations import PYLON_POWER_RADIUS, TARGET_LOST_REASON, distance
+from jev.policy import PolicyBundle
 from jev.runner import (
     EXIT_FAILURE,
     MatchOptions,
@@ -577,9 +579,11 @@ def _play(
     *hooks: _Hook,
     options: MatchOptions | None = None,
     clock: Callable[[], float] | None = None,
+    bundle: PolicyBundle | None = None,
 ) -> _Run:
+    """Play through the production runner (the packaged v1 policy unless ``bundle``)."""
     launcher = _Launcher(world, steps, *hooks)
-    bundle = load_policy()
+    bundle = load_policy() if bundle is None else bundle
     chosen = MatchOptions() if options is None else options
     with tempfile.TemporaryDirectory() as run_root:  # the evidence is not under test here
         root = Path(run_root)
@@ -1314,6 +1318,135 @@ def test_a_failed_leave_is_retried_then_bounded(failures: int, calls: int, left:
 
 
 # ---------------------------------------------------------------------------
+# Jev v2 (Phase J2 Step 214): grouped reinforcement and recovery
+# ---------------------------------------------------------------------------
+
+#: The rally point: rally_distance (8) from the main toward the map centre.
+_RALLY = (36.16, 36.16)
+#: Where a Gateway near the main spawns its Zealot (within the home radius).
+_SPAWN = (28.5, 32.5)
+
+
+def _attacks_by_actor(world: _World) -> dict[int, list[tuple[int, int | _Point]]]:
+    """Every ATTACK SC2 received, per actor: ``(game loop, target)`` in order."""
+    found: dict[int, list[tuple[int, int | _Point]]] = {}
+    for loop, actor, target in _sent_attacks(world):
+        found.setdefault(actor, []).append((loop, target))
+    return found
+
+
+def _moves_to(world: _World, actor: int) -> list[tuple[int, _Point]]:
+    return [
+        (loop, (c.target.x, c.target.y))
+        for loop, c in world.sent
+        if c.unit.tag == actor and c.ability == AbilityId.MOVE_MOVE
+    ]
+
+
+def test_v2_scenario_four_ready_zealots_launch_together_before_every_gateway_completes() -> None:
+    """D3 kept by v2: the first attack latches at four ready Zealots and all four set
+    out on one tick, while Gateways are still warping in; before it, they rally."""
+    pylon = _Body(PYLON, "Pylon", (24.0, 34.0))
+    gateways = [
+        _Body(1200, "Gateway", GATEWAY_SITES[0], orders=[_training(0.9)]),
+        _Body(1201, "Gateway", GATEWAY_SITES[1], orders=[_training(0.85)]),
+        _Body(1202, "Gateway", GATEWAY_SITES[2], progress=0.3),
+        _Body(1203, "Gateway", GATEWAY_SITES[3], progress=0.3),
+    ]
+    zealots = [_Body(tag, "Zealot", (28.0, 40.0), health=150.0) for tag in ZEALOTS[:2]]
+    probes = [_Body(tag, "Probe", (28.0, 26.0), orders=[_gather(3000)]) for tag in PROBES]
+    patch = _Body(3000, "MineralField", (26.5, 22.5), alliance=Alliance.Neutral)
+    world = _World([_Body(NEXUS, "Nexus", START), pylon, *gateways, *zealots, *probes, patch])
+    census: dict[int, tuple[int, list[float]]] = {}
+
+    def count(world: _World, controller: JevController, index: int) -> None:
+        progress = [world.bodies[1200 + i].progress for i in range(4)]
+        census[world.state.game_loop] = (len(world.own("Zealot")), progress)
+
+    run = _play(world, 30, count, bundle=load_v2_policy())
+    attacks = _sent_attacks(world)
+    launch_loop = attacks[0][0]
+    zealots_then, gateway_progress = census[launch_loop]
+    assert zealots_then == 4 and min(gateway_progress) < 1.0
+    launch = [(actor, target) for loop, actor, target in attacks if loop == launch_loop]
+    assert sorted(actor for actor, _ in launch) == sorted(z.tag for z in world.own("Zealot"))
+    assert {target for _, target in launch} == {ENEMY_START}
+    latched = [e for e in run.events if e.node_id == "army.attack.launch.first_wave.latch"]
+    assert latched[0].game_loop <= launch_loop and len({e.game_loop for e in latched}) == 1
+    early = [c for loop, c in world.sent if loop < launch_loop]
+    assert early and {c.ability for c in early} == {AbilityId.MOVE_MOVE}  # rallied first
+
+
+def test_v2_scenario_reinforcements_gather_at_home_and_join_only_as_a_group() -> None:
+    """D3: after the launch, new Zealots gather at the home rally point instead of
+    walking across the map one by one; four gathered join the group's attack together."""
+    world = _base()
+    arrivals: list[int] = []
+
+    def trained_at_home(world: _World, controller: JevController, index: int) -> None:
+        if index in (2, 4, 6, 8):
+            arrivals.append(world.add("Zealot", _SPAWN))
+
+    run = _play(world, 14, trained_at_home, bundle=load_v2_policy())
+    attacks = _attacks_by_actor(world)
+    assert {attacks[tag][0] for tag in ZEALOTS} == {(_loop_of(0), ENEMY_START)}  # the launch
+    joined = {attacks[tag][0][0] for tag in arrivals}
+    assert joined == {_loop_of(8)}  # all four reserves set out on the fourth's tick ...
+    assert {attacks[tag][0][1] for tag in arrivals} == {ENEMY_START}  # ... to the group's target
+    for tag in arrivals[:3]:  # ... after gathering at home, never alone across the map
+        assert {point for _, point in _moves_to(world, tag)} == {_RALLY}
+        assert _moves_to(world, tag)[0][0] < _loop_of(8)
+    assert {_actor_of(e) for e in _commands(run, "reserve.gather")} == set(arrivals[:3])
+    assert all(not _moves_to(world, tag) for tag in ZEALOTS)  # the group was never recalled
+    group = run.controller.runtime.assigned_to("army.attack.go")
+    assert group == {*ZEALOTS, *arrivals}  # one group now
+
+
+def test_v2_scenario_a_depleted_army_regroups_at_home_then_relaunches_as_one_group() -> None:
+    """D2/D3: after the launch, fewer than four ready Zealots regroup at home (the
+    attack's tasks are cancelled); the next full group of four sets out together."""
+    world = _base()
+    arrivals: list[int] = []
+
+    def losses_then_reinforcements(world: _World, controller: JevController, index: int) -> None:
+        if index == 3:
+            world.kill(ZEALOTS[1])
+            world.kill(ZEALOTS[2])  # two remain: below the regroup size
+        if index == 6:
+            arrivals.extend(world.add("Zealot", _SPAWN) for _ in range(2))
+
+    run = _play(world, 24, losses_then_reinforcements, bundle=load_v2_policy())
+    survivors = (ZEALOTS[0], ZEALOTS[3])
+    recalled = _commands(run, "army.recover.move")
+    assert {_actor_of(e) for e in recalled} == set(survivors)
+    assert {e.game_loop for e in recalled} == {_loop_of(3)}  # at once, on the first tick
+    cancelled = [
+        e
+        for e in run.events
+        if e.kind == "task" and e.status == "cancelled" and e.node_id == "army.attack.go"
+    ]
+    assert {e.reason for e in cancelled} == {"preempted by army.recover.move"}
+    assert {str(e.facts["actor_tag"]) for e in cancelled} == {str(t) for t in survivors}
+    attacks = _attacks_by_actor(world)
+    relaunch = {attacks[tag][-1][0] for tag in (*survivors, *arrivals)}
+    assert len(relaunch) == 1  # one group of four, on one tick
+    (relaunch_loop,) = relaunch
+    home = [e for e in run.events if e.kind == "task" and e.node_id == "army.recover.move"]
+    arrived = [e.game_loop for e in home if e.status == "succeeded"]
+    assert len(arrived) == 2 and max(arrived) <= relaunch_loop  # only after both got home
+    between = [loop for loop, _, _ in _sent_attacks(world) if _loop_of(3) <= loop < relaunch_loop]
+    assert between == []  # nothing trickled out while regrouping
+
+
+def test_v2_assignment_memory_is_kept_only_for_a_policy_that_reads_it() -> None:
+    """The v2 group is the attack's assignment; v1 never records assignments."""
+    v1 = _play(_base(), 3)
+    v2 = _play(_base(), 3, bundle=load_v2_policy())
+    assert v1.controller.runtime.assigned_to("army.attack.go") == frozenset()
+    assert v2.controller.runtime.assigned_to("army.attack.go") == set(ZEALOTS)
+
+
+# ---------------------------------------------------------------------------
 # Legacy isolation: Jev's gameplay call graph
 # ---------------------------------------------------------------------------
 
@@ -1332,11 +1465,13 @@ _FORBIDDEN_MODULE = (
     r"\A(?:bots\.(?:current|v\d+)|torch|stable_baselines3|sb3_contrib|gymnasium|gym|"
     r"anthropic|openai|claude_agent_sdk|claude_code_sdk|langchain\w*|transformers)(?:\.|\Z)"
 )
-#: Modules the entry point must reach, or the audit proves nothing.
+#: Modules the entry points must reach, or the audit proves nothing.
 _GAMEPLAY_MODULES = frozenset(
     {
         "bots.jev.v1",
         "bots.jev.v1.__main__",
+        "bots.jev.v2",
+        "bots.jev.v2.__main__",
         "jev.runner",
         "jev.bot",
         "jev.sc2_adapter",
@@ -1401,7 +1536,7 @@ def test_static_import_graph_of_jev_has_no_legacy_rl_or_llm_dependency() -> None
     forbidden = re.compile(_FORBIDDEN_MODULE)
     audited = {p for d in _JEV_DIRS for p in d.rglob("*.py")} | {_REPO / "bots" / "__init__.py"}
     reachable: set[str] = set()
-    queue = ["bots.jev.v1", "bots.jev.v1.__main__"]
+    queue = ["bots.jev.v1", "bots.jev.v1.__main__", "bots.jev.v2", "bots.jev.v2.__main__"]
     first_party: set[str] = set()
     external: set[str] = set()
     while queue:
