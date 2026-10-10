@@ -19,14 +19,26 @@ burnysc2 ``BotAI`` into the :class:`~jev.contracts.Observation` contract:
 * ``remembered_enemy_structures``: enemy structures seen earlier and not visible
   now. A memory entry is refreshed on every sighting and dropped once vision
   covers its position without seeing it (D3: revalidated on sight).
+* ``enemy_sightings`` (plan J2 Step 215): the timestamped memory of every enemy
+  unit and structure the bot has seen, keyed by tag
+  (:class:`~jev.contracts.EnemySighting`). Honest by construction: an entry is
+  created or refreshed only from an entity SC2 reports as *visible* in this game
+  step (never a fogged snapshot, a sensor-tower blip, burnysc2's previous-frame
+  maps or map metadata such as the enemy start location), with its orders never
+  read. An entity out of sight keeps its last-seen state and time and is marked
+  not visible; an unseen unit expires
+  :data:`~jev.contracts.SIGHTING_UNIT_TTL_SECONDS` after it was last seen; a
+  structure stays until vision covers its last-seen position without it; above
+  :data:`~jev.contracts.MAX_ENEMY_SIGHTINGS` entries the oldest are evicted.
 * ``mineral_field`` -> ``mineral_fields`` (visible patches only).
 * ``start_location`` / ``enemy_start_locations`` / ``expansion_locations_list`` /
   ``game_info.map_center``: map metadata (D3 permits it), read once.
 
 Between policy ticks the controller needs only the clock
-(:meth:`Sc2Adapter.game_seconds`) and the enemy-structure memory
+(:meth:`Sc2Adapter.game_seconds`) and the enemy memories
 (:meth:`Sc2Adapter.remember`, the same memory rules), so a full Observation is
-built only when the runtime will tick.
+built only when the runtime will tick while a glimpse between ticks is still
+remembered with its own time.
 
 Per entity: ``tag`` (uint64), ``name`` (SC2's unit type name, e.g. ``"Probe"``,
 the spelling the operation tables use), ``position``, ``health``, ``shield`` (a
@@ -72,11 +84,14 @@ from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
 from jev.contracts import (
     MAX_ABS_NUMBER,
     MAX_COORDINATE,
+    MAX_ENEMY_SIGHTINGS,
     MAX_ENTITY_ORDERS,
     MAX_OBSERVED_ENTITIES,
     MAX_OBSERVED_LOCATIONS,
     MAX_TAG,
+    SIGHTING_UNIT_TTL_SECONDS,
     CommandSpec,
+    EnemySighting,
     Entity,
     Observation,
     Order,
@@ -360,6 +375,20 @@ def _by_tag(found: Mapping[int, tuple[Entity, Any]]) -> tuple[Entity, ...]:
     return tuple(found[tag][0] for tag in sorted(found))
 
 
+def _vision(port: GamePort) -> Callable[[Point], bool]:
+    """``port.is_visible`` asked at most once per position in one game step (vision
+    cannot change within a step), so both enemy memories share each answer."""
+    answers: dict[Point, bool] = {}
+
+    def visible(point: Point) -> bool:
+        answer = answers.get(point)
+        if answer is None:
+            answer = answers[point] = _flag(port.is_visible(point), "is_visible reply")
+        return answer
+
+    return visible
+
+
 def _reads_game_state[**P, R](read: Callable[P, R]) -> Callable[P, R]:
     """Make :class:`ValueError` the only exception a game-state reader raises.
 
@@ -394,6 +423,8 @@ class Sc2Adapter:
     def __init__(self) -> None:
         self._map: _MapMetadata | None = None
         self._remembered: dict[int, Entity] = {}
+        # Enemy tag -> the latest sighting (plan J2 Step 215; see the module docstring).
+        self._sightings: dict[int, EnemySighting] = {}
         # Raw game objects of the latest observation, by tag. Commands may only name
         # these: own actors, visible mineral fields, visible enemies.
         self._actors: dict[int, Any] = {}
@@ -410,6 +441,11 @@ class Sc2Adapter:
     def records(self) -> tuple[CommandRecord, ...]:
         """The most recent :data:`MAX_COMMAND_RECORDS` command records, oldest first."""
         return tuple(self._records)
+
+    @property
+    def sightings(self) -> tuple[EnemySighting, ...]:
+        """The enemy sighting memory after the latest observe/remember, by tag."""
+        return tuple(self._sightings[tag] for tag in sorted(self._sightings))
 
     @property
     def accepted_count(self) -> int:
@@ -431,15 +467,21 @@ class Sc2Adapter:
 
     @_reads_game_state
     def remember(self, game: Any, port: GamePort) -> None:
-        """Update only the enemy-structure memory from ``game`` (between policy ticks).
+        """Update only the enemy memories from ``game`` (between policy ticks).
 
         Same sighting and revalidation rules as :meth:`observe`, so memory does not
         depend on which steps the runtime ticks on. Raises :class:`ValueError`
         (only) for malformed state; memory changes only on success.
         """
-        structures: dict[int, tuple[Entity, Any]] = {}
-        _visible(game.enemy_structures, "enemy_structures", structures)
-        self._remembered = self._remember(structures, port)
+        now = _count(game.state.game_loop, "state.game_loop") / GAME_LOOPS_PER_SECOND
+        enemies: dict[int, tuple[Entity, Any]] = {}
+        _visible(game.enemy_units, "enemy_units", enemies)
+        _visible(game.enemy_structures, "enemy_structures", enemies)
+        visible = _vision(port)
+        remembered = self._remember(enemies, visible)  # keeps structures only, as observe()
+        sightings = self._sight(enemies, now, visible)
+        self._remembered = remembered
+        self._sightings = sightings
 
     @_reads_game_state
     def observe(self, game: Any, port: GamePort) -> Observation:
@@ -459,10 +501,13 @@ class Sc2Adapter:
         _visible(game.enemy_structures, "enemy_structures", enemies)
         minerals: dict[int, tuple[Entity, Any]] = {}
         _visible(game.mineral_field, "mineral_field", minerals)
-        remembered = self._remember(enemies, port)
+        visible = _vision(port)
+        remembered = self._remember(enemies, visible)
+        game_seconds = game_loop / GAME_LOOPS_PER_SECOND
+        sightings = self._sight(enemies, game_seconds, visible)
         observation = Observation(
             game_loop=game_loop,
-            game_seconds=game_loop / GAME_LOOPS_PER_SECOND,
+            game_seconds=game_seconds,
             minerals=_count(game.minerals, "minerals"),
             supply_used=_count(game.supply_used, "supply_used"),
             supply_cap=_count(game.supply_cap, "supply_cap"),
@@ -477,9 +522,11 @@ class Sc2Adapter:
             expansion_locations=map_data.expansion_locations,
             map_center=map_data.map_center,
             mineral_fields=_by_tag(minerals),
+            enemy_sightings=tuple(sightings[tag] for tag in sorted(sightings)),
         )
         self._map = map_data
         self._remembered = remembered
+        self._sightings = sightings
         self._actors = actors
         self._minerals = {tag: raw for tag, (_, raw) in minerals.items()}
         self._enemies = {tag: raw for tag, (_, raw) in enemies.items()}
@@ -487,7 +534,7 @@ class Sc2Adapter:
         return observation
 
     def _remember(
-        self, enemies: Mapping[int, tuple[Entity, Any]], port: GamePort
+        self, enemies: Mapping[int, tuple[Entity, Any]], visible: Callable[[Point], bool]
     ) -> dict[int, Entity]:
         """Memory after this sighting: refreshed by vision, dropped where vision disproves it."""
         remembered = dict(self._remembered)
@@ -497,9 +544,43 @@ class Sc2Adapter:
             ):
                 remembered[tag] = entity
         for tag, entity in list(remembered.items()):
-            if tag not in enemies and _flag(port.is_visible(entity.position), "is_visible reply"):
+            if tag not in enemies and visible(entity.position):
                 del remembered[tag]  # its spot is in sight and it is not there
         return remembered
+
+    def _sight(
+        self,
+        enemies: Mapping[int, tuple[Entity, Any]],
+        now: float,
+        visible: Callable[[Point], bool],
+    ) -> dict[int, EnemySighting]:
+        """Sighting memory after this game step (see the module docstring).
+
+        ``enemies`` are this step's *visible* enemies only (``_visible`` drops every
+        entity SC2 does not report as visible), so nothing hidden can enter or
+        refresh the memory. O(memory + visible); a remembered structure's position
+        is checked through the step's shared ``visible`` answers (:func:`_vision`).
+        Bounded by :data:`~jev.contracts.MAX_ENEMY_SIGHTINGS`.
+        """
+        sightings: dict[int, EnemySighting] = {}
+        for tag, sighting in self._sightings.items():
+            if tag in enemies:
+                continue  # seen again: refreshed below
+            entity = sighting.entity
+            if entity.is_structure:
+                if visible(entity.position):
+                    continue  # its spot is in sight and it is not there
+            elif now - sighting.last_seen_game_seconds >= SIGHTING_UNIT_TTL_SECONDS:
+                continue  # an unseen unit's sighting has aged out
+            sightings[tag] = replace(sighting, visible=False) if sighting.visible else sighting
+        for tag, (entity, _) in enemies.items():
+            sightings[tag] = EnemySighting(entity, now, True)
+        if len(sightings) > MAX_ENEMY_SIGHTINGS:  # evict the oldest (visible ones are newest)
+            newest = sorted(
+                sightings.values(), key=lambda s: (-s.last_seen_game_seconds, s.entity.tag)
+            )[:MAX_ENEMY_SIGHTINGS]
+            sightings = {s.entity.tag: s for s in newest}
+        return sightings
 
     # -- commands --------------------------------------------------------------
 

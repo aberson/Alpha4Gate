@@ -50,9 +50,13 @@ One :class:`JevRuntime` executes one validated policy for one run:
   :data:`MAX_TRACKED_VISITS` locations per node). Bindings live only for one
   root evaluation in one tick. Two memories exist only for policies that read
   them (:mod:`jev.operations`): per own entity, the action node that most
-  recently took charge of it (assignments, pruned to the tick's own entities),
-  and per node a ``recent_task_count_compare`` names, the finish time and status
-  of its latest :data:`~jev.operations.MAX_TRACKED_FINISHES` tasks.
+  recently took charge of it (assignments, pruned to the tick's own entities,
+  plus per node the game time it last took charge of a new member, which
+  ``assignment_age_compare`` reads and which outlives that member), and per node
+  a ``recent_task_count_compare`` names, the finish time and status of its latest
+  :data:`~jev.operations.MAX_TRACKED_FINISHES` tasks. The enemy sighting memory
+  is not runtime state: the adapter keeps it and every Observation carries it
+  (validated like the other observation fields).
 * **Bounded recovery from unreachable targets (D4).** A task that gives up
   makes its intent a fresh task on retry (the order SC2 still carries never
   counts as already done). For every action node a ``demotions`` argument
@@ -97,6 +101,7 @@ from jev.contracts import (
     MAX_ABS_NUMBER,
     MAX_ACTIVE_TASKS,
     MAX_COORDINATE,
+    MAX_ENEMY_SIGHTINGS,
     MAX_ENTITY_ORDERS,
     MAX_OBSERVED_ENTITIES,
     MAX_OBSERVED_LOCATIONS,
@@ -105,6 +110,7 @@ from jev.contracts import (
     RUN_RESULTS,
     RUN_STATUSES,
     CommandSpec,
+    EnemySighting,
     Entity,
     Event,
     EventKind,
@@ -300,6 +306,38 @@ def _check_entity(path: str, entity: object) -> None:
                 f"observation {where} order target must be a tag, point or None, "
                 f"got {safe_repr(target)}"
             )
+
+
+def _check_sightings(observation: Observation) -> None:
+    """``enemy_sightings``: a bounded tuple of EnemySighting records, one per tag, each
+    seen at a finite game time no later than the observation's (ValueError names it)."""
+    sightings = observation.enemy_sightings
+    if not isinstance(sightings, tuple):
+        raise ValueError("observation enemy_sightings must be a tuple of EnemySighting records")
+    if len(sightings) > MAX_ENEMY_SIGHTINGS:
+        raise ValueError(
+            f"observation enemy_sightings has {len(sightings)} entries; "
+            f"limit is {MAX_ENEMY_SIGHTINGS}"
+        )
+    tags: set[int] = set()
+    for index, sighting in enumerate(sightings):
+        path = f"enemy_sightings[{index}]"
+        if not isinstance(sighting, EnemySighting):
+            raise ValueError(
+                f"observation {path} must be an EnemySighting, got {safe_repr(sighting)}"
+            )
+        _check_entity(f"{path}.entity", sighting.entity)
+        seen = sighting.last_seen_game_seconds
+        if not is_bounded_number(seen) or not 0 <= seen <= observation.game_seconds:
+            raise ValueError(
+                f"observation {path}.last_seen_game_seconds must be a finite game time "
+                f"in 0..{observation.game_seconds:g}, got {safe_repr(seen)}"
+            )
+        if not isinstance(sighting.visible, bool):
+            raise ValueError(f"observation {path}.visible must be a bool")
+        if sighting.entity.tag in tags:
+            raise ValueError(f"observation {path} repeats tag {sighting.entity.tag}")
+        tags.add(sighting.entity.tag)
 
 
 @dataclass(frozen=True)
@@ -570,6 +608,9 @@ class _View:
     def assigned(self, node_id: str) -> frozenset[int]:
         return self._runtime.assigned_to(node_id)
 
+    def assignment_age(self, node_id: str) -> float | None:
+        return self._runtime.assignment_age(node_id)
+
     def recent_task_count(self, node_id: str, statuses: frozenset[str], within: float) -> int:
         now = self._observation.game_seconds
         finishes = self._runtime._finishes.get(node_id, ())
@@ -629,6 +670,9 @@ class JevRuntime:
         # finishes only for the nodes a recent_task_count_compare names.
         self._track_assignments = bool(self._tracked_nodes("assignments"))
         self._assignments: dict[int, str] = {}
+        # Action node -> game time it last took charge of an entity not already in its
+        # charge (one value per node, kept after the entity is gone; with assignments).
+        self._claimed_at: dict[str, float] = {}
         self._finish_nodes = self._tracked_nodes("finishes")
         self._finishes: dict[str, deque[tuple[float, TaskStatus]]] = {}
         # node id -> map location -> Visit, least recent first (insertion order).
@@ -739,6 +783,13 @@ class JevRuntime:
         ``not_assigned_to``); see :mod:`jev.operations` for what takes charge.
         """
         return frozenset(tag for tag, node in self._assignments.items() if node == node_id)
+
+    def assignment_age(self, node_id: str) -> float | None:
+        """Game seconds since ``node_id`` last took charge of an entity that was not
+        already in its charge (a new member, e.g. a replacement scout); None if it
+        never did, or while the policy reads no assignments. Survives the entity."""
+        claimed = self._claimed_at.get(node_id)
+        return None if claimed is None else max(0.0, self._last_game_seconds - claimed)
 
     def set_army_decision(self, mode: str | None, facts: dict[str, JsonValue]) -> None:
         """Supply the coordinator's decision for the next graph evaluation."""
@@ -904,6 +955,7 @@ class JevRuntime:
                 )
             for index, entity in enumerate(entities):
                 _check_entity(f"{name}[{index}]", entity)
+        _check_sightings(observation)
 
     def task_status(self, task_id: str) -> TaskStatus | None:
         """Status of an active task; None once it has finished, or for an unknown id."""
@@ -1704,7 +1756,7 @@ class JevRuntime:
     def _assign(self, actor_tag: int, node_id: str) -> None:
         """``node_id`` took charge of ``actor_tag`` (kept only if the policy reads it)."""
         if self._track_assignments:
-            self._assignments[actor_tag] = node_id
+            self._take_charge(actor_tag, node_id)
 
     def _assign_if_free(self, actor_tag: int, node_id: str) -> None:
         """An actor found in ``node_id``'s intended state joins it unless another
@@ -1712,7 +1764,12 @@ class JevRuntime:
         if self._track_assignments:
             holder = self._holder_of(actor_tag)
             if holder is None or holder.node_id == node_id:
-                self._assignments[actor_tag] = node_id
+                self._take_charge(actor_tag, node_id)
+
+    def _take_charge(self, actor_tag: int, node_id: str) -> None:
+        if self._assignments.get(actor_tag) != node_id:  # a new member: the claim time
+            self._claimed_at[node_id] = self._last_game_seconds
+        self._assignments[actor_tag] = node_id
 
     @staticmethod
     def _shortfall(view: _View, intent: Intent) -> str | None:

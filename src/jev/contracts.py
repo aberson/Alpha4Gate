@@ -19,6 +19,16 @@ Observation additions (beyond the plan's field list, both required by D3):
 * ``map_center`` -- playable-area centre; D3's army gathers "eight units toward
   map center". It is map metadata, like the start/expansion locations.
 
+Phase J2 addition (Step 215, defaulted so every existing construction still holds):
+
+* ``enemy_sightings`` -- the bot's own timestamped memory of enemies it has
+  *seen* (:class:`EnemySighting`, keyed by tag, at most
+  :data:`MAX_ENEMY_SIGHTINGS`). Only entities SC2 reported as visible ever enter
+  it; an unseen unit's sighting expires :data:`SIGHTING_UNIT_TTL_SECONDS` after it
+  was last seen, and a remembered structure is dropped once vision covers its
+  position without it. ``jev.sc2_adapter`` owns the memory; policies read it
+  through the ``sighting_count_compare`` operation.
+
 Binding rule (the ONE model shared by validator and interpreter): selection
 bindings are root-local and live for one root evaluation in one tick. A node's
 binding effects commit only if the node SUCCEEDS; a node that fails -- a select
@@ -48,6 +58,7 @@ __all__ = [
     "ERROR_CODES",
     "EVENT_KINDS",
     "EVENT_STATUSES",
+    "EnemySighting",
     "Entity",
     "EntityCollection",
     "ErrorCode",
@@ -69,6 +80,7 @@ __all__ = [
     "MAX_ACTIVE_TASKS",
     "MAX_COORDINATE",
     "MAX_DOCUMENT_ELEMENTS",
+    "MAX_ENEMY_SIGHTINGS",
     "MAX_ENTITY_ORDERS",
     "MAX_FRAGMENT_CHARS",
     "MAX_MESSAGE_CHARS",
@@ -103,6 +115,9 @@ __all__ = [
     "RunStatus",
     "RunSummary",
     "SCHEMA_VERSION",
+    "SIGHTING_UNIT_TTL_SECONDS",
+    "SIGHTING_VISIBILITIES",
+    "SightingVisibility",
     "TASK_STATUSES",
     "TERMINAL_RUN_STATUSES",
     "Target",
@@ -188,6 +203,16 @@ MAX_COORDINATE: Final = 1e6
 MAX_OBSERVED_ENTITIES: Final = 4096
 MAX_OBSERVED_LOCATIONS: Final = 256
 MAX_ENTITY_ORDERS: Final = 64
+#: Enemy sighting memory (plan section 5 EnemySighting): at most this many tags are
+#: remembered; beyond it the oldest sightings are evicted first.
+MAX_ENEMY_SIGHTINGS: Final = 256
+#: An enemy *unit* not seen for this many game seconds is forgotten (it has moved
+#: on); a structure is kept until vision covers its position without it.
+SIGHTING_UNIT_TTL_SECONDS: Final = 30.0
+#: Which sightings a reader counts: all, only those visible now, or only remembered
+#: ones (not visible now).
+SightingVisibility = Literal["any", "visible", "remembered"]
+SIGHTING_VISIBILITIES: Final[tuple[SightingVisibility, ...]] = get_args(SightingVisibility)
 
 NODE_KINDS: Final[tuple[NodeKind, ...]] = get_args(NodeKind)
 NODE_STATUSES: Final[tuple[NodeStatus, ...]] = get_args(NodeStatus)
@@ -809,6 +834,25 @@ class Entity:
 
 
 @dataclass(frozen=True)
+class EnemySighting:
+    """The latest time the bot itself saw one enemy entity, and what it saw then.
+
+    ``entity`` is the entity as it was last seen (position, health, shields; never
+    its orders), ``last_seen_game_seconds`` the game time of that sighting and
+    ``visible`` whether it is in sight in the observation that carries the record.
+    A remembered (not visible) sighting is a past fact, never where the entity is now.
+    """
+
+    entity: Entity
+    last_seen_game_seconds: float
+    visible: bool
+
+    def age(self, game_seconds: float) -> float:
+        """Game seconds since the sighting, at ``game_seconds`` (0 while visible)."""
+        return max(0.0, game_seconds - self.last_seen_game_seconds)
+
+
+@dataclass(frozen=True)
 class Observation:
     """Normalized visible game state for one interpreter tick."""
 
@@ -826,6 +870,8 @@ class Observation:
     expansion_locations: tuple[Point, ...]
     map_center: Point
     mineral_fields: tuple[Entity, ...] = ()
+    #: The bot's own sighting memory, sorted by tag (see the module docstring).
+    enemy_sightings: tuple[EnemySighting, ...] = ()
 
     # Collection / location / point names ARE field names (one source of truth:
     # the Literal-derived tuples), so lookup is by field, never a re-listed branch.

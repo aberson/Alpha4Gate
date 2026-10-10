@@ -2,10 +2,12 @@
 
 Holds the packaged ``manifest.json`` and ``policy.json``: the four-Gateway opening
 with planned supply, bounded build recovery, and grouped reinforcements (plan J2
-Step 214). Like v1, the policy is read through :mod:`importlib.resources` relative
-to this package, so it resolves the same way from a source checkout and from an
-installed wheel, never from the caller's working directory. The runtime itself
-lives in the shared ``jev`` package; v1 stays frozen beside this package.
+Step 214), plus one owned, spaced Probe scout that reads the bot's own bounded
+enemy sightings and retreats when threatened (Step 215). Like v1, the policy is
+read through :mod:`importlib.resources` relative to this package, so it resolves
+the same way from a source checkout and from an installed wheel, never from the
+caller's working directory. The runtime itself lives in the shared ``jev``
+package; v1 stays frozen beside this package.
 """
 
 from __future__ import annotations

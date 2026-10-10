@@ -10,7 +10,10 @@ Three categories:
 * **Predicates** (``condition`` and ``wait`` nodes): count comparisons, resources
   and supply, planned supply (see :func:`planned_supply`), threat distance, task
   state (task counts, recent task outcomes and which map locations a node
-  visited), the ``attack_launched`` latch (set or still clear) and game time.
+  visited), the ``attack_launched`` latch (set or still clear), game time, the
+  enemy sighting memory (``sighting_count_compare``: counts and ages of what the
+  bot has seen, the safety facts later plan choices read) and how long ago an
+  action node took charge of a new member (``assignment_age_compare``).
   Powered/idle/ready checks are filter keys on the counted collection.
 * **Selections** (``select`` nodes): filter/sort/limit over an observation
   collection, map locations (optionally least recently visited first, which
@@ -39,13 +42,17 @@ the search -- until the demotion lapses (see :mod:`jev.runtime`).
 Two further memories are kept only when a policy reads them (Jev v2; a policy
 that names neither, such as v1, never records them):
 
-* **Assignments.** When any ``assigned_to`` / ``not_assigned_to`` argument names
-  a node, the runtime remembers, per own entity, the action node that most
-  recently took charge of it: created a task for it, holds it with an active
-  task, or found it already in that node's intended state while no other node's
-  task held it (:meth:`RuntimeView.assigned`). A unit therefore stays in a group
-  after its task ends until another node takes charge of it, so a selection can
-  tell an army group from reinforcements without a distance guess.
+* **Assignments.** When any ``assigned_to`` / ``not_assigned_to`` argument (or an
+  ``assignment_age_compare``) names a node, the runtime remembers, per own entity,
+  the action node that most recently took charge of it: created a task for it,
+  holds it with an active task, or found it already in that node's intended state
+  while no other node's task held it (:meth:`RuntimeView.assigned`). A unit
+  therefore stays in a group after its task ends until another node takes charge
+  of it, so a selection can tell an army group from reinforcements without a
+  distance guess -- and a lane can own an actor (the v2 scout) that every other
+  selection excludes with ``not_assigned_to`` even between its tasks. Per node,
+  the time it last took charge of a new member is kept too
+  (:meth:`RuntimeView.assignment_age`), so replacements can be spaced.
 * **Finishes.** For every action node a ``recent_task_count_compare`` names, the
   game times and terminal statuses of its latest
   :data:`MAX_TRACKED_FINISHES` finished tasks (:meth:`RuntimeView.recent_task_count`),
@@ -74,6 +81,7 @@ from jev.contracts import (
     NAME_RE,
     NODE_STATUSES,
     POINT_KEYWORDS,
+    SIGHTING_VISIBILITIES,
     TASK_STATUSES,
     Entity,
     EntityCollection,
@@ -123,6 +131,7 @@ __all__ = [
     "LOCATION_SORT_KEYS",
     "Lifecycle",
     "MAX_ANY_OF",
+    "MAX_ELAPSED_SECONDS",
     "MAX_FILTER_DEPTH",
     "MAX_FILTER_NAMES",
     "MAX_ISSUES_PER_FIELD",
@@ -302,6 +311,8 @@ MAX_SELECTION: Final = 200
 MAX_LOCATIONS: Final = 64
 #: Largest distance any distance-valued argument may take (game units).
 MAX_QUERY_DISTANCE: Final = 200.0
+#: Largest game-time span (an age or interval, game seconds) an argument may take.
+MAX_ELAPSED_SECONDS: Final = 86400.0
 MAX_FILTER_DEPTH: Final = 3
 MAX_ANY_OF: Final = 8
 #: A list-valued field (unknown keys, name lists, ...) names at most this many bad
@@ -476,6 +487,15 @@ class RuntimeView(Protocol):
         game seconds ago (of its latest :data:`MAX_TRACKED_FINISHES` finished tasks).
 
         Kept for every node a ``recent_task_count_compare`` names (0 for any other).
+        """
+        ...
+
+    def assignment_age(self, node_id: str) -> float | None:
+        """Game seconds since action node ``node_id`` last took charge of an entity
+        that was not already in its charge; None if it never did.
+
+        Kept while the policy reads assignments (None otherwise); it outlives the
+        entity, so a replacement after a loss is spaced from the previous claim.
         """
         ...
 
@@ -1141,6 +1161,78 @@ def _game_time_compare(view: RuntimeView, args: Args) -> OpOutcome:
         ok,
         f"game time {now:.2f} {op} {seconds:g} {verdict}",
         {"game_seconds": now, "op": op, "seconds": seconds},
+    )
+
+
+def _sighting_count_compare(view: RuntimeView, args: Args) -> OpOutcome:
+    """Count the enemy sightings matching the node's filter, seen at most ``max_age``
+    game seconds ago (and visible now / only remembered, per ``visibility``).
+
+    The filter reads each sighting's entity *as it was last seen*: a ``within``
+    radius measures the last-seen position, never where the entity is now. Facts
+    carry the count split by visibility and the newest/oldest sighting age (the
+    safety facts plan choices read). One pass over the bounded memory.
+    """
+    filt = view.node_filter()
+    max_age = _arg_num(args, "max_age")
+    visibility = _arg_str(args, "visibility")
+    op = _arg_str(args, "op")
+    expected = _arg_int(args, "value")
+    now = view.observation.game_seconds
+    ages: list[float] = []
+    visible = 0
+    for sighting in view.observation.enemy_sightings:
+        age = sighting.age(now)
+        if age > max_age:
+            continue
+        if (visibility == "visible" and not sighting.visible) or (
+            visibility == "remembered" and sighting.visible
+        ):
+            continue
+        if not entity_matches(sighting.entity, filt, view):
+            continue
+        ages.append(age)
+        if sighting.visible:
+            visible += 1
+    count = len(ages)
+    ok = compare(count, op, expected)
+    verdict = "holds" if ok else "does not hold"
+    return OpOutcome(
+        ok,
+        f"{count} enemy sighting(s) within {max_age:g}s ({visibility}) {op} {expected} {verdict}",
+        {
+            "count": count,
+            "visible": visible,
+            "remembered": count - visible,
+            "newest_age": round(min(ages), 2) if ages else None,
+            "oldest_age": round(max(ages), 2) if ages else None,
+            "max_age": max_age,
+            "visibility": visibility,
+            "op": op,
+            "value": expected,
+        },
+    )
+
+
+def _assignment_age_compare(view: RuntimeView, args: Args) -> OpOutcome:
+    """Compare the game seconds since an action node last took charge of a new
+    member; a node that never did compares as infinitely long ago."""
+    node_id = _arg_str(args, "node")
+    op = _arg_str(args, "op")
+    seconds = _arg_num(args, "seconds")
+    age = view.assignment_age(node_id)
+    ok = compare(math.inf if age is None else age, op, seconds)
+    verdict = "holds" if ok else "does not hold"
+    shown = "never" if age is None else f"{age:.2f}s ago"
+    return OpOutcome(
+        ok,
+        f"{node_id} last took charge of a new member {shown}; {op} {seconds:g}s {verdict}",
+        {
+            "node": node_id,
+            "age": None if age is None else round(age, 2),
+            "op": op,
+            "seconds": seconds,
+        },
     )
 
 
@@ -1854,6 +1946,35 @@ _SPECS: Final[tuple[OperationSpec, ...]] = (
             "seconds": ArgSpec("number", minimum=0.0, maximum=86400.0, param=True),
         },
         _game_time_compare,
+    ),
+    PredicateOp(
+        "sighting_count_compare",
+        "Compare how many enemies the bot has seen that match a filter (applied to each "
+        "entity as last seen: a 'within' radius measures its last-seen position), seen at "
+        "most max_age game seconds ago; visibility 'visible' counts only those in sight "
+        "now, 'remembered' only those out of sight",
+        {
+            "filter": ArgSpec("filter", required=False),
+            "max_age": ArgSpec("number", minimum=0.0, maximum=MAX_ELAPSED_SECONDS, param=True),
+            "visibility": ArgSpec(
+                "enum", required=False, choices=SIGHTING_VISIBILITIES, default="any"
+            ),
+            "op": _COMPARATOR,
+            "value": ArgSpec("int", minimum=0, maximum=1000, param=True),
+        },
+        _sighting_count_compare,
+    ),
+    PredicateOp(
+        "assignment_age_compare",
+        "Compare the game seconds since an action node last took charge of an entity "
+        "that was not already in its charge (never: infinitely long ago); spaces "
+        "replacements such as a new scout",
+        {
+            "node": ArgSpec("node", tracks="assignments"),
+            "op": _COMPARATOR,
+            "seconds": ArgSpec("number", minimum=0.0, maximum=MAX_ELAPSED_SECONDS, param=True),
+        },
+        _assignment_age_compare,
     ),
     SelectOp(
         "select_entities",

@@ -540,13 +540,24 @@ the steps numerically and bypass 224's dependency before live tests.
 ### Step 215: Scout with bounded, honest enemy memory
 - **Problem:** Give v2 fresh observed information for later plan choices.
 - **Type:** code
-- **Status:** PENDING
+- **Status:** DONE (2026-10-09)
 - **Issue:** #332
 - **Flags:** --reviewers deep
 - **Files:** src/jev/contracts.py, src/jev/sc2_adapter.py, src/jev/operations.py, src/jev/runtime.py, bots/jev/v2/policy.json, tests/test_jev_scouting.py (new), tests/test_jev_sc2.py.
 - **Produces:** One-Probe scouting branch, timestamped bounded sightings and safety facts.
 - **Done when:** Controller-to-adapter tests cover scout loss/retreat/replacement, aged unseen units, removed visible-absent structures and hidden-state exclusion; economy cannot reclaim a scout mid-task; scouting never consumes all root evaluation budget.
 - **Depends on:** 214
+- **Build notes (2026-10-09):**
+  - v2 gains a 7th root, a one-Probe scouting lane. Replacements are rate-limited to one every 60 s, per D3.
+  - New operations: `sighting_count_compare` and `assignment_age_compare`.
+  - The v2 policy hash is `d7a262c7…` (128 nodes); v1 is unchanged.
+  - The SC2 adapter keeps enemy sightings capped at `MAX_ENEMY_SIGHTINGS` and drops unseen units after 30 s. Fogged and hidden state is excluded, and structures whose site is visible and empty are removed.
+  - `is_visible` is queried at most once per position per step.
+  - `Sc2Adapter.remember()` between ticks now also reads `enemy_units`. This affects the v1 path too; reviewers verified it has no gameplay effect.
+  - Enemy workers are not scout threats.
+  - The two scout threat filters in `policy.json` (`scouting.retreat.threat`, `scouting.scout.unit.replace.safe`) must stay identical. A drift test enforces this, because the policy cannot share a named filter.
+  - Also touched `bots/jev/v2/__init__.py` (docstring only).
+  - Reviewed by `/review-deep` (6 lenses) over 2 iterations. Evidence in `.build-step/jev-v2-215/` (gitignored).
 
 ### Step 216: Execute a gas economy safely
 - **Problem:** Collect and reserve gas through visible graph actions.

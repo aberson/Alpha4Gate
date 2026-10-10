@@ -35,7 +35,13 @@ from sc2.unit import Unit
 import jev.bot as bot_module
 from jev import runner
 from jev.bot import JevBot, JevController
-from jev.contracts import MAX_ENTITY_ORDERS, MAX_OBSERVED_ENTITIES, CommandSpec, Order
+from jev.contracts import (
+    MAX_ENEMY_SIGHTINGS,
+    MAX_ENTITY_ORDERS,
+    MAX_OBSERVED_ENTITIES,
+    CommandSpec,
+    Order,
+)
 from jev.operations import BUILD_ABILITY, COMMAND_ABILITIES, MAX_PLACEMENT_CANDIDATES
 from jev.runner import (
     EXIT_FAILURE,
@@ -248,6 +254,113 @@ def test_failed_observation_leaves_adapter_memory_untouched() -> None:
         adapter.observe(_game(minerals=-1), port)
     later = adapter.observe(_game(state=SimpleNamespace(game_loop=448)), port)
     assert [e.tag for e in later.remembered_enemy_structures] == [7200]
+
+
+# ---------------------------------------------------------------------------
+# Enemy sighting memory (plan J2 Step 215): only what the bot saw, bounded
+# ---------------------------------------------------------------------------
+
+
+def _at(loop: int, **fields: Any) -> SimpleNamespace:
+    return _game(state=SimpleNamespace(game_loop=loop), **fields)
+
+
+def test_sightings_hold_only_visible_enemies_with_the_time_they_were_seen() -> None:
+    """Fogged snapshots -- a structure never scouted, a unit on unseen high ground --
+    never enter memory, however much true state they carry; a visible enemy enters
+    without its orders, stamped with its sighting's game time; a glimpse between
+    policy ticks (``remember``) is kept with its own time."""
+    adapter, port = Sc2Adapter(), _Port()
+    hidden_main = _unit(
+        7100, "CommandCenter", position=(120.5, 120.5), is_structure=True, is_visible=False
+    )
+    hidden_unit = _unit(7101, "Marine", position=(60.0, 60.0), is_visible=False)
+    marine = _unit(7000, "Marine", position=(40.0, 40.0), orders=[_order("ATTACK", 2000)])
+    first = adapter.observe(
+        _at(224, enemy_units=[marine, hidden_unit], enemy_structures=[hidden_main]), port
+    )
+    (sighting,) = first.enemy_sightings
+    assert (sighting.entity.tag, sighting.visible) == (7000, True)
+    assert sighting.last_seen_game_seconds == 10.0 and sighting.entity.orders == ()
+    assert adapter.sightings == first.enemy_sightings  # the observation carries the memory
+    bunker = _unit(7200, "Bunker", position=(60.0, 60.0), is_structure=True)
+    adapter.remember(_at(228, enemy_structures=[bunker, hidden_main]), port)  # a glimpse
+    later = adapter.observe(_at(232, enemy_units=[hidden_unit]), port)
+    by_tag = {s.entity.tag: s for s in later.enemy_sightings}
+    assert set(by_tag) == {7000, 7200}  # never the snapshots
+    assert by_tag[7200].last_seen_game_seconds == 228 / GAME_LOOPS_PER_SECOND
+    assert not by_tag[7000].visible and not by_tag[7200].visible
+    assert [s.entity.tag for s in later.enemy_sightings] == [7000, 7200]  # by tag
+    assert later.visible_enemies == ()
+
+
+def test_unseen_unit_sightings_expire_and_structures_wait_for_vision() -> None:
+    """An unseen unit keeps its last-seen state for 30 game seconds, then is gone; a
+    fogged structure stays however old (its snapshot's newer state ignored) until
+    vision covers its position without it."""
+    adapter, port = Sc2Adapter(), _Port()
+    marine = _unit(7000, "Marine", position=(40.0, 40.0), health=45.0)
+    gateway = _unit(7300, "Gateway", position=(90.0, 90.0), is_structure=True, health=500.0)
+    adapter.observe(_at(224, enemy_units=[marine], enemy_structures=[gateway]), port)
+    moved = _unit(7000, "Marine", position=(70.0, 70.0), health=5.0, is_visible=False)
+    snapshot = _unit(
+        7300, "Gateway", position=(90.0, 90.0), is_structure=True, health=50.0, is_visible=False
+    )
+    kept = adapter.observe(_at(895, enemy_units=[moved], enemy_structures=[snapshot]), port)
+    remembered = {s.entity.tag: s for s in kept.enemy_sightings}
+    assert remembered[7000].entity.position == (40.0, 40.0)  # where it was seen, 29.96 s ago
+    assert remembered[7000].entity.health == 45.0 and not remembered[7000].visible
+    expired = adapter.observe(_at(897, enemy_structures=[snapshot]), port)
+    (gate,) = expired.enemy_sightings  # the unit's sighting is 30.04 s old: forgotten
+    assert gate.entity.health == 500.0 and gate.last_seen_game_seconds == 10.0
+    old = adapter.observe(_at(22_400, enemy_structures=[snapshot]), port)  # 990 s later
+    assert [s.entity.tag for s in old.enemy_sightings] == [7300]
+    port.visible = lambda point: point == (90.0, 90.0)  # its site in sight, it is not there
+    assert adapter.observe(_at(22_404), port).enemy_sightings == ()
+
+
+def test_both_enemy_memories_share_one_vision_query_per_position_and_step() -> None:
+    """A fogged structure sits in both memories; its site is asked about once a step."""
+    asked: list[tuple[float, float]] = []
+
+    def visible(point: tuple[float, float]) -> bool:
+        asked.append(point)
+        return False
+
+    adapter, port = Sc2Adapter(), _Port(visible=visible)
+    bunker = _unit(7200, "Bunker", position=(60.0, 60.0), is_structure=True)
+    adapter.observe(_at(224, enemy_structures=[bunker]), port)
+    assert asked == []  # in sight: nothing to revalidate
+    adapter.remember(_at(228), port)
+    adapter.observe(_at(232), port)
+    assert asked == [(60.0, 60.0), (60.0, 60.0)]  # once per step, not once per memory
+    kept = adapter.observe(_at(236), port)
+    assert [e.tag for e in kept.remembered_enemy_structures] == [7200]
+    assert [s.entity.tag for s in kept.enemy_sightings] == [7200]
+
+
+def test_sighting_memory_is_capped_by_evicting_the_oldest() -> None:
+    adapter, port = Sc2Adapter(), _Port()
+    extra = 44
+    for index in range(MAX_ENEMY_SIGHTINGS + extra):  # one new unit a loop: none expires
+        marine = _unit(10_000 + index, "Marine", position=(40.0, 40.0))
+        adapter.remember(_at(index, enemy_units=[marine]), port)
+    kept = adapter.observe(_at(MAX_ENEMY_SIGHTINGS + extra), port).enemy_sightings
+    assert len(kept) == MAX_ENEMY_SIGHTINGS
+    assert [s.entity.tag for s in kept] == list(
+        range(10_000 + extra, 10_000 + MAX_ENEMY_SIGHTINGS + extra)
+    )  # the 44 oldest sightings were evicted
+
+
+def test_failed_observation_leaves_sighting_memory_untouched() -> None:
+    adapter, port = Sc2Adapter(), _Port()
+    marine = _unit(7000, "Marine", position=(40.0, 40.0))
+    before = adapter.observe(_at(224, enemy_units=[marine]), port).enemy_sightings
+    with pytest.raises(ValueError):
+        adapter.observe(_at(448, minerals=-1), port)
+    with pytest.raises(ValueError):
+        adapter.remember(_at(448, enemy_units=[_unit(7001, "Marine", position=math.nan)]), port)
+    assert adapter.sightings == before  # still marked visible at its first sighting
 
 
 class _Exploding:

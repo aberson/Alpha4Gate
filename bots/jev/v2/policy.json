@@ -6,6 +6,7 @@
     "economy",
     "supply",
     "construction",
+    "scouting",
     "production",
     "army",
     "reserve"
@@ -23,7 +24,12 @@
     "reinforcement_group_size": 4,
     "regroup_below": 4,
     "build_failure_limit": 3,
-    "build_failure_window": 30
+    "build_failure_window": 30,
+    "scout_replace_interval": 60,
+    "scout_threat_radius": 7,
+    "scout_threat_age": 2,
+    "scout_arrive_within": 6,
+    "scout_safe_within": 5
   },
   "nodes": [
     {
@@ -58,7 +64,7 @@
     },
     {
       "id": "economy.idle_probes",
-      "label": "Idle probes not held by a task",
+      "label": "Idle probes not held by a task (never the scout)",
       "kind": "select",
       "children": [],
       "operation": "select_entities",
@@ -75,6 +81,7 @@
         },
         "limit": 32,
         "exclude_busy": true,
+        "not_assigned_to": "scouting.move",
         "bind": "idle_probes"
       }
     },
@@ -299,7 +306,7 @@
     },
     {
       "id": "supply.first.worker",
-      "label": "Nearest available mining or idle probe to the site, tie by tag",
+      "label": "Nearest available mining or idle probe to the site, tie by tag (never the scout)",
       "kind": "select",
       "children": [],
       "operation": "select_entities",
@@ -327,6 +334,7 @@
         },
         "limit": 1,
         "exclude_busy": true,
+        "not_assigned_to": "scouting.move",
         "bind": "first_pylon_builder"
       }
     },
@@ -580,7 +588,7 @@
     },
     {
       "id": "supply.buffer.worker",
-      "label": "Nearest available mining or idle probe to the site, tie by tag",
+      "label": "Nearest available mining or idle probe to the site, tie by tag (never the scout)",
       "kind": "select",
       "children": [],
       "operation": "select_entities",
@@ -608,6 +616,7 @@
         },
         "limit": 1,
         "exclude_busy": true,
+        "not_assigned_to": "scouting.move",
         "bind": "buffer_pylon_builder"
       }
     },
@@ -828,7 +837,7 @@
     },
     {
       "id": "construction.repower.worker",
-      "label": "Nearest available mining or idle probe to the site, tie by tag",
+      "label": "Nearest available mining or idle probe to the site, tie by tag (never the scout)",
       "kind": "select",
       "children": [],
       "operation": "select_entities",
@@ -856,6 +865,7 @@
         },
         "limit": 1,
         "exclude_busy": true,
+        "not_assigned_to": "scouting.move",
         "bind": "repower_builder"
       }
     },
@@ -981,7 +991,7 @@
     },
     {
       "id": "construction.gateways.worker",
-      "label": "Nearest available mining or idle probe to the site, tie by tag",
+      "label": "Nearest available mining or idle probe to the site, tie by tag (never the scout)",
       "kind": "select",
       "children": [],
       "operation": "select_entities",
@@ -1009,6 +1019,7 @@
         },
         "limit": 1,
         "exclude_busy": true,
+        "not_assigned_to": "scouting.move",
         "bind": "gateway_builder"
       }
     },
@@ -1023,6 +1034,389 @@
         "worker": "$gateway_builder",
         "site": "$gateway_site",
         "hold_reservation": true
+      }
+    },
+    {
+      "id": "scouting",
+      "label": "Scouting: one Probe visits enemy and expansion sites; retreats when threatened",
+      "kind": "selector",
+      "children": [
+        "scouting.retreating",
+        "scouting.retreat",
+        "scouting.scout"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "scouting.retreating",
+      "label": "A threatened scout is still on its way home (nothing else until it arrives)",
+      "kind": "condition",
+      "children": [],
+      "operation": "task_count_compare",
+      "args": {
+        "node": "scouting.retreat.go",
+        "statuses": [
+          "pending",
+          "issued",
+          "running"
+        ],
+        "op": ">=",
+        "value": 1
+      }
+    },
+    {
+      "id": "scouting.retreat",
+      "label": "Retreat: send the scout home when a threat was just seen near it",
+      "kind": "sequence",
+      "children": [
+        "scouting.retreat.scout",
+        "scouting.retreat.threat",
+        "scouting.retreat.home",
+        "scouting.retreat.go"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "scouting.retreat.scout",
+      "label": "The current scout",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_units",
+        "filter": {
+          "types": [
+            "Probe"
+          ]
+        },
+        "sort": {
+          "by": "tag"
+        },
+        "limit": 1,
+        "assigned_to": "scouting.move",
+        "bind": "scout"
+      }
+    },
+    {
+      "id": "scouting.retreat.threat",
+      "label": "An enemy that can hurt the scout was seen within the threat radius just now",
+      "kind": "condition",
+      "children": [],
+      "operation": "sighting_count_compare",
+      "args": {
+        "filter": {
+          "within": {
+            "point": "$scout",
+            "distance": {
+              "param": "scout_threat_radius"
+            }
+          },
+          "any_of": [
+            {
+              "structure": false,
+              "exclude_types": [
+                "SCV",
+                "MULE",
+                "Drone",
+                "Probe",
+                "Larva",
+                "Egg",
+                "Overlord",
+                "OverlordTransport",
+                "Overseer",
+                "Observer",
+                "Medivac",
+                "WarpPrism",
+                "Changeling",
+                "AdeptPhaseShift"
+              ]
+            },
+            {
+              "types": [
+                "Bunker",
+                "PhotonCannon",
+                "SpineCrawler",
+                "PlanetaryFortress"
+              ]
+            }
+          ]
+        },
+        "max_age": {
+          "param": "scout_threat_age"
+        },
+        "op": ">=",
+        "value": 1
+      }
+    },
+    {
+      "id": "scouting.retreat.home",
+      "label": "Safety: the home base",
+      "kind": "select",
+      "children": [],
+      "operation": "select_point",
+      "args": {
+        "from": "start_location",
+        "toward": "map_center",
+        "distance": 0,
+        "bind": "scout_safety"
+      }
+    },
+    {
+      "id": "scouting.retreat.go",
+      "label": "Return the threatened scout home (it then mines again; the next scout is spaced)",
+      "kind": "action",
+      "children": [],
+      "operation": "move",
+      "args": {
+        "units": "$scout",
+        "target": "$scout_safety",
+        "arrive_within": {
+          "param": "scout_safe_within"
+        },
+        "preempt": true
+      }
+    },
+    {
+      "id": "scouting.scout",
+      "label": "Scout: keep the one scout touring sites, least recently visited first",
+      "kind": "sequence",
+      "children": [
+        "scouting.scout.unit",
+        "scouting.scout.origin",
+        "scouting.scout.next",
+        "scouting.move"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "scouting.scout.unit",
+      "label": "The current scout, else a spaced replacement",
+      "kind": "selector",
+      "children": [
+        "scouting.scout.unit.current",
+        "scouting.scout.unit.replace"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "scouting.scout.unit.current",
+      "label": "The current scout (owned by the scouting lane until it dies or retreats)",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_units",
+        "filter": {
+          "types": [
+            "Probe"
+          ]
+        },
+        "sort": {
+          "by": "tag"
+        },
+        "limit": 1,
+        "assigned_to": "scouting.move",
+        "bind": "scout"
+      }
+    },
+    {
+      "id": "scouting.scout.unit.replace",
+      "label": "Reserve a new scout: only after the first Gateway, spaced, never into a threat",
+      "kind": "sequence",
+      "children": [
+        "scouting.scout.unit.replace.gateway",
+        "scouting.scout.unit.replace.spaced",
+        "scouting.scout.unit.replace.calm",
+        "scouting.scout.unit.replace.pick",
+        "scouting.scout.unit.replace.safe"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "scouting.scout.unit.replace.gateway",
+      "label": "The first Gateway has been started",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Gateway"
+          ]
+        },
+        "op": ">=",
+        "value": 1
+      }
+    },
+    {
+      "id": "scouting.scout.unit.replace.spaced",
+      "label": "The previous scout was reserved at least the replacement interval ago",
+      "kind": "condition",
+      "children": [],
+      "operation": "assignment_age_compare",
+      "args": {
+        "node": "scouting.move",
+        "op": ">=",
+        "seconds": {
+          "param": "scout_replace_interval"
+        }
+      }
+    },
+    {
+      "id": "scouting.scout.unit.replace.calm",
+      "label": "No scout retreated within the replacement interval",
+      "kind": "condition",
+      "children": [],
+      "operation": "recent_task_count_compare",
+      "args": {
+        "node": "scouting.retreat.go",
+        "statuses": [
+          "succeeded",
+          "failed",
+          "cancelled"
+        ],
+        "within": {
+          "param": "scout_replace_interval"
+        },
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "scouting.scout.unit.replace.pick",
+      "label": "A mining or idle probe no task holds",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_units",
+        "filter": {
+          "types": [
+            "Probe"
+          ],
+          "any_of": [
+            {
+              "idle": true
+            },
+            {
+              "order_in": [
+                "HARVEST_GATHER",
+                "HARVEST_RETURN"
+              ]
+            }
+          ]
+        },
+        "sort": {
+          "by": "tag"
+        },
+        "limit": 1,
+        "exclude_busy": true,
+        "bind": "scout"
+      }
+    },
+    {
+      "id": "scouting.scout.unit.replace.safe",
+      "label": "No threat was just seen near the probe (home is not under attack there)",
+      "kind": "condition",
+      "children": [],
+      "operation": "sighting_count_compare",
+      "args": {
+        "filter": {
+          "within": {
+            "point": "$scout",
+            "distance": {
+              "param": "scout_threat_radius"
+            }
+          },
+          "any_of": [
+            {
+              "structure": false,
+              "exclude_types": [
+                "SCV",
+                "MULE",
+                "Drone",
+                "Probe",
+                "Larva",
+                "Egg",
+                "Overlord",
+                "OverlordTransport",
+                "Overseer",
+                "Observer",
+                "Medivac",
+                "WarpPrism",
+                "Changeling",
+                "AdeptPhaseShift"
+              ]
+            },
+            {
+              "types": [
+                "Bunker",
+                "PhotonCannon",
+                "SpineCrawler",
+                "PlanetaryFortress"
+              ]
+            }
+          ]
+        },
+        "max_age": {
+          "param": "scout_threat_age"
+        },
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "scouting.scout.origin",
+      "label": "Enemy start (the tour begins nearest it)",
+      "kind": "select",
+      "children": [],
+      "operation": "select_locations",
+      "args": {
+        "source": "enemy_start_locations",
+        "sort": {
+          "by": "distance",
+          "from": "start_location"
+        },
+        "limit": 1,
+        "bind": "scout_origin"
+      }
+    },
+    {
+      "id": "scouting.scout.next",
+      "label": "Next site: never-visited first, else the one visited longest ago",
+      "kind": "select",
+      "children": [],
+      "operation": "select_locations",
+      "args": {
+        "source": "expansion_locations",
+        "sort": {
+          "by": "distance",
+          "from": "$scout_origin"
+        },
+        "least_recently_visited_by": "scouting.move",
+        "limit": 1,
+        "bind": "scout_target"
+      }
+    },
+    {
+      "id": "scouting.move",
+      "label": "Move the scout to the next site",
+      "kind": "action",
+      "children": [],
+      "operation": "move",
+      "args": {
+        "units": "$scout",
+        "target": "$scout_target",
+        "arrive_within": {
+          "param": "scout_arrive_within"
+        },
+        "preempt": true
       }
     },
     {
