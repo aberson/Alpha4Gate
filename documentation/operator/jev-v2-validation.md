@@ -233,12 +233,13 @@ than one game second is missing coverage, not zero. Every metric is labeled
 
 - **Measured:** first attack, first expansion Nexus, first Cybernetics Core and first
   Stalker times; supply-blocked seconds; ready, powered, idle Gateway seconds while
-  resources and supply suffice; mean mineral bank; worker final/max/mean; unit losses
+  resources and supply suffice; mean mineral and vespene bank; worker final/max/mean; unit losses
   from own tag disappearances; accepted and rejected commands; model calls, answers,
   accepted and stale answers, failures, returned models, latency and tokens.
 - **v1 limitations:** v1 never builds the last three milestones, so they read
-  `not_reached`. Gas bank and plan aborts read `unavailable`, because v1 observes no
-  gas and has no plans.
+  `not_reached`. Plan aborts read `unavailable`, because v1 has no plans. The frozen
+  v1 baseline's gas bank also reads `unavailable` (its frozen source observes no gas);
+  the current runtime observes gas since Step 216, so v2 runs measure it.
 - **Cost:** token counts are reported, but no currency cost is claimed. The
   scorecard's `service` totals sum **every attempt** of every case, valid or invalid.
   An interrupted attempt that was retried still counts, because each case's `spent`

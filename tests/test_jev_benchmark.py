@@ -1735,6 +1735,20 @@ def test_metrics_reach_the_archive_through_the_production_runner(tmp_path: Path)
     assert metadata is not None and metadata.policy_hash == V1_HASH
 
 
+def test_a_v1_run_archives_and_scores_a_measured_zero_gas_bank(tmp_path: Path) -> None:
+    """Since Step 216 every Observation carries the gas bank, so the D6 mean gas bank is
+    measured for every version, as the mineral bank is. v1 never collects gas: it reads
+    0.0, never unavailable, and the scorecard carries it through as a valid case."""
+    options = _options(SCRIPTED)
+    run_id = _play(tmp_path, options)
+    metrics = _diagnostics(tmp_path / run_id)["metrics"]
+    assert metrics["mean_vespene_bank"] == {"status": "measured", "value": 0.0}
+    assert metrics["mean_mineral_bank"]["status"] == "measured"  # labelled the same way
+    scored = score_run(tmp_path, run_id, _expect(options))
+    assert (scored.status, scored.findings) == ("complete", ())
+    assert scored.metrics["mean_vespene_bank"] == {"status": "measured", "value": 0.0}
+
+
 def test_metrics_are_observation_only_and_v1_behavior_is_unchanged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

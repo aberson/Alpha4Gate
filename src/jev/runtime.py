@@ -17,9 +17,11 @@ One :class:`JevRuntime` executes one validated policy for one run:
   (``running``) without spinning.
 * **Side effects.** Only through tasks, deduplicated by ``intent_key`` (node ID
   plus the operation's semantic target), so re-evaluation never duplicates an
-  active task. Task IDs are ``run_id:counter``. Mineral/supply commitments of
-  unacknowledged tasks and this tick's holds are subtracted before later nodes
-  spend; an actor held by a task cannot be taken by another node unless the
+  active task. Task IDs are ``run_id:counter``. Mineral/vespene/supply
+  commitments of unacknowledged tasks and this tick's holds are subtracted before
+  later nodes spend; a commitment ends when the observation acknowledges the task
+  (SC2 has then deducted the cost) or the task fails, so no cost is ever charged
+  twice. An actor held by a task cannot be taken by another node unless the
   action opts into same-lane ``preempt``.
 * **Lifecycle (D4).** Issuance is not success: acknowledgement comes from the
   observation (structure progress, queued order, unit order/position). A rejected
@@ -136,7 +138,10 @@ from jev.contracts import (
 from jev.operations import (
     MAX_TRACKED_FINISHES,
     OP_BUILD,
+    OP_BUILD_GAS,
     OP_GATHER,
+    OP_GATHER_GAS,
+    OP_RELEASE_GAS,
     OPERATIONS,
     PARAM_STRUCTURE,
     PARAM_TARGET_TAG,
@@ -152,6 +157,7 @@ from jev.operations import (
     TrackedMemory,
     Visit,
     compile_filter,
+    decode_site,
     distance,
     resolve_args,
     tracked_nodes,
@@ -199,6 +205,9 @@ REFUSAL_CAUSES: Final[frozenset[FailureCause]] = frozenset({"rejected", "unackno
 SITE_EXCLUSION_CAUSES: Final[frozenset[FailureCause]] = frozenset({"rejected", "unacknowledged"})
 #: Task states whose command is not yet confirmed: cost committed, actor held.
 UNACKNOWLEDGED_STATUSES: Final[frozenset[TaskStatus]] = frozenset({"pending", "issued"})
+#: Operations whose tasks send a worker to gather (minerals or gas): their
+#: unacknowledged tasks count toward a resource's workers.
+_GATHER_OPERATIONS: Final = frozenset({OP_GATHER, OP_GATHER_GAS, OP_RELEASE_GAS})
 #: Pseudo node id for runtime diagnostics that no policy node originated (it can
 #: never collide with an authored id: authored ids must match NODE_ID_RE).
 RUNTIME_NODE_ID: Final = "@runtime"
@@ -276,7 +285,11 @@ def _check_entity(path: str, entity: object) -> None:
             raise ValueError(f"observation {path}.{field_name} must be a finite number")
     if not is_bounded_number(entity.shield) or entity.shield < 0:
         raise ValueError(f"observation {path}.shield must be a finite number >= 0")
-    for field_name in ("is_structure", "is_flying"):
+    for field_name in ("vespene_contents", "assigned_harvesters", "ideal_harvesters"):
+        count = getattr(entity, field_name)
+        if not _is_int(count) or not 0 <= count <= MAX_ABS_NUMBER:
+            raise ValueError(f"observation {path}.{field_name} must be a non-negative int")
+    for field_name in ("is_structure", "is_flying", "carrying_vespene"):
         if not isinstance(getattr(entity, field_name), bool):
             raise ValueError(f"observation {path}.{field_name} must be a bool")
     for field_name in ("ready", "idle", "powered"):
@@ -424,6 +437,7 @@ class _TaskRecord:
     issued_at: float
     attempts: int
     reason: str
+    vespene: int = 0
     acknowledged_at: float | None = None
     next_attempt_at: float | None = None
     last_progress_at: float | None = None
@@ -458,6 +472,27 @@ class _TaskRecord:
         if self.lifecycle.tracks_movement and self.last_progress_at is not None:
             return self.last_progress_at + config.replan_after_seconds
         return None
+
+    def build_sites(self) -> tuple[Point, ...]:
+        """The sites a build task tried: a point build's candidates, a gas build's
+        geyser position; () for any other task."""
+        if self.operation == OP_BUILD and isinstance(self.target, tuple):
+            return (self.target, *self.alternatives)
+        if self.operation == OP_BUILD_GAS:
+            site = decode_site(self.params)
+            return () if site is None else (site,)
+        return ()
+
+    def cost_facts(self) -> dict[str, JsonValue]:
+        """Gas-costing tasks show their cost and whether it is still committed (D5
+        facts; a task without a gas cost adds none, so older traces are unchanged)."""
+        if not self.vespene:
+            return {}
+        return {
+            "minerals": self.minerals,
+            "vespene": self.vespene,
+            "cost_committed": self.committed(),
+        }
 
     def subject(self) -> TaskSubject:
         return TaskSubject(
@@ -550,6 +585,9 @@ class _View:
     def available_minerals(self) -> int:
         return self._runtime._available_minerals(self._observation)
 
+    def available_vespene(self) -> int:
+        return self._runtime._available_vespene(self._observation)
+
     def available_supply(self) -> int:
         return self._runtime._available_supply(self._observation)
 
@@ -580,14 +618,24 @@ class _View:
     def in_flight_builds(self) -> tuple[tuple[str, Point], ...]:
         found: list[tuple[str, Point]] = []
         for task in self._runtime._active.values():
-            if task.operation == OP_BUILD and task.committed() and isinstance(task.target, tuple):
+            if not task.committed():
+                continue
+            if task.operation == OP_BUILD and isinstance(task.target, tuple):
                 found.append((str(task.params.get(PARAM_STRUCTURE, "")), task.target))
+            elif task.operation == OP_BUILD_GAS:
+                site = decode_site(task.params)
+                if site is not None:
+                    found.append((str(task.params.get(PARAM_STRUCTURE, "")), site))
         return tuple(found)
 
     def gather_assignments(self) -> Mapping[int, int]:
         counts: Counter[int] = Counter()
         for task in self._runtime._active.values():
-            if task.operation == OP_GATHER and task.committed() and isinstance(task.target, int):
+            if (
+                task.operation in _GATHER_OPERATIONS
+                and task.committed()
+                and isinstance(task.target, int)
+            ):
                 counts[task.target] += 1
         return counts
 
@@ -728,6 +776,7 @@ class JevRuntime:
         self._commands: list[CommandSpec] = []
         self._reserved_actors: set[int] = set()
         self._held_minerals = 0
+        self._held_vespene = 0
         self._held_supply = 0
         self._node_status: dict[str, NodeStatus] = {}
         self._waiting_nodes: set[str] = set()
@@ -830,6 +879,7 @@ class JevRuntime:
         self._commands = []
         self._reserved_actors = set()
         self._held_minerals = 0
+        self._held_vespene = 0
         self._held_supply = 0
         self._node_status = {}
         self._waiting_nodes = set()
@@ -925,7 +975,7 @@ class JevRuntime:
     def _check_numbers(observation: Observation) -> None:
         """Every Observation/Entity/Order field has the contract type and a bounded
         value; violations raise ValueError naming the field path (never mutate)."""
-        for name in ("minerals", "supply_used", "supply_cap"):
+        for name in ("minerals", "vespene", "supply_used", "supply_cap"):
             value = getattr(observation, name)
             if not _is_int(value) or not 0 <= value <= MAX_ABS_NUMBER:
                 raise ValueError(
@@ -1145,6 +1195,7 @@ class JevRuntime:
                 "actor_tag": str(task.actor_tag),
                 "attempts": task.attempts,
                 "failure_cause": task.failure_cause,
+                **task.cost_facts(),
             },
         )
 
@@ -1153,6 +1204,10 @@ class JevRuntime:
     def _available_minerals(self, observation: Observation) -> int:
         committed = sum(t.minerals for t in self._active.values() if t.committed())
         return observation.minerals - committed - self._held_minerals
+
+    def _available_vespene(self, observation: Observation) -> int:
+        committed = sum(t.vespene for t in self._active.values() if t.committed())
+        return observation.vespene - committed - self._held_vespene
 
     def _available_supply(self, observation: Observation) -> int:
         committed = sum(t.supply for t in self._active.values() if t.committed())
@@ -1210,12 +1265,8 @@ class JevRuntime:
             until = self._last_game_seconds + self._life.failure_cooldown_seconds
             self._cooldowns[task.intent_key] = until
             excluded: list[JsonValue] = []
-            if (
-                task.operation == OP_BUILD
-                and task.failure_cause in SITE_EXCLUSION_CAUSES
-                and isinstance(task.target, tuple)
-            ):
-                sites = (task.target, *task.alternatives)
+            sites = task.build_sites()
+            if sites and task.failure_cause in SITE_EXCLUSION_CAUSES:
                 structure = str(task.params.get(PARAM_STRUCTURE, ""))
                 self._rejected_sites[task.intent_key] = (structure, frozenset(sites), until)
                 excluded = [[site[0], site[1]] for site in sites]
@@ -1549,7 +1600,7 @@ class JevRuntime:
             "command",
             "issued",
             f"{task.ability} for task {task.id}",
-            {"intent_key": task.intent_key, "attempt": task.attempts},
+            {"intent_key": task.intent_key, "attempt": task.attempts, **task.cost_facts()},
             command.to_dict(),
         )
 
@@ -1696,6 +1747,10 @@ class JevRuntime:
                 if plan.hold_reservation:
                     self._held_minerals += max(0, min(intent.minerals, view.available_minerals()))
                     self._held_supply += max(0, min(intent.supply, view.available_supply()))
+                    if intent.vespene:  # a gas cost shows what it holds (D5 facts)
+                        held = max(0, min(intent.vespene, view.available_vespene()))
+                        self._held_vespene += held
+                        facts["held_vespene"] = held
                     waiting_reason = f"waiting for {shortfall}; holding reservation"
                 else:
                     blocked.append(f"insufficient {shortfall}")
@@ -1775,6 +1830,8 @@ class JevRuntime:
     def _shortfall(view: _View, intent: Intent) -> str | None:
         if intent.minerals and intent.minerals > view.available_minerals():
             return "minerals"
+        if intent.vespene and intent.vespene > view.available_vespene():
+            return "vespene"
         if intent.supply and intent.supply > view.available_supply():
             return "supply"
         return None
@@ -1804,6 +1861,7 @@ class JevRuntime:
             params=intent.params,
             minerals=intent.minerals,
             supply=intent.supply,
+            vespene=intent.vespene,
             status="issued",
             created_at=now,
             issued_at=now,

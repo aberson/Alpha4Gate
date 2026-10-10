@@ -2040,3 +2040,230 @@ def test_scenario_events_follow_the_wire_contract(v1_runtime: JevRuntime) -> Non
     state = v1_runtime.run_state(status="running", updated_at="2026-10-07T00:00:00Z").to_dict()
     assert state["policy_hash"] == load_policy().policy_hash
     json.dumps(state)
+
+
+# ---------------------------------------------------------------------------
+# Gas (plan J2 Step 216): vespene reservations and geyser-targeted builds
+# ---------------------------------------------------------------------------
+
+GATES = (_gateway(1100, (26.5, 34.5)), _gateway(1101, (29.5, 34.5)))
+GEYSERS = (
+    Entity(5000, "VespeneGeyser", (37.5, 25.5), 0.0, is_structure=True, vespene_contents=2250),
+    Entity(5001, "VespeneGeyser", (37.5, 36.5), 0.0, is_structure=True, vespene_contents=2250),
+)
+
+
+@pytest.fixture
+def zealot_gas(monkeypatch: pytest.MonkeyPatch) -> int:
+    """A hypothetical 50-gas Zealot (no allowlisted type costs gas before Step 218).
+
+    Concurrent spending and release on acknowledgement/failure run through the
+    production runner in test_jev_macro.py; here only the exact held amount.
+    """
+    import jev.operations as operations
+
+    monkeypatch.setitem(operations.VESPENE_COST, "Zealot", 50)  # type: ignore[arg-type]
+    return 50
+
+
+def _zealot_lane(root: str, order: str, *, hold: bool = False) -> list[dict[str, Any]]:
+    """``root``: the idle Gateway first by tag in ``order``, then one Zealot from it."""
+    return [
+        _node(root, "sequence", [f"{root}.gate", f"{root}.train"]),
+        _node(
+            f"{root}.gate",
+            "select",
+            operation="select_entities",
+            collection="own_structures",
+            filter={"types": ["Gateway"], "idle": True},
+            sort={"by": "tag", "order": order},
+            limit=1,
+            bind="gate",
+        ),
+        _node(
+            f"{root}.train",
+            "action",
+            operation="train",
+            unit="Zealot",
+            producers="$gate",
+            hold_reservation=hold,
+        ),
+    ]
+
+
+_GAS_CHECK = [
+    _node("check", "selector", ["check.gas"]),
+    _node(
+        "check.gas",
+        "condition",
+        operation="resource_compare",
+        resource="vespene",
+        op=">=",
+        value=0,
+    ),
+]
+
+
+def _gas_policy(*, hold: bool = False) -> Policy:
+    nodes = [*_zealot_lane("a", "asc", hold=hold), *_zealot_lane("b", "desc"), *_GAS_CHECK]
+    return _build_policy(["a", "b", "check"], nodes)
+
+
+def _gas_obs(seconds: float, vespene: int) -> Observation:
+    base = _observation(
+        seconds, minerals=1000, supply_cap=40, structures=(_nexus(), *GATES), units=()
+    )
+    return dataclasses.replace(base, vespene=vespene)
+
+
+def _available_gas(result: TickResult) -> object:
+    return _node_events(result)["check.gas"].facts["actual"]
+
+
+def test_a_held_gas_reservation_is_not_spent_by_a_later_lane(zealot_gas: int) -> None:
+    runtime = _runtime_for(_gas_policy(hold=True))
+    result = runtime.tick(_gas_obs(10.0, 30))
+    events = _node_events(result)
+    assert events["a.train"].reason == "waiting for vespene; holding reservation"
+    assert events["a.train"].facts["held_vespene"] == 30
+    assert result.commands == () and _available_gas(result) == 0
+
+
+_NEGATIVE_GAS = dataclasses.replace(GEYSERS[0], vespene_contents=-5)
+_FRACTIONAL_IDEAL = dataclasses.replace(GEYSERS[0], ideal_harvesters=1.5)
+_BOOLEAN_COUNT = dataclasses.replace(_nexus(), assigned_harvesters=True)
+
+
+@pytest.mark.parametrize(
+    ("change", "fragment"),
+    [
+        ({"vespene": -1}, "vespene"),
+        ({"vespene": True}, "vespene"),
+        ({"vespene_geysers": None}, "vespene_geysers"),
+        ({"vespene_geysers": (_NEGATIVE_GAS,)}, "vespene_contents"),
+        ({"vespene_geysers": (_FRACTIONAL_IDEAL,)}, "ideal_harvesters"),
+        ({"own_structures": (_BOOLEAN_COUNT,)}, "assigned_harvesters"),
+    ],
+)
+def test_malformed_gas_observation_fields_are_value_errors(
+    change: dict[str, Any], fragment: str
+) -> None:
+    runtime = _runtime_for(_build_policy(["lane"], _probe_lane("lane")))
+    first = runtime.tick(_observation(10.0, minerals=0))
+    with pytest.raises(ValueError, match=fragment):
+        runtime.tick(dataclasses.replace(_observation(10.5, minerals=0), **change))
+    assert runtime.last_sequence == first.events[-1].sequence
+
+
+def _gas_build_policy() -> Policy:
+    return _build_policy(
+        ["gas"],
+        [
+            _node("gas", "sequence", ["gas.worker", "gas.geysers", "gas.build"]),
+            _node(
+                "gas.worker",
+                "select",
+                operation="select_entities",
+                collection="own_units",
+                filter={"types": ["Probe"]},
+                limit=1,
+                bind="worker",
+            ),
+            _node(
+                "gas.geysers",
+                "select",
+                operation="select_entities",
+                collection="vespene_geysers",
+                filter={"has_vespene": True},
+                sort={"by": "tag"},
+                limit=2,
+                bind="geysers",
+            ),
+            _node(
+                "gas.build",
+                "action",
+                operation="build_gas",
+                structure="Assimilator",
+                worker="$worker",
+                geyser="$geysers",
+            ),
+        ],
+    )
+
+
+def _geyser_obs(
+    seconds: float,
+    *,
+    geysers: tuple[Entity, ...] = GEYSERS,
+    structures: tuple[Entity, ...] = (),
+    enemies: tuple[Entity, ...] = (),
+) -> Observation:
+    base = _observation(
+        seconds,
+        minerals=500,
+        units=(_mining_probe(2000),),
+        structures=(_nexus(), *structures),
+        enemies=enemies,
+    )
+    return dataclasses.replace(base, vespene_geysers=geysers)
+
+
+def test_a_gas_build_targets_the_first_free_geyser_by_tag() -> None:
+    runtime = _runtime_for(_gas_build_policy())
+    (build,) = runtime.tick(_geyser_obs(10.0)).commands
+    assert (build.ability, build.target, build.alternatives) == (
+        "PROTOSSBUILD_ASSIMILATOR",
+        5000,
+        (),
+    )
+    refinery = Entity(7300, "Refinery", GEYSERS[0].position, 500.0, is_structure=True)
+    taken = _runtime_for(_gas_build_policy())
+    result = taken.tick(_geyser_obs(10.0, enemies=(refinery,)))
+    (build,) = result.commands
+    assert build.target == 5001  # the first geyser carries an enemy Refinery
+    assert _node_events(result)["gas.build"].facts["skipped"] == {"taken": 1}
+    depleted = (dataclasses.replace(GEYSERS[0], vespene_contents=0), GEYSERS[1])
+    only = _runtime_for(_gas_build_policy())
+    (build,) = only.tick(_geyser_obs(10.0, geysers=depleted)).commands
+    assert build.target == 5001
+
+
+def test_a_refused_gas_build_moves_to_the_next_geyser_and_a_lost_one_is_visible() -> None:
+    runtime = JevRuntime(
+        _gas_build_policy(),
+        run_id=uuid.uuid4().hex,
+        lifecycle_config=LifecycleConfig(max_retries=0),
+    )
+    (first,) = runtime.tick(_geyser_obs(10.0)).commands
+    runtime.mark_command_rejected(first.task_id, "CantBuildLocationInvalid")
+    second = runtime.tick(_geyser_obs(10.5))
+    (excluded,) = [e for e in second.events if "cooling down" in e.reason]
+    assert excluded.facts["excluded_sites"] == [[37.5, 25.5]]
+    (build,) = second.commands
+    assert build.target == 5001  # D4: a refused site is not proposed again at once
+    assert _node_events(second)["gas.build"].facts["skipped"] == {"refused": 1}
+    gone = runtime.tick(_geyser_obs(11.0, geysers=(GEYSERS[0],)))  # 5001 left sight
+    (lost,) = [e for e in _kinds(gone, "task") if e.status == "failed"]
+    assert (lost.reason, lost.facts["failure_cause"]) == (
+        "geyser lost: no longer a visible vespene geyser",
+        "lost",
+    )
+
+
+def test_a_gas_build_is_acknowledged_by_the_gas_structure_on_its_geyser() -> None:
+    runtime = _runtime_for(_gas_build_policy())
+    (build,) = runtime.tick(_geyser_obs(10.0)).commands
+    rich = Entity(
+        9000,
+        "AssimilatorRich",  # the name SC2 gives the structure on a rich geyser
+        GEYSERS[0].position,
+        450.0,
+        build_progress=0.1,
+        is_structure=True,
+    )
+    result = runtime.tick(_geyser_obs(10.5, structures=(rich,)))
+    (task,) = [t for t in runtime.active_tasks() if t.id == build.task_id]
+    assert task.status == "running" and task.target == 5000  # still the geyser, by tag
+    assert all(e.status != "failed" for e in _kinds(result, "task"))
+    (gas,) = result.commands  # the free second geyser is next
+    assert gas.target == 5001

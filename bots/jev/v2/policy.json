@@ -29,18 +29,19 @@
     "scout_threat_radius": 7,
     "scout_threat_age": 2,
     "scout_arrive_within": 6,
-    "scout_safe_within": 5
+    "scout_safe_within": 5,
+    "workers_per_gas": 3,
+    "assimilator_target": 1,
+    "geyser_radius": 10
   },
   "nodes": [
     {
       "id": "economy",
-      "label": "Economy: keep idle probes mining while a Nexus stands",
+      "label": "Economy: idle probes mine and gas stays saturated while a Nexus stands",
       "kind": "sequence",
       "children": [
         "economy.nexus",
-        "economy.idle_probes",
-        "economy.mineral_patches",
-        "economy.assign"
+        "economy.work"
       ],
       "operation": null,
       "args": {}
@@ -61,6 +62,29 @@
         "op": ">=",
         "value": 1
       }
+    },
+    {
+      "id": "economy.work",
+      "label": "Idle probes to minerals first, then balance gas workers",
+      "kind": "selector",
+      "children": [
+        "economy.minerals",
+        "economy.gas"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "economy.minerals",
+      "label": "Send every idle probe to the least-loaded mineral patch",
+      "kind": "sequence",
+      "children": [
+        "economy.idle_probes",
+        "economy.mineral_patches",
+        "economy.assign"
+      ],
+      "operation": null,
+      "args": {}
     },
     {
       "id": "economy.idle_probes",
@@ -118,6 +142,166 @@
         "minerals": "$patches",
         "per_patch": {
           "param": "workers_per_patch"
+        }
+      }
+    },
+    {
+      "id": "economy.gas",
+      "label": "Gas workers: return any surplus to minerals, else fill open gas slots",
+      "kind": "selector",
+      "children": [
+        "economy.gas.release",
+        "economy.gas.saturate"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "economy.gas.release",
+      "label": "Return workers a gas building holds beyond its slots (all once depleted)",
+      "kind": "sequence",
+      "children": [
+        "economy.gas.release.buildings",
+        "economy.gas.release.patches",
+        "economy.gas.release.go"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "economy.gas.release.buildings",
+      "label": "Own gas buildings, finished or not, by tag",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "gas_building": true
+        },
+        "sort": {
+          "by": "tag"
+        },
+        "limit": 4,
+        "bind": "gas_buildings"
+      }
+    },
+    {
+      "id": "economy.gas.release.patches",
+      "label": "Visible mineral patches near the main, nearest first",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "mineral_fields",
+        "filter": {
+          "within": {
+            "point": "start_location",
+            "distance": 12
+          }
+        },
+        "sort": {
+          "by": "distance",
+          "from": "start_location"
+        },
+        "limit": 8,
+        "bind": "release_patches"
+      }
+    },
+    {
+      "id": "economy.gas.release.go",
+      "label": "Send the surplus gas workers to the least-loaded patch",
+      "kind": "action",
+      "children": [],
+      "operation": "release_gas",
+      "args": {
+        "buildings": "$gas_buildings",
+        "minerals": "$release_patches",
+        "per_building": {
+          "param": "workers_per_gas"
+        },
+        "per_patch": {
+          "param": "workers_per_patch"
+        }
+      }
+    },
+    {
+      "id": "economy.gas.saturate",
+      "label": "Fill each finished gas building with gas left up to its slots",
+      "kind": "sequence",
+      "children": [
+        "economy.gas.saturate.buildings",
+        "economy.gas.saturate.workers",
+        "economy.gas.saturate.go"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "economy.gas.saturate.buildings",
+      "label": "Finished own gas buildings with gas left, by tag",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "gas_building": true,
+          "ready": true,
+          "has_vespene": true
+        },
+        "sort": {
+          "by": "tag"
+        },
+        "limit": 4,
+        "bind": "open_gas"
+      }
+    },
+    {
+      "id": "economy.gas.saturate.workers",
+      "label": "Idle or mineral-gathering probes no task holds, nearest the gas first (never the scout or a gas worker)",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_units",
+        "filter": {
+          "types": [
+            "Probe"
+          ],
+          "gathering_gas": false,
+          "any_of": [
+            {
+              "idle": true
+            },
+            {
+              "order_in": [
+                "HARVEST_GATHER"
+              ]
+            }
+          ]
+        },
+        "sort": {
+          "by": "distance",
+          "from": "$open_gas"
+        },
+        "limit": 6,
+        "exclude_busy": true,
+        "not_assigned_to": "scouting.move",
+        "bind": "gas_candidates"
+      }
+    },
+    {
+      "id": "economy.gas.saturate.go",
+      "label": "Send the nearest free probes to open gas slots (never above SC2's ideal)",
+      "kind": "action",
+      "children": [],
+      "operation": "gather_gas",
+      "args": {
+        "workers": "$gas_candidates",
+        "buildings": "$open_gas",
+        "per_building": {
+          "param": "workers_per_gas"
         }
       }
     },
@@ -306,7 +490,7 @@
     },
     {
       "id": "supply.first.worker",
-      "label": "Nearest available mining or idle probe to the site, tie by tag (never the scout)",
+      "label": "Nearest available mining or idle probe to the site, tie by tag (never the scout or a gas worker)",
       "kind": "select",
       "children": [],
       "operation": "select_entities",
@@ -316,6 +500,7 @@
           "types": [
             "Probe"
           ],
+          "gathering_gas": false,
           "any_of": [
             {
               "idle": true
@@ -588,7 +773,7 @@
     },
     {
       "id": "supply.buffer.worker",
-      "label": "Nearest available mining or idle probe to the site, tie by tag (never the scout)",
+      "label": "Nearest available mining or idle probe to the site, tie by tag (never the scout or a gas worker)",
       "kind": "select",
       "children": [],
       "operation": "select_entities",
@@ -598,6 +783,7 @@
           "types": [
             "Probe"
           ],
+          "gathering_gas": false,
           "any_of": [
             {
               "idle": true
@@ -635,7 +821,7 @@
     },
     {
       "id": "construction",
-      "label": "Construction: while a Nexus stands, re-power a Gateway, then Gateways to the target",
+      "label": "Construction: while a Nexus stands, re-power a Gateway, then Gateways to the target, then gas",
       "kind": "sequence",
       "children": [
         "construction.nexus",
@@ -663,11 +849,12 @@
     },
     {
       "id": "construction.lanes",
-      "label": "Re-power a Gateway, then Gateways toward the target",
+      "label": "Re-power a Gateway, then Gateways toward the target, then an Assimilator",
       "kind": "selector",
       "children": [
         "construction.repower",
-        "construction.gateways"
+        "construction.gateways",
+        "construction.gas"
       ],
       "operation": null,
       "args": {}
@@ -837,7 +1024,7 @@
     },
     {
       "id": "construction.repower.worker",
-      "label": "Nearest available mining or idle probe to the site, tie by tag (never the scout)",
+      "label": "Nearest available mining or idle probe to the site, tie by tag (never the scout or a gas worker)",
       "kind": "select",
       "children": [],
       "operation": "select_entities",
@@ -847,6 +1034,7 @@
           "types": [
             "Probe"
           ],
+          "gathering_gas": false,
           "any_of": [
             {
               "idle": true
@@ -991,7 +1179,7 @@
     },
     {
       "id": "construction.gateways.worker",
-      "label": "Nearest available mining or idle probe to the site, tie by tag (never the scout)",
+      "label": "Nearest available mining or idle probe to the site, tie by tag (never the scout or a gas worker)",
       "kind": "select",
       "children": [],
       "operation": "select_entities",
@@ -1001,6 +1189,7 @@
           "types": [
             "Probe"
           ],
+          "gathering_gas": false,
           "any_of": [
             {
               "idle": true
@@ -1033,6 +1222,210 @@
         "structure": "Gateway",
         "worker": "$gateway_builder",
         "site": "$gateway_site",
+        "hold_reservation": true
+      }
+    },
+    {
+      "id": "construction.gas",
+      "label": "One Assimilator per active base once the four-Gateway opening is placed",
+      "kind": "sequence",
+      "children": [
+        "construction.gas.opening",
+        "construction.gas.below_target",
+        "construction.gas.none_ordered",
+        "construction.gas.no_order_carried",
+        "construction.gas.backoff",
+        "construction.gas.base",
+        "construction.gas.geysers",
+        "construction.gas.worker",
+        "construction.gas.build"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "construction.gas.opening",
+      "label": "The Gateway target is placed (any build progress): gas never delays the opening",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Gateway"
+          ]
+        },
+        "op": ">=",
+        "value": {
+          "param": "gateway_target"
+        }
+      }
+    },
+    {
+      "id": "construction.gas.below_target",
+      "label": "Fewer gas buildings than the target, one per active base (any build progress)",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "gas_building": true
+        },
+        "op": "<",
+        "value": {
+          "param": "assimilator_target"
+        }
+      }
+    },
+    {
+      "id": "construction.gas.none_ordered",
+      "label": "No unacknowledged Assimilator order (one at a time)",
+      "kind": "condition",
+      "children": [],
+      "operation": "task_count_compare",
+      "args": {
+        "node": "construction.gas.build",
+        "statuses": [
+          "pending",
+          "issued"
+        ],
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "construction.gas.no_order_carried",
+      "label": "No probe still carries an Assimilator order (a late start counts toward the target)",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_units",
+        "filter": {
+          "types": [
+            "Probe"
+          ],
+          "order_in": [
+            "PROTOSSBUILD_ASSIMILATOR"
+          ]
+        },
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "construction.gas.backoff",
+      "label": "Fewer failed Assimilator tasks than the limit within the failure window (back off, releasing the reservation, after repeated failures)",
+      "kind": "condition",
+      "children": [],
+      "operation": "recent_task_count_compare",
+      "args": {
+        "node": "construction.gas.build",
+        "statuses": [
+          "failed"
+        ],
+        "within": {
+          "param": "build_failure_window"
+        },
+        "op": "<",
+        "value": {
+          "param": "build_failure_limit"
+        }
+      }
+    },
+    {
+      "id": "construction.gas.base",
+      "label": "A finished Nexus: an active base, by tag",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Nexus"
+          ],
+          "ready": true
+        },
+        "sort": {
+          "by": "tag"
+        },
+        "limit": 1,
+        "bind": "gas_base"
+      }
+    },
+    {
+      "id": "construction.gas.geysers",
+      "label": "Visible geysers with gas left at that base, nearest first",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "vespene_geysers",
+        "filter": {
+          "has_vespene": true,
+          "within": {
+            "point": "$gas_base",
+            "distance": {
+              "param": "geyser_radius"
+            }
+          }
+        },
+        "sort": {
+          "by": "distance",
+          "from": "$gas_base"
+        },
+        "limit": 2,
+        "bind": "geysers"
+      }
+    },
+    {
+      "id": "construction.gas.worker",
+      "label": "Nearest available mining or idle probe to the geyser, tie by tag (never the scout or a gas worker)",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_units",
+        "filter": {
+          "types": [
+            "Probe"
+          ],
+          "gathering_gas": false,
+          "any_of": [
+            {
+              "idle": true
+            },
+            {
+              "order_in": [
+                "HARVEST_GATHER",
+                "HARVEST_RETURN"
+              ]
+            }
+          ]
+        },
+        "sort": {
+          "by": "distance",
+          "from": "$geysers"
+        },
+        "limit": 1,
+        "exclude_busy": true,
+        "not_assigned_to": "scouting.move",
+        "bind": "gas_builder"
+      }
+    },
+    {
+      "id": "construction.gas.build",
+      "label": "Build an Assimilator on the first free geyser, targeting the geyser unit (holds minerals while short)",
+      "kind": "action",
+      "children": [],
+      "operation": "build_gas",
+      "args": {
+        "structure": "Assimilator",
+        "worker": "$gas_builder",
+        "geyser": "$geysers",
         "hold_reservation": true
       }
     },
@@ -1290,7 +1683,7 @@
     },
     {
       "id": "scouting.scout.unit.replace.pick",
-      "label": "A mining or idle probe no task holds",
+      "label": "A mining or idle probe no task holds (never a gas worker)",
       "kind": "select",
       "children": [],
       "operation": "select_entities",
@@ -1300,6 +1693,7 @@
           "types": [
             "Probe"
           ],
+          "gathering_gas": false,
           "any_of": [
             {
               "idle": true

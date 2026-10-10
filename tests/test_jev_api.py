@@ -99,6 +99,7 @@ def _unit(tag: int, name: str = "Probe", **fields: Any) -> SimpleNamespace:
         "is_idle": True,
         "is_powered": False,
         "is_visible": True,
+        "is_carrying_vespene": False,
     }
     values.update(fields)
     return SimpleNamespace(**values)
@@ -118,6 +119,8 @@ def _game() -> SimpleNamespace:
         mineral_field=[
             _unit(PATCH + i, "MineralField", position=(26.5 + i, 22.5)) for i in range(8)
         ],
+        vespene=0,
+        vespene_geyser=[],
         start_location=START,
         enemy_start_locations=[(120.5, 120.5)],
         expansion_locations_list=[(120.5, 120.5), START],

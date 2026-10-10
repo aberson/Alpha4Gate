@@ -23,6 +23,17 @@ Three categories:
   intents plus the ``set_latch`` memory write. The runtime turns intents into
   deduplicated tasks and :class:`~jev.contracts.CommandSpec` records.
 
+Gas (Jev v2, plan J2 Step 216) is three explicit actions, never a helper that
+"manages" it: ``build_gas`` orders a gas structure on a vespene geyser *unit* (its
+tag is the command target; there is no placement query and no point-target build
+of a gas structure -- ``build``/``select_placement`` do not accept one);
+``gather_gas`` fills a gas building's open slots from bound workers; ``release_gas``
+returns a gas building's surplus workers to minerals. A gas building's slots
+(:func:`gas_slots`) are the authored per-building count, never above SC2's ideal,
+and none while it is unfinished or once it is depleted. Every cost is a minerals
+*and* a vespene amount (:data:`MINERAL_COST`, :data:`VESPENE_COST`); the runtime
+reserves both and releases them on acknowledgement or failure.
+
 Visits are explicit runtime memory, not a hidden variable in an operation: for
 every action node a ``visits`` argument names, the runtime records which map
 locations that node visited and when (:class:`Visit`, read through
@@ -124,7 +135,12 @@ __all__ = [
     "ENTITY_SORT_METRICS",
     "FILTER_KEYS",
     "FOOTPRINT",
+    "GAS_BUILD_ABILITY",
+    "GAS_DEPLETED_REASON",
+    "GAS_FOOTPRINT",
+    "GAS_STRUCTURE_TYPES",
     "GATHER_ABILITY",
+    "GATHER_TARGET_LOST_REASON",
     "HARVEST_ABILITIES",
     "Intent",
     "KNOWN_ORDER_ABILITIES",
@@ -134,6 +150,7 @@ __all__ = [
     "MAX_ELAPSED_SECONDS",
     "MAX_FILTER_DEPTH",
     "MAX_FILTER_NAMES",
+    "MAX_GAS_HARVESTERS",
     "MAX_ISSUES_PER_FIELD",
     "MAX_LOCATIONS",
     "MAX_PLACEMENT_CANDIDATES",
@@ -146,11 +163,15 @@ __all__ = [
     "MOVE_ABILITY",
     "OPERATIONS",
     "OP_BUILD",
+    "OP_BUILD_GAS",
     "OP_GATHER",
+    "OP_GATHER_GAS",
+    "OP_RELEASE_GAS",
     "OWN_TYPES",
     "OpOutcome",
     "OperationSpec",
     "PARAM_ARRIVE_WITHIN",
+    "PARAM_SITE",
     "PARAM_TARGET_TAG",
     "PARAM_STRUCTURE",
     "PARAM_UNIT",
@@ -183,6 +204,8 @@ __all__ = [
     "TRAIN_ABILITY",
     "TaskSubject",
     "TrackedMemory",
+    "VESPENE_COST",
+    "VIEW_FILTER_ATTRIBUTES",
     "Visit",
     "WORKER_TYPE",
     "binding_inputs",
@@ -190,9 +213,12 @@ __all__ = [
     "compare",
     "compile_filter",
     "decode_arrive_within",
+    "decode_site",
     "distance",
     "entity_matches",
     "format_point",
+    "gas_slots",
+    "is_gas_worker",
     "node_outcomes",
     "operation_node_kinds",
     "parameter_references",
@@ -214,13 +240,29 @@ MOVE_ABILITY: Final = "MOVE"
 ATTACK_ABILITY: Final = "ATTACK"
 HARVEST_ABILITIES: Final = frozenset({GATHER_ABILITY, RETURN_ABILITY})
 
-#: Structures Jev v1 may build -> generic SC2 build ability. No Nexus/Assimilator:
-#: one base, no gas (D3) is enforced by the allowlist itself.
+#: Structures Jev may build *at a point* (placement candidates the SC2 adapter tests)
+#: -> generic SC2 build ability. No Nexus: one base (D3) is enforced by the
+#: allowlist itself. A gas structure is never a point build: see GAS_BUILD_ABILITY.
 BUILD_ABILITY: Final[Mapping[str, str]] = {
     "Pylon": "PROTOSSBUILD_PYLON",
     "Gateway": "PROTOSSBUILD_GATEWAY",
 }
-#: Units Jev v1 may train -> generic SC2 train ability.
+#: Gas structures Jev v2 may build -> generic SC2 build ability. SC2 builds them on
+#: a vespene geyser *unit*: the command targets the geyser's tag (burnysc2's
+#: ``Unit.build_gas``), never a point, and only ``build_gas`` emits them.
+GAS_BUILD_ABILITY: Final[Mapping[str, str]] = {"Assimilator": "PROTOSSBUILD_ASSIMILATOR"}
+#: Every race's gas extraction structure type (SC2 names a rich-geyser variant
+#: separately). The ``gas_building`` filter flag reads this set, so a policy names
+#: its gas buildings without listing type names.
+GAS_STRUCTURE_TYPES: Final = frozenset(
+    {"Assimilator", "AssimilatorRich", "Extractor", "ExtractorRich", "Refinery", "RefineryRich"}
+)
+#: Footprint edge (cells) of a gas structure: a vespene geyser's 3x3.
+GAS_FOOTPRINT: Final = 3
+#: SC2's ideal harvester count for one gas building (game data): the most workers
+#: any ``per_building`` argument may ask for.
+MAX_GAS_HARVESTERS: Final = 3
+#: Units Jev may train -> generic SC2 train ability.
 TRAIN_ABILITY: Final[Mapping[str, str]] = {
     "Probe": "NEXUSTRAIN_PROBE",
     "Zealot": "GATEWAYTRAIN_ZEALOT",
@@ -229,7 +271,23 @@ TRAIN_ABILITY: Final[Mapping[str, str]] = {
 PRODUCER_TYPE: Final[Mapping[str, str]] = {"Probe": "Nexus", "Zealot": "Gateway"}
 #: The unit type that mines and constructs.
 WORKER_TYPE: Final = "Probe"
-MINERAL_COST: Final[Mapping[str, int]] = {"Probe": 50, "Zealot": 100, "Pylon": 100, "Gateway": 150}
+#: Costs (SC2 5.0 game data; the Assimilator is 75 minerals since LotV). Both
+#: tables cover every buildable and trainable type, so an intent always carries
+#: both amounts; no allowlisted type costs gas yet (Step 218 adds the Stalker).
+MINERAL_COST: Final[Mapping[str, int]] = {
+    "Probe": 50,
+    "Zealot": 100,
+    "Pylon": 100,
+    "Gateway": 150,
+    "Assimilator": 75,
+}
+VESPENE_COST: Final[Mapping[str, int]] = {
+    "Probe": 0,
+    "Zealot": 0,
+    "Pylon": 0,
+    "Gateway": 0,
+    "Assimilator": 0,
+}
 SUPPLY_COST: Final[Mapping[str, int]] = {"Probe": 1, "Zealot": 2}
 #: Supply each supply-providing structure adds once complete (SC2 game data).
 SUPPLY_PROVIDED: Final[Mapping[str, int]] = {"Nexus": 15, "Pylon": 8}
@@ -255,6 +313,7 @@ OWN_TYPES: Final = (
 KNOWN_ORDER_ABILITIES: Final = frozenset(
     {GATHER_ABILITY, RETURN_ABILITY, MOVE_ABILITY, ATTACK_ABILITY}
     | set(BUILD_ABILITY.values())
+    | set(GAS_BUILD_ABILITY.values())
     | set(TRAIN_ABILITY.values())
 )
 #: Abilities a command may carry -- exactly what the action operations below emit
@@ -282,6 +341,14 @@ MAX_PLACEMENT_CANDIDATES: Final = 8
 #: Operation names the runtime's reservation views recognize (used by the registry too).
 OP_BUILD: Final = "build"
 OP_GATHER: Final = "gather"
+OP_BUILD_GAS: Final = "build_gas"
+OP_GATHER_GAS: Final = "gather_gas"
+OP_RELEASE_GAS: Final = "release_gas"
+#: Why a gather task's target can no longer be gathered from (D4: visible outcome).
+GATHER_TARGET_LOST_REASON: Final = (
+    "gather target lost: no longer an own gas building or a visible mineral field"
+)
+GAS_DEPLETED_REASON: Final = "gas building depleted"
 #: Intent.params keys shared by the operations' lifecycle checks and the runtime.
 PARAM_STRUCTURE: Final = "structure"
 PARAM_UNIT: Final = "unit"
@@ -291,6 +358,21 @@ PARAM_ARRIVE_WITHIN: Final = "arrive_within"
 #: The entity an attack intent was planned against (its target may be the point
 #: where that entity was seen); the runtime keys give-ups and demotions on it.
 PARAM_TARGET_TAG: Final = "target_tag"
+#: Where a gas build's geyser stands (``[x, y]``): its target is the geyser's tag,
+#: so acknowledgement, site exclusion and placement screening read the site here.
+PARAM_SITE: Final = "site"
+
+
+def decode_site(params: Mapping[str, JsonValue]) -> Point | None:
+    """THE decode of a gas build's geyser site: ``[x, y]`` -> a point, else None."""
+    value = params.get(PARAM_SITE)
+    if not isinstance(value, list | tuple) or len(value) != 2:
+        return None
+    x, y = value
+    if isinstance(x, int | float) and isinstance(y, int | float):
+        if is_bounded_number(x) and is_bounded_number(y):
+            return (float(x), float(y))
+    return None
 
 
 def decode_arrive_within(params: Mapping[str, JsonValue]) -> float:
@@ -410,6 +492,10 @@ class RuntimeView(Protocol):
         """Observed minerals minus in-flight commitments and this tick's holds."""
         ...
 
+    def available_vespene(self) -> int:
+        """Observed vespene minus in-flight commitments and this tick's holds."""
+        ...
+
     def available_supply(self) -> int:
         """Free supply minus in-flight training commitments and this tick's holds."""
         ...
@@ -439,11 +525,13 @@ class RuntimeView(Protocol):
         ...
 
     def in_flight_builds(self) -> tuple[tuple[str, Point], ...]:
-        """``(structure, site)`` for build tasks whose structure has not appeared yet."""
+        """``(structure, site)`` for build tasks whose structure has not appeared yet
+        (a gas build's site is its geyser's position)."""
         ...
 
     def gather_assignments(self) -> Mapping[int, int]:
-        """Mineral-patch tag -> workers assigned by unacknowledged gather tasks."""
+        """Mineral-patch or gas-building tag -> workers assigned to it by unacknowledged
+        gather tasks (mineral and gas gathers alike)."""
         ...
 
     def rejected_sites(self, structure: str) -> frozenset[Point]:
@@ -520,7 +608,12 @@ class Selection:
 
 @dataclass(frozen=True)
 class Intent:
-    """One per-actor side effect an action wants. The runtime owns dedup/budgets."""
+    """One per-actor side effect an action wants. The runtime owns dedup/budgets.
+
+    ``minerals`` / ``vespene`` / ``supply`` are what the command costs: the runtime
+    commits them to the task until the observation acknowledges it (SC2 has then
+    deducted them) or the task fails, so concurrent spenders never double-spend.
+    """
 
     actor_tag: int
     semantic: str
@@ -531,6 +624,7 @@ class Intent:
     supply: int = 0
     satisfied: bool = False
     params: Mapping[str, JsonValue] = field(default_factory=dict)
+    vespene: int = 0
 
 
 @dataclass(frozen=True)
@@ -772,8 +866,17 @@ BOOL_FILTER_ATTRIBUTES: Final[Mapping[str, Callable[[Entity], bool]]] = {
     "flying": lambda e: e.is_flying,
     "structure": lambda e: e.is_structure,
     "under_construction": lambda e: e.build_progress < 1.0,
+    # Gas (Jev v2): any race's gas extraction structure; gas left in a geyser or one.
+    "gas_building": lambda e: e.type_name in GAS_STRUCTURE_TYPES,
+    "has_vespene": lambda e: e.vespene_contents > 0,
 }
-_BOOL_FILTER_KEYS: Final = tuple(BOOL_FILTER_ATTRIBUTES)
+#: Boolean filter keys that also read the evaluation's view, the same way.
+VIEW_FILTER_ATTRIBUTES: Final[Mapping[str, Callable[[Entity, RuntimeView], bool]]] = {
+    # A worker of the gas lane anywhere in its gas cycle (:func:`is_gas_worker`): a
+    # builder, scout or gas-candidate selection excludes it (D3 single ownership).
+    "gathering_gas": lambda e, view: is_gas_worker(e, view),
+}
+_BOOL_FILTER_KEYS: Final = (*BOOL_FILTER_ATTRIBUTES, *VIEW_FILTER_ATTRIBUTES)
 FILTER_KEYS: Final = frozenset(
     {"types", "exclude_types", "order_in", "within", "any_of", *_BOOL_FILTER_KEYS}
 )
@@ -845,7 +948,9 @@ def entity_matches(entity: Entity, filt: CompiledFilter | None, view: RuntimeVie
     if filt.exclude_types is not None and entity.type_name in filt.exclude_types:
         return False
     for key, wanted in filt.flags:
-        if BOOL_FILTER_ATTRIBUTES[key](entity) != wanted:
+        reader = BOOL_FILTER_ATTRIBUTES.get(key)
+        actual = reader(entity) if reader is not None else VIEW_FILTER_ATTRIBUTES[key](entity, view)
+        if actual != wanted:
             return False
     if filt.order_in is not None and entity.current_ability not in filt.order_in:
         return False
@@ -924,12 +1029,14 @@ def _count_compare(view: RuntimeView, args: Args) -> OpOutcome:
 
 
 #: Resource names a ``resource_compare`` may read, and how -- one table for the
-#: validator's choices and the evaluator. Minerals/free supply are post-reservation.
+#: validator's choices and the evaluator. Minerals, vespene and free supply are
+#: post-reservation.
 RESOURCE_READERS: Final[Mapping[str, Callable[[RuntimeView], int]]] = {
     "minerals": lambda view: view.available_minerals(),
     "supply_free": lambda view: view.available_supply(),
     "supply_used": lambda view: view.observation.supply_used,
     "supply_cap": lambda view: view.observation.supply_cap,
+    "vespene": lambda view: view.available_vespene(),
 }
 RESOURCE_NAMES: Final = tuple(RESOURCE_READERS)
 
@@ -1328,6 +1435,15 @@ def _overlaps(a: Point, size_a: float, b: Point, size_b: float) -> bool:
     return abs(a[0] - b[0]) < reach and abs(a[1] - b[1]) < reach
 
 
+def _footprint(type_name: str) -> int:
+    """THE footprint edge of a structure type for placement screening: a gas
+    structure's is its geyser's 3x3 (standing or ordered alike), a footprinted type's
+    its own, anything else :data:`DEFAULT_FOOTPRINT`."""
+    if type_name in GAS_STRUCTURE_TYPES:
+        return GAS_FOOTPRINT
+    return FOOTPRINT.get(type_name, DEFAULT_FOOTPRINT)
+
+
 def placement_candidates(
     view: RuntimeView,
     *,
@@ -1352,7 +1468,7 @@ def placement_candidates(
     reach = radius_max + 6.0
     enemy_structures = tuple(e for e in obs.visible_enemies if e.is_structure)
     blockers: list[tuple[Point, float]] = [
-        (e.position, float(FOOTPRINT.get(e.type_name, DEFAULT_FOOTPRINT)))
+        (e.position, float(_footprint(e.type_name)))
         for e in (*obs.own_structures, *enemy_structures)
         if distance(e.position, near) <= reach
     ]
@@ -1377,7 +1493,7 @@ def placement_candidates(
             if any(_overlaps(point, size, center, other) for center, other in blockers):
                 continue
             if any(
-                _overlaps(point, size, site, FOOTPRINT[kind])
+                _overlaps(point, size, site, _footprint(kind))
                 and not (kind == structure and distance(point, site) < 1e-6)
                 for kind, site in in_flight
             ):
@@ -1467,15 +1583,7 @@ def _gather(view: RuntimeView, args: Args) -> ActionPlan:
     per_patch = _arg_int(args, "per_patch")
     if not patches:
         return ActionPlan(failure_reason="no mineral patch bound", blocked=tuple(blocked))
-    patch_tags = {p.tag for p in patches}
-    load: Counter[int] = Counter()
-    for unit in view.observation.own_units:
-        order = unit.orders[0] if unit.orders else None
-        if order and order.ability == GATHER_ABILITY and isinstance(order.target, int):
-            if order.target in patch_tags:
-                load[order.target] += 1
-    for patch_tag, count in view.gather_assignments().items():
-        load[patch_tag] += count
+    load = _patch_loads(view, patches)
     intents: list[Intent] = []
     for worker in sorted(workers, key=lambda w: w.tag):
         semantic = str(worker.tag)
@@ -1486,19 +1594,40 @@ def _gather(view: RuntimeView, args: Args) -> ActionPlan:
             # Deduplicated (same intent) or refused (other holder) by the runtime.
             intents.append(Intent(worker.tag, semantic, GATHER_ABILITY, None))
             continue
-        patch = min(
-            patches,
-            key=lambda p: (
-                load[p.tag] >= per_patch,
-                load[p.tag],
-                distance(worker.position, p.position),
-                p.tag,
-            ),
-        )
+        patch = _least_loaded_patch(patches, load, per_patch, worker)
         load[patch.tag] += 1
         intents.append(Intent(worker.tag, semantic, GATHER_ABILITY, patch.tag))
     return ActionPlan(
         intents=tuple(intents), blocked=tuple(blocked), facts={"per_patch": per_patch}
+    )
+
+
+def _patch_loads(view: RuntimeView, patches: Sequence[Entity]) -> Counter[int]:
+    """Workers per bound patch: visible gather orders on it plus unacknowledged gathers."""
+    patch_tags = {p.tag for p in patches}
+    load: Counter[int] = Counter()
+    for unit in view.observation.own_units:
+        order = unit.orders[0] if unit.orders else None
+        if order and order.ability == GATHER_ABILITY and isinstance(order.target, int):
+            if order.target in patch_tags:
+                load[order.target] += 1
+    for patch_tag, count in view.gather_assignments().items():
+        load[patch_tag] += count
+    return load
+
+
+def _least_loaded_patch(
+    patches: Sequence[Entity], load: Counter[int], per_patch: int, worker: Entity
+) -> Entity:
+    """Below ``per_patch`` first, then least loaded, then nearest ``worker``, then tag."""
+    return min(
+        patches,
+        key=lambda p: (
+            load[p.tag] >= per_patch,
+            load[p.tag],
+            distance(worker.position, p.position),
+            p.tag,
+        ),
     )
 
 
@@ -1521,6 +1650,7 @@ def _build(view: RuntimeView, args: Args) -> ActionPlan:
         alternatives=tuple(sites[1:]),
         minerals=MINERAL_COST[structure],
         params={PARAM_STRUCTURE: structure},
+        vespene=VESPENE_COST[structure],
     )
     return ActionPlan(
         intents=(intent,),
@@ -1553,6 +1683,7 @@ def _train(view: RuntimeView, args: Args) -> ActionPlan:
                     minerals=MINERAL_COST[unit],
                     supply=SUPPLY_COST[unit],
                     params={PARAM_UNIT: unit, PARAM_UNIT_COUNT: existing},
+                    vespene=VESPENE_COST[unit],
                 )
             )
     return ActionPlan(
@@ -1639,6 +1770,273 @@ def _set_latch(view: RuntimeView, args: Args) -> ActionPlan:
 
 
 # ---------------------------------------------------------------------------
+# Gas actions (Jev v2, plan J2 Step 216)
+# ---------------------------------------------------------------------------
+
+
+def gas_slots(building: Entity, per_building: int) -> int:
+    """How many workers gas building ``building`` may hold (plan D4 saturation).
+
+    None while it is unfinished or once it is depleted; otherwise ``per_building``,
+    never above SC2's ideal harvester count when SC2 reports one.
+    """
+    if not building.is_ready or building.vespene_contents <= 0:
+        return 0
+    if building.ideal_harvesters > 0:
+        return min(per_building, building.ideal_harvesters)
+    return per_building
+
+
+def _gather_target(unit: Entity) -> int | None:
+    """The tag a unit's current gather order targets, or None."""
+    order = unit.orders[0] if unit.orders else None
+    if order is not None and order.ability == GATHER_ABILITY and isinstance(order.target, int):
+        return order.target
+    return None
+
+
+def is_gas_worker(unit: Entity, view: RuntimeView) -> bool:
+    """THE gas-worker identity (D3): ``unit`` is in a gas cycle -- carrying vespene
+    back (SC2's carry buff; its return order targets the Nexus, never the gas
+    building), or ordered to gather from an own structure. SC2 gathers only from
+    resources, and the only own structure that is one is a gas building."""
+    return unit.carrying_vespene or _gather_target(unit) in view.own_structure_tags()
+
+
+def _gas_structures_at(entities: Sequence[Entity], site: Point) -> list[Entity]:
+    """Gas structures standing on ``site`` (a geyser's position)."""
+    return [
+        e
+        for e in entities
+        if e.type_name in GAS_STRUCTURE_TYPES
+        and distance(e.position, site) <= POINT_MATCH_TOLERANCE
+    ]
+
+
+def _own_gas_buildings(
+    view: RuntimeView, entities: Sequence[Entity]
+) -> tuple[list[Entity], list[tuple[int, str]]]:
+    """Split bound entities into own gas buildings and visibly blocked others (by tag,
+    each once): a binding may hold anything, and only own gas buildings are worked."""
+    owned = view.own_structure_tags()
+    buildings: dict[int, Entity] = {}
+    blocked: list[tuple[int, str]] = []
+    for entity in entities:
+        if entity.tag not in owned or entity.type_name not in GAS_STRUCTURE_TYPES:
+            blocked.append((entity.tag, f"entity {entity.tag} is not an own gas building"))
+        else:
+            buildings.setdefault(entity.tag, entity)
+    return [buildings[tag] for tag in sorted(buildings)], blocked
+
+
+@dataclass(frozen=True)
+class _GasBuilding:
+    """One gas building's saturation this evaluation.
+
+    ``load`` is the workers it holds: SC2's assigned count (which includes a worker
+    inside the building, out of sight) or, when more, the visible workers ordered to
+    gather from it, plus unacknowledged gather tasks to it. ``gatherers`` are those
+    visible workers -- the only ones a command can reach.
+    """
+
+    entity: Entity
+    slots: int
+    load: int
+    gatherers: tuple[Entity, ...]
+
+
+def _gas_state(
+    view: RuntimeView, buildings: Sequence[Entity], per_building: int
+) -> list[_GasBuilding]:
+    gatherers: dict[int, list[Entity]] = {b.tag: [] for b in buildings}
+    for unit in view.observation.own_units:
+        target = _gather_target(unit)
+        if target is not None and target in gatherers and unit.type_name == WORKER_TYPE:
+            gatherers[target].append(unit)
+    in_flight = view.gather_assignments()
+    return [
+        _GasBuilding(
+            entity=b,
+            slots=gas_slots(b, per_building),
+            load=max(b.assigned_harvesters, len(gatherers[b.tag])) + in_flight.get(b.tag, 0),
+            gatherers=tuple(gatherers[b.tag]),
+        )
+        for b in buildings
+    ]
+
+
+def _gas_facts(state: Sequence[_GasBuilding], per_building: int) -> dict[str, JsonValue]:
+    """Per building (by tag): the workers it holds and the slots it may hold."""
+    buildings: dict[str, JsonValue] = {}
+    for b in state:
+        buildings[str(b.entity.tag)] = {"workers": b.load, "slots": b.slots}
+    return {"per_building": per_building, "buildings": buildings}
+
+
+def _nearest(entities: Sequence[Entity], point: Point) -> Entity:
+    return min(entities, key=lambda e: (distance(e.position, point), e.tag))
+
+
+def _build_gas(view: RuntimeView, args: Args) -> ActionPlan:
+    """A gas structure on the first bound geyser that is free: a visible vespene geyser
+    (by tag, in this observation) with gas left, no gas structure on it (own or
+    enemy, visible or remembered), no gas build already ordered there and no recent
+    refusal there. The command targets the geyser's *tag*: never a point."""
+    structure = _arg_str(args, "structure")
+    bound_workers = _binding(view, _arg_str(args, "worker")).entities
+    workers, blocked = _own_actors(view, bound_workers, structures=False, worker=True)
+    bound = _binding(view, _arg_str(args, "geyser")).entities[:MAX_PLACEMENT_CANDIDATES]
+    hold = _arg_bool(args, "hold_reservation")
+    if not workers or not bound:
+        reason = blocked[0][1] if blocked else "worker or geyser binding empty"
+        return ActionPlan(failure_reason=reason, hold_reservation=hold)
+    obs = view.observation
+    visible = {g.tag: g for g in obs.vespene_geysers}
+    standing = (*obs.own_structures, *obs.visible_enemies, *obs.remembered_enemy_structures)
+    ordered = [site for kind, site in view.in_flight_builds() if kind in GAS_BUILD_ABILITY]
+    refused = view.rejected_sites(structure)
+    skipped: Counter[str] = Counter()
+    chosen: Entity | None = None
+    for candidate in bound:
+        geyser = visible.get(candidate.tag)
+        if geyser is None:
+            skipped["not_a_visible_geyser"] += 1
+        elif geyser.vespene_contents <= 0:
+            skipped["depleted"] += 1
+        elif _gas_structures_at(standing, geyser.position):
+            skipped["taken"] += 1
+        elif any(distance(site, geyser.position) <= POINT_MATCH_TOLERANCE for site in ordered):
+            skipped["ordered"] += 1
+        elif any(distance(site, geyser.position) <= POINT_MATCH_TOLERANCE for site in refused):
+            skipped["refused"] += 1
+        else:
+            chosen = geyser
+            break
+    skipped_counts: dict[str, JsonValue] = {key: skipped[key] for key in sorted(skipped)}
+    facts: dict[str, JsonValue] = {"structure": structure, "skipped": skipped_counts}
+    if chosen is None:
+        return ActionPlan(
+            failure_reason=f"no free vespene geyser among {len(bound)} bound",
+            hold_reservation=hold,
+            facts=facts,
+        )
+    worker = workers[0]
+    site = chosen.position
+    intent = Intent(
+        actor_tag=worker.tag,
+        semantic=f"{structure}#{chosen.tag}",
+        ability=GAS_BUILD_ABILITY[structure],
+        target=chosen.tag,
+        minerals=MINERAL_COST[structure],
+        params={PARAM_STRUCTURE: structure, PARAM_SITE: [site[0], site[1]]},
+        vespene=VESPENE_COST[structure],
+    )
+    facts.update(
+        {
+            "worker": str(worker.tag),
+            "geyser": str(chosen.tag),
+            "site": [site[0], site[1]],
+            "minerals": intent.minerals,
+            "vespene": intent.vespene,
+        }
+    )
+    return ActionPlan(intents=(intent,), hold_reservation=hold, facts=facts)
+
+
+def _gather_gas(view: RuntimeView, args: Args) -> ActionPlan:
+    """Fill each bound own gas building's open slots (:func:`gas_slots`) with the
+    nearest bound workers not already gathering gas and not held by a task."""
+    bound_workers = _binding(view, _arg_str(args, "workers")).entities
+    workers, blocked = _own_actors(view, bound_workers, structures=False, worker=True)
+    bound = _binding(view, _arg_str(args, "buildings")).entities
+    buildings, refused = _own_gas_buildings(view, bound)
+    blocked.extend(refused)
+    per_building = _arg_int(args, "per_building")
+    state = _gas_state(view, buildings, per_building)
+    facts = _gas_facts(state, per_building)
+    if not state:
+        return ActionPlan(
+            failure_reason="no own gas building bound", blocked=tuple(blocked), facts=facts
+        )
+    free = [
+        w
+        for w in sorted(workers, key=lambda w: w.tag)
+        if not is_gas_worker(w, view) and not view.actor_is_busy(w.tag)
+    ]
+    intents: list[Intent] = []
+    open_slots = 0
+    for building in state:
+        deficit = building.slots - building.load
+        while deficit > 0 and free:
+            worker = _nearest(free, building.entity.position)
+            free.remove(worker)
+            intents.append(Intent(worker.tag, str(worker.tag), GATHER_ABILITY, building.entity.tag))
+            deficit -= 1
+        open_slots += max(0, deficit)
+    facts.update({"open_slots": open_slots, "assigned": len(intents)})
+    if intents:
+        return ActionPlan(intents=tuple(intents), blocked=tuple(blocked), facts=facts)
+    if open_slots:
+        reason = f"no free worker for {open_slots} open gas slot(s)"
+    else:
+        reason = "every bound gas building holds its allowed workers"
+    return ActionPlan(failure_reason=reason, blocked=tuple(blocked), facts=facts)
+
+
+def _release_gas(view: RuntimeView, args: Args) -> ActionPlan:
+    """Send each bound own gas building's surplus -- workers beyond its slots, every
+    one once it is depleted -- to the least-loaded bound mineral patch, farthest
+    from the building first (not yet inside it)."""
+    bound = _binding(view, _arg_str(args, "buildings")).entities
+    buildings, blocked = _own_gas_buildings(view, bound)
+    mineral_tags = {m.tag for m in view.observation.mineral_fields}
+    patches = [
+        p for p in _binding(view, _arg_str(args, "minerals")).entities if p.tag in mineral_tags
+    ]
+    per_building = _arg_int(args, "per_building")
+    per_patch = _arg_int(args, "per_patch")
+    state = _gas_state(view, buildings, per_building)
+    facts = _gas_facts(state, per_building)
+    surplus = sum(max(0, b.load - b.slots) for b in state)
+    facts["surplus"] = surplus
+    if not state:
+        return ActionPlan(
+            failure_reason="no own gas building bound", blocked=tuple(blocked), facts=facts
+        )
+    if not surplus:
+        return ActionPlan(
+            failure_reason="no gas building holds surplus workers",
+            blocked=tuple(blocked),
+            facts=facts,
+        )
+    if not patches:
+        return ActionPlan(failure_reason="no mineral patch bound", blocked=tuple(blocked))
+    load = _patch_loads(view, patches)
+    intents: list[Intent] = []
+    for building in state:
+        excess = building.load - building.slots
+        if excess <= 0:
+            continue
+        site = building.entity.position
+        movable = sorted(
+            (w for w in building.gatherers if not view.actor_is_busy(w.tag)),
+            key=lambda w: (-distance(w.position, site), w.tag),
+        )
+        for worker in movable[:excess]:
+            patch = _least_loaded_patch(patches, load, per_patch, worker)
+            load[patch.tag] += 1
+            intents.append(Intent(worker.tag, str(worker.tag), GATHER_ABILITY, patch.tag))
+    facts["released"] = len(intents)
+    if intents:
+        return ActionPlan(intents=tuple(intents), blocked=tuple(blocked), facts=facts)
+    return ActionPlan(
+        failure_reason=f"{surplus} surplus gas worker(s) out of sight or held by a task",
+        blocked=tuple(blocked),
+        facts=facts,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Lifecycle checks (observation-confirmed; command issuance is never success)
 # ---------------------------------------------------------------------------
 
@@ -1684,6 +2082,57 @@ def _build_progress(task: TaskSubject, obs: Observation) -> Progress:
     if structure.build_progress >= 1.0:
         return Progress("complete", "construction complete", structure.build_progress)
     return Progress("ongoing", "under construction", structure.build_progress)
+
+
+def _gas_build_ack(task: TaskSubject, obs: Observation) -> Ack | None:
+    """An own gas structure stands on the task's geyser (SC2 picks the rich variant on
+    a rich geyser, so any own gas structure type there counts)."""
+    site = decode_site(task.params)
+    standing = [] if site is None else _gas_structures_at(obs.own_structures, site)
+    if not standing:
+        return None
+    return Ack(tracked_tag=min(e.tag for e in standing))
+
+
+def _gas_build_target_lost(task: TaskSubject, obs: Observation) -> str | None:
+    """The geyser left sight, ran dry or carries someone else's gas structure.
+
+    Checked before acknowledgement (runtime order), so an own gas structure on the
+    geyser -- the acknowledgement itself -- is never a loss.
+    """
+    site = decode_site(task.params)
+    if site is not None and _gas_structures_at(obs.own_structures, site):
+        return None
+    geyser = next((g for g in obs.vespene_geysers if g.tag == task.target), None)
+    if geyser is None:
+        return "geyser lost: no longer a visible vespene geyser"
+    if geyser.vespene_contents <= 0:
+        return "geyser depleted"
+    enemies = (*obs.visible_enemies, *obs.remembered_enemy_structures)
+    if _gas_structures_at(enemies, geyser.position):
+        return "geyser taken by an enemy gas structure"
+    return None
+
+
+def _harvest_ack(task: TaskSubject, obs: Observation) -> Ack | None:
+    """The worker's current order is to gather from exactly the task's target."""
+    worker = obs.own_entity(task.actor_tag)
+    if worker is not None and _gather_target(worker) == task.target:
+        return Ack()
+    return None
+
+
+def _harvest_target_lost(task: TaskSubject, obs: Observation) -> str | None:
+    """A gas or mineral gather's target can no longer be gathered from (D4)."""
+    target = task.target
+    if not isinstance(target, int):
+        return GATHER_TARGET_LOST_REASON
+    building = obs.own_entity(target)
+    if building is not None and building.type_name in GAS_STRUCTURE_TYPES:
+        return GAS_DEPLETED_REASON if building.vespene_contents <= 0 else None
+    if any(m.tag == target for m in obs.mineral_fields):
+        return None
+    return GATHER_TARGET_LOST_REASON
 
 
 def _train_ack(task: TaskSubject, obs: Observation) -> Ack | None:
@@ -1820,6 +2269,26 @@ _UNIT_LIFECYCLE: Final = Lifecycle(
     deadline_kind=None,
     tracks_movement=True,
     holds_actor_while_running=True,
+)
+_GAS_BUILD_LIFECYCLE: Final = Lifecycle(
+    acknowledge=_gas_build_ack,
+    progress=_build_progress,
+    target_lost=_gas_build_target_lost,
+    completes_on_ack=False,
+    deadline_kind="build",
+    tracks_movement=False,
+    holds_actor_while_running=False,
+)
+#: Gas gathers and gas releases: confirmed by the worker's gather order on exactly
+#: the target (a released worker's previous order was a gather too).
+_HARVEST_LIFECYCLE: Final = Lifecycle(
+    acknowledge=_harvest_ack,
+    progress=_immediate_progress,
+    target_lost=_harvest_target_lost,
+    completes_on_ack=True,
+    deadline_kind=None,
+    tracks_movement=False,
+    holds_actor_while_running=False,
 )
 
 # ---------------------------------------------------------------------------
@@ -2117,6 +2586,50 @@ _SPECS: Final[tuple[OperationSpec, ...]] = (
         _set_latch,
         _ALWAYS_SUCCEEDS_OUTCOMES,
         None,
+    ),
+    ActionOp(
+        OP_BUILD_GAS,
+        "Order the first bound worker to build a gas structure on the first bound vespene "
+        "geyser that is visible, has gas left, carries no gas structure and has no gas "
+        "build ordered or recently refused; the command targets the geyser unit by tag, "
+        "never a point",
+        {
+            "structure": ArgSpec("enum", choices=tuple(GAS_BUILD_ABILITY)),
+            "worker": ArgSpec("entities"),
+            "geyser": ArgSpec("entities"),
+            "hold_reservation": _HOLD,
+        },
+        _build_gas,
+        _ACTION_OUTCOMES,
+        _GAS_BUILD_LIFECYCLE,
+    ),
+    ActionOp(
+        OP_GATHER_GAS,
+        "Send the nearest bound workers not already gathering gas to each bound own gas "
+        "building with open slots: per_building, never above SC2's ideal count, none "
+        "while unfinished or once depleted",
+        {
+            "workers": ArgSpec("entities"),
+            "buildings": ArgSpec("entities"),
+            "per_building": ArgSpec("int", minimum=1, maximum=MAX_GAS_HARVESTERS, param=True),
+        },
+        _gather_gas,
+        _ACTION_OUTCOMES,
+        _HARVEST_LIFECYCLE,
+    ),
+    ActionOp(
+        OP_RELEASE_GAS,
+        "Send the workers a bound own gas building holds beyond its slots (all of them "
+        "once it is depleted) to the least-loaded bound mineral patch, up to per_patch",
+        {
+            "buildings": ArgSpec("entities"),
+            "minerals": ArgSpec("entities"),
+            "per_building": ArgSpec("int", minimum=1, maximum=MAX_GAS_HARVESTERS, param=True),
+            "per_patch": ArgSpec("int", minimum=1, maximum=3, param=True),
+        },
+        _release_gas,
+        _ACTION_OUTCOMES,
+        _HARVEST_LIFECYCLE,
     ),
 )
 

@@ -208,6 +208,7 @@ class _World:
         self.state = SimpleNamespace(game_loop=0, action_errors=[])
         self.bodies = {body.tag: body for body in bodies}
         self.minerals = minerals
+        self.vespene = 0
         self.supply_used, self.supply_cap = 28, 47  # spare supply: no supply Pylon
         self.start_location = Point2(START)
         self.enemy_start_locations = [Point2(ENEMY_START)]
@@ -284,6 +285,7 @@ class _World:
             "enemy_units": [],
             "enemy_structures": [],
             "mineral_field": [],
+            "vespene_geyser": [],
         }
         for body in sorted(self.bodies.values(), key=lambda b: b.tag):
             structure = _KINDS[body.kind][1]
@@ -1594,7 +1596,7 @@ def unit(tag, name, position, **extra):
         tag=tag, name=name, position=position, health=40.0, shield=0.0, build_progress=1.0,
         orders=[],
         is_structure=False, is_flying=False, is_ready=True, is_idle=True, is_powered=True,
-        is_visible=True,
+        is_visible=True, is_carrying_vespene=False,
     )
     fields.update(extra)
     return SimpleNamespace(**fields)
@@ -1605,6 +1607,7 @@ game = SimpleNamespace(
     units=[unit(6000 + i, "Zealot", (36.0, 40.0)) for i in range(4)],
     structures=[unit(1000, "Nexus", (30.5, 30.5), is_structure=True)],
     enemy_units=[unit(7000, "Marine", (40.0, 30.5))], enemy_structures=[], mineral_field=[],
+    vespene=0, vespene_geyser=[],
     start_location=(30.5, 30.5), enemy_start_locations=[(120.5, 120.5)],
     expansion_locations_list=[(120.5, 120.5)], game_info=SimpleNamespace(map_center=(75.5, 75.5)),
 )

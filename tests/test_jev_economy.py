@@ -176,6 +176,7 @@ class _World:
         self.state = SimpleNamespace(game_loop=0, action_errors=[])
         self.bodies = {body.tag: body for body in bodies}
         self.minerals = minerals
+        self.vespene = 0
         self.supply_used, self.supply_cap = supply
         self.start_location = Point2(START)
         self.enemy_start_locations = [Point2(ENEMY_START)]
@@ -231,6 +232,7 @@ class _World:
             "enemy_units": [],
             "enemy_structures": [],
             "mineral_field": [],
+            "vespene_geyser": [],
         }
         for body in sorted(self.bodies.values(), key=lambda b: b.tag):
             powered = body.kind == "Gateway" and any(

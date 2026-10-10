@@ -176,6 +176,7 @@ class _Sample:
     """The per-sample values the time-weighted accumulators integrate."""
 
     minerals: int
+    vespene: int
     workers: int
     supply_blocked: bool
     idle_gateways: int
@@ -227,7 +228,7 @@ class MatchMetrics:
 
     :meth:`sample` reads one tick's Observation; :meth:`record_decision` reads the
     decision facts the controller hands the runtime. Time-weighted values (mean
-    mineral bank, worker count, supply-blocked and idle-Gateway seconds) integrate
+    mineral and vespene bank, worker count, supply-blocked and idle-Gateway seconds) integrate
     each sample's value over the game time to the next sample; a gap longer than
     :data:`METRIC_SAMPLE_GAP_SECONDS` is counted as missed coverage instead.
     :meth:`summary` labels every metric ``observed``/``measured``,
@@ -244,6 +245,7 @@ class MatchMetrics:
         self._missed = 0.0
         self._max_gap = 0.0
         self._bank = 0.0
+        self._gas_bank = 0.0
         self._worker_time = 0.0
         self._blocked = 0.0
         self._idle_gateways = 0.0
@@ -304,6 +306,7 @@ class MatchMetrics:
             self._integrate(now - self._last, self._previous)
         current = _Sample(
             minerals=observation.minerals,
+            vespene=observation.vespene,
             workers=sum(1 for u in observation.own_units if u.type_name == WORKER_TYPE),
             supply_blocked=_supply_blocked(observation),
             idle_gateways=_idle_gateways(observation),
@@ -325,6 +328,7 @@ class MatchMetrics:
         self._covered += span
         self._max_gap = max(self._max_gap, span)
         self._bank += values.minerals * span
+        self._gas_bank += values.vespene * span
         self._worker_time += values.workers * span
         if values.supply_blocked:
             self._blocked += span
@@ -432,6 +436,7 @@ class MatchMetrics:
         """
         covered, missed, max_gap = self._covered, self._missed, self._max_gap
         bank, worker_time = self._bank, self._worker_time
+        gas_bank = self._gas_bank
         blocked, idle = self._blocked, self._idle_gateways
         tail = 0.0
         if self._last is not None and math.isfinite(end_game_seconds):
@@ -443,6 +448,7 @@ class MatchMetrics:
             else:
                 covered += tail
                 bank += previous.minerals * tail
+                gas_bank += previous.vespene * tail
                 worker_time += previous.workers * tail
                 blocked += tail if previous.supply_blocked else 0.0
                 idle += previous.idle_gateways * tail
@@ -489,11 +495,7 @@ class MatchMetrics:
         record["supply_blocked_game_seconds"] = measured(blocked)
         record["idle_gateway_game_seconds"] = measured(idle)
         record["mean_mineral_bank"] = measured(bank / covered if covered > 0 else 0.0)
-        record["mean_vespene_bank"] = {
-            "status": "unavailable",
-            "value": None,
-            "reason": "the observation has no vespene field",
-        }
+        record["mean_vespene_bank"] = measured(gas_bank / covered if covered > 0 else 0.0)
         if timed and previous is not None:
             record["workers"] = {
                 "status": "measured",

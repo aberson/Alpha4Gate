@@ -31,6 +31,13 @@ burnysc2 ``BotAI`` into the :class:`~jev.contracts.Observation` contract:
   structure stays until vision covers its last-seen position without it; above
   :data:`~jev.contracts.MAX_ENEMY_SIGHTINGS` entries the oldest are evicted.
 * ``mineral_field`` -> ``mineral_fields`` (visible patches only).
+* ``vespene`` -> ``vespene`` and ``vespene_geyser`` -> ``vespene_geysers`` (plan J2
+  Step 216): the gas bank and the visible geysers with their ``vespene_contents``.
+  Own gas buildings (:data:`~jev.operations.GAS_STRUCTURE_TYPES`) also carry
+  ``vespene_contents`` and SC2's ``assigned_harvesters`` / ``ideal_harvesters``
+  (a worker inside a gas building is out of sight but still in SC2's count).
+  Own units carry ``carrying_vespene`` (burnysc2's buff-based
+  ``is_carrying_vespene``, every race's carry-gas buff, rich geysers included).
 * ``start_location`` / ``enemy_start_locations`` / ``expansion_locations_list`` /
   ``game_info.map_center``: map metadata (D3 permits it), read once.
 
@@ -55,10 +62,13 @@ queued orders are read. Game state is untrusted input: anything malformed raises
 through a :class:`GamePort`. A command is only issued when it is attributed to a
 policy node and to a task the runtime is awaiting, names exactly one actor Jev
 owns in the current observation, uses a Jev command ability, and targets a
-visible mineral field (gather), a visible enemy (unit attack) or a point. For a
-build, the API tests placement legality over the graph-selected candidates (at
-most :data:`~jev.operations.MAX_PLACEMENT_CANDIDATES`) and the first legal one is
-used. Issuing is never success (D4): SC2's acceptance is reported with
+visible mineral field or an own finished gas building with gas left (gather), a
+visible vespene geyser (a gas build: the geyser *unit* is the target, as
+burnysc2's ``Unit.build_gas`` sends it -- never a point and never a placement
+query), a visible enemy (unit attack) or a point. For a point build, the API tests
+placement legality over the graph-selected candidates (at most
+:data:`~jev.operations.MAX_PLACEMENT_CANDIDATES`) and the first legal one is used.
+Issuing is never success (D4): SC2's acceptance is reported with
 :meth:`~jev.runtime.JevRuntime.mark_command_accepted` and the runtime still waits
 for observation (an acceptance the runtime does not apply is recorded as
 ``ignored`` and neither counted nor awaited); every refusal -- by the adapter,
@@ -106,6 +116,8 @@ from jev.operations import (
     ATTACK_ABILITY,
     BUILD_ABILITY,
     COMMAND_ABILITIES,
+    GAS_BUILD_ABILITY,
+    GAS_STRUCTURE_TYPES,
     GATHER_ABILITY,
     MAX_PLACEMENT_CANDIDATES,
     MOVE_ABILITY,
@@ -148,6 +160,7 @@ MAX_ACTION_ERRORS: Final = 1024
 CommandOutcome = Literal["accepted", "rejected", "ignored"]
 
 _BUILD_ABILITIES: Final = frozenset(BUILD_ABILITY.values())
+_GAS_BUILD_ABILITIES: Final = frozenset(GAS_BUILD_ABILITY.values())
 _TRAIN_ABILITIES: Final = frozenset(TRAIN_ABILITY.values())
 #: burnysc2's own ``Unit.move`` issues MOVE_MOVE; every other Jev command ability
 #: is issued under its own AbilityId name.
@@ -301,7 +314,9 @@ def _orders(value: object, where: str) -> tuple[Order, ...]:
     return tuple(orders)
 
 
-def _entity(unit: Any, where: str, *, own: bool, structure_flags: bool) -> Entity:
+def _entity(
+    unit: Any, where: str, *, own: bool, structure_flags: bool, geyser: bool = False
+) -> Entity:
     tag = _tag(unit.tag, f"{where}.tag")
     type_name = unit.name
     if not full_match(TYPE_NAME_RE, type_name):
@@ -315,6 +330,18 @@ def _entity(unit: Any, where: str, *, own: bool, structure_flags: bool) -> Entit
         powered = (
             _flag(unit.is_powered, f"{where}.is_powered") if type_name in REQUIRES_POWER else True
         )
+    # Gas facts are read only where SC2 fills them: a geyser's gas, and an own gas
+    # building's gas and workers (every other entity keeps the 0 defaults).
+    gas_building = own and structure_flags and type_name in GAS_STRUCTURE_TYPES
+    vespene = assigned = ideal = 0
+    if geyser or gas_building:
+        vespene = _count(unit.vespene_contents, f"{where}.vespene_contents")
+    if gas_building:
+        assigned = _count(unit.assigned_harvesters, f"{where}.assigned_harvesters")
+        ideal = _count(unit.ideal_harvesters, f"{where}.ideal_harvesters")
+    carrying = False
+    if own and not structure_flags:
+        carrying = _flag(unit.is_carrying_vespene, f"{where}.is_carrying_vespene")
     return Entity(
         tag=tag,
         type_name=type_name,
@@ -328,6 +355,10 @@ def _entity(unit: Any, where: str, *, own: bool, structure_flags: bool) -> Entit
         ready=ready,
         idle=idle,
         powered=powered,
+        vespene_contents=vespene,
+        assigned_harvesters=assigned,
+        ideal_harvesters=ideal,
+        carrying_vespene=carrying,
     )
 
 
@@ -342,12 +373,14 @@ def _own(raw: object, where: str, *, structures: bool, actors: dict[int, Any]) -
     return entities
 
 
-def _visible(raw: object, where: str, found: dict[int, tuple[Entity, Any]]) -> None:
+def _visible(
+    raw: object, where: str, found: dict[int, tuple[Entity, Any]], *, geyser: bool = False
+) -> None:
     for index, unit in enumerate(_items(raw, where, MAX_OBSERVED_ENTITIES)):
         here = f"{where}[{index}]"
         if not _flag(unit.is_visible, f"{here}.is_visible"):
             continue  # a fogged snapshot is not visible state
-        entity = _entity(unit, here, own=False, structure_flags=False)
+        entity = _entity(unit, here, own=False, structure_flags=False, geyser=geyser)
         if entity.tag in found:
             raise ValueError(f"{here} repeats tag {entity.tag}")
         found[entity.tag] = (entity, unit)
@@ -430,6 +463,10 @@ class Sc2Adapter:
         self._actors: dict[int, Any] = {}
         self._minerals: dict[int, Any] = {}
         self._enemies: dict[int, Any] = {}
+        # Visible vespene geysers (gas build targets) and own gas buildings with their
+        # entities (gather targets), by tag.
+        self._geysers: dict[int, Any] = {}
+        self._gas: dict[int, tuple[Entity, Any]] = {}
         # Actor tag -> its last command SC2 accepted, until the runtime moves on.
         self._awaiting: dict[int, CommandRecord] = {}
         self._records: deque[CommandRecord] = deque(maxlen=MAX_COMMAND_RECORDS)
@@ -501,6 +538,8 @@ class Sc2Adapter:
         _visible(game.enemy_structures, "enemy_structures", enemies)
         minerals: dict[int, tuple[Entity, Any]] = {}
         _visible(game.mineral_field, "mineral_field", minerals)
+        geysers: dict[int, tuple[Entity, Any]] = {}
+        _visible(game.vespene_geyser, "vespene_geyser", geysers, geyser=True)
         visible = _vision(port)
         remembered = self._remember(enemies, visible)
         game_seconds = game_loop / GAME_LOOPS_PER_SECOND
@@ -523,6 +562,8 @@ class Sc2Adapter:
             map_center=map_data.map_center,
             mineral_fields=_by_tag(minerals),
             enemy_sightings=tuple(sightings[tag] for tag in sorted(sightings)),
+            vespene=_count(game.vespene, "vespene"),
+            vespene_geysers=_by_tag(geysers),
         )
         self._map = map_data
         self._remembered = remembered
@@ -530,6 +571,10 @@ class Sc2Adapter:
         self._actors = actors
         self._minerals = {tag: raw for tag, (_, raw) in minerals.items()}
         self._enemies = {tag: raw for tag, (_, raw) in enemies.items()}
+        self._geysers = {tag: raw for tag, (_, raw) in geysers.items()}
+        self._gas = {
+            s.tag: (s, actors[s.tag]) for s in own_structures if s.type_name in GAS_STRUCTURE_TYPES
+        }
         self._game_loop = game_loop
         return observation
 
@@ -713,14 +758,33 @@ class Sc2Adapter:
                     candidates,
                 )
             sc2_target = placement
+        elif ability in _GAS_BUILD_ABILITIES:
+            # SC2 builds a gas structure on the geyser unit: never a point, no placement query.
+            if not isinstance(target, int) or command.alternatives:
+                return self._reject(
+                    runtime, command, f"{ability} targets one vespene geyser by tag, never a point"
+                )
+            sc2_target = self._geysers.get(target)
+            if sc2_target is None:
+                return self._reject(runtime, command, f"{ability} target is not a visible geyser")
         elif ability in _TRAIN_ABILITIES:
             if target is not None:
                 return self._reject(runtime, command, "a train command takes no target")
         elif ability == GATHER_ABILITY:
             sc2_target = self._minerals.get(target) if isinstance(target, int) else None
+            gas = self._gas.get(target) if isinstance(target, int) else None
+            if sc2_target is None and gas is not None:
+                building, raw = gas
+                if not building.is_ready:
+                    return self._reject(runtime, command, "gather target gas building unfinished")
+                if building.vespene_contents <= 0:
+                    return self._reject(runtime, command, "gather target gas building depleted")
+                sc2_target = raw
             if sc2_target is None:
                 return self._reject(
-                    runtime, command, "gather target is not a visible mineral field"
+                    runtime,
+                    command,
+                    "gather target is not a visible mineral field or an own gas building",
                 )
         elif isinstance(target, int):  # only an attack may name a unit target
             sc2_target = self._enemies.get(target) if ability == ATTACK_ABILITY else None

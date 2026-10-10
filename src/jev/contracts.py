@@ -29,6 +29,18 @@ Phase J2 addition (Step 215, defaulted so every existing construction still hold
   position without it. ``jev.sc2_adapter`` owns the memory; policies read it
   through the ``sighting_count_compare`` operation.
 
+Phase J2 additions (Step 216, defaulted likewise):
+
+* ``vespene`` -- the gas bank, beside ``minerals``.
+* ``vespene_geysers`` -- visible vespene geysers (an entity collection policies may
+  select, so a gas structure is built on a geyser *unit*, never at a point).
+* :class:`Entity` ``vespene_contents`` (gas left in a geyser or gas building) and
+  ``assigned_harvesters`` / ``ideal_harvesters`` (SC2's own worker count and ideal
+  count for an own gas building). The adapter fills them for geysers and own gas
+  buildings only; elsewhere they keep their 0 defaults.
+* :class:`Entity` ``carrying_vespene`` -- an own unit carries gas back (SC2's carry
+  buff), so a gas worker on its return trip is still known as one. Default False.
+
 Binding rule (the ONE model shared by validator and interpreter): selection
 bindings are root-local and live for one root evaluation in one tick. A node's
 binding effects commit only if the node SUCCEEDS; a node that fails -- a select
@@ -182,6 +194,7 @@ EntityCollection = Literal[
     "visible_enemies",
     "remembered_enemy_structures",
     "mineral_fields",
+    "vespene_geysers",
 ]
 #: Observation fields holding map-metadata point lists.
 LocationSource = Literal["enemy_start_locations", "expansion_locations"]
@@ -796,6 +809,10 @@ class Entity:
     and may be ``None`` elsewhere; the ``is_*`` properties apply the documented
     fallbacks (ready := fully built, idle := no orders, powered := explicit True).
     ``shield`` is the Protoss shield (0 for other races); damage lands on it first.
+    ``vespene_contents`` is the gas left in a geyser or gas building;
+    ``assigned_harvesters`` / ``ideal_harvesters`` are SC2's worker count and
+    ideal count for an own gas building (all three 0 for any other entity).
+    ``carrying_vespene`` is True for an own unit carrying gas (False elsewhere).
     """
 
     tag: int
@@ -810,6 +827,10 @@ class Entity:
     idle: bool | None = None
     powered: bool | None = None
     shield: float = 0.0
+    vespene_contents: int = 0
+    assigned_harvesters: int = 0
+    ideal_harvesters: int = 0
+    carrying_vespene: bool = False
 
     @property
     def durability(self) -> float:
@@ -872,6 +893,9 @@ class Observation:
     mineral_fields: tuple[Entity, ...] = ()
     #: The bot's own sighting memory, sorted by tag (see the module docstring).
     enemy_sightings: tuple[EnemySighting, ...] = ()
+    #: The gas bank and the visible vespene geysers (plan J2 Step 216).
+    vespene: int = 0
+    vespene_geysers: tuple[Entity, ...] = ()
 
     # Collection / location / point names ARE field names (one source of truth:
     # the Literal-derived tuples), so lookup is by field, never a re-listed branch.

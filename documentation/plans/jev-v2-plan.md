@@ -562,13 +562,26 @@ the steps numerically and bypass 224's dependency before live tests.
 ### Step 216: Execute a gas economy safely
 - **Problem:** Collect and reserve gas through visible graph actions.
 - **Type:** code
-- **Status:** PENDING
+- **Status:** DONE (2026-10-10)
 - **Issue:** #333
 - **Flags:** --reviewers deep
 - **Files:** src/jev/contracts.py, src/jev/operations.py, src/jev/runtime.py, src/jev/sc2_adapter.py, bots/jev/v2/policy.json, tests/test_jev_macro.py (new), tests/test_jev_sc2.py, tests/test_jev_runtime.py.
 - **Produces:** Geyser-targeted Assimilator construction, gas assignment and gas cost accounting.
 - **Done when:** Production-caller tests cover correct unit-tag construction target, saturation, depleted/destroyed gas building, missing worker, concurrent gas spending and release on acknowledgement/failure; no point-target mineral-build shortcut used for Assimilator.
 - **Depends on:** 215
+- **Build notes (2026-10-10):**
+  - The v2 policy hash is `c9912677…` (149 nodes); v1 bytes and hash are unchanged, and a 700-step v1 production-runner trace is byte-identical.
+  - **Construction and saturation:** Assimilators target the geyser unit by tag. Saturation follows SC2's `assigned_harvesters`/ideal of 3.
+  - **Gas accounting:** gas is reserved per task and released on acknowledgement or failure.
+  - **Gas-worker identity:** `operations.is_gas_worker` is true when a worker carries vespene (`Entity.carrying_vespene`, own units only) or gathers from an own structure.
+    - The `gathering_gas` view filter and the `gather_gas` free-worker check both use it.
+    - Every v2 builder, scout-replacement and gas-candidate pick sets `gathering_gas:false`.
+  - **Gas-building selection:** a `gas_building` flag, which covers rich geysers. The JV type-allowlist test still pins v1's list, and Step 218 must extend it for the Core and Stalker.
+  - **Footprint:** gas buildings screen as 3x3 through one `_footprint` helper, whether standing or in flight.
+  - **Test-only gas cost:** nothing in v2 spends gas until Step 218, so the gas-cost tests patch `VESPENE_COST`. The Assimilator's 75 minerals comes from SC2 5.0 knowledge.
+  - **Shared change:** `src/jev/bot.py` now measures `mean_vespene_bank` for every run. Current-source v1 runs report 0.0; the frozen baseline still reports "unavailable".
+  - **Also touched:** `documentation/operator/jev-v2-validation.md`, `bots/jev/v2/__init__.py`, the test fakes (now with `vespene` and `vespene_geyser`), and `tests/test_jev_benchmark.py`.
+  - Reviewed by `/review-deep` (6 lenses) over 3 iterations. Evidence in `.build-step/jev-v2-216/` (gitignored).
 
 ### Step 217: Carry out a recoverable natural expansion
 - **Problem:** Complete a second base through an inspectable persistent plan.

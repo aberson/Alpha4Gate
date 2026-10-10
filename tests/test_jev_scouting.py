@@ -87,6 +87,8 @@ PROBE_SELECTIONS = (
     "supply.buffer.worker",
     "construction.repower.worker",
     "construction.gateways.worker",
+    "construction.gas.worker",
+    "economy.gas.saturate.workers",
 )
 _EPSILON = 1e-6
 #: 8.6 east of the enemy natural, 16.5 from the enemy start and 12.4 from the
@@ -167,6 +169,7 @@ class _ScoutWorld(_World):
             "enemy_units": [],
             "enemy_structures": [],
             "mineral_field": [],
+            "vespene_geyser": [],
         }
         pylons = [b.position for b in self.own("Pylon") if b.progress >= 1.0]
         for body in sorted(self.bodies.values(), key=lambda b: b.tag):

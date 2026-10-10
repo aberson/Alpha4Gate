@@ -29,6 +29,7 @@ from s2clientprotocol import raw_pb2
 from sc2.data import ActionResult, Result
 from sc2.game_state import ActionError
 from sc2.ids.ability_id import AbilityId
+from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 from sc2.unit import Unit
 
@@ -80,6 +81,7 @@ def _unit(tag: int, name: str = "Probe", **fields: Any) -> SimpleNamespace:
         "is_idle": True,
         "is_powered": False,
         "is_visible": True,
+        "is_carrying_vespene": False,
     }
     values.update(fields)
     return SimpleNamespace(**values)
@@ -115,6 +117,8 @@ def _game(**fields: Any) -> SimpleNamespace:
         "enemy_units": [],
         "enemy_structures": [],
         "mineral_field": _patches(),
+        "vespene": 0,
+        "vespene_geyser": [],
         "start_location": START,
         "enemy_start_locations": [(120.5, 120.5)],
         "expansion_locations_list": [(120.5, 120.5), START],
@@ -656,6 +660,174 @@ def test_malformed_action_error_reports_are_value_errors(
 
 
 # ---------------------------------------------------------------------------
+# Gas (plan J2 Step 216): geysers, gas buildings and geyser-targeted builds
+# ---------------------------------------------------------------------------
+
+GEYSER = 5000
+ASSIMILATOR = 1300
+GAS_BUILD = "PROTOSSBUILD_ASSIMILATOR"
+
+
+def _geyser(tag: int = GEYSER, **fields: Any) -> SimpleNamespace:
+    values: dict[str, Any] = {
+        "position": (37.5, 25.5),
+        "is_structure": True,
+        "vespene_contents": 2250,
+    }
+    values.update(fields)
+    return _unit(tag, "VespeneGeyser", **values)
+
+
+def _assimilator(
+    *, ready: bool = True, gas: int = 2000, assigned: int = 1, ideal: int = 3
+) -> SimpleNamespace:
+    return _unit(
+        ASSIMILATOR,
+        "Assimilator",
+        position=(37.5, 25.5),
+        is_structure=True,
+        build_progress=1.0 if ready else 0.5,
+        is_ready=ready,
+        vespene_contents=gas,
+        assigned_harvesters=assigned,
+        ideal_harvesters=ideal,
+    )
+
+
+def test_observation_carries_the_gas_bank_visible_geysers_and_gas_building_counts() -> None:
+    fogged = _geyser(GEYSER + 1, is_visible=False)
+    game = _game(
+        vespene=137, vespene_geyser=[_geyser(), fogged], structures=[_nexus(), _assimilator()]
+    )
+    obs = Sc2Adapter().observe(game, _Port())
+    assert obs.vespene == 137
+    (geyser,) = obs.vespene_geysers  # a fogged snapshot is not visible state
+    assert (geyser.tag, geyser.type_name, geyser.vespene_contents) == (
+        GEYSER,
+        "VespeneGeyser",
+        2250,
+    )
+    assert obs.collection("vespene_geysers") == obs.vespene_geysers  # selectable by policies
+    nexus, gas = obs.own_structures
+    assert (gas.vespene_contents, gas.assigned_harvesters, gas.ideal_harvesters) == (2000, 1, 3)
+    # Gas facts are read for geysers and own gas buildings only (the Nexus stand-in has
+    # none of those attributes): every other entity keeps the 0 defaults.
+    assert (nexus.vespene_contents, nexus.assigned_harvesters, nexus.ideal_harvesters) == (0, 0, 0)
+    assert [p.vespene_contents for p in obs.mineral_fields] == [0] * 8
+
+
+def test_own_units_report_whether_they_carry_vespene() -> None:
+    """A gas worker on its way back targets the Nexus, never the gas building: only
+    burnysc2's carry buff (``is_carrying_vespene``) still names it a gas worker."""
+    carrier = _unit(
+        2001, orders=[_order("HARVEST_RETURN", 1000)], is_idle=False, is_carrying_vespene=True
+    )
+    obs = Sc2Adapter().observe(_game(units=[_mining(2000), carrier]), _Port())
+    assert [(u.tag, u.carrying_vespene) for u in obs.own_units] == [(2000, False), (2001, True)]
+    assert all(not s.carrying_vespene for s in obs.own_structures)
+
+
+@pytest.mark.parametrize(
+    ("change", "fragment"),
+    [
+        ({"vespene": -1}, "vespene"),
+        (
+            {"vespene_geyser": [_geyser(vespene_contents="lots")]},
+            "vespene_geyser[0].vespene_contents",
+        ),
+        ({"structures": [_assimilator(assigned=-1)]}, "structures[0].assigned_harvesters"),
+        ({"units": [_unit(2000, is_carrying_vespene="yes")]}, "units[0].is_carrying_vespene"),
+        ({"vespene_geyser": 5}, "vespene_geyser must be a collection"),
+    ],
+)
+def test_malformed_gas_state_raises_value_error_naming_the_field(
+    change: dict[str, Any], fragment: str
+) -> None:
+    with pytest.raises(ValueError) as excinfo:
+        Sc2Adapter().observe(_game(**change), _Port())
+    assert fragment in str(excinfo.value)
+
+
+def _gas_ticked(**fields: Any) -> tuple[Sc2Adapter, JevRuntime, CommandSpec, SimpleNamespace]:
+    """One idle probe's gather task (any issued task carries a forged command)."""
+    game = _game(units=[_unit(2000)], minerals=0, **fields)
+    port = _Port()
+    adapter, runtime, commands = _ticked(game, port)
+    (gather,) = commands
+    return adapter, runtime, gather, game
+
+
+def test_a_gas_build_sends_the_geyser_unit_itself_and_never_queries_placement() -> None:
+    adapter, runtime, task, game = _gas_ticked(vespene_geyser=[_geyser()])
+    port = _Port()
+    build = CommandSpec(task.node_id, task.task_id, GAS_BUILD, task.actor_tags, GEYSER)
+    (record,) = asyncio.run(adapter.issue([build], port, runtime))
+    ((ability, actor, target),) = port.issued
+    assert (ability, actor) == (GAS_BUILD, game.units[0])
+    assert target is game.vespene_geyser[0]  # the raw geyser unit, as Unit.build_gas sends
+    assert port.queries == []  # a gas structure is never a placement query
+    assert (record.outcome, record.target, record.candidates) == ("accepted", GEYSER, ())
+
+
+@pytest.mark.parametrize(
+    ("target", "alternatives", "reason"),
+    [
+        ((37.5, 25.5), (), "never a point"),  # the geyser's position is not the geyser
+        (GEYSER, ((37.5, 25.5),), "never a point"),
+        (PATCH, (), "not a visible geyser"),  # a mineral field
+        (GEYSER + 1, (), "not a visible geyser"),  # fogged: not in the observation
+        (ASSIMILATOR, (), "not a visible geyser"),
+    ],
+)
+def test_a_gas_build_needs_one_visible_geyser_unit(
+    target: object, alternatives: tuple[tuple[float, float], ...], reason: str
+) -> None:
+    adapter, runtime, task, _ = _gas_ticked(
+        vespene_geyser=[_geyser(), _geyser(GEYSER + 1, is_visible=False)],
+        structures=[_nexus(), _assimilator()],
+    )
+    port = _Port()
+    build = CommandSpec(
+        task.node_id, task.task_id, GAS_BUILD, task.actor_tags, target, alternatives
+    )
+    (record,) = asyncio.run(adapter.issue([build], port, runtime))
+    assert (port.issued, port.queries) == ([], [])
+    assert record.outcome == "rejected" and reason in record.reason
+    assert runtime.task_status(task.task_id) == "pending"  # the runtime owns the retry
+
+
+@pytest.mark.parametrize(
+    ("building", "reason"),
+    [
+        (_assimilator(), None),
+        (_assimilator(ready=False), "gas building unfinished"),
+        (_assimilator(gas=0), "gas building depleted"),
+    ],
+)
+def test_a_gas_gather_reaches_only_an_own_finished_gas_building_with_gas_left(
+    building: SimpleNamespace, reason: str | None
+) -> None:
+    adapter, runtime, task, _ = _gas_ticked(structures=[_nexus(), building])
+    port = _Port()
+    gather = CommandSpec(task.node_id, task.task_id, "HARVEST_GATHER", task.actor_tags, ASSIMILATOR)
+    (record,) = asyncio.run(adapter.issue([gather], port, runtime))
+    if reason is None:
+        ((_, _, target),) = port.issued
+        assert target is building and record.outcome == "accepted"
+    else:
+        assert port.issued == [] and record.outcome == "rejected" and reason in record.reason
+
+
+def test_an_enemy_gas_building_is_never_a_gather_target() -> None:
+    refinery = _unit(7300, "Refinery", position=(90.5, 90.5), is_structure=True)
+    adapter, runtime, task, _ = _gas_ticked(enemy_structures=[refinery])
+    port = _Port()
+    gather = CommandSpec(task.node_id, task.task_id, "HARVEST_GATHER", task.actor_tags, 7300)
+    (record,) = asyncio.run(adapter.issue([gather], port, runtime))
+    assert port.issued == [] and "not a visible mineral field or an own gas" in record.reason
+
+
+# ---------------------------------------------------------------------------
 # BotAIPort: explicit burnysc2 unit commands
 # ---------------------------------------------------------------------------
 
@@ -705,6 +877,7 @@ _PORT_CASES: dict[str, tuple[object, AbilityId]] = {
     "HARVEST_GATHER": ("unit", AbilityId.HARVEST_GATHER),
     "PROTOSSBUILD_PYLON": ((24.0, 34.0), AbilityId.PROTOSSBUILD_PYLON),
     "PROTOSSBUILD_GATEWAY": ((26.5, 34.5), AbilityId.PROTOSSBUILD_GATEWAY),
+    "PROTOSSBUILD_ASSIMILATOR": ("unit", AbilityId.PROTOSSBUILD_ASSIMILATOR),  # on a geyser
     "NEXUSTRAIN_PROBE": (None, AbilityId.NEXUSTRAIN_PROBE),
     "GATEWAYTRAIN_ZEALOT": (None, AbilityId.GATEWAYTRAIN_ZEALOT),
     "MOVE": ((40.0, 40.0), AbilityId.MOVE_MOVE),  # burnysc2's own Unit.move convention
@@ -767,6 +940,26 @@ def test_port_reports_refusals_queries_errors_and_leaves() -> None:
     assert port.is_visible((60.0, 60.0)) and not port.is_visible((10.0, 10.0))
     asyncio.run(port.leave())
     assert bot.client.left
+
+
+def test_port_builds_a_gas_structure_on_the_geyser_unit_like_build_gas() -> None:
+    """burnysc2's ``Unit.build_gas(geyser)`` is ``UnitCommand(creation ability, worker,
+    geyser)``: the port sends that very command, target the geyser ``Unit``."""
+    bot = _bot([ActionResult.Success])
+    geyser = Unit(
+        raw_pb2.Unit(tag=GEYSER, unit_type=UnitTypeId.VESPENEGEYSER.value, alliance=3),
+        SimpleNamespace(state=SimpleNamespace(game_loop=0)),
+    )
+    worker = _sc2_unit(5)
+    assert asyncio.run(BotAIPort(bot).issue(GAS_BUILD, worker, geyser)) is None  # type: ignore[arg-type]
+    ((commands, _),) = bot.client.sent
+    (command,) = commands
+    assert (command.ability, command.unit, command.target) == (
+        AbilityId.PROTOSSBUILD_ASSIMILATOR,
+        worker,
+        geyser,
+    )
+    assert type(command.target) is Unit and not hasattr(bot, "placed")  # no can_place
 
 
 # ---------------------------------------------------------------------------
