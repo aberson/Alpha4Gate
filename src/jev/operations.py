@@ -88,6 +88,24 @@ structure's cost each tick (a reservation the plan's own build then takes over:
 transferred, never charged twice). Their failures carry fixed reason codes
 (:data:`jev.plans.PLAN_CODES`), so the plan records why it waits.
 
+Limited tech and a mixed army (Jev v2, plan J2 Step 218, D4): the Cybernetics Core
+and the Stalker join the tables, with SC2's tech requirements in
+:data:`TECH_REQUIREMENT` (the Core needs a ready Gateway, the Stalker a ready Core).
+``build`` and ``train`` check that requirement against the observation before they
+ask for anything, and ``train`` never uses a producer SC2 reports unpowered, so a
+lost or unfinished prerequisite blocks visibly instead of reaching SC2. SC2 counts a
+prerequisite's build progress only; a ``train`` node may opt into a stricter,
+operational prerequisite (``powered_prerequisite``: the Core must also have Pylon
+power), which v2's Stalker node does. ``train`` also takes optional composition
+guards -- ``max_count`` and a ``max_ratio`` to another unit type (``ratio_of``) --
+over *planned* counts (standing units, queued orders and unconfirmed train tasks,
+:meth:`RuntimeView.in_flight_trains`), so one tick with many idle producers never
+overshoots the mix. ``affordable`` asks whether
+a type's price from the central tables is available after reservations (so a policy
+never spells out a cost). ``attack`` never assigns a flying target to an actor whose
+weapons cannot hit air (``Entity.can_attack_air``): such actors are blocked with a
+reason, so a Zealot is never ordered onto an air unit while a Stalker may be.
+
 There are deliberately no strategy helpers (``manage_economy``, ``rush``,
 ``expand_now``, ``distribute_workers`` ...): the node arguments carry every
 criterion, tie-break and limit, so the graph is the policy.
@@ -140,10 +158,12 @@ from jev.plans import (
 )
 
 __all__ = [
+    "AFFORD_RESOURCES",
     "ATTACK_ABILITY",
     "Ack",
     "ActionOp",
     "ActionPlan",
+    "AffordResource",
     "ArgIssue",
     "ArgSpec",
     "ArgType",
@@ -176,6 +196,7 @@ __all__ = [
     "Lifecycle",
     "MAX_ANY_OF",
     "MAX_BASES",
+    "MAX_COMPOSITION_RATIO",
     "MAX_ELAPSED_SECONDS",
     "MAX_EXPANSION_CANDIDATES",
     "MAX_FILTER_DEPTH",
@@ -199,6 +220,7 @@ __all__ = [
     "OP_GATHER_GAS",
     "OP_RELEASE_GAS",
     "OP_START_PLAN",
+    "OP_TRAIN",
     "OP_TRANSFER_WORKERS",
     "OWN_TYPES",
     "OpOutcome",
@@ -233,6 +255,7 @@ __all__ = [
     "SupplyMeasure",
     "SupplyPlan",
     "TARGET_LOST_REASON",
+    "TECH_REQUIREMENT",
     "TERMINAL_TASK_STATUSES",
     "TRACKED_MEMORIES",
     "TRAIN_ABILITY",
@@ -259,6 +282,7 @@ __all__ = [
     "parameter_references",
     "placement_candidates",
     "planned_supply",
+    "planned_unit_count",
     "resolve_args",
     "resolve_point",
     "tracked_nodes",
@@ -266,7 +290,7 @@ __all__ = [
 ]
 
 # ---------------------------------------------------------------------------
-# Game data: the single source of truth for Jev v1's allowed unit/structure set.
+# Game data: the single source of truth for Jev's allowed unit/structure set.
 # ---------------------------------------------------------------------------
 
 GATHER_ABILITY: Final = "HARVEST_GATHER"
@@ -283,6 +307,7 @@ HARVEST_ABILITIES: Final = frozenset({GATHER_ABILITY, RETURN_ABILITY})
 BUILD_ABILITY: Final[Mapping[str, str]] = {
     "Pylon": "PROTOSSBUILD_PYLON",
     "Gateway": "PROTOSSBUILD_GATEWAY",
+    "CyberneticsCore": "PROTOSSBUILD_CYBERNETICSCORE",  # plan J2 Step 218 (D4)
 }
 #: Gas structures Jev v2 may build -> generic SC2 build ability. SC2 builds them on
 #: a vespene geyser *unit*: the command targets the geyser's tag (burnysc2's
@@ -312,43 +337,68 @@ MAX_GAS_HARVESTERS: Final = 3
 TRAIN_ABILITY: Final[Mapping[str, str]] = {
     "Probe": "NEXUSTRAIN_PROBE",
     "Zealot": "GATEWAYTRAIN_ZEALOT",
+    "Stalker": "GATEWAYTRAIN_STALKER",  # plan J2 Step 218 (D4)
 }
 #: Unit -> structure type that trains it.
-PRODUCER_TYPE: Final[Mapping[str, str]] = {"Probe": "Nexus", "Zealot": "Gateway"}
+PRODUCER_TYPE: Final[Mapping[str, str]] = {
+    "Probe": "Nexus",
+    "Zealot": "Gateway",
+    "Stalker": "Gateway",
+}
+#: SC2's tech requirements among the allowlisted types: the structure type that must
+#: stand *ready* (build complete) before this type may be built or trained. The
+#: allowlisted part of burnysc2's ``PROTOSS_TECH_REQUIREMENT``: SC2 counts build
+#: progress only, never Pylon power (``BotAI.tech_requirement_progress``). Pylon,
+#: Gateway, Nexus, Assimilator, Probe and Zealot have none (a Gateway's need for
+#: Pylon power is its placement, which ``select_placement`` screens).
+TECH_REQUIREMENT: Final[Mapping[str, str]] = {
+    "CyberneticsCore": "Gateway",
+    "Stalker": "CyberneticsCore",
+}
 #: The unit type that mines and constructs.
 WORKER_TYPE: Final = "Probe"
-#: Costs (SC2 5.0 game data; the Assimilator is 75 minerals since LotV). Both
-#: tables cover every buildable and trainable type, so an intent always carries
-#: both amounts; no allowlisted type costs gas yet (Step 218 adds the Stalker).
+#: Costs (SC2 5.0 game data; the Assimilator is 75 minerals since LotV; Step 218
+#: adds the Cybernetics Core at 150 minerals and the Stalker at 125 minerals, 50
+#: vespene and 2 supply). Both cost tables cover every buildable and trainable
+#: type, so an intent always carries both amounts.
 MINERAL_COST: Final[Mapping[str, int]] = {
     "Probe": 50,
     "Zealot": 100,
+    "Stalker": 125,
     "Pylon": 100,
     "Gateway": 150,
+    "CyberneticsCore": 150,
     "Assimilator": 75,
     "Nexus": 400,
 }
 VESPENE_COST: Final[Mapping[str, int]] = {
     "Probe": 0,
     "Zealot": 0,
+    "Stalker": 50,
     "Pylon": 0,
     "Gateway": 0,
+    "CyberneticsCore": 0,
     "Assimilator": 0,
     "Nexus": 0,
 }
-SUPPLY_COST: Final[Mapping[str, int]] = {"Probe": 1, "Zealot": 2}
+SUPPLY_COST: Final[Mapping[str, int]] = {"Probe": 1, "Zealot": 2, "Stalker": 2}
 #: Supply each supply-providing structure adds once complete (SC2 game data).
 SUPPLY_PROVIDED: Final[Mapping[str, int]] = {"Nexus": 15, "Pylon": 8}
 #: SC2's supply ceiling: no supply structure raises the cap above it.
 MAX_SUPPLY: Final = 200
 #: Square footprint edge length (cells) for placement overlap checks.
-FOOTPRINT: Final[Mapping[str, int]] = {"Nexus": 5, "Pylon": 2, "Gateway": 3}
+FOOTPRINT: Final[Mapping[str, int]] = {
+    "Nexus": 5,
+    "Pylon": 2,
+    "Gateway": 3,
+    "CyberneticsCore": 3,
+}
 DEFAULT_FOOTPRINT: Final = 2
 PYLON_POWER_RADIUS: Final = 6.5
 #: Allowed structures that only operate inside Pylon power (every other own
-#: structure -- Nexus, Pylon -- needs none). The SC2 adapter reads SC2's powered
-#: flag for these types only.
-REQUIRES_POWER: Final = frozenset({"Gateway"})
+#: structure -- Nexus, Pylon, gas buildings -- needs none). The SC2 adapter reads
+#: SC2's powered flag for these types only.
+REQUIRES_POWER: Final = frozenset({"Gateway", "CyberneticsCore"})
 #: Own entity types a filter on ``own_units`` / ``own_structures`` may name: derived
 #: from the tables above (buildable + trainable + producers + footprinted structures).
 OWN_TYPES: Final = (
@@ -389,6 +439,7 @@ MAX_TRACKED_FINISHES: Final = 64
 MAX_PLACEMENT_CANDIDATES: Final = 8
 #: Operation names the runtime's reservation views recognize (used by the registry too).
 OP_BUILD: Final = "build"
+OP_TRAIN: Final = "train"
 OP_GATHER: Final = "gather"
 OP_BUILD_GAS: Final = "build_gas"
 OP_GATHER_GAS: Final = "gather_gas"
@@ -441,6 +492,8 @@ def decode_arrive_within(params: Mapping[str, JsonValue]) -> float:
 
 MAX_PLACEMENT_RADIUS: Final = 20.0
 MAX_SELECTION: Final = 200
+#: Largest ``max_ratio`` a train node's composition guard may name.
+MAX_COMPOSITION_RATIO: Final = 8.0
 #: Most map locations a select_locations node may bind.
 MAX_LOCATIONS: Final = 64
 #: Largest distance any distance-valued argument may take (game units).
@@ -584,6 +637,11 @@ class RuntimeView(Protocol):
     def gather_assignments(self) -> Mapping[int, int]:
         """Mineral-patch or gas-building tag -> workers assigned to it by unacknowledged
         gather tasks (mineral and gas gathers alike)."""
+        ...
+
+    def in_flight_trains(self) -> Mapping[str, int]:
+        """Unit type -> train tasks whose command is not confirmed yet (their queue
+        entry is not in the observation; a confirmed one is a queued order)."""
         ...
 
     def rejected_sites(self, structure: str) -> frozenset[Point]:
@@ -817,6 +875,9 @@ TRACKED_MEMORIES: Final[tuple[TrackedMemory, ...]] = get_args(TrackedMemory)
 #: :data:`MAX_SUPPLY` (so a policy never spells out SC2's ceiling itself).
 SupplyMeasure = Literal["free", "ceiling_room"]
 SUPPLY_MEASURES: Final[tuple[SupplyMeasure, ...]] = get_args(SupplyMeasure)
+#: What an ``affordable`` check may require of a price (post-reservation amounts).
+AffordResource = Literal["minerals", "vespene", "supply"]
+AFFORD_RESOURCES: Final[tuple[AffordResource, ...]] = get_args(AffordResource)
 
 
 @dataclass(frozen=True)
@@ -966,6 +1027,9 @@ BOOL_FILTER_ATTRIBUTES: Final[Mapping[str, Callable[[Entity], bool]]] = {
     # Gas (Jev v2): any race's gas extraction structure; gas left in a geyser or one.
     "gas_building": lambda e: e.type_name in GAS_STRUCTURE_TYPES,
     "has_vespene": lambda e: e.vespene_contents > 0,
+    # Weapons (Jev v2 Step 218): SC2's targets for the entity's weapons.
+    "can_attack_ground": lambda e: e.can_attack_ground,
+    "can_attack_air": lambda e: e.can_attack_air,
 }
 #: Boolean filter keys that also read the evaluation's view, the same way.
 VIEW_FILTER_ATTRIBUTES: Final[Mapping[str, Callable[[Entity, RuntimeView], bool]]] = {
@@ -1150,6 +1214,45 @@ def _resource_compare(view: RuntimeView, args: Args) -> OpOutcome:
         f"{resource} {actual} {op} {expected} {verdict}",
         {"resource": resource, "actual": actual, "op": op, "value": expected},
     )
+
+
+#: Post-reservation amount of each resource an ``affordable`` check reads.
+_AFFORD_READERS: Final[Mapping[str, Callable[[RuntimeView], int]]] = {
+    "minerals": lambda view: view.available_minerals(),
+    "vespene": lambda view: view.available_vespene(),
+    "supply": lambda view: view.available_supply(),
+}
+
+
+def _price(item: str, resource: str) -> int:
+    """``item``'s price in ``resource`` from the central tables (supply: 0 unless a unit)."""
+    if resource == "minerals":
+        return MINERAL_COST[item]
+    if resource == "vespene":
+        return VESPENE_COST[item]
+    return SUPPLY_COST.get(item, 0)
+
+
+def _affordable(view: RuntimeView, args: Args) -> OpOutcome:
+    """Whether ``item``'s price in each named resource -- from the central cost tables,
+    never spelled in a policy -- is available after in-flight commitments and this
+    tick's holds (a plan lane's own hold counts as its own). Failure is a plan's
+    ``budget_short``."""
+    item = _arg_str(args, "item")
+    short: list[str] = []
+    facts: dict[str, JsonValue] = {"item": item}
+    for resource in _str_list(args["resources"]):
+        need = _price(item, resource)
+        have = _AFFORD_READERS[resource](view)
+        facts[resource] = {"need": need, "available": have}
+        if need > have:
+            short.append(resource)
+    facts["short"] = list(short)
+    if short:
+        return OpOutcome(
+            False, f"{item} unaffordable: short of {', '.join(short)}", facts, "budget_short"
+        )
+    return OpOutcome(True, f"{item} affordable", facts)
 
 
 @dataclass(frozen=True)
@@ -1728,6 +1831,36 @@ def _least_loaded_patch(
     )
 
 
+def _missing_requirement(view: RuntimeView, kind: str, *, powered: bool = False) -> str | None:
+    """The :data:`TECH_REQUIREMENT` of ``kind`` when no own structure of that type is
+    ready in this observation (a live prerequisite, never remembered); else None.
+
+    SC2 counts build progress only. With ``powered`` (a train node's opt-in
+    ``powered_prerequisite``) the structure must also have Pylon power when its type
+    needs it (:data:`REQUIRES_POWER`): a stricter, operational prerequisite."""
+    required = TECH_REQUIREMENT.get(kind)
+    if required is None:
+        return None
+    for structure in view.observation.own_structures:
+        if structure.type_name != required or not structure.is_ready:
+            continue
+        if not powered or required not in REQUIRES_POWER or structure.is_powered:
+            return None
+    return required
+
+
+def planned_unit_count(view: RuntimeView, unit: str) -> int:
+    """THE planned count of ``unit`` for composition guards: own units of the type,
+    plus queued train orders for it on own structures, plus train tasks not yet
+    confirmed (:meth:`RuntimeView.in_flight_trains`). A confirmed task is a queued
+    order, so nothing is counted twice."""
+    obs = view.observation
+    ability = TRAIN_ABILITY[unit]
+    standing = sum(1 for u in obs.own_units if u.type_name == unit)
+    queued = sum(1 for s in obs.own_structures for order in s.orders if order.ability == ability)
+    return standing + queued + view.in_flight_trains().get(unit, 0)
+
+
 def _build(view: RuntimeView, args: Args) -> ActionPlan:
     structure = _arg_str(args, "structure")
     bound_workers = _binding(view, _arg_str(args, "worker")).entities
@@ -1737,6 +1870,14 @@ def _build(view: RuntimeView, args: Args) -> ActionPlan:
     if not workers or not sites:
         reason = blocked[0][1] if blocked else "worker or site binding empty"
         return ActionPlan(failure_reason=reason, hold_reservation=hold)
+    required = _missing_requirement(view, structure)
+    if required is not None:
+        return ActionPlan(
+            failure_reason=f"{structure} requires a ready {required}",
+            hold_reservation=hold,
+            facts={"structure": structure, "requires": required},
+            code="prerequisite_missing",
+        )
     worker = workers[0]
     site = sites[0]
     intent = Intent(
@@ -1756,21 +1897,77 @@ def _build(view: RuntimeView, args: Args) -> ActionPlan:
     )
 
 
+def _composition_allowance(
+    view: RuntimeView, args: Args, unit: str, facts: dict[str, JsonValue]
+) -> int | None:
+    """How many more ``unit`` the node's composition guards allow (None: no guard).
+
+    ``max_count`` caps the planned count; ``max_ratio`` caps it at that many times
+    the planned count of ``ratio_of`` (rounded down), so a 1.0 ratio keeps Stalkers
+    at most as many as Zealots. Both read :func:`planned_unit_count`, and the facts
+    show the counts and the bound."""
+    max_count = args.get("max_count")
+    ratio_of = args.get("ratio_of")
+    max_ratio = args.get("max_ratio")
+    bounds: list[int] = []
+    if isinstance(max_count, int) and not isinstance(max_count, bool):
+        bounds.append(max_count)
+        facts["max_count"] = max_count
+    if isinstance(ratio_of, str) and isinstance(max_ratio, int | float):
+        other = planned_unit_count(view, ratio_of)
+        bounds.append(math.floor(float(max_ratio) * other + 1e-9))
+        facts.update({"ratio_of": ratio_of, "max_ratio": max_ratio, "planned_other": other})
+    if not bounds:
+        return None
+    planned = planned_unit_count(view, unit)
+    bound = min(bounds)
+    facts.update({"planned": planned, "composition_bound": bound})
+    return max(0, bound - planned)
+
+
 def _train(view: RuntimeView, args: Args) -> ActionPlan:
+    """One ``unit`` from each bound idle producer of its type: never one that is not
+    ready or that SC2 reports unpowered, never while the unit's tech requirement
+    (:data:`TECH_REQUIREMENT`) is not ready, and -- with composition guards -- never
+    beyond what they allow this evaluation (each new intent counts toward the bound;
+    an intent for a producer already held by a task adds nothing)."""
     unit = _arg_str(args, "unit")
     bound = sorted(_binding(view, _arg_str(args, "producers")).entities, key=lambda p: p.tag)
     producers, blocked = _own_actors(view, bound, structures=True)
     hold = _arg_bool(args, "hold_reservation")
     existing = sum(1 for u in view.observation.own_units if u.type_name == unit)
+    facts: dict[str, JsonValue] = {"unit": unit}
+    powered = _arg_bool(args, "powered_prerequisite")
+    required = _missing_requirement(view, unit, powered=powered)
+    if required is not None:
+        facts["requires"] = required
+        state = "ready, powered" if powered and required in REQUIRES_POWER else "ready"
+        reason = f"{unit} requires a {state} {required}"
+        blocked.extend((producer.tag, reason) for producer in producers)
+        return ActionPlan(
+            blocked=tuple(blocked),
+            failure_reason=reason,
+            hold_reservation=hold,
+            facts=facts,
+            code="prerequisite_missing",
+        )
+    allowance = _composition_allowance(view, args, unit, facts)
     intents: list[Intent] = []
     for producer in producers:
+        held = view.actor_is_busy(producer.tag)
         if producer.type_name != PRODUCER_TYPE[unit]:
             blocked.append((producer.tag, f"{producer.type_name} cannot train {unit}"))
         elif not producer.is_ready:
             blocked.append((producer.tag, "producer not ready"))
-        elif not producer.is_idle and not view.actor_is_busy(producer.tag):
+        elif producer.powered is False and producer.type_name in REQUIRES_POWER:
+            blocked.append((producer.tag, "producer unpowered"))
+        elif not producer.is_idle and not held:
             blocked.append((producer.tag, "producer busy"))
+        elif allowance is not None and not held and allowance <= 0:
+            blocked.append((producer.tag, f"composition guard: no more {unit} allowed now"))
         else:
+            if allowance is not None and not held:
+                allowance -= 1  # this intent may become a new task: it counts
             intents.append(
                 Intent(
                     actor_tag=producer.tag,
@@ -1787,7 +1984,7 @@ def _train(view: RuntimeView, args: Args) -> ActionPlan:
         intents=tuple(intents),
         blocked=tuple(blocked),
         hold_reservation=hold,
-        facts={"unit": unit},
+        facts=facts,
     )
 
 
@@ -1799,14 +1996,18 @@ def _unit_command(view: RuntimeView, args: Args, ability: str) -> ActionPlan:
     target: Target
     target_key: str
     params: dict[str, JsonValue] = {PARAM_ARRIVE_WITHIN: arrive_within}
+    air_target: int | None = None  # a visible flying enemy: only anti-air actors may take it
     if target_binding.kind == "units" and ability == ATTACK_ABILITY:
         if not target_binding.entities:
             return ActionPlan(failure_reason="target binding empty", preempt=preempt)
         chosen = target_binding.entities[0]
         params[PARAM_TARGET_TAG] = chosen.tag
-        if _visible_enemy(chosen.tag, view.observation) is not None:
+        seen = _visible_enemy(chosen.tag, view.observation)
+        if seen is not None:
             target = chosen.tag
             target_key = f"#{target}"
+            if seen.is_flying:
+                air_target = seen.tag
         else:
             # SC2 can only target a unit in sight: an entity that is not a visible
             # enemy (a remembered structure) is attack-moved to where it was seen.
@@ -1819,6 +2020,18 @@ def _unit_command(view: RuntimeView, args: Args, ability: str) -> ActionPlan:
         target = point
         target_key = format_point(point)
     actors, blocked = _own_actors(view, sorted(units, key=lambda u: u.tag), structures=False)
+    extra: dict[str, JsonValue] = {}
+    if air_target is not None:
+        # Capability-aware (D2/D4): a unit whose weapons cannot hit air (a Zealot) is
+        # never assigned a flying target; it is blocked, visibly, and left alone.
+        unable = [unit for unit in actors if not unit.can_attack_air]
+        if unable:
+            actors = [unit for unit in actors if unit.can_attack_air]
+            blocked.extend(
+                (unit.tag, f"{unit.type_name} {unit.tag} cannot attack air target {air_target}")
+                for unit in unable
+            )
+            extra["cannot_attack_air"] = len(unable)
     # An attack-move point is done only once no ground enemy holds it (D3: cleared).
     held = (
         isinstance(target, tuple)
@@ -1846,7 +2059,7 @@ def _unit_command(view: RuntimeView, args: Args, ability: str) -> ActionPlan:
         intents=tuple(intents),
         blocked=tuple(blocked),
         preempt=preempt,
-        facts={"target": target_key, "units": len(units)},
+        facts={"target": target_key, "units": len(units), **extra},
     )
 
 
@@ -2876,6 +3089,16 @@ _SPECS: Final[tuple[OperationSpec, ...]] = (
         _resource_compare,
     ),
     PredicateOp(
+        "affordable",
+        "Whether a type's price from the central cost tables, in each named resource, "
+        "is available after reservations (never a cost spelled in the policy)",
+        {
+            "item": ArgSpec("enum", choices=tuple(MINERAL_COST)),
+            "resources": ArgSpec("enum_list", choices=AFFORD_RESOURCES),
+        },
+        _affordable,
+    ),
+    PredicateOp(
         "threat_within",
         "Visible enemy within a distance of a point",
         {
@@ -3090,12 +3313,21 @@ _SPECS: Final[tuple[OperationSpec, ...]] = (
         _BUILD_LIFECYCLE,
     ),
     ActionOp(
-        "train",
-        "Train one unit from each bound idle producer",
+        OP_TRAIN,
+        "Train one unit from each bound idle, ready, powered producer once the unit's "
+        "tech requirement is ready (with powered_prerequisite, also powered: stricter than "
+        "SC2); optional composition guards cap the unit's planned count (max_count) and its "
+        "ratio to another unit's planned count (ratio_of, max_ratio)",
         {
             "unit": ArgSpec("enum", choices=tuple(TRAIN_ABILITY)),
             "producers": ArgSpec("entities"),
             "hold_reservation": _HOLD,
+            "max_count": ArgSpec("int", required=False, minimum=0, maximum=MAX_SUPPLY, param=True),
+            "ratio_of": ArgSpec("enum", required=False, choices=tuple(TRAIN_ABILITY)),
+            "max_ratio": ArgSpec(
+                "number", required=False, minimum=0.0, maximum=MAX_COMPOSITION_RATIO, param=True
+            ),
+            "powered_prerequisite": ArgSpec("bool", required=False, default=False),
         },
         _train,
         _ACTION_OUTCOMES,
@@ -3679,6 +3911,22 @@ def _cross_checks(
     if operation == "select_placement":
         if _arg_num(resolved, "radius_min") > _arg_num(resolved, "radius_max"):
             return [("invalid_arg", "argument 'radius_min' must not exceed 'radius_max'")]
+    if operation == OP_TRAIN:
+        ratio_of, max_ratio = resolved.get("ratio_of"), resolved.get("max_ratio")
+        if (ratio_of is None) != (max_ratio is None):
+            return [("invalid_arg", "arguments 'ratio_of' and 'max_ratio' go together")]
+        if ratio_of is not None and ratio_of == resolved.get("unit"):
+            return [("invalid_arg", "argument 'ratio_of' must name another unit")]
+        if resolved.get("powered_prerequisite") is True:
+            required = TECH_REQUIREMENT.get(str(resolved.get("unit")))
+            if required is None or required not in REQUIRES_POWER:
+                return [
+                    (
+                        "invalid_arg",
+                        "argument 'powered_prerequisite' needs a unit whose tech requirement "
+                        "is a structure that uses Pylon power",
+                    )
+                ]
     return []
 
 

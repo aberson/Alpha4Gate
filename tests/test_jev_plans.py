@@ -85,6 +85,7 @@ from jev.plans import (
     PLAN_NO_PROGRESS_SECONDS,
     PLAN_SITE_AVOID_SECONDS,
     PLAN_TIMEOUT_SECONDS,
+    PLAN_YIELD_SECONDS,
     PlanKind,
     PlanRecord,
     PlanStore,
@@ -95,6 +96,7 @@ from jev.runtime import JevRuntime
 from jev.sc2_adapter import GAME_LOOPS_PER_SECOND, BotAIPort, Sc2Adapter
 from test_jev_economy import (
     _BUILD_KIND,
+    _POWERED_KINDS,
     _REMAPS,
     _TRAIN_KIND,
     BASE_BUILD,
@@ -139,6 +141,9 @@ THIRD = (30.5, 64.5)
 NATURAL_PATCHES = tuple(range(3100, 3108))
 THIRD_PATCHES = tuple(range(3200, 3208))
 ZEALOTS = tuple(range(6000, 6008))
+#: The finished Cybernetics Core of the launched world (beside its Pylon, powered).
+CORE = 1400
+CORE_SITE = (27.5, 33.5)
 PLAN_NODE = "expansion.start.go"
 BUILD_NODE = "expansion.build"
 MOVE_NODE = "expansion.move"
@@ -251,7 +256,7 @@ class _ExpansionWorld(_GasWorld):
             if body.tag in self.inside:
                 continue
             structure = _GAS_KINDS[body.kind][1]
-            powered = body.kind == "Gateway" and any(
+            powered = body.kind in _POWERED_KINDS and any(
                 distance(body.position, p) <= PYLON_POWER_RADIUS for p in pylons
             )
             proto = self._gas_proto(body, powered)
@@ -346,12 +351,15 @@ def _world(
     paths: dict[Point, float | None] | None = None,
     nexus_seconds: float = 10.0,
     natural_nexus: bool = False,
+    core: bool = True,
 ) -> _ExpansionWorld:
     """A launched one-base v2 Jev ready to expand: Nexus, Pylon, four powered Gateways,
-    an Assimilator with three gas workers, sixteen probes on eight main patches,
-    eight ready Zealots at home and eight patches at each expansion; no income
-    unless a scenario adds some. ``natural_nexus`` stands a finished second Nexus
-    at the natural already."""
+    a powered Cybernetics Core (Step 218: D2 orders the Core prerequisite before the
+    expansion, so the tech plan has already done its work here), an Assimilator with
+    three gas workers, sixteen probes on eight main patches, eight ready Zealots at
+    home and eight patches at each expansion; no income unless a scenario adds some.
+    ``natural_nexus`` stands a finished second Nexus at the natural already; without
+    ``core`` there is no Core yet (the tech plan's work is still to do)."""
     bodies = [
         _Body(NEXUS, "Nexus", START),
         _Body(PYLON, "Pylon", (24.0, 36.0)),
@@ -376,6 +384,8 @@ def _world(
     ]
     if natural_nexus:
         bodies.append(_Body(1001, "Nexus", NATURAL))
+    if core:
+        bodies.append(_Body(CORE, "CyberneticsCore", CORE_SITE))
     for i, tag in enumerate(PROBES):
         orders = [(AbilityId.HARVEST_GATHER_PROBE, PATCHES[i % 8], 0.0)]
         bodies.append(_Body(tag, "Probe", (27.0 + i * 0.4, 26.0), orders=orders))
@@ -454,8 +464,15 @@ def _actor(event: Event) -> int:
     return int(str(actors[0]))
 
 
-def _zealot_trains(run: _Run) -> list[Event]:
-    return run.commands("production.zealots.train")
+ZEALOT_TRAIN = "production.zealots.train"
+STALKER_TRAIN = "production.stalkers.train"
+
+
+def _production_trains(run: _Run) -> list[Event]:
+    """Every army train command (Step 218: the launched world's Core and gas let
+    production buy Stalkers too, from the same minerals a plan may hold); tests that
+    name a unit assert the node of each command."""
+    return [*run.commands(STALKER_TRAIN), *run.commands(ZEALOT_TRAIN)]
 
 
 def _assert_released(run: _Run, aborted: Event) -> None:
@@ -520,7 +537,7 @@ def test_v2_expands_to_the_path_checked_natural_and_transfers_workers() -> None:
         if e.facts["summary"] and 6 * STEP_LOOPS < e.game_loop < build_event.game_loop
     ]
     assert summaries and {e.facts["reserved_minerals"] for e in summaries} == {_NEXUS_COST}
-    assert _zealot_trains(run) == []  # production never spent the held minerals
+    assert _production_trains(run) == []  # production never spent the held minerals
     assert world.minerals == 0 and world.overspent == []  # charged exactly once
     # Acknowledged, constructed, staffed, completed; the second base is defensible.
     nexuses = world.own("Nexus")
@@ -572,8 +589,9 @@ def test_the_reservation_holds_only_the_nexus_cost_and_transfers_without_double_
     (two Zealots), and the build takes the hold over -- never charged twice."""
     world = _world()
     run = _expand(world, 60, _fund(at=6, minerals=600))
-    trains = _zealot_trains(run)
-    assert len(trains) == 2  # 600 - 400 held = two Zealots, never a third
+    trains = _production_trains(run)
+    # 600 - 400 held = two Zealots, never a third (no gas yet: the Stalker branch waits).
+    assert [e.node_id for e in trains] == [ZEALOT_TRAIN, ZEALOT_TRAIN]
     ((loop, _),) = run.sent(NEXUS_BUILD)
     assert all(e.game_loop < loop for e in trains)
     assert world.overspent == [] and world.minerals == 0
@@ -628,7 +646,7 @@ def test_v2_aborts_after_three_worker_recoveries_and_releases_every_hold() -> No
     released = aborted.facts["released"]
     assert isinstance(released, dict) and released["minerals"] == _NEXUS_COST
     # The 400 held through four walks are free at once: production spends them now.
-    trains = _zealot_trains(run)
+    trains = _production_trains(run)
     assert trains and min(e.game_loop for e in trains) == aborted.game_loop
     assert run.sent(NEXUS_BUILD) == []
     _assert_released(run, aborted)
@@ -641,9 +659,15 @@ def test_v2_aborts_after_three_worker_recoveries_and_releases_every_hold() -> No
         for e in run.node_events(PLAN_NODE)
         if e.status == "failure" and aborted.game_loop < e.game_loop
     ]
-    assert refused and all("cools down" in e.reason for e in refused)
-    second = [r for r in _plans(run) if r.plan_id.endswith(":plan:2")]
-    assert all(r.started_game_seconds >= cooldown - 1e-9 for r in second)
+    # Then (Step 218) one turn for the tech plan, which this world -- its Core stands --
+    # never takes: the window lapses and the expansion may start again.
+    yielded = [e for e in refused if "yields to tech" in e.reason]
+    assert refused and all(e in yielded or "cools down" in e.reason for e in refused)
+    assert yielded  # the turn rule's window did apply
+    assert all(cooldown <= e.game_seconds < cooldown + PLAN_YIELD_SECONDS for e in yielded)
+    (second,) = [r for r in _plans(run) if r.plan_id.endswith(":plan:2")]
+    assert second.kind == "expand"  # the expansion did restart, once the window lapsed
+    assert second.started_game_seconds >= cooldown + PLAN_YIELD_SECONDS - 1e-9
     assert run.controller is not None
     summary = run.controller.metrics.summary(end_game_seconds=world.seconds)
     assert summary["plan_aborts"] == {"status": "measured", "value": 1}  # D6 metric
@@ -847,8 +871,11 @@ def test_v2_missing_budget_waits_recovers_then_aborts_releasing_its_reservation(
     assert released["actor_tag"] == str(worker)
     held = [e for e in run.events if e.kind == "command" and _actor(e) == worker]
     assert {e.node_id for e in held if e.game_loop < aborted.game_loop} == {MOVE_NODE}
-    trains = _zealot_trains(run)
-    assert len(trains) == 2 and {e.game_loop for e in trains} == {aborted.game_loop}
+    trains = _production_trains(run)
+    # The released 250 buy exactly two Stalkers (2 x 125; two minutes of gas income
+    # pays their 2 x 50) on the abort tick -- never a third unit.
+    assert [e.node_id for e in trains] == [STALKER_TRAIN, STALKER_TRAIN]
+    assert {e.game_loop for e in trains} == {aborted.game_loop}
     assert run.sent(NEXUS_BUILD) == []
     _assert_released(run, aborted)
 
@@ -1003,6 +1030,207 @@ def test_second_base_defense_is_eligible_only_once_a_second_nexus_stands() -> No
 
 
 # ---------------------------------------------------------------------------
+# Step 218: the expansion after the tech prerequisite, and never starved by it
+# ---------------------------------------------------------------------------
+
+
+def _macro_plans(run: _Run, kind: str) -> list[PlanRecord]:
+    """The run's kept plans of ``kind``, oldest first."""
+    return [record for record in _plans(run) if record.kind == kind]
+
+
+def _funding(prices: dict[str, int]) -> _Hook:
+    """Fund each macro plan with its kind's price on the step it is first seen open."""
+    funded: set[str] = set()
+
+    def fund(world: _ExpansionWorld, controller: JevController, index: int) -> None:
+        for record in controller.runtime.plans():
+            if record.is_open and record.plan_id not in funded:
+                funded.add(record.plan_id)
+                world.minerals += prices.get(record.kind, 0)
+
+    return fund
+
+
+def test_v2_without_a_core_the_expansion_waits_for_the_tech_plan_then_expands() -> None:
+    """D2 fallback order from the expansion's side: a launched army ready to expand
+    but without a Core. The tech plan takes the macro slot first (its lane runs first);
+    every tick the expansion tries, the slot refuses it while the tech plan is open --
+    through the Core's construction -- and the expansion opens only once the tech plan
+    completed, then takes the natural."""
+    world = _world(core=False)
+    ready: dict[int, bool] = {}
+
+    def mark(world: _ExpansionWorld, controller: JevController, index: int) -> None:
+        ready[world.state.game_loop] = any(b.progress >= 1.0 for b in world.own("CyberneticsCore"))
+
+    run = _expand(world, 230, mark, _funding({"tech": 150, "expand": _NEXUS_COST}))
+    core_ready = min(loop for loop, ok in ready.items() if ok)
+    starts = [e for e in run.events if e.kind == "node" and e.node_id == "expansion.start.go"]
+    before = [e for e in starts if e.game_loop < core_ready]
+    assert before and {e.status for e in before} == {"failure"}  # waits while tech runs
+    assert all("never a duplicate plan" in e.reason for e in before)  # refused by the slot
+    placed = min(
+        loop for loop, c in world.sent if c.ability == AbilityId.PROTOSSBUILD_CYBERNETICSCORE
+    )
+    assert placed < core_ready  # it waited through the Core's construction, too
+    (tech,) = _macro_plans(run, "tech")
+    (expansion,) = _macro_plans(run, "expand")
+    assert tech.status == expansion.status == "completed"
+    assert tech.finished_game_seconds is not None
+    assert expansion.started_game_seconds >= tech.finished_game_seconds
+    assert expansion.started_game_seconds * GAME_LOOPS_PER_SECOND >= core_ready - 1e-6
+    assert len(world.own("Nexus")) == 2 and world.overspent == []
+
+
+def _saboteur(
+    doomed: dict[str, set[int]], prices: dict[str, dict[int, int]] | None = None
+) -> _Hook:
+    """Make the run's ``n``th plan of each kind in ``doomed`` fail fast, for a
+    non-static reason, and fund the ``n``th plan of each kind in ``prices`` as it
+    opens. A doomed tech plan loses its acknowledged Core (``structure_lost``); a
+    doomed expansion plan loses every worker it claims (``recoveries_exhausted``)."""
+    seen: dict[str, list[str]] = {"tech": [], "expand": []}
+    claimed_at: dict[int, int] = {}
+    prices = prices or {}
+
+    def hook(world: _ExpansionWorld, controller: JevController, index: int) -> None:
+        for record in controller.runtime.plans():
+            if not record.is_open or record.kind not in seen:
+                continue
+            ids = seen[record.kind]
+            if record.plan_id not in ids:
+                ids.append(record.plan_id)
+                world.minerals += prices.get(record.kind, {}).get(len(ids), 0)
+            if len(ids) not in doomed.get(record.kind, set()):
+                continue
+            if record.kind == "tech" and record.acknowledged_game_seconds is not None:
+                for core in world.own("CyberneticsCore"):
+                    if core.progress < 1.0:
+                        world.kill(core.tag)
+            elif record.kind == "expand" and record.actor_tag is not None:
+                tag = record.actor_tag
+                claimed_at.setdefault(tag, index)
+                if index - claimed_at[tag] >= 3 and tag in world.bodies:
+                    world.kill(tag)
+
+    return hook
+
+
+def _macro_aborts(run: _Run) -> list[Event]:
+    """Every macro plan's abort event, in order."""
+    return [
+        e
+        for e in _transitions(run)
+        if e.status == "failed" and e.facts["plan_kind"] in ("tech", "expand")
+    ]
+
+
+def test_v2_repeated_failures_alternate_tech_and_expansion_turns_until_both_are_disabled() -> None:
+    """Both macro kinds keep failing for non-static reasons. The shared slot gives each
+    kind exactly one turn after the other's abort -- whichever lane runs first -- so
+    the kinds alternate strictly until each reaches the abort limit; neither ever takes
+    two turns in a row while the other is still enabled (Step 218: the slot's turn rule,
+    not lane order or a latch in the graph)."""
+    world = _world(core=False)
+    hook = _saboteur({"tech": {1, 2, 3}, "expand": {1, 2, 3}}, {"tech": {1: 150, 2: 150, 3: 150}})
+    run = _expand(world, 420, hook)
+    plans = sorted(
+        (r for r in _plans(run) if r.kind in ("tech", "expand")),
+        key=lambda r: r.started_game_seconds,
+    )
+    assert [r.kind for r in plans] == ["tech", "expand"] * MAX_PLAN_ABORTS
+    assert all(r.status == "aborted" for r in plans)
+    aborts = _macro_aborts(run)
+    assert [e.facts["reason_code"] for e in aborts] == [
+        "structure_lost",
+        "recoveries_exhausted",
+    ] * MAX_PLAN_ABORTS  # non-static: no kind is disabled before its abort limit
+    # Each abort owes the next turn to the other kind, until that kind is disabled.
+    assert [e.facts["yield_to"] for e in aborts] == [["expand"], ["tech"]] * 2 + [["expand"], []]
+    # Within one turn: each plan opens at the first tick after the previous cooldown.
+    tick = STEP_LOOPS / GAME_LOOPS_PER_SECOND
+    for aborted, following in zip(aborts, plans[1:], strict=False):
+        cooldown = aborted.facts["cooldown_until"]
+        assert isinstance(cooldown, float)
+        assert cooldown <= following.started_game_seconds <= cooldown + tick
+    assert run.controller is not None
+    (macro, _) = run.controller.runtime.plan_slots()
+    assert dict(macro.disabled) == {"expand": "abort_limit", "tech": "abort_limit"}
+
+
+def test_v2_a_failing_expansion_hands_the_slot_to_tech_then_both_complete() -> None:
+    """The mirror of the tech-starves-expansion case: the expansion fails after a tech
+    failure, and the slot's next turn is the tech plan's -- not the expansion's again
+    -- which then builds the Core; the expansion's next turn takes the natural."""
+    world = _world(core=False)
+    hook = _saboteur(
+        {"tech": {1}, "expand": {1}},
+        {"tech": {1: 150, 2: 150}, "expand": {2: _NEXUS_COST}},
+    )
+    run = _expand(world, 380, hook)
+    plans = sorted(
+        (r for r in _plans(run) if r.kind in ("tech", "expand")),
+        key=lambda r: r.started_game_seconds,
+    )
+    assert [(r.kind, r.status) for r in plans] == [
+        ("tech", "aborted"),
+        ("expand", "aborted"),
+        ("tech", "completed"),
+        ("expand", "completed"),
+    ]
+    failed_expansion = plans[1].finished_game_seconds
+    assert failed_expansion is not None
+    turn = failed_expansion + PLAN_COOLDOWN_SECONDS + STEP_LOOPS / GAME_LOOPS_PER_SECOND
+    assert plans[2].started_game_seconds <= turn  # tech's turn, at once
+    tech_refusals = [
+        e
+        for e in run.node_events("tech.start.go")
+        if e.status == "failure" and "yields" in e.reason
+    ]
+    assert tech_refusals  # after its own abort, tech was told the expansion's turn came first
+    assert len(world.own("Nexus")) == 2 and len(world.own("CyberneticsCore")) == 1
+    assert all(b.progress >= 1.0 for b in world.own("CyberneticsCore"))
+    assert world.overspent == []
+
+
+def test_v2_a_failing_tech_plan_defers_the_expansion_by_at_most_one_plan() -> None:
+    """The tech plan cannot afford its Core (no minerals, no income) and times out. The
+    expansion -- whose lane runs before the tech lane -- takes the macro slot as soon
+    as the slot has cooled down, not after the tech kind is disabled; the tech plan is
+    refused, visibly, while the expansion is open and restarts only after it."""
+    world = _world(core=False)
+    run = _expand(world, 520, _funding({"expand": _NEXUS_COST}))
+    tech = _macro_plans(run, "tech")
+    (expansion,) = _macro_plans(run, "expand")
+    first = tech[0]
+    assert (first.status, first.reason_code) == ("aborted", "timeout")
+    assert first.finished_game_seconds is not None
+    # The bound: one tech plan's deadline and one cooldown (plus a tick), never more.
+    bound = first.started_game_seconds + PLAN_TIMEOUT_SECONDS + PLAN_COOLDOWN_SECONDS + 0.5
+    assert first.finished_game_seconds <= expansion.started_game_seconds <= bound
+    assert expansion.status == "completed" and len(world.own("Nexus")) == 2
+    done = expansion.finished_game_seconds
+    assert done is not None
+    assert len(tech) == 2 and tech[1].started_game_seconds >= done  # tech restarts after it
+    refused = [
+        e
+        for e in run.events
+        if e.kind == "node"
+        and e.node_id == "tech.start.go"
+        and e.status == "failure"
+        and expansion.started_game_seconds <= e.game_seconds < done
+    ]
+    turn = "yields to expand"  # the slot's turn rule, on the tick the expansion starts
+    assert refused and all(
+        "never a duplicate plan" in e.reason or turn in e.reason for e in refused
+    )
+    assert run.controller is not None
+    assert run.controller.runtime.plan_aborts() == 1  # tech was never disabled
+    assert world.overspent == []
+
+
+# ---------------------------------------------------------------------------
 # The plan store: one per slot, bounded recovery, deadlines, release
 # ---------------------------------------------------------------------------
 
@@ -1010,7 +1238,7 @@ _RUN = "0123456789ab4def8123456789abcdef"
 
 
 def _store_with_plan() -> PlanStore:
-    store = PlanStore(_RUN)
+    store = PlanStore(_RUN, kinds=("expand",))  # Step 217's shape: expansion plans only
     record, reason = store.start("lane.start", "lane", "expand", 10.0)
     assert record is not None, reason
     return store
@@ -1126,7 +1354,7 @@ def test_a_static_site_failure_disables_the_kind_and_a_site_failure_is_avoided()
 
 
 def test_the_abort_limit_disables_a_kind_for_the_match() -> None:
-    store = PlanStore(_RUN)
+    store = PlanStore(_RUN, kinds=("expand",))  # one kind: no other kind's turn to wait
     now = 10.0
     for attempt in range(1, MAX_PLAN_ABORTS + 1):
         record, reason = store.start("lane.start", "lane", "expand", now)
@@ -1183,6 +1411,113 @@ def test_a_site_change_recovers_on_the_old_site_before_committing_the_new_one() 
     assert aborted.facts["avoided_sites"] == [[NATURAL[0], NATURAL[1]]]
     again, _ = store.start("lane.start", "lane", "expand", 12.0 + PLAN_COOLDOWN_SECONDS)
     assert again is not None and again.avoided_sites == (NATURAL,)
+
+
+_MACRO_STARTS: dict[str, tuple[str, str]] = {
+    "expand": ("exp.start", "exp"),
+    "tech": ("tech.start", "tech"),
+}
+
+
+def _macro_store() -> PlanStore:
+    return PlanStore(_RUN, kinds=("expand", "tech"))
+
+
+def _start_kind(store: PlanStore, kind: PlanKind, now: float) -> tuple[PlanRecord | None, str]:
+    node, root = _MACRO_STARTS[kind]
+    return store.start(node, root, kind, now)
+
+
+@pytest.mark.parametrize(("aborted", "other"), [("tech", "expand"), ("expand", "tech")])
+def test_after_an_abort_the_macro_slot_yields_one_turn_to_the_other_kind(
+    aborted: PlanKind, other: PlanKind
+) -> None:
+    store = _macro_store()
+    record, _ = _start_kind(store, aborted, 0.0)
+    assert record is not None
+    assert store.abort(_MACRO_STARTS[aborted][0], "timeout", "deadline", 10.0)
+    (event,) = [e for e in store.drain_events() if e.status == "failed"]
+    until = 10.0 + PLAN_COOLDOWN_SECONDS + PLAN_YIELD_SECONDS
+    assert (event.facts["yield_to"], event.facts["yield_until"]) == ([other], until)
+    turn = event.facts["slot_turn"]
+    assert isinstance(turn, dict) and (turn["yield_from"], turn["yield_to"]) == (aborted, [other])
+    cooled = 10.0 + PLAN_COOLDOWN_SECONDS
+    refused, reason = _start_kind(store, aborted, cooled)
+    assert refused is None and f"yields to {other}" in reason
+    slot = store.slot("macro")
+    assert (slot.yield_from, slot.yield_to, slot.yield_until) == (aborted, (other,), until)
+    taken, _ = _start_kind(store, other, cooled)
+    assert taken is not None and store.slot("macro").yield_from is None  # its turn, taken
+    assert store.slot("macro").open_kind == other
+
+
+@pytest.mark.parametrize("order", [("tech", "expand"), ("expand", "tech")])
+def test_repeated_aborts_alternate_the_macro_kinds_whatever_the_attempt_order(
+    order: tuple[PlanKind, PlanKind],
+) -> None:
+    """Every turn both kinds try to start in a fixed order (as lanes do) and the one
+    that starts aborts: the kinds alternate strictly until both are disabled."""
+    store = _macro_store()
+    now = 0.0
+    started: list[str] = []
+    for _ in range(2 * MAX_PLAN_ABORTS + 2):
+        for kind in order:
+            record, _ = _start_kind(store, kind, now)
+            if record is not None:
+                started.append(kind)
+                assert store.abort(_MACRO_STARTS[kind][0], "timeout", "deadline", now + 1.0)
+                now += 1.0
+                break
+        now += PLAN_COOLDOWN_SECONDS
+    first, second = order
+    assert started == [first, second] * MAX_PLAN_ABORTS  # then both are disabled
+
+
+def test_the_yield_lapses_when_no_other_kind_takes_the_slot() -> None:
+    store = _macro_store()
+    _start_kind(store, "tech", 0.0)
+    assert store.abort("tech.start", "timeout", "deadline", 10.0)
+    cooled = 10.0 + PLAN_COOLDOWN_SECONDS
+    early, _ = _start_kind(store, "tech", cooled + PLAN_YIELD_SECONDS - 0.25)
+    assert early is None  # the expansion's turn is still open
+    again, _ = _start_kind(store, "tech", cooled + PLAN_YIELD_SECONDS)
+    assert again is not None and store.slot("macro").yield_from is None
+
+
+def test_no_turn_is_owed_without_another_enabled_kind_after_a_completion_or_across_slots() -> None:
+    store = _macro_store()
+    _start_kind(store, "expand", 0.0)
+    store.after_lane(
+        "exp.start",
+        stage="exp.site",
+        rank=1,
+        failed=True,
+        waiting=False,
+        code="no_site",
+        reason="no site",
+        now=1.0,
+    )  # a static failure: expansion is disabled for the match
+    tech, _ = _start_kind(store, "tech", 1.0 + PLAN_COOLDOWN_SECONDS)
+    assert tech is not None
+    assert store.abort("tech.start", "timeout", "deadline", 20.0)
+    (event,) = [e for e in store.drain_events() if e.status == "failed" and "tech" in e.reason]
+    assert event.facts["yield_to"] == [] and event.facts["yield_until"] is None
+    again, _ = _start_kind(store, "tech", 20.0 + PLAN_COOLDOWN_SECONDS)
+    assert again is not None  # nobody else could take the turn: no wait
+    assert dict(store.slot("macro").disabled) == {"expand": "no_site"}
+    # A completion owes no turn and sets no cooldown.
+    store = _macro_store()
+    _start_kind(store, "tech", 0.0)
+    assert store.complete("tech.start", 5.0) is None
+    slot = store.slot("macro")
+    assert (slot.yield_from, slot.cooldown_until) == (None, None)
+    # An army plan's abort owes the macro slot nothing (and the other way round).
+    store = PlanStore(_RUN)
+    army, _ = store.start("army.start", "army", "pressure", 0.0)
+    assert army is not None and store.abort("army.start", "timeout", "deadline", 3.0)
+    assert store.slot("army").yield_to == ("opening", "recover")
+    assert store.slot("macro").yield_from is None
+    assert _start_kind(store, "tech", 3.0)[0] is not None
 
 
 def test_second_base_defense_is_read_from_the_live_state() -> None:
@@ -1245,6 +1580,8 @@ class _View:
     record: PlanRecord | None = None
     bindings: dict[str, Binding] = field(default_factory=dict)
     builds: tuple[tuple[str, Point], ...] = ()
+    trains: dict[str, int] = field(default_factory=dict)  # unconfirmed train tasks (Step 218)
+    busy: frozenset[int] = frozenset()  # actors a task holds
 
     def binding(self, name: str) -> Binding | None:
         return self.bindings.get(name)
@@ -1269,6 +1606,9 @@ class _View:
 
     def gather_assignments(self) -> dict[int, int]:
         return {}
+
+    def in_flight_trains(self) -> dict[str, int]:
+        return dict(self.trains)
 
     def visits(self, node_id: str) -> dict[Point, Visit]:
         return {}
@@ -1298,7 +1638,7 @@ class _View:
         return frozenset(s.tag for s in self.observation.own_structures)
 
     def actor_is_busy(self, tag: int) -> bool:
-        return False
+        return tag in self.busy
 
     def node_filter(self) -> CompiledFilter | None:
         return None
@@ -1788,7 +2128,7 @@ def test_plan_arguments_name_a_start_plan_node_and_a_lane_starts_one_plan() -> N
     assert "invalid_plan" in excinfo.value.codes()
 
 
-def test_v2_runs_one_expansion_plan_lane_and_v1_none() -> None:
+def test_v2_runs_macro_plan_lanes_before_production_and_v1_none() -> None:
     plan_operations = {
         "start_plan",
         "plan_status_is",
@@ -1802,13 +2142,22 @@ def test_v2_runs_one_expansion_plan_lane_and_v1_none() -> None:
     }
     v1 = load_v1_policy().policy
     assert not [n.id for n in v1.nodes if n.operation in plan_operations]
-    starts = [n for n in _V2.nodes if n.operation == "start_plan"]
-    assert [(n.id, n.args["kind"]) for n in starts] == [(PLAN_NODE, "expand")]
-    assert "expansion" in _V2.roots
-    assert _V2.roots.index("expansion") < _V2.roots.index("production")  # it holds first
+    kinds = sorted(str(n.args["kind"]) for n in _V2.nodes if n.operation == "start_plan")
+    assert kinds == ["expand", "tech"]  # Step 218 adds the Core prerequisite plan
+    roots = _V2.roots
+    assert max(roots.index("expansion"), roots.index("tech")) < roots.index("production")
+    # Fairness between the macro kinds is the plan store's turn rule (Step 218): no node
+    # reads another lane's plan, so no graph latch can encode (or break) whose turn it is.
+    lane: dict[str, str] = {}
+    for root in roots:
+        stack = [root]
+        while stack:
+            node_id = stack.pop()
+            lane[node_id] = root
+            stack.extend(_V2.node(node_id).children)
     for node in _V2.nodes:
         if "plan" in node.args:
-            assert node.args["plan"] == PLAN_NODE, node.id
+            assert lane[node.id] == lane[str(node.args["plan"])], node.id
     assert _V2.node(BUILD_NODE).args == {
         "structure": "Nexus",
         "worker": "$expander",

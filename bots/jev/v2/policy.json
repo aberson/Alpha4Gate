@@ -6,6 +6,7 @@
     "economy",
     "supply",
     "construction",
+    "tech",
     "expansion",
     "scouting",
     "production",
@@ -43,7 +44,9 @@
     "expansion_scout_age": 2,
     "expansion_max_path_ratio": 1.5,
     "natural_transfer_workers": 6,
-    "natural_defense_radius": 15
+    "natural_defense_radius": 15,
+    "stalkers_per_zealot": 1,
+    "stalker_cap": 16
   },
   "nodes": [
     {
@@ -708,7 +711,7 @@
     },
     {
       "id": "supply.buffer.site",
-      "label": "Next to an unpowered Gateway if one stands (the Pylon serves both), else near the main",
+      "label": "Next to an unpowered Gateway or Core if one stands (the Pylon serves both), else near the main",
       "kind": "selector",
       "children": [
         "supply.buffer.site.repower",
@@ -719,18 +722,18 @@
     },
     {
       "id": "supply.buffer.site.repower",
-      "label": "Pylon candidates that power the first completed, unpowered Gateway",
+      "label": "Pylon candidates that power the first completed, unpowered Gateway or Core",
       "kind": "sequence",
       "children": [
-        "supply.buffer.site.repower.gateway",
+        "supply.buffer.site.repower.structure",
         "supply.buffer.site.repower.near"
       ],
       "operation": null,
       "args": {}
     },
     {
-      "id": "supply.buffer.site.repower.gateway",
-      "label": "Choose a completed, unpowered Gateway",
+      "id": "supply.buffer.site.repower.structure",
+      "label": "Choose a completed, unpowered Gateway or Cybernetics Core",
       "kind": "select",
       "children": [],
       "operation": "select_entities",
@@ -738,7 +741,8 @@
         "collection": "own_structures",
         "filter": {
           "types": [
-            "Gateway"
+            "Gateway",
+            "CyberneticsCore"
           ],
           "ready": true,
           "powered": false
@@ -747,7 +751,7 @@
           "by": "tag"
         },
         "limit": 1,
-        "bind": "buffer_unpowered_gateway"
+        "bind": "buffer_unpowered_structure"
       }
     },
     {
@@ -758,7 +762,7 @@
       "operation": "select_placement",
       "args": {
         "structure": "Pylon",
-        "near": "$buffer_unpowered_gateway",
+        "near": "$buffer_unpowered_structure",
         "radius_min": 2,
         "radius_max": 5,
         "require_power": false,
@@ -872,7 +876,7 @@
     },
     {
       "id": "construction.repower",
-      "label": "Replace power for an unpowered Gateway",
+      "label": "Replace power for an unpowered Gateway or Cybernetics Core",
       "kind": "sequence",
       "children": [
         "construction.repower.none_warping",
@@ -881,7 +885,7 @@
         "construction.repower.none_ordered",
         "construction.repower.none_carried",
         "construction.repower.backoff",
-        "construction.repower.gateway",
+        "construction.repower.structure",
         "construction.repower.site",
         "construction.repower.worker",
         "construction.repower.build"
@@ -996,8 +1000,8 @@
       }
     },
     {
-      "id": "construction.repower.gateway",
-      "label": "Choose a completed, unpowered Gateway",
+      "id": "construction.repower.structure",
+      "label": "Choose a completed, unpowered Gateway or Cybernetics Core",
       "kind": "select",
       "children": [],
       "operation": "select_entities",
@@ -1005,7 +1009,8 @@
         "collection": "own_structures",
         "filter": {
           "types": [
-            "Gateway"
+            "Gateway",
+            "CyberneticsCore"
           ],
           "ready": true,
           "powered": false
@@ -1014,7 +1019,7 @@
           "by": "tag"
         },
         "limit": 1,
-        "bind": "unpowered_gateway"
+        "bind": "unpowered_structure"
       }
     },
     {
@@ -1025,7 +1030,7 @@
       "operation": "select_placement",
       "args": {
         "structure": "Pylon",
-        "near": "$unpowered_gateway",
+        "near": "$unpowered_structure",
         "radius_min": 2,
         "radius_max": 5,
         "require_power": false,
@@ -1441,6 +1446,406 @@
       }
     },
     {
+      "id": "tech",
+      "label": "Tech: one persistent plan builds the Cybernetics Core; its lane runs before the expansion's (D2: the Core first), and the shared macro slot takes turns after aborts",
+      "kind": "sequence",
+      "children": [
+        "tech.home",
+        "tech.plan",
+        "tech.stages"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "tech.home",
+      "label": "A finished Nexus stands (no tech without a home base)",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Nexus"
+          ],
+          "ready": true
+        },
+        "op": ">=",
+        "value": 1
+      }
+    },
+    {
+      "id": "tech.plan",
+      "label": "The tech plan in progress, else start one once eligible",
+      "kind": "selector",
+      "children": [
+        "tech.plan.open",
+        "tech.start"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "tech.plan.open",
+      "label": "A tech plan is open (active or waiting)",
+      "kind": "condition",
+      "children": [],
+      "operation": "plan_status_is",
+      "args": {
+        "plan": "tech.start.go",
+        "statuses": [
+          "active",
+          "waiting"
+        ]
+      }
+    },
+    {
+      "id": "tech.start",
+      "label": "Start a plan once the army launched, the opening and gas are placed, no Core stands and home is safe",
+      "kind": "sequence",
+      "children": [
+        "tech.start.launched",
+        "tech.start.missing",
+        "tech.start.opening",
+        "tech.start.gas",
+        "tech.start.home_safe",
+        "tech.start.go"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "tech.start.launched",
+      "label": "The first attack has launched (D3: macro plans only after the launch)",
+      "kind": "condition",
+      "children": [],
+      "operation": "latch_is_set",
+      "args": {
+        "latch": "attack_launched"
+      }
+    },
+    {
+      "id": "tech.start.missing",
+      "label": "No Cybernetics Core stands (any build progress): build it, or rebuild a lost one",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "CyberneticsCore"
+          ]
+        },
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "tech.start.opening",
+      "label": "The Gateway target is placed (any build progress)",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Gateway"
+          ]
+        },
+        "op": ">=",
+        "value": {
+          "param": "gateway_target"
+        }
+      }
+    },
+    {
+      "id": "tech.start.gas",
+      "label": "The gas prerequisite is placed (Stalkers need gas)",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "gas_building": true
+        },
+        "op": ">=",
+        "value": {
+          "param": "assimilator_target"
+        }
+      }
+    },
+    {
+      "id": "tech.start.home_safe",
+      "label": "No visible ground threat near the main (home defense comes first)",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "visible_enemies",
+        "filter": {
+          "flying": false,
+          "structure": false,
+          "within": {
+            "point": "start_location",
+            "distance": {
+              "param": "defense_radius"
+            }
+          }
+        },
+        "op": "==",
+        "value": 0
+      }
+    },
+    {
+      "id": "tech.start.go",
+      "label": "Open the tech plan (refused while the macro slot holds a plan, cools down, or owes its turn to the expansion after a tech abort; or once tech is disabled)",
+      "kind": "action",
+      "children": [],
+      "operation": "start_plan",
+      "args": {
+        "kind": "tech"
+      }
+    },
+    {
+      "id": "tech.stages",
+      "label": "Carry the plan stage by stage; the plan records the first stage not yet done",
+      "kind": "sequence",
+      "children": [
+        "tech.prereq",
+        "tech.core",
+        "tech.construct",
+        "tech.complete"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "tech.prereq",
+      "label": "The Core's prerequisite, a completed Gateway, stands; else the plan waits (bounded by its deadlines) while construction rebuilds Gateways",
+      "kind": "selector",
+      "children": [
+        "tech.prereq.gateway",
+        "tech.prereq.wait"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "tech.prereq.gateway",
+      "label": "A completed Gateway stands (SC2's tech requirement for the Core)",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Gateway"
+          ],
+          "ready": true
+        },
+        "op": ">=",
+        "value": 1
+      }
+    },
+    {
+      "id": "tech.prereq.wait",
+      "label": "Wait: the prerequisite is missing",
+      "kind": "action",
+      "children": [],
+      "operation": "plan_wait",
+      "args": {
+        "plan": "tech.start.go",
+        "reason": "prerequisite_missing"
+      }
+    },
+    {
+      "id": "tech.core",
+      "label": "Until the Core stands: hold its minerals, then claim a worker and build it",
+      "kind": "selector",
+      "children": [
+        "tech.core.placed",
+        "tech.core.steps"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "tech.core.placed",
+      "label": "The Core stands (any build progress): construction is under way",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "CyberneticsCore"
+          ]
+        },
+        "op": ">=",
+        "value": 1
+      }
+    },
+    {
+      "id": "tech.core.steps",
+      "label": "The Core's minerals held and covered (or its build already in flight), a powered site, the plan's worker, then the build",
+      "kind": "sequence",
+      "children": [
+        "tech.reserve",
+        "tech.afford",
+        "tech.site",
+        "tech.worker",
+        "tech.build"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "tech.reserve",
+      "label": "Hold the Core's minerals each tick (production after this lane cannot spend them; supply and construction before it may preempt)",
+      "kind": "action",
+      "children": [],
+      "operation": "plan_reserve",
+      "args": {
+        "plan": "tech.start.go",
+        "structure": "CyberneticsCore"
+      }
+    },
+    {
+      "id": "tech.afford",
+      "label": "The Core's build is already in flight (its task carries the cost), else the hold must cover the Core's price",
+      "kind": "selector",
+      "children": [
+        "tech.afford.ordered",
+        "tech.funded"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "tech.afford.ordered",
+      "label": "A Core build order is in flight (pending or issued)",
+      "kind": "condition",
+      "children": [],
+      "operation": "task_count_compare",
+      "args": {
+        "node": "tech.build",
+        "statuses": [
+          "pending",
+          "issued"
+        ],
+        "op": ">=",
+        "value": 1
+      }
+    },
+    {
+      "id": "tech.funded",
+      "label": "The hold covers the Core's price (the central cost table): no worker is claimed while the plan still saves",
+      "kind": "condition",
+      "children": [],
+      "operation": "affordable",
+      "args": {
+        "item": "CyberneticsCore",
+        "resources": [
+          "minerals"
+        ]
+      }
+    },
+    {
+      "id": "tech.site",
+      "label": "Core placement candidates within Pylon power near the main",
+      "kind": "select",
+      "children": [],
+      "operation": "select_placement",
+      "args": {
+        "structure": "CyberneticsCore",
+        "near": "start_location",
+        "radius_min": 5,
+        "radius_max": 14,
+        "require_power": true,
+        "limit": 8,
+        "bind": "core_site"
+      }
+    },
+    {
+      "id": "tech.worker",
+      "label": "The plan's one worker, else the nearest free mining or idle probe to the site (never the scout or a gas worker), claimed for the plan",
+      "kind": "select",
+      "children": [],
+      "operation": "select_plan_actor",
+      "args": {
+        "plan": "tech.start.go",
+        "filter": {
+          "types": [
+            "Probe"
+          ],
+          "gathering_gas": false,
+          "any_of": [
+            {
+              "idle": true
+            },
+            {
+              "order_in": [
+                "HARVEST_GATHER",
+                "HARVEST_RETURN"
+              ]
+            }
+          ]
+        },
+        "sort": {
+          "by": "distance",
+          "from": "$core_site"
+        },
+        "not_assigned_to": "scouting.move",
+        "bind": "core_builder"
+      }
+    },
+    {
+      "id": "tech.build",
+      "label": "Build the Core (it takes the plan's hold over; SC2 checks placement; a missing Gateway blocks it visibly)",
+      "kind": "action",
+      "children": [],
+      "operation": "build",
+      "args": {
+        "structure": "CyberneticsCore",
+        "worker": "$core_builder",
+        "site": "$core_site"
+      }
+    },
+    {
+      "id": "tech.construct",
+      "label": "Acknowledged (the Core stands, the worker is released); wait until it is ready",
+      "kind": "wait",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "CyberneticsCore"
+          ],
+          "ready": true
+        },
+        "op": ">=",
+        "value": 1
+      }
+    },
+    {
+      "id": "tech.complete",
+      "label": "Complete the plan: Stalkers are unlocked (its holds are released)",
+      "kind": "action",
+      "children": [],
+      "operation": "plan_complete",
+      "args": {
+        "plan": "tech.start.go"
+      }
+    },
+    {
       "id": "expansion",
       "label": "Expansion: one persistent plan takes the natural (two bases at most); its stages are the nodes below",
       "kind": "sequence",
@@ -1497,7 +1902,7 @@
     },
     {
       "id": "expansion.start",
-      "label": "Start a plan once the opening and gas are placed, the army launched and grown, and home is safe",
+      "label": "Start a plan once the opening and gas are placed, the army launched and grown, and home is safe (the macro slot decides turns with the tech plan)",
       "kind": "sequence",
       "children": [
         "expansion.start.launched",
@@ -1559,7 +1964,7 @@
     },
     {
       "id": "expansion.start.army",
-      "label": "Enough ready combat units to hold while the probe walks (D2 fallback: eight)",
+      "label": "Enough ready combat units, Zealots and Stalkers, to hold while the probe walks (D2 fallback: eight)",
       "kind": "condition",
       "children": [],
       "operation": "count_compare",
@@ -1567,7 +1972,8 @@
         "collection": "own_units",
         "filter": {
           "types": [
-            "Zealot"
+            "Zealot",
+            "Stalker"
           ],
           "ready": true
         },
@@ -1620,7 +2026,7 @@
     },
     {
       "id": "expansion.start.go",
-      "label": "Open the expansion plan (one at a time; refused while one is open or cooling down)",
+      "label": "Open the expansion plan (refused while the macro slot holds a plan, cools down, or owes its turn to the tech plan after an expansion abort; or once disabled)",
       "kind": "action",
       "children": [],
       "operation": "start_plan",
@@ -2477,14 +2883,105 @@
     },
     {
       "id": "production",
-      "label": "Production: Zealots first, then probes with leftover minerals",
+      "label": "Production: Stalkers while the Core, gas and the Zealot/Stalker mix allow, else Zealots, then probes with leftover minerals",
       "kind": "selector",
       "children": [
+        "production.stalkers",
         "production.zealots",
         "production.probes"
       ],
       "operation": null,
       "args": {}
+    },
+    {
+      "id": "production.stalkers",
+      "label": "Train Stalkers from idle powered Gateways while the Core stands and the mix allows (gas ready: a Stalker holds minerals before a Zealot)",
+      "kind": "sequence",
+      "children": [
+        "production.stalkers.core",
+        "production.stalkers.gas",
+        "production.stalkers.gateways",
+        "production.stalkers.train"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "production.stalkers.core",
+      "label": "A completed, powered Cybernetics Core stands (an unpowered one pauses Stalkers until it is repowered: stricter than SC2's requirement, by design; the train node enforces the same)",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "CyberneticsCore"
+          ],
+          "ready": true,
+          "powered": true
+        },
+        "op": ">=",
+        "value": 1
+      }
+    },
+    {
+      "id": "production.stalkers.gas",
+      "label": "A Stalker's gas is available after reservations (the central cost table); else the Gateways train Zealots",
+      "kind": "condition",
+      "children": [],
+      "operation": "affordable",
+      "args": {
+        "item": "Stalker",
+        "resources": [
+          "vespene"
+        ]
+      }
+    },
+    {
+      "id": "production.stalkers.gateways",
+      "label": "Ready, idle, powered Gateways by tag",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Gateway"
+          ],
+          "ready": true,
+          "idle": true,
+          "powered": true
+        },
+        "sort": {
+          "by": "tag"
+        },
+        "limit": {
+          "param": "gateway_target"
+        },
+        "bind": "stalker_gateways"
+      }
+    },
+    {
+      "id": "production.stalkers.train",
+      "label": "Train Stalkers (holds minerals and gas while short) from a ready, powered Core, within the composition guards: at most stalkers_per_zealot per Zealot and stalker_cap",
+      "kind": "action",
+      "children": [],
+      "operation": "train",
+      "args": {
+        "unit": "Stalker",
+        "producers": "$stalker_gateways",
+        "hold_reservation": true,
+        "ratio_of": "Zealot",
+        "max_ratio": {
+          "param": "stalkers_per_zealot"
+        },
+        "max_count": {
+          "param": "stalker_cap"
+        },
+        "powered_prerequisite": true
+      }
     },
     {
       "id": "production.zealots",
@@ -2614,13 +3111,11 @@
     },
     {
       "id": "army.defend",
-      "label": "Defend the main, and the second base once it stands, against nearby ground threats",
+      "label": "Defend the main, and the second base once it stands: a ground threat with every combat unit, else an air threat with the units that can hit air",
       "kind": "sequence",
       "children": [
         "army.defend.mode",
-        "army.defend.where",
-        "army.defend.zealots",
-        "army.defend.attack"
+        "army.defend.engage"
       ],
       "operation": null,
       "args": {}
@@ -2633,6 +3128,181 @@
       "operation": "army_mode_is",
       "args": {
         "mode": "defend"
+      }
+    },
+    {
+      "id": "army.defend.engage",
+      "label": "Ground threats first (every combat unit), else air threats (anti-air units only)",
+      "kind": "selector",
+      "children": [
+        "army.defend.ground",
+        "army.defend.air"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "army.defend.ground",
+      "label": "A ground threat near the main or the second base: every combat unit attacks it",
+      "kind": "sequence",
+      "children": [
+        "army.defend.where",
+        "army.defend.units",
+        "army.defend.attack"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "army.defend.air",
+      "label": "An air threat near the main or the second base: only units whose weapons hit air attack it (never a Zealot)",
+      "kind": "sequence",
+      "children": [
+        "army.defend.air.where",
+        "army.defend.air.units",
+        "army.defend.air.attack"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "army.defend.air.where",
+      "label": "A flying threat near the main, else near the second base once its Nexus stands",
+      "kind": "selector",
+      "children": [
+        "army.defend.air.main",
+        "army.defend.air.natural"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "army.defend.air.main",
+      "label": "Nearest flying enemy unit within the defense radius of the main, tie by tag, unless air defense gave up on it",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "visible_enemies",
+        "filter": {
+          "flying": true,
+          "structure": false,
+          "within": {
+            "point": "start_location",
+            "distance": {
+              "param": "defense_radius"
+            }
+          }
+        },
+        "sort": {
+          "by": "distance",
+          "from": "start_location"
+        },
+        "limit": 1,
+        "skip_demoted_by": "army.defend.air.attack",
+        "bind": "air_threat"
+      }
+    },
+    {
+      "id": "army.defend.air.natural",
+      "label": "The second base: eligible once a second Nexus stands (any build progress)",
+      "kind": "sequence",
+      "children": [
+        "army.defend.air.natural.base",
+        "army.defend.air.natural.target"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "army.defend.air.natural.base",
+      "label": "Both Nexuses, the second base first (fails while only one stands)",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Nexus"
+          ]
+        },
+        "sort": {
+          "by": "distance",
+          "from": "start_location",
+          "order": "desc"
+        },
+        "limit": {
+          "param": "base_target"
+        },
+        "min_count": {
+          "param": "base_target"
+        },
+        "bind": "air_natural_nexus"
+      }
+    },
+    {
+      "id": "army.defend.air.natural.target",
+      "label": "Nearest flying enemy unit to the second base, tie by tag, unless air defense gave up on it",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "visible_enemies",
+        "filter": {
+          "flying": true,
+          "structure": false,
+          "within": {
+            "point": "$air_natural_nexus",
+            "distance": {
+              "param": "natural_defense_radius"
+            }
+          }
+        },
+        "sort": {
+          "by": "distance",
+          "from": "$air_natural_nexus"
+        },
+        "limit": 1,
+        "skip_demoted_by": "army.defend.air.attack",
+        "bind": "air_threat"
+      }
+    },
+    {
+      "id": "army.defend.air.units",
+      "label": "Every combat unit whose weapons hit air (Stalkers; a Zealot never qualifies)",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_units",
+        "filter": {
+          "types": [
+            "Zealot",
+            "Stalker"
+          ],
+          "can_attack_air": true
+        },
+        "sort": {
+          "by": "tag"
+        },
+        "limit": 200,
+        "bind": "anti_air"
+      }
+    },
+    {
+      "id": "army.defend.air.attack",
+      "label": "Attack the air threat (the attack itself refuses any actor that cannot hit air)",
+      "kind": "action",
+      "children": [],
+      "operation": "attack",
+      "args": {
+        "units": "$anti_air",
+        "target": "$air_threat",
+        "arrive_within": {
+          "param": "army_arrive_within"
+        },
+        "preempt": true
       }
     },
     {
@@ -2676,8 +3346,8 @@
       }
     },
     {
-      "id": "army.defend.zealots",
-      "label": "Every Zealot",
+      "id": "army.defend.units",
+      "label": "Every Zealot and Stalker",
       "kind": "select",
       "children": [],
       "operation": "select_entities",
@@ -2685,7 +3355,8 @@
         "collection": "own_units",
         "filter": {
           "types": [
-            "Zealot"
+            "Zealot",
+            "Stalker"
           ]
         },
         "sort": {
@@ -2813,13 +3484,13 @@
     },
     {
       "id": "army.recover",
-      "label": "After the launch, regroup every Zealot at home while fewer than the regroup size remain (overrides the attack intent)",
+      "label": "After the launch, regroup every combat unit at home while fewer than the regroup size remain (overrides the attack intent)",
       "kind": "sequence",
       "children": [
         "army.recover.launched",
         "army.recover.few",
         "army.recover.point",
-        "army.recover.zealots",
+        "army.recover.units",
         "army.recover.move"
       ],
       "operation": null,
@@ -2837,7 +3508,7 @@
     },
     {
       "id": "army.recover.few",
-      "label": "Fewer ready Zealots than the regroup size",
+      "label": "Fewer ready combat units than the regroup size",
       "kind": "condition",
       "children": [],
       "operation": "count_compare",
@@ -2845,7 +3516,8 @@
         "collection": "own_units",
         "filter": {
           "types": [
-            "Zealot"
+            "Zealot",
+            "Stalker"
           ],
           "ready": true
         },
@@ -2871,8 +3543,8 @@
       }
     },
     {
-      "id": "army.recover.zealots",
-      "label": "Every Zealot",
+      "id": "army.recover.units",
+      "label": "Every Zealot and Stalker",
       "kind": "select",
       "children": [],
       "operation": "select_entities",
@@ -2880,7 +3552,8 @@
         "collection": "own_units",
         "filter": {
           "types": [
-            "Zealot"
+            "Zealot",
+            "Stalker"
           ]
         },
         "sort": {
@@ -3004,7 +3677,7 @@
     },
     {
       "id": "army.attack.units.wave",
-      "label": "Free ready Zealots at home outside the attack, at least the reinforcement group size",
+      "label": "Free ready Zealots and Stalkers at home outside the attack, at least the reinforcement group size",
       "kind": "select",
       "children": [],
       "operation": "select_entities",
@@ -3012,7 +3685,8 @@
         "collection": "own_units",
         "filter": {
           "types": [
-            "Zealot"
+            "Zealot",
+            "Stalker"
           ],
           "ready": true,
           "within": {
@@ -3036,7 +3710,7 @@
     },
     {
       "id": "army.attack.units.group",
-      "label": "Ready Zealots the attack is in charge of (the main group)",
+      "label": "Ready Zealots and Stalkers the attack is in charge of (the main group)",
       "kind": "select",
       "children": [],
       "operation": "select_entities",
@@ -3044,7 +3718,8 @@
         "collection": "own_units",
         "filter": {
           "types": [
-            "Zealot"
+            "Zealot",
+            "Stalker"
           ],
           "ready": true
         },
@@ -3216,7 +3891,7 @@
       "children": [
         "army.rally.before_launch",
         "army.rally.point",
-        "army.rally.zealots",
+        "army.rally.units",
         "army.rally.move"
       ],
       "operation": null,
@@ -3248,8 +3923,8 @@
       }
     },
     {
-      "id": "army.rally.zealots",
-      "label": "Every Zealot",
+      "id": "army.rally.units",
+      "label": "Every Zealot and Stalker",
       "kind": "select",
       "children": [],
       "operation": "select_entities",
@@ -3257,7 +3932,8 @@
         "collection": "own_units",
         "filter": {
           "types": [
-            "Zealot"
+            "Zealot",
+            "Stalker"
           ]
         },
         "sort": {
@@ -3284,14 +3960,14 @@
     },
     {
       "id": "reserve",
-      "label": "Reserve: after the launch, gather Zealots outside the attack at home until a group forms",
+      "label": "Reserve: after the launch, gather combat units outside the attack at home until a group forms",
       "kind": "sequence",
       "children": [
         "reserve.launched",
         "reserve.safe",
         "reserve.natural_safe",
         "reserve.point",
-        "reserve.zealots",
+        "reserve.units",
         "reserve.gather"
       ],
       "operation": null,
@@ -3309,7 +3985,7 @@
     },
     {
       "id": "reserve.safe",
-      "label": "No visible ground threat near the main (defense takes every Zealot instead)",
+      "label": "No visible ground threat near the main (defense takes every combat unit instead)",
       "kind": "condition",
       "children": [],
       "operation": "count_compare",
@@ -3331,7 +4007,7 @@
     },
     {
       "id": "reserve.natural_safe",
-      "label": "No second base, or no visible ground threat near it (defense takes every Zealot)",
+      "label": "No second base, or no visible ground threat near it (defense takes every combat unit)",
       "kind": "selector",
       "children": [
         "reserve.natural_safe.one_base",
@@ -3435,8 +4111,8 @@
       }
     },
     {
-      "id": "reserve.zealots",
-      "label": "Free ready Zealots the attack is not in charge of",
+      "id": "reserve.units",
+      "label": "Free ready Zealots and Stalkers the attack is not in charge of",
       "kind": "select",
       "children": [],
       "operation": "select_entities",
@@ -3444,7 +4120,8 @@
         "collection": "own_units",
         "filter": {
           "types": [
-            "Zealot"
+            "Zealot",
+            "Stalker"
           ],
           "ready": true
         },

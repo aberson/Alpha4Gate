@@ -622,13 +622,32 @@ the steps numerically and bypass 224's dependency before live tests.
 ### Step 218: Produce and control a mixed army
 - **Problem:** Transition beyond ground-only Zealots using a bounded tech plan.
 - **Type:** code
-- **Status:** BLOCKED (2026-10-10)
+- **Status:** DONE (2026-10-10)
 - **Issue:** #335
 - **Flags:** --reviewers deep
 - **Files:** src/jev/contracts.py, src/jev/operations.py, src/jev/runtime.py, src/jev/sc2_adapter.py, src/jev/plans.py, bots/jev/v2/policy.json, tests/test_jev_macro.py, tests/test_jev_army.py, tests/test_jev_v2.py.
 - **Produces:** Core prerequisite plan, Stalker training, composition guards and capability-aware target selection.
 - **Done when:** Production fixtures execute Core then Stalker commands with mineral/gas/supply accounting; destroyed/unpowered prerequisites prevent training and recover; Stalkers can engage air while Zealots are never assigned an air unit attack; expansion and tech cannot double-spend.
 - **Depends on:** 217
+- **Build notes (2026-10-10):**
+  - **Tech plan:** a Cybernetics Core tech plan, then Stalkers trained from ready, powered Gateways.
+    - Costs come from the central tables: Core 150; Stalker 125/50/2.
+    - burnysc2 7.1.3 has no static price table, so these are SC2 5.0 values. `test_tech_tables_agree_with_the_installed_burnysc2_game_data` checks prerequisites, abilities, producers and power rules. Step 222 should confirm the prices live with `calculate_cost`.
+  - **Powered prerequisite:** the opt-in `powered_prerequisite` train argument makes the operation refuse an unpowered Core. v2's Stalker node uses it; SC2's default applies elsewhere, including v1.
+  - **Targeting:** the adapter reads weapon air/ground capability from game data. Stalkers engage air, and Zealots are never given an air target.
+  - **Macro-slot fairness:** `src/jev/plans.py` owns the turn rule.
+    - When a kind aborts, the slot owes its next turn to the other kind that the policy can start. The aborted kind is refused until the other kind starts, a 5 s window after the cooldown passes, or no other kind is left enabled.
+    - Both starvation directions are bounded (≤270 s). `PlanStore` takes the policy's start `kinds`.
+    - It is inspectable through `SlotRecord`, `JevRuntime.plan_slots()`, `slot_turn` facts, and `yield_to`/`yield_until`.
+    - The order-dependent `expansion.start.tech` gate was removed. Lanes run tech before expansion, per D2's preference.
+    - The Step 217 abort test now expects the expansion to restart at cooldown + 5 s.
+  - **Policy hashes:** v2 is now `40a04c3d…` (240 nodes, 9 lanes). v1 is unchanged, and the 700-step v1 trace is byte-identical.
+  - **Test changes:** the JV type allowlist gains CyberneticsCore and Stalker. The pretend Zealot gas cost in the gas tests is now real Stalker gas. Test fakes gain weapon fields.
+  - **Left for later:**
+    - Max health and shield facts, and D3's 40% low-health regroup.
+    - The `available_abilities` query.
+    - The hosted army context in `decision.py` (Step 219).
+  - Reviewed by `/review-deep` (6 lenses) over 4 iterations. The 3rd was re-scoped after an oscillation diagnosis, and the 4th was operator-authorized. Evidence in `.build-step/jev-v2-218/` (gitignored).
 
 ### Step 219: Let Typesafe choose persistent strategic plans
 - **Problem:** Use real hosted strategic choices to direct the executable v2 graph.

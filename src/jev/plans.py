@@ -13,8 +13,39 @@ exactly as section 5 lists them; "max one macro plan plus one army plan". The
 slot of each kind follows the plan's own split: expand and tech are the macro
 plans (D3 "one macro plan at a time"; D4 "natural expansion and limited tech"),
 opening, pressure and recover the army's (D2's fallback sequence: opening
-completion, then recover or pressure after the first launch). Only ``expand`` has
-a graph in Step 217; nothing here is specific to the other kinds.
+completion, then recover or pressure after the first launch). ``expand`` has a
+graph since Step 217 and ``tech`` (the Cybernetics Core prerequisite) since Step
+218; nothing here is specific to the other kinds.
+
+**Expansion and tech share the macro slot (Step 218).** Both are macro plans, so
+the store never opens one while the other is open (``start`` refuses it, visibly):
+only one plan reservation exists at a time, and that reservation becomes its own
+build's commitment when the build issues (transferred, never charged twice).
+
+**Turns: a slot is fair between its kinds (Step 218).** Whose turn it is after an
+abort is slot state kept here, never inferred from lane order or from another
+kind's latest record. When a plan of kind K aborts, its slot *yields* to the slot's
+other kinds that the policy can start (the store's ``kinds``) and that are not
+disabled: until :data:`PLAN_YIELD_SECONDS` after the cooldown, ``start`` refuses K
+-- visibly -- while another kind may start. The yield ends when any plan starts in
+the slot (the other kind took its turn), when the window lapses (no other kind
+wanted the slot) or when no other kind is left enabled. So repeated failures of one
+kind alternate with the other kind's turns, symmetrically and whatever order the
+lanes run in: after its own abort a kind waits at most one cooldown, one plan of
+the other kind (its deadlines) and that plan's cooldown -- never until the failing
+kind is disabled. A completed plan sets neither a cooldown nor a yield.
+:meth:`PlanStore.slot` and every plan event's ``slot_turn`` facts show the turn.
+
+The v2 graph keeps D2's preference -- the Core prerequisite before the expansion --
+in its lane order alone: the tech lane runs before the expansion lane and its start
+conditions are a subset of the expansion's, so when both could start, tech goes
+first; the expansion then waits, refused by the slot, until the tech plan ends.
+Fairness after failures is the turn rule above. The other spenders are ordered around
+them: supply and construction run before them (D3: they may preempt the
+discretionary macro hold, recorded as ``budget_preempted``), production after them
+(it spends only what the macro hold leaves, gas included). Every spender sees the
+bank minus in-flight commitments and the holds of the lanes before it, so the
+macro hold, gas holds and production commitments never overlap.
 
 **Identity and scope.** A plan is started by a ``start_plan`` action node; that
 node id is the plan's stable policy identity (every plan operation names it in
@@ -94,7 +125,7 @@ from __future__ import annotations
 import itertools
 import math
 from collections import Counter, deque
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Final, Literal, get_args
 
@@ -115,6 +146,7 @@ __all__ = [
     "PLAN_SLOT",
     "PLAN_STATUSES",
     "PLAN_TIMEOUT_SECONDS",
+    "PLAN_YIELD_SECONDS",
     "SITE_TROUBLE",
     "STATIC_FAILURES",
     "WAIT_CODES",
@@ -128,6 +160,7 @@ __all__ = [
     "PlanStatus",
     "PlanStore",
     "Released",
+    "SlotRecord",
     "WaitCode",
 ]
 
@@ -177,6 +210,7 @@ PlanCode = Literal[
     "acknowledged",
     "constructed",
     "nexus_lost",
+    "structure_lost",
     "no_progress",
     "timeout",
     "recoveries_exhausted",
@@ -213,6 +247,10 @@ MAX_STAGE_RECOVERIES: Final = 3
 PLAN_COOLDOWN_SECONDS: Final = 15.0
 #: Aborts of one kind a match allows; the last disables the kind (``abort_limit``).
 MAX_PLAN_ABORTS: Final = 3
+#: After an abort, the slot's other kinds' turn lasts this long beyond the cooldown:
+#: the aborted kind may not start again before that unless another kind started, or
+#: none is left enabled (module docstring: Turns). Many ticks for an eligible kind.
+PLAN_YIELD_SECONDS: Final = 5.0
 #: A site a plan was aborted over, or SC2 refused, is avoided by later plans this long.
 PLAN_SITE_AVOID_SECONDS: Final = 120.0
 #: Avoided sites remembered at once (oldest dropped).
@@ -318,6 +356,38 @@ class Released:
     cancel_tasks: bool
 
 
+@dataclass(frozen=True)
+class SlotRecord:
+    """Read-only turn state of one plan slot (module docstring: Turns).
+
+    ``yield_from`` is the kind that aborted and must wait its turn until
+    ``yield_until`` while another of ``yield_to`` (the slot's other startable,
+    enabled kinds) may start; all None/empty when nobody is owed a turn.
+    ``cooldown_until`` is the slot's latest cooldown end (a time, possibly past).
+    """
+
+    slot: PlanSlot
+    open_plan_id: str | None
+    open_kind: PlanKind | None
+    cooldown_until: float | None
+    yield_from: PlanKind | None
+    yield_to: tuple[PlanKind, ...]
+    yield_until: float | None
+    disabled: tuple[tuple[PlanKind, PlanCode], ...]
+
+    def facts(self) -> dict[str, JsonValue]:
+        return {
+            "slot": self.slot,
+            "open_plan_id": self.open_plan_id,
+            "open_kind": self.open_kind,
+            "cooldown_until": self.cooldown_until,
+            "yield_from": self.yield_from,
+            "yield_to": list(self.yield_to),
+            "yield_until": self.yield_until,
+            "disabled": {kind: code for kind, code in self.disabled},
+        }
+
+
 @dataclass
 class _Plan:
     """Mutable state behind one :class:`PlanRecord`."""
@@ -392,8 +462,13 @@ class PlanStore:
     """Every plan of one run: open plans, the latest per start node and a bounded
     history (see the module docstring). All methods are O(kept plans) or O(1)."""
 
-    def __init__(self, run_id: str) -> None:
+    def __init__(self, run_id: str, kinds: Iterable[PlanKind] = PLAN_KINDS) -> None:
+        """``kinds``: the plan kinds the policy can start (its ``start_plan`` nodes);
+        after an abort a slot yields only to another of these."""
         self._run_id = run_id
+        self._kinds: frozenset[PlanKind] = frozenset(kinds)
+        # Slot -> (the kind that aborted, the game time its yield ends): Turns.
+        self._yield: dict[PlanSlot, tuple[PlanKind, float]] = {}
         self._counter = itertools.count(1)
         self._open: dict[str, _Plan] = {}  # start node id -> its open plan
         self._latest: dict[str, _Plan] = {}  # start node id -> its latest plan
@@ -439,6 +514,30 @@ class PlanStore:
                 return key
         return None
 
+    def slot(self, slot: PlanSlot) -> SlotRecord:
+        """The turn state of ``slot`` (module docstring: Turns)."""
+        holder = next((p for p in self._open.values() if PLAN_SLOT[p.kind] == slot), None)
+        turn = self._yield.get(slot)
+        yield_from = None if turn is None else turn[0]
+        return SlotRecord(
+            slot=slot,
+            open_plan_id=None if holder is None else holder.plan_id,
+            open_kind=None if holder is None else holder.kind,
+            cooldown_until=self._cooldown.get(slot),
+            yield_from=yield_from,
+            yield_to=() if yield_from is None else self._others(yield_from),
+            yield_until=None if turn is None else turn[1],
+            disabled=tuple(
+                (kind, self._disabled[kind])
+                for kind in PLAN_KINDS
+                if kind in self._disabled and PLAN_SLOT[kind] == slot
+            ),
+        )
+
+    def slots(self) -> tuple[SlotRecord, ...]:
+        """Every slot's turn state, macro first."""
+        return (self.slot("macro"), self.slot("army"))
+
     @property
     def aborts(self) -> int:
         """Plans aborted so far this run (plan D6 metric)."""
@@ -473,6 +572,15 @@ class PlanStore:
         until = self._cooldown.get(slot)
         if until is not None and now < until:
             return None, f"the {slot} slot cools down until {until:.2f}s after an abort"
+        turn = self._yield.get(slot)
+        if turn is not None and turn[0] == kind and now < turn[1]:
+            others = self._others(kind)
+            if others:
+                return None, (
+                    f"the {slot} slot yields to {', '.join(others)} until {turn[1]:.2f}s after "
+                    f"a {kind} abort: one turn each"
+                )
+        self._yield.pop(slot, None)  # a start in the slot ends any yield
         plan = _Plan(
             plan_id=f"{self._run_id}:plan:{next(self._counter)}",
             node_id=node_id,
@@ -757,7 +865,8 @@ class PlanStore:
             return
         if acknowledged:
             plan.second_base_defense = False
-            self._abort(plan, "nexus_lost" if failure == "lost" else "timeout", reason, now)
+            lost: PlanCode = "nexus_lost" if plan.kind == "expand" else "structure_lost"
+            self._abort(plan, lost if failure == "lost" else "timeout", reason, now)
         elif failure == "refused":
             site = plan.site
             if site is not None:
@@ -776,6 +885,18 @@ class PlanStore:
             self._recover(plan, "move_stalled", reason, now)
 
     # -- internals ------------------------------------------------------------------
+
+    def _others(self, kind: PlanKind) -> tuple[PlanKind, ...]:
+        """The other kinds of ``kind``'s slot the policy can start, not disabled."""
+        slot = PLAN_SLOT[kind]
+        return tuple(
+            other
+            for other in PLAN_KINDS
+            if other != kind
+            and PLAN_SLOT[other] == slot
+            and other in self._kinds
+            and other not in self._disabled
+        )
 
     def _recover(self, plan: _Plan, code: PlanCode, reason: str, now: float) -> None:
         if not plan.is_open:
@@ -839,6 +960,11 @@ class PlanStore:
         elif self._kind_aborts[plan.kind] >= MAX_PLAN_ABORTS:
             self._disabled.setdefault(plan.kind, "abort_limit")
         disabled = self._disabled.get(plan.kind)
+        yield_to = self._others(plan.kind)
+        if yield_to:  # the slot's next turn is another kind's (Turns)
+            self._yield[slot] = (plan.kind, self._cooldown[slot] + PLAN_YIELD_SECONDS)
+        else:
+            self._yield.pop(slot, None)
         self._released.append(released)
         self._event(
             plan,
@@ -850,6 +976,8 @@ class PlanStore:
                 "disabled": disabled is not None,
                 "disabled_by": disabled,
                 "kind_aborts": self._kind_aborts[plan.kind],
+                "yield_to": list(yield_to),
+                "yield_until": self._yield[slot][1] if yield_to else None,
                 "avoided_sites": [[p[0], p[1]] for p in avoided],
             },
         )
@@ -884,6 +1012,7 @@ class PlanStore:
     ) -> None:
         """Queue one plan event, attributed to ``at`` (a task's node) or the stage."""
         facts: dict[str, JsonValue] = dict(plan.snapshot().facts())
+        facts["slot_turn"] = self.slot(PLAN_SLOT[plan.kind]).facts()
         facts["transition"] = transition if transition is not None else plan.reason_code
         facts["summary"] = summary
         if extra:

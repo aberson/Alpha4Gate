@@ -74,7 +74,13 @@ _KINDS: dict[str, tuple[UnitTypeId, bool]] = {
     "Gateway": (UnitTypeId.GATEWAY, True),
     "MineralField": (UnitTypeId.MINERALFIELD, False),
     "Marine": (UnitTypeId.MARINE, False),
+    # Step 218 (the mixed army): built and trained only by Jev v2's tech and production.
+    "CyberneticsCore": (UnitTypeId.CYBERNETICSCORE, True),
+    "Stalker": (UnitTypeId.STALKER, False),
 }
+#: SC2 structures that need Pylon power to operate (written out independently of
+#: Jev's own REQUIRES_POWER).
+_POWERED_KINDS = frozenset({"Gateway", "CyberneticsCore"})
 #: Exact ability -> generic ability, as SC2's game data remaps them.
 _REMAPS = {
     AbilityId.HARVEST_GATHER_PROBE: AbilityId.HARVEST_GATHER,
@@ -98,8 +104,8 @@ _V1_ABILITIES = {
 _BUILD_KIND = {AbilityId[ability]: kind for kind, ability in BUILD_ABILITY.items()}
 _TRAIN_KIND = {AbilityId[ability]: kind for kind, ability in TRAIN_ABILITY.items()}
 #: SC2 "faster" build and train times, in game seconds.
-_BUILD_SECONDS = {"Pylon": 18.0, "Gateway": 46.0}
-_TRAIN_SECONDS = {"Probe": 12.0, "Zealot": 27.0}
+_BUILD_SECONDS = {"Pylon": 18.0, "Gateway": 46.0, "CyberneticsCore": 36.0}
+_TRAIN_SECONDS = {"Probe": 12.0, "Zealot": 27.0, "Stalker": 30.0}
 
 
 def _game_data() -> GameData:
@@ -235,7 +241,7 @@ class _World:
             "vespene_geyser": [],
         }
         for body in sorted(self.bodies.values(), key=lambda b: b.tag):
-            powered = body.kind == "Gateway" and any(
+            powered = body.kind in _POWERED_KINDS and any(
                 distance(body.position, p) <= PYLON_POWER_RADIUS for p in pylons
             )
             unit = Unit(self._proto(body, powered), self, base_build=BASE_BUILD)

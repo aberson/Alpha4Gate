@@ -82,6 +82,8 @@ def _unit(tag: int, name: str = "Probe", **fields: Any) -> SimpleNamespace:
         "is_powered": False,
         "is_visible": True,
         "is_carrying_vespene": False,
+        "can_attack_ground": False,
+        "can_attack_air": False,
     }
     values.update(fields)
     return SimpleNamespace(**values)
@@ -748,6 +750,40 @@ def test_malformed_gas_state_raises_value_error_naming_the_field(
     assert fragment in str(excinfo.value)
 
 
+@pytest.mark.parametrize(
+    ("change", "fragment"),
+    [
+        ({"units": [_unit(2000, can_attack_air=1)]}, "units[0].can_attack_air"),
+        ({"structures": [_nexus(can_attack_ground=None)]}, "structures[0].can_attack_ground"),
+        (
+            {"enemy_units": [_unit(7000, "Banshee", can_attack_ground="yes")]},
+            "enemy_units[0].can_attack_ground",
+        ),
+    ],
+)
+def test_malformed_weapon_targets_raise_value_error_naming_the_field(
+    change: dict[str, Any], fragment: str
+) -> None:
+    """Step 218: own and enemy weapon targets are untrusted game state like any other."""
+    with pytest.raises(ValueError) as excinfo:
+        Sc2Adapter().observe(_game(**change), _Port())
+    assert fragment in str(excinfo.value)
+
+
+def test_weapon_targets_are_read_for_own_and_enemy_entities_only() -> None:
+    """Neutral minerals and geysers are never asked (a malformed flag there is ignored)."""
+    game = _game(
+        units=[_unit(2000, can_attack_ground=True)],
+        enemy_units=[_unit(7000, "Banshee", is_flying=True, can_attack_ground=True)],
+        mineral_field=[_unit(PATCH, "MineralField", can_attack_air="never read")],
+    )
+    obs = Sc2Adapter().observe(game, _Port())
+    assert [(u.can_attack_ground, u.can_attack_air) for u in obs.own_units] == [(True, False)]
+    (raider,) = obs.visible_enemies
+    assert (raider.can_attack_ground, raider.can_attack_air) == (True, False)
+    assert all(not (m.can_attack_ground or m.can_attack_air) for m in obs.mineral_fields)
+
+
 def _gas_ticked(**fields: Any) -> tuple[Sc2Adapter, JevRuntime, CommandSpec, SimpleNamespace]:
     """One idle probe's gather task (any issued task carries a forged command)."""
     game = _game(units=[_unit(2000)], minerals=0, **fields)
@@ -881,6 +917,9 @@ _PORT_CASES: dict[str, tuple[object, AbilityId]] = {
     "PROTOSSBUILD_NEXUS": ((60.5, 60.5), AbilityId.PROTOSSBUILD_NEXUS),  # an expansion site
     "NEXUSTRAIN_PROBE": (None, AbilityId.NEXUSTRAIN_PROBE),
     "GATEWAYTRAIN_ZEALOT": (None, AbilityId.GATEWAYTRAIN_ZEALOT),
+    # Step 218: the Cybernetics Core (a point build) and the Stalker.
+    "PROTOSSBUILD_CYBERNETICSCORE": ((29.5, 37.5), AbilityId.PROTOSSBUILD_CYBERNETICSCORE),
+    "GATEWAYTRAIN_STALKER": (None, AbilityId.GATEWAYTRAIN_STALKER),
     "MOVE": ((40.0, 40.0), AbilityId.MOVE_MOVE),  # burnysc2's own Unit.move convention
     "ATTACK": ((40.0, 40.0), AbilityId.ATTACK),
 }

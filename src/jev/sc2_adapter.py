@@ -38,6 +38,10 @@ burnysc2 ``BotAI`` into the :class:`~jev.contracts.Observation` contract:
   (a worker inside a gas building is out of sight but still in SC2's count).
   Own units carry ``carrying_vespene`` (burnysc2's buff-based
   ``is_carrying_vespene``, every race's carry-gas buff, rich geysers included).
+* Own and enemy entities carry ``can_attack_ground`` / ``can_attack_air`` (plan J2
+  Step 218): burnysc2's ``Unit.can_attack_ground`` / ``can_attack_air``, which read
+  the weapons of the game's own unit data (a Stalker hits air, a Zealot does not).
+  Neutral minerals and geysers keep False.
 * ``start_location`` / ``enemy_start_locations`` / ``expansion_locations_list`` /
   ``game_info.map_center``: map metadata (D3 permits it), read once.
 * ``expansion_paths`` (plan J2 Step 217): SC2's ground path distance from the start
@@ -342,7 +346,13 @@ def _orders(value: object, where: str) -> tuple[Order, ...]:
 
 
 def _entity(
-    unit: Any, where: str, *, own: bool, structure_flags: bool, geyser: bool = False
+    unit: Any,
+    where: str,
+    *,
+    own: bool,
+    structure_flags: bool,
+    geyser: bool = False,
+    weapons: bool = False,
 ) -> Entity:
     tag = _tag(unit.tag, f"{where}.tag")
     type_name = unit.name
@@ -369,6 +379,12 @@ def _entity(
     carrying = False
     if own and not structure_flags:
         carrying = _flag(unit.is_carrying_vespene, f"{where}.is_carrying_vespene")
+    # Weapon targets (Step 218) for own and enemy entities: burnysc2 reads them from the
+    # game's own unit data; neutral entities (minerals, geysers) keep the False defaults.
+    ground = air = False
+    if own or weapons:
+        ground = _flag(unit.can_attack_ground, f"{where}.can_attack_ground")
+        air = _flag(unit.can_attack_air, f"{where}.can_attack_air")
     return Entity(
         tag=tag,
         type_name=type_name,
@@ -386,6 +402,8 @@ def _entity(
         assigned_harvesters=assigned,
         ideal_harvesters=ideal,
         carrying_vespene=carrying,
+        can_attack_ground=ground,
+        can_attack_air=air,
     )
 
 
@@ -401,13 +419,20 @@ def _own(raw: object, where: str, *, structures: bool, actors: dict[int, Any]) -
 
 
 def _visible(
-    raw: object, where: str, found: dict[int, tuple[Entity, Any]], *, geyser: bool = False
+    raw: object,
+    where: str,
+    found: dict[int, tuple[Entity, Any]],
+    *,
+    geyser: bool = False,
+    weapons: bool = False,
 ) -> None:
     for index, unit in enumerate(_items(raw, where, MAX_OBSERVED_ENTITIES)):
         here = f"{where}[{index}]"
         if not _flag(unit.is_visible, f"{here}.is_visible"):
             continue  # a fogged snapshot is not visible state
-        entity = _entity(unit, here, own=False, structure_flags=False, geyser=geyser)
+        entity = _entity(
+            unit, here, own=False, structure_flags=False, geyser=geyser, weapons=weapons
+        )
         if entity.tag in found:
             raise ValueError(f"{here} repeats tag {entity.tag}")
         found[entity.tag] = (entity, unit)
@@ -558,8 +583,8 @@ class Sc2Adapter:
         """
         now = _count(game.state.game_loop, "state.game_loop") / GAME_LOOPS_PER_SECOND
         enemies: dict[int, tuple[Entity, Any]] = {}
-        _visible(game.enemy_units, "enemy_units", enemies)
-        _visible(game.enemy_structures, "enemy_structures", enemies)
+        _visible(game.enemy_units, "enemy_units", enemies, weapons=True)
+        _visible(game.enemy_structures, "enemy_structures", enemies, weapons=True)
         visible = _vision(port)
         remembered = self._remember(enemies, visible)  # keeps structures only, as observe()
         sightings = self._sight(enemies, now, visible)
@@ -582,8 +607,8 @@ class Sc2Adapter:
         own_units = _own(game.units, "units", structures=False, actors=actors)
         own_structures = _own(game.structures, "structures", structures=True, actors=actors)
         enemies: dict[int, tuple[Entity, Any]] = {}
-        _visible(game.enemy_units, "enemy_units", enemies)
-        _visible(game.enemy_structures, "enemy_structures", enemies)
+        _visible(game.enemy_units, "enemy_units", enemies, weapons=True)
+        _visible(game.enemy_structures, "enemy_structures", enemies, weapons=True)
         minerals: dict[int, tuple[Entity, Any]] = {}
         _visible(game.mineral_field, "mineral_field", minerals)
         geysers: dict[int, tuple[Entity, Any]] = {}

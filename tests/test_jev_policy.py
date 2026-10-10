@@ -880,9 +880,20 @@ def test_observation_lookup_names_are_its_field_names() -> None:
 
 
 def test_own_type_allowlist_matches_d3_and_rejects_other_units() -> None:
-    # D3: one Protoss base, Probes and Zealots only -- no gas, no expansion, no tech.
-    assert operations_module.OWN_TYPES == {"Probe", "Zealot", "Nexus", "Pylon", "Gateway"}
-    for foreign in ("Assimilator", "Stalker", "CyberneticsCore"):
+    # D3: one Protoss base, Probes and Zealots -- extended by plan J2 Step 218 (D4,
+    # "Zealot/Stalker composition only") with exactly the Cybernetics Core and the
+    # Stalker. Gas buildings are named by the gas_building flag, never by type, and
+    # every other unit or structure (the rest of the tech tree) stays out.
+    assert operations_module.OWN_TYPES == {
+        "Probe",
+        "Zealot",
+        "Nexus",
+        "Pylon",
+        "Gateway",
+        "CyberneticsCore",
+        "Stalker",
+    }
+    for foreign in ("Assimilator", "Sentry", "Adept", "TwilightCouncil", "Stargate"):
         doc = _minimal_valid()
         doc["nodes"][1]["args"]["filter"] = {"types": [foreign]}
         error = _issues_of(doc)

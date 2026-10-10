@@ -53,6 +53,14 @@ Phase J2 addition (Step 217, defaulted likewise):
   SC2's own visibility answer, refreshed every game step). Plan D4: unknown is not
   safe, so a site never seen, or not seen lately, is not yet safe to build on.
 
+Phase J2 addition (Step 218, defaulted likewise):
+
+* :class:`Entity` ``can_attack_ground`` / ``can_attack_air`` -- SC2's weapon
+  targets (burnysc2's ``Unit.can_attack_ground`` / ``can_attack_air``, read from
+  the game's own unit data) for own and enemy entities. Policies filter on them,
+  and an attack never assigns a flying target to an actor that cannot attack air
+  (a Zealot). Default False; the adapter fills actual values.
+
 Binding rule (the ONE model shared by validator and interpreter): selection
 bindings are root-local and live for one root evaluation in one tick. A node's
 binding effects commit only if the node SUCCEEDS; a node that fails -- a select
@@ -827,6 +835,9 @@ class Entity:
     ``assigned_harvesters`` / ``ideal_harvesters`` are SC2's worker count and
     ideal count for an own gas building (all three 0 for any other entity).
     ``carrying_vespene`` is True for an own unit carrying gas (False elsewhere).
+    ``can_attack_ground`` / ``can_attack_air`` are SC2's weapon targets for an own
+    or enemy entity (plan J2 Step 218: a Stalker can engage air, a Zealot cannot);
+    both False for neutral entities and wherever the adapter did not fill them.
     """
 
     tag: int
@@ -845,6 +856,8 @@ class Entity:
     assigned_harvesters: int = 0
     ideal_harvesters: int = 0
     carrying_vespene: bool = False
+    can_attack_ground: bool = False
+    can_attack_air: bool = False
 
     @property
     def durability(self) -> float:

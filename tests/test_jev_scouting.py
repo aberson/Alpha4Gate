@@ -53,6 +53,7 @@ from jev.runtime import NODE_BUDGET_REASON, JevRuntime, TickConfig, TickResult
 from jev.sc2_adapter import GAME_LOOPS_PER_SECOND
 from test_jev_army import (
     _KINDS,
+    _POWERED_KINDS,
     BASE_BUILD,
     CENTER,
     ENEMY_NATURAL,
@@ -91,6 +92,7 @@ PROBE_SELECTIONS = (
     "economy.gas.saturate.workers",
     "expansion.worker",
     "expansion.transfer.workers",
+    "tech.worker",  # Step 218: the tech plan's Core builder
 )
 _EPSILON = 1e-6
 #: 8.6 east of the enemy natural, 16.5 from the enemy start and 12.4 from the
@@ -182,7 +184,7 @@ class _ScoutWorld(_World):
                     self.ever_seen.add(body.tag)
                 else:
                     display = DisplayType.Snapshot  # the true state, but not in sight
-            powered = body.kind == "Gateway" and any(
+            powered = body.kind in _POWERED_KINDS and any(
                 distance(body.position, p) <= PYLON_POWER_RADIUS for p in pylons
             )
             unit = Unit(self._proto(body, display, powered), self, base_build=BASE_BUILD)
@@ -693,7 +695,7 @@ def _evaluations(result: TickResult, lanes: dict[str, str]) -> dict[str, int]:
     return counts
 
 
-@pytest.mark.parametrize("budget", [8, 9, 12, 20, 40, 256])  # 8 roots: the least legal
+@pytest.mark.parametrize("budget", [9, 10, 12, 20, 40, 256])  # 9 roots: the least legal
 def test_scouting_never_consumes_the_evaluation_budget_of_later_lanes(budget: int) -> None:
     """Every lane, scouting included, gets at most its fair share of what is left;
     the lanes after scouting are always evaluated, at any legal budget."""

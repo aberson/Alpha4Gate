@@ -5,7 +5,11 @@ with planned supply, bounded build recovery, and grouped reinforcements (plan J2
 Step 214), plus one owned, spaced Probe scout that reads the bot's own bounded
 enemy sightings and retreats when threatened (Step 215), plus a gas economy: one
 Assimilator per active base once the opening is placed, built on the geyser unit,
-saturated up to SC2's ideal and emptied back to minerals when depleted (Step 216).
+saturated up to SC2's ideal and emptied back to minerals when depleted (Step 216),
+plus a persistent natural expansion (Step 217), plus limited tech and a mixed army: a
+tech plan that builds the Cybernetics Core before the expansion (one macro plan at a
+time), Stalkers trained within composition guards, and air threats engaged only by
+units that can hit air (Step 218).
 Like v1, the policy is read through :mod:`importlib.resources` relative to this
 package, so it resolves the same way from a source checkout and from an installed
 wheel, never from the caller's working directory. The runtime itself lives in the shared ``jev``

@@ -118,7 +118,13 @@ _KINDS: dict[str, tuple[UnitTypeId, bool]] = {
     "Barracks": (UnitTypeId.BARRACKS, True),
     "Bunker": (UnitTypeId.BUNKER, True),
     "PhotonCannon": (UnitTypeId.PHOTONCANNON, True),
+    # Step 218 (the mixed army): Stalkers, and an air unit only they can hit.
+    "Stalker": (UnitTypeId.STALKER, False),
+    "Banshee": (UnitTypeId.BANSHEE, False),
 }
+#: SC2 structures that need Pylon power to operate (written out independently of
+#: Jev's own REQUIRES_POWER).
+_POWERED_KINDS = frozenset({"Gateway", "CyberneticsCore"})
 #: Exact ability -> generic ability, as SC2's game data remaps them.
 _REMAPS = {
     AbilityId.HARVEST_GATHER_PROBE: AbilityId.HARVEST_GATHER,
@@ -130,6 +136,19 @@ _REMAPS = {
 _PLAIN = (AbilityId.GATEWAYTRAIN_ZEALOT, AbilityId.NEXUSTRAIN_PROBE)
 _GATEWAY_SECONDS = 46.0
 _ZEALOT_SECONDS = 27.0
+#: SC2's weapon targets (game data) of the armed kinds: burnysc2 derives a unit's
+#: ``can_attack_ground`` / ``can_attack_air`` from these (Step 218).
+_WEAPONS: dict[str, int] = {
+    "Probe": data_pb2.Weapon.Ground,
+    "Zealot": data_pb2.Weapon.Ground,
+    "Stalker": data_pb2.Weapon.Any,
+    "Marine": data_pb2.Weapon.Any,
+    "Banshee": data_pb2.Weapon.Ground,
+    "PhotonCannon": data_pb2.Weapon.Any,
+}
+#: Own kinds that fight, with their reach (a Zealot is melee, a Stalker shoots at 6).
+_REACH = {"Zealot": REACH, "Stalker": 6.0}
+_AIR = frozenset({data_pb2.Weapon.Air, data_pb2.Weapon.Any})
 
 
 def _game_data() -> GameData:
@@ -139,6 +158,11 @@ def _game_data() -> GameData:
             name=name,
             available=True,
             attributes=[Attribute.Structure.value] if structure else [],
+            weapons=(
+                [data_pb2.Weapon(type=_WEAPONS[name], damage=10, attacks=1, range=1, speed=1)]
+                if name in _WEAPONS
+                else []
+            ),
         )
         for name, (type_id, structure) in _KINDS.items()
     ]
@@ -297,7 +321,7 @@ class _World:
                     display = DisplayType.Snapshot  # fogged memory, not visible state
                 else:
                     continue  # never reported: hidden-map information
-            powered = body.kind == "Gateway" and any(
+            powered = body.kind in _POWERED_KINDS and any(
                 distance(body.position, p) <= PYLON_POWER_RADIUS for p in pylons
             )
             unit = Unit(self._proto(body, display, powered), self, base_build=BASE_BUILD)
@@ -363,6 +387,10 @@ class _World:
         elif ability == AbilityId.ATTACK and point is not None:
             body.orders = [(AbilityId.ATTACK_ATTACK, point, 0.0)]
         elif ability == AbilityId.ATTACK and isinstance(target, Unit):
+            aimed = self.bodies.get(target.tag)
+            if aimed is not None and aimed.flying and _WEAPONS.get(body.kind) not in _AIR:
+                self.unexpected.append(f"{body.kind} {body.tag} ordered onto air {target.tag}")
+                return ActionResult.CantTargetAirUnits
             body.orders = [(AbilityId.ATTACK_ATTACK, target.tag, 0.0)]
         elif ability == AbilityId.GATEWAYTRAIN_ZEALOT and body.kind == "Gateway":
             if self.minerals < 100 or self.supply_cap - self.supply_used < 2:
@@ -395,7 +423,7 @@ class _World:
                     self.bodies[self._next_tag] = _Body(self._next_tag, "Zealot", spawn)
                 else:
                     body.orders[0] = (ability, None, progress)
-            elif body.kind == "Zealot" and body.orders and not self.frozen:
+            elif body.kind in _REACH and body.orders and not self.frozen:
                 if body.tag not in self.stuck:
                     self._act(body, dt)
         for tag in [t for t, b in self.bodies.items() if b.health <= 0.0]:
@@ -457,8 +485,9 @@ class _World:
         )
 
     def _fight(self, body: _Body, enemy: _Body, dt: float) -> None:
-        if distance(body.position, enemy.position) > REACH + _EPSILON:
-            self._walk(body, enemy.position, dt, stop=REACH)
+        reach = _REACH.get(body.kind, REACH)
+        if distance(body.position, enemy.position) > reach + _EPSILON:
+            self._walk(body, enemy.position, dt, stop=reach)
         else:
             if enemy.tag not in self.untouchable:
                 damage = DPS * dt
@@ -467,12 +496,14 @@ class _World:
                 enemy.health -= damage - absorbed
 
     def _acquire(self, body: _Body) -> _Body | None:
-        """The nearest visible ground enemy within acquisition range (tie by tag)."""
+        """The nearest visible enemy its weapons can hit within acquisition range (tie by
+        tag): ground only for a Zealot, air too for a Stalker."""
+        anti_air = _WEAPONS.get(body.kind) in _AIR
         candidates = [
             (distance(body.position, b.position), b.tag)
             for b in self.bodies.values()
             if b.alliance == Alliance.Enemy
-            and not b.flying
+            and (anti_air or not b.flying)
             and distance(body.position, b.position) <= ACQUIRE
             and self.sees(b.position)
         ]
@@ -1449,6 +1480,117 @@ def test_v2_assignment_memory_is_kept_only_for_a_policy_that_reads_it() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Step 218: a mixed army -- capability-aware targets (Stalkers hit air, Zealots never)
+# ---------------------------------------------------------------------------
+
+STALKERS = (6100, 6101)
+_AIR_RAID = (33.0, 35.0)  # in sight of the main, inside its defense radius
+_AIR_DEFENSE = "army.defend.air.attack"
+
+
+def _mixed(*extra: _Body) -> _World:
+    """``_base``'s four Zealots plus two Stalkers at home (the world's weapon data
+    gives the Stalker ground and air targets, the Zealot ground only)."""
+    stalkers = [_Body(tag, "Stalker", (34.0, 38.0), health=80.0, shield=80.0) for tag in STALKERS]
+    return _base(extra=(*stalkers, *extra))
+
+
+def _raider(tag: int = 900_100, at: _Point = _AIR_RAID) -> _Body:
+    return _Body(tag, "Banshee", at, Alliance.Enemy, health=60.0, flying=True)
+
+
+def _attacks_on(world: _World, tag: int) -> list[tuple[int, int]]:
+    """``(game loop, actor)`` of every ATTACK SC2 received on unit ``tag``."""
+    return [(loop, actor) for loop, actor, target in _sent_attacks(world) if target == tag]
+
+
+def test_v2_mixed_scenario_stalkers_shoot_down_an_air_raider_and_zealots_never_take_it() -> None:
+    world = _mixed()
+
+    def raid(world: _World, controller: JevController, index: int) -> None:
+        if index == 3:
+            world.bodies[900_100] = _raider()
+            world.refresh()
+
+    run = _play(world, 40, raid, bundle=load_v2_policy())
+    on_raider = _attacks_on(world, 900_100)
+    assert on_raider and {actor for _, actor in on_raider} == set(STALKERS)
+    assert min(loop for loop, _ in on_raider) == _loop_of(3)  # at once, the tick it shows
+    assert 900_100 not in world.bodies  # shot down
+    defense = _commands(run, _AIR_DEFENSE)
+    assert defense and {_actor_of(e) for e in defense} == set(STALKERS)  # never a Zealot
+    selections = [
+        e for e in run.events if e.node_id == "army.defend.air.units" and e.kind == "node"
+    ]
+    assert selections and all(
+        set(e.facts["tags"]) == {str(t) for t in STALKERS} for e in selections
+    )
+    # The Zealots were never pulled onto it: they kept the attack they were given.
+    assert all(actor not in ZEALOTS for _, actor in on_raider)
+    assert world.unexpected == []  # SC2 never saw a Zealot ordered onto an air unit
+
+
+def test_v2_mixed_scenario_ground_threats_take_every_unit_then_stalkers_take_the_air() -> None:
+    marine = _enemy(900_200, "Marine", (34.0, 36.0), health=45.0)
+    world = _mixed(marine, _raider(at=(36.0, 34.0)))
+    run = _play(world, 40, bundle=load_v2_policy())
+    on_marine = _attacks_on(world, 900_200)
+    assert {actor for _, actor in on_marine} == {*ZEALOTS, *STALKERS}  # every combat unit
+    assert 900_200 not in world.bodies
+    marine_dead = max(loop for loop, _ in on_marine)
+    on_raider = _attacks_on(world, 900_100)
+    assert on_raider and {actor for _, actor in on_raider} == set(STALKERS)
+    assert min(loop for loop, _ in on_raider) > marine_dead  # ground first, then air
+    first = [e for e in run.events if e.kind == "node" and e.node_id == "army.defend.engage"]
+    assert first and first[0].facts["child"] == "army.defend.ground"
+
+
+def test_without_the_capability_filter_the_attack_itself_refuses_zealots_an_air_target(
+    tmp_path: Path,
+) -> None:
+    """Calibration of both layers: with ``can_attack_air`` removed from the anti-air
+    selection, the Zealots are selected too -- and the attack operation still never
+    assigns them the air target (blocked, with a reason), so SC2 never sees one."""
+    document = json.loads(load_v2_policy().policy_bytes)
+    for node in document["nodes"]:
+        if node["id"] == "army.defend.air.units":
+            del node["args"]["filter"]["can_attack_air"]
+    candidate = tmp_path / "policy.json"
+    candidate.write_text(json.dumps(document), encoding="utf-8")
+    world = _mixed(_raider())
+    run = _play(world, 6, bundle=load_v2_policy(candidate))
+    selected = [e for e in run.events if e.node_id == "army.defend.air.units" and e.kind == "node"]
+    assert set(selected[0].facts["tags"]) == {str(t) for t in (*ZEALOTS, *STALKERS)}
+    attacks = [e for e in run.events if e.node_id == _AIR_DEFENSE and e.kind == "node"]
+    assert attacks[0].facts["cannot_attack_air"] == len(ZEALOTS)
+    assert {_actor_of(e) for e in _commands(run, _AIR_DEFENSE)} == set(STALKERS)
+    assert world.unexpected == []
+    # The detector is live: SC2 (this world) does refuse a Zealot ordered onto air.
+    world.bodies[900_101] = _raider(900_101)  # the first raider was shot down
+    world.refresh()
+    zealot = next(u for u in world.units if u.tag == ZEALOTS[0])
+    raider = next(u for u in world.enemy_units if u.tag == 900_101)
+    assert world.receive(UnitCommand(AbilityId.ATTACK, zealot, raider)) == (
+        ActionResult.CantTargetAirUnits
+    )
+    assert world.unexpected and "onto air" in world.unexpected[0]
+
+
+def test_the_adapter_reads_weapon_targets_from_the_game_data() -> None:
+    from jev.sc2_adapter import Sc2Adapter
+
+    world = _mixed(_raider())
+    observation = Sc2Adapter().observe(world, BotAIPort(world))  # type: ignore[arg-type]
+    own = {e.type_name: e for e in observation.own_units}
+    assert (own["Stalker"].can_attack_ground, own["Stalker"].can_attack_air) == (True, True)
+    assert (own["Zealot"].can_attack_ground, own["Zealot"].can_attack_air) == (True, False)
+    (raider,) = observation.visible_enemies
+    assert raider.is_flying and (raider.can_attack_ground, raider.can_attack_air) == (True, False)
+    nexus = next(e for e in observation.own_structures if e.type_name == "Nexus")
+    assert (nexus.can_attack_ground, nexus.can_attack_air) == (False, False)  # unarmed
+
+
+# ---------------------------------------------------------------------------
 # Legacy isolation: Jev's gameplay call graph
 # ---------------------------------------------------------------------------
 
@@ -1597,7 +1739,8 @@ def unit(tag, name, position, **extra):
         tag=tag, name=name, position=position, health=40.0, shield=0.0, build_progress=1.0,
         orders=[],
         is_structure=False, is_flying=False, is_ready=True, is_idle=True, is_powered=True,
-        is_visible=True, is_carrying_vespene=False,
+        is_visible=True, is_carrying_vespene=False, can_attack_ground=False,
+        can_attack_air=False,
     )
     fields.update(extra)
     return SimpleNamespace(**fields)

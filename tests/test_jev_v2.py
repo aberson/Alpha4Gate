@@ -20,6 +20,15 @@
 Grouped reinforcement, recovery, bounded build failures and the Pylon plan are
 also exercised scenario by scenario in ``test_jev_army.py`` and
 ``test_jev_economy.py`` through the same production path.
+
+Step 218 (limited tech and a mixed army): the graph's contract (a tech plan lane
+before the expansion's, Stalker production within composition guards, combat lanes
+of Zealots and Stalkers, air threats for anti-air units only), the new operation
+arguments at the operation level (tech requirements, unpowered producers, planned
+counts, affordability, capability-aware attack targets), and -- through the
+production controller -- expansion and tech sharing the one macro slot without
+ever double-spending. The Core-then-Stalker scenarios live in ``test_jev_macro.py``
+and the mixed-army ones in ``test_jev_army.py``.
 """
 
 from __future__ import annotations
@@ -46,17 +55,21 @@ from jev.bot import JevController
 from jev.contracts import Entity, Observation, Order, Point, Policy
 from jev.operations import (
     BUILD_ABILITY,
+    MAX_COMPOSITION_RATIO,
     MAX_SUPPLY,
     MINERAL_COST,
     OPERATIONS,
     SUPPLY_PROVIDED,
     TERMINAL_TASK_STATUSES,
     TRAIN_ABILITY,
+    ActionOp,
+    Binding,
     PredicateOp,
     distance,
     planned_supply,
     validate_operation_args,
 )
+from jev.plans import PlanStore
 from jev.policy import PolicyError
 from jev.runner import MatchOptions, run_match
 from jev.runtime import NODE_BUDGET_REASON
@@ -657,3 +670,471 @@ def test_v2_opening_spends_on_gateways_as_soon_as_minerals_allow(v2_opening: _Op
     bank = summary["mean_mineral_bank"]
     assert isinstance(bank, dict) and bank["status"] == "measured"
     assert float(str(bank["value"])) < MINERAL_COST["Gateway"]
+
+
+# ---------------------------------------------------------------------------
+# Step 218: the graph's contract for tech and the mixed army
+# ---------------------------------------------------------------------------
+
+_COMBAT = ["Zealot", "Stalker"]
+
+
+def test_v2_macro_lanes_hold_before_production_and_the_expansion_after_construction() -> None:
+    """The lane-order contract only (the ordering behaviour itself is proven by the
+    production scenarios): both macro lanes hold before production spends, after the
+    supply and construction lanes that may preempt them, and the tech lane runs before
+    the expansion lane (D2's preference when both could start; fairness after aborts is
+    the macro slot's own turn rule, whatever the order)."""
+    roots = load_v2_policy().policy.roots
+    assert roots.index("construction") < roots.index("tech") < roots.index("expansion")
+    assert roots.index("expansion") < roots.index("production")
+
+
+def test_v2_stalkers_train_first_within_the_composition_guards() -> None:
+    policy = load_v2_policy().policy
+    assert policy.node("production").children[:2] == ("production.stalkers", "production.zealots")
+    core = policy.node("production.stalkers.core").args["filter"]
+    assert core == {"types": ["CyberneticsCore"], "ready": True, "powered": True}
+    gas = policy.node("production.stalkers.gas")
+    assert (gas.operation, gas.args["item"], list(gas.args["resources"])) == (
+        "affordable",
+        "Stalker",
+        ["vespene"],
+    )
+    train = policy.node("production.stalkers.train").args
+    assert (train["unit"], train["ratio_of"], train["hold_reservation"]) == (
+        "Stalker",
+        "Zealot",
+        True,
+    )
+    assert train["max_ratio"] == {"param": "stalkers_per_zealot"}
+    assert train["max_count"] == {"param": "stalker_cap"}
+    assert train["powered_prerequisite"] is True  # the operation enforces the Core's power
+    assert policy.parameters["stalkers_per_zealot"] == 1  # D2 fallback: balanced
+    assert policy.parameters["stalker_cap"] == 16
+    # No policy node spells an SC2 price: gas gating reads the central cost table.
+    assert not [n.id for n in policy.nodes if n.args.get("resource") == "vespene"]
+
+
+def test_v2_combat_lanes_take_zealots_and_stalkers_and_air_only_for_anti_air() -> None:
+    policy = load_v2_policy().policy
+    combat = [
+        n
+        for n in policy.nodes
+        if n.args.get("collection") == "own_units"
+        and {"Zealot", "Stalker"} & set(n.args.get("filter", {}).get("types", []))
+    ]
+    first_wave = "army.attack.launch.first_wave.ready"
+    for node in combat:
+        types = list(node.args["filter"]["types"])
+        expected = ["Zealot"] if node.id == first_wave else _COMBAT  # D3: four Zealots
+        assert types == expected, node.id
+    assert len(combat) == 10  # every army, reserve and expansion count of combat units
+    anti_air = policy.node("army.defend.air.units").args["filter"]
+    assert anti_air == {"types": _COMBAT, "can_attack_air": True}
+    for node_id in ("army.defend.air.main", "army.defend.air.natural.target"):
+        assert policy.node(node_id).args["filter"]["flying"] is True
+    attack = policy.node("army.defend.air.attack").args
+    assert (attack["units"], attack["target"]) == ("$anti_air", "$air_threat")
+    assert policy.node("army.defend.engage").children == ("army.defend.ground", "army.defend.air")
+
+
+# ---------------------------------------------------------------------------
+# Step 218: the operations, at the operation level
+# ---------------------------------------------------------------------------
+
+
+def _core(*, progress: float = 1.0, powered: bool = True) -> Entity:
+    return Entity(
+        1400,
+        "CyberneticsCore",
+        (34.5, 39.5),
+        550.0,
+        build_progress=progress,
+        is_structure=True,
+        ready=progress >= 1.0,
+        powered=powered,
+    )
+
+
+_GATE_SITES = ((26.5, 34.5), (29.5, 34.5), (24.0, 37.5), (21.5, 34.5))
+
+
+def _gates(*, powered: bool = True) -> tuple[Entity, ...]:
+    return tuple(
+        dataclasses.replace(_gateway(1100 + i, site), powered=powered)
+        for i, site in enumerate(_GATE_SITES)
+    )
+
+
+def _op_view(
+    *,
+    structures: tuple[Entity, ...],
+    units: tuple[Entity, ...] = (),
+    minerals: int = 1000,
+    vespene: int = 1000,
+    trains: dict[str, int] | None = None,
+    busy: frozenset[int] = frozenset(),
+    enemies: tuple[Entity, ...] = (),
+    remembered: tuple[Entity, ...] = (),
+    **bindings: Binding,
+) -> Any:
+    from test_jev_plans import _View
+
+    observation = dataclasses.replace(
+        _observation(
+            10.0,
+            minerals=minerals,
+            supply_used=20,
+            supply_cap=100,
+            units=units,
+            structures=(_nexus(), *structures),
+            enemies=enemies,
+            remembered=remembered,
+        ),
+        vespene=vespene,
+    )
+    return _View(observation, bindings=dict(bindings), trains=dict(trains or {}), busy=busy)
+
+
+def _plan_of(operation: str, view: Any, **args: Any) -> Any:
+    spec = OPERATIONS[operation]
+    assert isinstance(spec, ActionOp)
+    from jev.operations import resolve_args
+
+    return spec.plan(view, resolve_args(operation, args, {}))
+
+
+def _train_stalkers(view: Any, **guards: Any) -> Any:
+    return _plan_of("train", view, unit="Stalker", producers="$p", **guards)
+
+
+def _producers(entities: tuple[Entity, ...]) -> Binding:
+    return Binding("units", entities=entities)
+
+
+def test_train_needs_the_live_tech_requirement_and_a_powered_producer() -> None:
+    gates = _gates()
+    for structures in ((), (_core(progress=0.5),)):  # no Core, or one still warping in
+        plan = _train_stalkers(_op_view(structures=(*gates, *structures), p=_producers(gates)))
+        assert plan.intents == () and plan.code == "prerequisite_missing"
+        assert {reason for _, reason in plan.blocked} == {
+            "Stalker requires a ready CyberneticsCore"
+        }
+        assert plan.facts["requires"] == "CyberneticsCore"
+    # SC2's requirement is build progress only: an unpowered finished Core is enough here
+    # (v2's graph is stricter by its own condition, production.stalkers.core).
+    ready = _train_stalkers(
+        _op_view(structures=(*gates, _core(powered=False)), p=_producers(gates))
+    )
+    assert len(ready.intents) == 4 and ready.code is None
+    (intent, *_) = ready.intents
+    assert (intent.ability, intent.minerals, intent.vespene, intent.supply) == (
+        "GATEWAYTRAIN_STALKER",
+        125,
+        50,
+        2,
+    )
+    dark = _gates(powered=False)
+    plan = _train_stalkers(_op_view(structures=(*dark, _core()), p=_producers(dark)))
+    assert plan.intents == () and {r for _, r in plan.blocked} == {"producer unpowered"}
+
+
+def test_powered_prerequisite_makes_the_train_refuse_an_unpowered_core() -> None:
+    """The opt-in, stricter prerequisite v2's Stalker node uses: the operation itself
+    refuses an unpowered Core (SC2 would not), whatever a selector let through."""
+    gates = _gates()
+    unpowered = _op_view(structures=(*gates, _core(powered=False)), p=_producers(gates))
+    strict = _train_stalkers(unpowered, powered_prerequisite=True)
+    assert strict.intents == () and strict.code == "prerequisite_missing"
+    assert {r for _, r in strict.blocked} == {"Stalker requires a ready, powered CyberneticsCore"}
+    assert len(_train_stalkers(unpowered).intents) == 4  # the default: SC2's own rule
+    powered = _op_view(structures=(*gates, _core()), p=_producers(gates))
+    assert len(_train_stalkers(powered, powered_prerequisite=True).intents) == 4
+
+
+def test_composition_guards_count_planned_units_and_never_overshoot_in_one_tick() -> None:
+    """Planned Zealots: 2 standing + 1 queued + 1 unconfirmed task = 4; planned
+    Stalkers: 1 standing + 1 unconfirmed = 2. A 1:1 ratio leaves room for 2 more of
+    the four idle Gateways; a cap of 3 leaves room for 1. A Gateway already held by a
+    task gets its (deduplicated) intent without using the room."""
+    gates = _gates()
+    queued = dataclasses.replace(
+        _gateway(1104, (32.5, 34.5), orders=(Order(TRAIN_ABILITY["Zealot"]),)), powered=True
+    )
+    units = (_zealot(6000, (40.0, 40.0)), _zealot(6001, (40.0, 41.0)))
+    stalker = Entity(6100, "Stalker", (40.0, 42.0), 80.0)
+    view = _op_view(
+        structures=(*gates, queued, _core()),
+        units=(*units, stalker),
+        trains={"Zealot": 1, "Stalker": 1},
+        p=_producers(gates),
+    )
+    plan = _train_stalkers(view, ratio_of="Zealot", max_ratio=1.0)
+    assert [i.actor_tag for i in plan.intents] == [1100, 1101]
+    assert [tag for tag, _ in plan.blocked] == [1102, 1103]
+    assert all(reason.startswith("composition guard") for _, reason in plan.blocked)
+    facts = plan.facts
+    assert (facts["planned"], facts["planned_other"], facts["composition_bound"]) == (2, 4, 4)
+    capped = _train_stalkers(view, ratio_of="Zealot", max_ratio=1.0, max_count=3)
+    assert [i.actor_tag for i in capped.intents] == [1100]
+    assert capped.facts["composition_bound"] == 3
+    held = _train_stalkers(
+        dataclasses.replace(view, busy=frozenset({1100})), ratio_of="Zealot", max_ratio=1.0
+    )
+    assert [i.actor_tag for i in held.intents] == [1100, 1101, 1102]  # 1100 uses no room
+    stalker_heavy = _train_stalkers(view, ratio_of="Zealot", max_ratio=2.0)
+    assert len(stalker_heavy.intents) == 4  # D2's 1:2: room for 6 more
+    zealot_heavy = _train_stalkers(view, ratio_of="Zealot", max_ratio=0.5)
+    assert zealot_heavy.intents == ()  # 2:1: 4 Zealots allow 2 Stalkers, both planned
+
+
+def test_the_runtime_counts_unconfirmed_train_tasks_toward_the_mix() -> None:
+    """Through the runtime: one Zealot allows one Stalker. The first tick's Stalker is
+    not confirmed on the next tick (SC2 shows no queue yet), and it still counts --
+    a second Stalker is never ordered for the same Zealot."""
+    lane = [
+        _node("lane", "sequence", ["lane.gates", "lane.train"]),
+        _node(
+            "lane.gates",
+            "select",
+            operation="select_entities",
+            collection="own_structures",
+            filter={"types": ["Gateway"], "ready": True, "idle": True, "powered": True},
+            limit=4,
+            bind="g",
+        ),
+        _node(
+            "lane.train",
+            "action",
+            operation="train",
+            unit="Stalker",
+            producers="$g",
+            ratio_of="Zealot",
+            max_ratio=1,
+        ),
+    ]
+    runtime = _runtime_for(_build_policy(["lane"], lane))
+    world = {
+        "minerals": 1000,
+        "supply_cap": 100,
+        "units": (_zealot(6000, (40.0, 40.0)),),
+        "structures": (_nexus(), *_gates(), _core()),
+    }
+    first = runtime.tick(dataclasses.replace(_observation(1.0, **world), vespene=1000))
+    second = runtime.tick(dataclasses.replace(_observation(1.5, **world), vespene=1000))
+    assert [c.actor_tags for c in first.commands] == [(1100,)]
+    assert second.commands == ()  # the unconfirmed Stalker still fills the one slot
+    (event,) = [e for e in second.events if e.kind == "node" and e.node_id == "lane.train"]
+    assert event.facts["planned"] == 1 and event.facts["planned_other"] == 1
+
+
+def test_affordable_reads_the_central_cost_tables_after_reservations() -> None:
+    spec = OPERATIONS["affordable"]
+    assert isinstance(spec, PredicateOp)
+
+    def check(item: str, resources: list[str], **view: Any) -> Any:
+        return spec.evaluate(
+            _op_view(structures=(), **view), {"item": item, "resources": resources}
+        )
+
+    short = check("Stalker", ["vespene"], vespene=49)
+    assert (short.ok, short.code, short.facts["short"]) == (False, "budget_short", ["vespene"])
+    assert short.facts["vespene"] == {"need": 50, "available": 49}
+    assert check("Stalker", ["vespene"], vespene=50).ok
+    both = check("Stalker", ["minerals", "vespene", "supply"], minerals=124, vespene=50)
+    assert both.facts["short"] == ["minerals"]
+    assert check("CyberneticsCore", ["minerals", "supply"], minerals=150).ok  # no supply cost
+
+
+def test_build_refuses_a_core_without_a_finished_gateway() -> None:
+    site = Binding("points", points=((34.5, 39.5),))
+    probe = _probe(2000, (31.0, 31.0))
+    worker = Binding("units", entities=(probe,))
+    args = {"structure": "CyberneticsCore", "worker": "$w", "site": "$s"}
+    warping = dataclasses.replace(_gateway(1100, (26.5, 34.5)), ready=False, build_progress=0.5)
+    for gates in ((), (warping,)):
+        view = _op_view(structures=gates, units=(probe,), w=worker, s=site)
+        plan = _plan_of("build", view, **args)
+        assert plan.intents == () and plan.code == "prerequisite_missing"
+        assert plan.failure_reason == "CyberneticsCore requires a ready Gateway"
+    finished = (_gateway(1100, (26.5, 34.5)),)
+    ready = _plan_of(
+        "build", _op_view(structures=finished, units=(probe,), w=worker, s=site), **args
+    )
+    (intent,) = ready.intents
+    assert (intent.ability, intent.minerals, intent.vespene) == (
+        "PROTOSSBUILD_CYBERNETICSCORE",
+        150,
+        0,
+    )
+
+
+def _flyer(tag: int, position: Point) -> Entity:
+    return Entity(tag, "Banshee", position, 140.0, is_flying=True, can_attack_ground=True)
+
+
+def test_attack_never_assigns_a_flying_target_to_an_actor_that_cannot_hit_air() -> None:
+    zealot = dataclasses.replace(_zealot(6000, (40.0, 40.0)), can_attack_ground=True)
+    stalker = Entity(
+        6100, "Stalker", (40.0, 41.0), 80.0, can_attack_ground=True, can_attack_air=True
+    )
+    army = Binding("units", entities=(zealot, stalker))
+    raider = _flyer(9000, (45.0, 45.0))
+    args = {"units": "$u", "target": "$t", "arrive_within": 4}
+    view = _op_view(
+        structures=(),
+        units=(zealot, stalker),
+        enemies=(raider,),
+        u=army,
+        t=Binding("units", entities=(raider,)),
+    )
+    plan = _plan_of("attack", view, **args)
+    assert [(i.actor_tag, i.target) for i in plan.intents] == [(6100, 9000)]
+    assert plan.blocked == ((6000, "Zealot 6000 cannot attack air target 9000"),)
+    assert plan.facts["cannot_attack_air"] == 1
+    marine = Entity(9001, "Marine", (45.0, 45.0), 45.0)
+    ground = _op_view(
+        structures=(),
+        units=(zealot, stalker),
+        enemies=(marine,),
+        u=army,
+        t=Binding("units", entities=(marine,)),
+    )
+    plan = _plan_of("attack", ground, **args)
+    assert [i.actor_tag for i in plan.intents] == [6000, 6100] and plan.blocked == ()
+    assert "cannot_attack_air" not in plan.facts  # unchanged facts for ground targets
+    lifted = dataclasses.replace(
+        _flyer(9002, (60.0, 60.0)), type_name="Barracks", is_structure=True
+    )
+    remembered = _op_view(
+        structures=(),
+        units=(zealot, stalker),
+        remembered=(lifted,),
+        u=army,
+        t=Binding("units", entities=(lifted,)),
+    )
+    plan = _plan_of("attack", remembered, **args)
+    assert {i.target for i in plan.intents} == {(60.0, 60.0)}  # attack-move where it was seen
+    assert len(plan.intents) == 2  # a point is no unit assignment
+
+
+@pytest.mark.parametrize(
+    ("operation", "args", "message"),
+    [
+        ("train", {"unit": "Stalker", "producers": "$p", "ratio_of": "Zealot"}, "go together"),
+        ("train", {"unit": "Stalker", "producers": "$p", "max_ratio": 1}, "go together"),
+        (
+            "train",
+            {"unit": "Stalker", "producers": "$p", "ratio_of": "Stalker", "max_ratio": 1},
+            "another unit",
+        ),
+        (
+            "train",
+            {
+                "unit": "Stalker",
+                "producers": "$p",
+                "ratio_of": "Zealot",
+                "max_ratio": MAX_COMPOSITION_RATIO + 1,
+            },
+            "must be <=",
+        ),
+        ("train", {"unit": "Sentry", "producers": "$p"}, "must be one of"),
+        (
+            "train",
+            {"unit": "Zealot", "producers": "$p", "powered_prerequisite": True},
+            "powered_prerequisite",
+        ),
+        ("train", {"unit": "Stalker", "producers": "$p", "powered_prerequisite": 1}, "boolean"),
+        ("affordable", {"item": "Sentry", "resources": ["minerals"]}, "must be one of"),
+        ("affordable", {"item": "Stalker", "resources": []}, "non-empty list"),
+        ("affordable", {"item": "Stalker", "resources": ["gold"]}, "unknown value"),
+    ],
+)
+def test_step_218_operation_arguments_are_validated(
+    operation: str, args: dict[str, object], message: str
+) -> None:
+    issues = validate_operation_args(operation, args, parameters={}, node_kinds={})  # type: ignore[arg-type]
+    assert any(message in text for _, text in issues), issues
+
+
+def test_the_runtime_rejects_a_non_bool_weapon_flag() -> None:
+    runtime = _runtime_for(load_v2_policy().policy)
+    bad = dataclasses.replace(_zealot(6000, (40.0, 40.0)), can_attack_air="yes")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match=r"own_units\[0\]\.can_attack_air must be a bool"):
+        runtime.tick(_observation(1.0, units=(bad,)))
+
+
+def test_a_lost_acknowledged_structure_aborts_by_its_plan_kind() -> None:
+    """The tech plan's lost Core is ``structure_lost``; an expansion's lost Nexus stays
+    ``nexus_lost`` (Step 217's code, unchanged)."""
+    for kind, code in (("tech", "structure_lost"), ("expand", "nexus_lost")):
+        store = PlanStore("0123456789ab4def8123456789abcdef")
+        record, _ = store.start(f"{kind}.start", kind, kind, 1.0)  # type: ignore[arg-type]
+        assert record is not None
+        store.build_committed(f"{kind}.start", f"{kind}.build", "t:1", 150, 0)
+        store.build_acknowledged(f"{kind}.start", f"{kind}.build", 3.0)
+        store.build_failed(f"{kind}.start", "lost", True, "structure destroyed", 5.0)
+        latest = store.record(f"{kind}.start")
+        assert latest is not None and (latest.status, latest.reason_code) == ("aborted", code)
+
+
+# ---------------------------------------------------------------------------
+# Step 218: expansion and tech share the macro slot and never double-spend
+# ---------------------------------------------------------------------------
+
+
+def test_expansion_and_tech_share_the_macro_slot_and_never_double_spend() -> None:
+    """A launched one-base army ready to expand but without a Core. The tech plan
+    takes the macro slot first (D2: the Core prerequisite before the expansion; its
+    lane runs first). Every tick until it completes the slot refuses the expansion,
+    visibly -- through the Core's construction -- and on the tick the Core is finished
+    the tech lane completes its plan before the expansion lane opens its own. At no
+    step are two macro plans open, their holds never exceed the bank, and SC2 never
+    sees an order it cannot pay for."""
+    import test_jev_plans as expansion_suite
+
+    world = expansion_suite._world(core=False)
+    seen: list[tuple[int, int, int, int]] = []
+    funded: set[str] = set()
+    ready: dict[int, bool] = {}
+
+    def watch(world: Any, controller: JevController, index: int) -> None:
+        ready[world.state.game_loop] = any(b.progress >= 1.0 for b in world.own("CyberneticsCore"))
+        open_plans = [r for r in controller.runtime.plans() if r.is_open]
+        held = sum(r.reserved_minerals for r in open_plans)
+        seen.append((world.state.game_loop, len(open_plans), held, world.minerals))
+        for record in open_plans:
+            if record.plan_id not in funded:  # each plan's price, as it opens
+                funded.add(record.plan_id)
+                world.minerals += 150 if record.kind == "tech" else 400
+
+    run = expansion_suite._expand(world, 230, watch)
+    assert all(open_plans <= 1 for _, open_plans, _, _ in seen)  # one macro plan at a time
+    assert all(held <= bank for _, _, held, bank in seen)
+    plans = run.controller.runtime.plans() if run.controller is not None else ()
+    tech, expand = (next(r for r in plans if r.kind == kind) for kind in ("tech", "expand"))
+    assert tech.plan_id.endswith(":plan:1") and tech.status == "completed"
+    assert expand.plan_id.endswith(":plan:2") and expand.status == "completed"
+    assert tech.finished_game_seconds is not None
+    assert expand.started_game_seconds >= tech.finished_game_seconds
+    refusals = [
+        e
+        for e in run.events
+        if e.kind == "node" and e.node_id == "expansion.start.go" and e.status == "failure"
+    ]
+    assert refusals and all("never a duplicate plan" in e.reason for e in refusals)
+    core_ready = min(loop for loop, ok in ready.items() if ok)
+    assert max(e.game_loop for e in refusals) < core_ready  # refused while tech was open
+    assert expand.started_game_seconds * GAME_LOOPS_PER_SECOND == pytest.approx(core_ready)
+    nexus_holds = [
+        e.game_seconds
+        for e in run.events
+        if e.kind == "diagnostic"
+        and e.facts.get("plan_kind") == "expand"
+        and isinstance(e.facts.get("reserved_minerals"), int)
+        and int(str(e.facts["reserved_minerals"])) > 0
+    ]
+    assert nexus_holds and min(nexus_holds) >= tech.finished_game_seconds
+    assert world.overspent == [] and world.sc2_refusals == []
+    assert len(world.own("Nexus")) == 2 and len(world.own("CyberneticsCore")) == 1

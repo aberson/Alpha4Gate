@@ -1,4 +1,5 @@
-"""Jev v2 gas economy through the production entry point (Phase J2 Step 216, plan D3/D4).
+"""Jev v2 gas economy and limited tech through the production entry point (Phase J2
+Steps 216 and 218, plan D3/D4).
 
 Every scenario runs the path a real match runs: :func:`jev.runner.run_match` ->
 :class:`jev.bot.JevController` -> ``JevBot.on_step`` ->
@@ -7,23 +8,31 @@ packaged v2 policy -> :class:`jev.sc2_adapter.BotAIPort`. Only the SC2 process i
 replaced: :class:`_GasWorld` extends the economy suite's burnysc2 world (real
 ``Unit`` objects from protobuf with real ``GameData``) with vespene geysers,
 Assimilators built on a geyser *unit*, gas mining, SC2's harvester counts, a
-probe that is out of sight while inside an Assimilator, and vespene costs.
+probe that is out of sight while inside an Assimilator, and SC2's training rules:
+prices in minerals, vespene and supply, tech requirements and Pylon power, all
+written out independently of Jev's tables (a command SC2 would refuse for them is
+recorded in ``sc2_refusals``).
 
-Covered: the Assimilator command targets the geyser by unit tag (never a point,
-never a placement query), one per base; saturation at three workers (never above
-SC2's ideal); a depleted Assimilator returns its workers to minerals; a destroyed
-one fails the gathers still on their way and is rebuilt; a lost gas worker or
-builder is replaced at once; gas is reserved so concurrent spenders never
-double-spend, and released on acknowledgement or failure. Gas workers never take
+Covered (Step 216): the Assimilator command targets the geyser by unit tag (never a
+point, never a placement query), one per base; saturation at three workers (never
+above SC2's ideal); a depleted Assimilator returns its workers to minerals; a
+destroyed one fails the gathers still on their way and is rebuilt; a lost gas
+worker or builder is replaced at once; gas is reserved so concurrent spenders never
+double-spend, and released on acknowledgement or failure -- with the Stalker's real
+50 gas (Step 216 had to give the Zealot a pretend gas cost). Gas workers never take
 the scout or a probe another task holds.
 
-No allowlisted v2 type costs gas until Step 218 (the Stalker), so the spending
-scenarios give the Zealot a hypothetical gas cost through the one cost table
-(:data:`jev.operations.VESPENE_COST`), which the production intents read.
+Covered (Step 218): the tech plan builds the Cybernetics Core, then Stalkers train,
+with every mineral, gas and supply charged once; a destroyed Core (finished or under
+construction), an unpowered Core or unpowered Gateways and a missing Gateway each
+stop Stalker training and recover visibly; the composition guards keep Stalkers at
+most one per Zealot at every step; the cost and prerequisite tables agree with the
+installed burnysc2's game data.
 """
 
 from __future__ import annotations
 
+import json
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -64,11 +73,14 @@ from jev.operations import (
     placement_candidates,
     validate_operation_args,
 )
+from jev.plans import PLAN_COOLDOWN_SECONDS, PLAN_TIMEOUT_SECONDS
+from jev.policy import PolicyBundle
 from jev.runner import MatchOptions, run_match
 from jev.sc2_adapter import GAME_LOOPS_PER_SECOND
 from test_jev_economy import (
     _BUILD_KIND,
     _KINDS,
+    _POWERED_KINDS,
     _REMAPS,
     _TRAIN_KIND,
     BASE_BUILD,
@@ -111,6 +123,26 @@ _GEYSER_GAS = 2250
 #: A probe stays out of sight inside an Assimilator for one of every two 32-loop
 #: windows once it has gathered there this long (SC2 hides it while it harvests).
 _INSIDE_AFTER_LOOPS = 64
+
+# Step 218: the Cybernetics Core, its own Pylon (away from the Gateways' one, so
+# either can lose power alone) and the Zealots that launch the first attack.
+CORE = 1400
+CORE_SITE = (34.5, 39.5)
+CORE_PYLON = 1201
+CORE_PYLON_SITE = (36.0, 34.0)
+ZEALOTS = tuple(range(6000, 6008))
+CORE_BUILD = AbilityId.PROTOSSBUILD_CYBERNETICSCORE
+STALKER_TRAIN = AbilityId.GATEWAYTRAIN_STALKER
+TECH_PLAN = "tech.start.go"
+TECH_BUILD = "tech.build"
+STALKER_NODE = "production.stalkers.train"
+ZEALOT_NODE = "production.zealots.train"
+#: SC2 5.0 prices of what the worlds train: (minerals, vespene, supply), written out
+#: independently of Jev's tables (the cost-table test pins Jev's to the same numbers).
+_SC2_TRAIN_PRICE = {"Probe": (50, 0, 1), "Zealot": (100, 0, 2), "Stalker": (125, 50, 2)}
+#: SC2's tech requirements (build progress only, never power) for what the worlds
+#: build or train.
+_SC2_REQUIRES = {"CyberneticsCore": "Gateway", "Stalker": "CyberneticsCore"}
 
 
 def _gas_game_data() -> GameData:
@@ -172,6 +204,10 @@ class _GasWorld(_World):
         self.placement_abilities: list[AbilityId] = []
         self.vespene_refusals: list[str] = []
         self.refuse_train_from: set[int] = set()
+        self.refuse_stalkers_from: set[int] = set()
+        #: Commands SC2 refuses for a missing tech requirement or Pylon power (Jev
+        #: must never rely on SC2 for these: every scenario expects this empty).
+        self.sc2_refusals: list[str] = []
         self.gas_mined = 0
         self._gas_income = 0.0
         self._gas_placements: list[tuple[int, int, int]] = []  # (due loop, worker, geyser)
@@ -224,7 +260,7 @@ class _GasWorld(_World):
         for body in sorted(self.bodies.values(), key=lambda b: b.tag):
             if body.tag in self.inside:
                 continue  # inside an Assimilator: out of sight, still in SC2's count
-            powered = body.kind == "Gateway" and any(
+            powered = body.kind in _POWERED_KINDS and any(
                 distance(body.position, p) <= PYLON_POWER_RADIUS for p in pylons
             )
             unit = Unit(self._gas_proto(body, powered), self, base_build=BASE_BUILD)
@@ -296,19 +332,57 @@ class _GasWorld(_World):
                 self._gas_placements.append((due, body.tag, geyser.tag))
             return ActionResult.Success
         if ability in _TRAIN_KIND:
-            if command.unit.tag in self.refuse_train_from:
-                self.sent.append((self.state.game_loop, command))
-                return ActionResult.Error
-            cost = VESPENE_COST[_TRAIN_KIND[ability]]  # read now: a test may set a gas cost
-            if cost and self.vespene < cost:
-                self.sent.append((self.state.game_loop, command))
-                self.vespene_refusals.append(f"loop {self.state.game_loop}")
-                return ActionResult.NotEnoughVespene
-            result = super().receive(command)
-            if result == ActionResult.Success:
-                self.vespene -= cost
-            return result
+            return self._train(command, body)
+        if ability == CORE_BUILD and not self.ready("Gateway"):
+            self.sent.append((self.state.game_loop, command))
+            self.sc2_refusals.append(f"Core ordered without a ready Gateway at {self.loop}")
+            return ActionResult.BuildTechRequirementsNotMet
         return super().receive(command)
+
+    @property
+    def loop(self) -> int:
+        return int(self.state.game_loop)
+
+    def ready(self, kind: str) -> bool:
+        """An own ``kind`` stands with its construction complete (SC2's tech test)."""
+        return any(b.progress >= 1.0 for b in self.own(kind))
+
+    def powered(self, body: _Body) -> bool:
+        pylons = [b.position for b in self.own("Pylon") if b.progress >= 1.0]
+        return any(distance(body.position, p) <= PYLON_POWER_RADIUS for p in pylons)
+
+    def _train(self, command: UnitCommand, body: _Body | None) -> ActionResult:
+        """SC2's verdict on a train command, by its own rules (module docstring)."""
+        self.sent.append((self.loop, command))
+        if body is None or body.alliance != Alliance.Self:
+            self.foreign.append(command.unit.tag)
+            return ActionResult.NotSupported
+        kind = _TRAIN_KIND[command.ability]
+        if body.tag in self.refuse_train_from or (
+            kind == "Stalker" and body.tag in self.refuse_stalkers_from
+        ):
+            return ActionResult.Error
+        required = _SC2_REQUIRES.get(kind)
+        if required is not None and not self.ready(required):
+            self.sc2_refusals.append(f"{kind} without a ready {required} at {self.loop}")
+            return ActionResult.TechRequirementsNotMet
+        if body.kind in _POWERED_KINDS and not self.powered(body):
+            self.sc2_refusals.append(f"{kind} from unpowered {body.tag} at {self.loop}")
+            return ActionResult.Error
+        minerals, gas, supply = _SC2_TRAIN_PRICE[kind]
+        if self.minerals < minerals:
+            self.overspent.append(f"{kind} at loop {self.loop}")
+            return ActionResult.NotEnoughMinerals
+        if self.vespene < gas:
+            self.vespene_refusals.append(f"loop {self.loop}")
+            return ActionResult.NotEnoughVespene
+        if self.supply_cap - self.supply_used < supply:
+            return ActionResult.NotEnoughFood
+        self.minerals -= minerals
+        self.vespene -= gas
+        self.supply_used += supply
+        body.orders.append((command.ability, None, 0.0))
+        return ActionResult.Success
 
     def advance(self, loops: int = STEP_LOOPS) -> None:
         dt = loops / GAME_LOOPS_PER_SECOND
@@ -384,12 +458,16 @@ def _gas_world(
     gas_workers: int = 0,
     place_after: float | None = 2.0,
     hide_inside: bool = True,
+    core: float | None = None,
+    zealots: int = 0,
 ) -> _GasWorld:
     """One Nexus, a Pylon, four finished powered Gateways (the opening is placed),
     eight patches, sixteen mining probes and -- with ``geysers`` -- two geysers.
 
     ``assimilator`` adds one on GEYSER at that build progress, with ``gas_workers``
-    of the probes already gathering from it.
+    of the probes already gathering from it. ``core`` adds a second Pylon and a
+    Cybernetics Core it powers at that build progress (Step 218); ``zealots`` adds
+    that many ready Zealots at home (four launch the first attack).
     """
     bodies = [
         _Body(NEXUS, "Nexus", START),
@@ -408,6 +486,11 @@ def _gas_world(
     for i, tag in enumerate(PROBES):
         orders = [(AbilityId.HARVEST_GATHER_PROBE, PATCHES[i % 8], 0.0)]
         bodies.append(_Body(tag, "Probe", (27.0 + i * 0.4, 26.0), orders=orders))
+    if core is not None:
+        bodies.append(_Body(CORE_PYLON, "Pylon", CORE_PYLON_SITE))
+        bodies.append(_Body(CORE, "CyberneticsCore", CORE_SITE, progress=core))
+    for i, tag in enumerate(ZEALOTS[:zealots]):
+        bodies.append(_Body(tag, "Zealot", (34.0 + i % 4, 42.0 + i // 4)))
     world = _GasWorld(
         bodies,
         minerals=minerals,
@@ -524,11 +607,15 @@ class _Run:
         return [(loop, c) for loop, c in self.world.sent if c.ability == ability]
 
 
-def _play(world: _GasWorld, steps: int, hook: _Hook | None = None) -> _Run:
+def _play(
+    world: _GasWorld, steps: int, hook: _Hook | None = None, *, bundle: PolicyBundle | None = None
+) -> _Run:
+    """Play ``world`` with the packaged v2 policy (or a candidate ``bundle``)."""
     run = _Run(world)
     launcher = _Launcher(world, steps, run.hook(hook))  # type: ignore[arg-type]
+    chosen = load_v2_policy() if bundle is None else bundle
     with tempfile.TemporaryDirectory() as run_root:  # the evidence is not under test here
-        run_match(MatchOptions(), load_v2_policy(), launcher=launcher, run_root=Path(run_root))
+        run_match(MatchOptions(), chosen, launcher=launcher, run_root=Path(run_root))
     assert run.controller is not None
     return run
 
@@ -871,64 +958,481 @@ def test_v2_a_lost_assimilator_builder_is_replaced_and_the_cost_charged_once() -
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def zealot_costs_gas(monkeypatch: pytest.MonkeyPatch) -> int:
-    """A hypothetical 50-gas Zealot, through the one cost table the intents read."""
-    monkeypatch.setitem(operations.VESPENE_COST, "Zealot", 50)  # type: ignore[arg-type]
-    return 50
+#: The v2 production lane's gas gate (``affordable``: a Stalker's gas after reservations).
+GAS_GATE = "production.stalkers.gas"
 
 
-def _zealot_trains(run: _Run) -> list[Event]:
-    return run.commands("production.zealots.train")
+def _stalker_trains(run: _Run) -> list[Event]:
+    return run.commands(STALKER_NODE)
 
 
-def test_concurrent_gas_spenders_never_double_spend(zealot_costs_gas: int) -> None:
-    world = _gas_world(minerals=1000, vespene=120, geysers=False)
+def _gas_available(event: Event) -> object:
+    vespene = event.facts["vespene"]
+    assert isinstance(vespene, dict)
+    return vespene["available"]
+
+
+def test_concurrent_gas_spenders_never_double_spend() -> None:
+    """The Stalker's real 50 gas (Step 216 needed a pretend Zealot gas cost). 120 gas
+    buys two Stalkers on the first tick and the third holds the 20 left; next tick
+    SC2 has deducted the two (acknowledged), so their commitment is released and the
+    bank's 20 is all there is -- never charged twice (it would read -80) -- and the
+    free Gateways train Zealots instead of waiting. Later income buys two more."""
+    world = _gas_world(minerals=1000, vespene=120, geysers=False, core=1.0, zealots=8)
 
     def income(world: _GasWorld, controller: JevController, index: int) -> None:
         if index == 4:
             world.vespene += 100
 
-    run = _play(world, 6, income)
-    trains = _zealot_trains(run)
+    run = _play(world, 90, income)
+    trains = _stalker_trains(run)
     loops = sorted({e.game_loop for e in trains})
     assert [sum(1 for e in trains if e.game_loop == lp) for lp in loops] == [2, 2]
-    assert world.vespene_refusals == [] and world.overspent == []
-    assert world.vespene == 120 + 100 - 4 * zealot_costs_gas
+    assert loops[0] == 0
+    assert world.vespene_refusals == [] and world.overspent == [] and world.sc2_refusals == []
+    assert world.vespene == 120 + 100 - 4 * VESPENE_COST["Stalker"]
     for event in trains:
-        assert (event.facts["vespene"], event.facts["cost_committed"]) == (50, True)
-    waits = [
+        facts = (event.facts["minerals"], event.facts["vespene"], event.facts["cost_committed"])
+        assert facts == (125, 50, True)
+    (wait,) = [
         e
-        for e in run.node_events("production.zealots.train")
-        if e.reason == "waiting for vespene; holding reservation"
+        for e in run.node_events(STALKER_NODE)
+        if e.game_loop == 0 and e.reason == "waiting for vespene; holding reservation"
     ]
-    # First tick: 120 - 2 x 50 leaves 20 to hold. Next tick the two are acknowledged
-    # (SC2 deducted their gas), so their commitment is released, not charged again.
-    assert [e.facts["held_vespene"] for e in waits[:2]] == [20, 20]
+    assert wait.facts["held_vespene"] == 20  # 120 - 2 x 50
+    gate = {e.game_loop: e for e in run.node_events(GAS_GATE)}
+    assert _gas_available(gate[STEP_LOOPS]) == 20  # acknowledged: released, not charged again
+    assert gate[STEP_LOOPS].status == "failure"
+    zealots = [e for e in run.commands(ZEALOT_NODE) if e.game_loop == STEP_LOOPS]
+    assert len(zealots) == 2 and all("vespene" not in e.facts for e in zealots)  # no gas
     acknowledged = [
         e
         for e in run.events
-        if e.kind == "task" and e.node_id == "production.zealots.train" and e.status == "running"
+        if e.kind == "task" and e.node_id == STALKER_NODE and e.status == "running"
     ]
     assert len(acknowledged) == 4
     assert all(e.facts["cost_committed"] is False for e in acknowledged)
+    trained = len(trains) + len(run.commands(ZEALOT_NODE))
+    assert world.supply_used == 30 + 2 * trained  # each train charged its supply once
 
 
-def test_a_failed_gas_command_releases_its_reservation(zealot_costs_gas: int) -> None:
-    world = _gas_world(minerals=1000, vespene=50, geysers=False)
-    world.refuse_train_from = {GATEWAYS[0]}  # SC2 refuses that Gateway's Zealot every time
-    run = _play(world, 30)
-    trains = _zealot_trains(run)
+def test_a_failed_gas_command_releases_its_reservation() -> None:
+    """SC2 refuses Gateway 1100's Stalker every time. Its 50 gas stays committed through
+    the four attempts (the gas gate reads 0) and is released by the failure (it reads
+    50 again); it then buys exactly one other Stalker once a Gateway is free."""
+    world = _gas_world(minerals=1000, vespene=50, geysers=False, core=1.0, zealots=8)
+    world.refuse_stalkers_from = {GATEWAYS[0]}
+    run = _play(world, 85)
+    trains = _stalker_trains(run)
     refused = [e for e in trains if _actor(e) == GATEWAYS[0]]
     assert len(refused) == 4  # the first attempt and three retries
-    (failed,) = [
-        e for e in run.tasks("production.zealots.train", "failed") if e.facts["actor_tag"] == "1100"
-    ]
+    (failed,) = [e for e in run.tasks(STALKER_NODE, "failed") if e.facts["actor_tag"] == "1100"]
     assert failed.facts["failure_cause"] == "rejected" and failed.facts["cost_committed"] is False
+    gates = run.node_events(GAS_GATE)
+    committed = [e for e in gates if refused[0].game_loop < e.game_loop <= failed.game_loop]
+    assert committed and {_gas_available(e) for e in committed} == {0}
+    released = [e for e in gates if e.game_loop > failed.game_loop]
+    assert _gas_available(released[0]) == 50
     others = [e for e in trains if _actor(e) != GATEWAYS[0]]
-    assert len(others) == 1  # the 50 gas buys exactly one other Zealot ...
+    assert len(others) == 1  # the 50 gas buys exactly one other Stalker ...
     assert others[0].game_loop > failed.game_loop  # ... only once the failure released it
-    assert world.vespene == 0 and world.vespene_refusals == []
+    assert world.vespene == 0 and world.vespene_refusals == [] and world.sc2_refusals == []
+
+
+# ---------------------------------------------------------------------------
+# Step 218: the Core prerequisite plan, then Stalkers; prerequisite loss; the mix
+# ---------------------------------------------------------------------------
+#
+# These worlds have no expansion location besides home and the enemy start, so an
+# expansion plan, once eligible, aborts at once (``no_site``: the kind is disabled)
+# and the macro slot cools down for PLAN_COOLDOWN_SECONDS -- the scenarios fund the
+# tech plan when it opens, never on a fixed step. ``hide_inside=False`` keeps every
+# probe in sight (a probe hidden in the Assimilator would look like a missing one).
+
+_When = Callable[[_GasWorld, JevController, int], bool]
+
+
+def _tech_events(run: _Run, nth: int | None = None) -> list[Event]:
+    """Tech plan transitions (no per-second summaries), optionally of the run's ``nth``
+    tech plan only (counting distinct tech plans, whatever other plans opened between)."""
+    events = [
+        e
+        for e in run.events
+        if e.kind == "diagnostic"
+        and e.facts.get("plan_kind") == "tech"
+        and not e.facts.get("summary")
+    ]
+    if nth is None:
+        return events
+    ids = list(dict.fromkeys(str(e.facts["plan_id"]) for e in events))
+    return [e for e in events if str(e.facts["plan_id"]) == ids[nth - 1]]
+
+
+def _ready_core(world: _GasWorld) -> bool:
+    return any(b.progress >= 1.0 for b in world.own("CyberneticsCore"))
+
+
+def _marks(record: dict[int, bool], check: Callable[[_GasWorld], bool]) -> _Hook:
+    """A hook recording, per step (by its game loop), ``check`` of the world as it began."""
+
+    def mark(world: _GasWorld, controller: JevController, index: int) -> None:
+        record[world.state.game_loop] = check(world)
+
+    return mark
+
+
+def _hooks(*hooks: _Hook) -> _Hook:
+    def every(world: _GasWorld, controller: JevController, index: int) -> None:
+        for hook in hooks:
+            hook(world, controller, index)
+
+    return every
+
+
+def _once(when: _When, act: Callable[[_GasWorld], None]) -> _Hook:
+    """A hook that runs ``act`` on the first step ``when`` holds, then never again."""
+    done: list[bool] = []
+
+    def hook(world: _GasWorld, controller: JevController, index: int) -> None:
+        if not done and when(world, controller, index):
+            done.append(True)
+            act(world)
+            world.refresh()
+
+    return hook
+
+
+def _at(step: int) -> _When:
+    return lambda world, controller, index: index == step
+
+
+def _tech_open(nth: int = 1) -> _When:
+    """The ``nth`` tech plan of the run is open (counting distinct tech plans seen)."""
+    seen: list[str] = []
+
+    def when(world: _GasWorld, controller: JevController, index: int) -> bool:
+        record = controller.runtime.plan(TECH_PLAN)
+        if record is None or not record.is_open:
+            return False
+        if record.plan_id not in seen:
+            seen.append(record.plan_id)
+        return len(seen) == nth
+
+    return when
+
+
+def _fund(minerals: int = 0, vespene: int = 0) -> Callable[[_GasWorld], None]:
+    def act(world: _GasWorld) -> None:
+        world.minerals += minerals
+        world.vespene += vespene
+
+    return act
+
+
+def _stalker_loops(world: _GasWorld) -> list[int]:
+    return [loop for loop, command in world.sent if command.ability == STALKER_TRAIN]
+
+
+def test_v2_builds_the_core_then_trains_stalkers_charging_every_cost_once() -> None:
+    """A launched one-base army with gas but no Core: the tech plan holds the Core's
+    150, builds it (the hold becomes the build's commitment), waits for it and
+    completes; only then do Stalkers train, each charged 125 minerals, 50 gas and 2
+    supply exactly once (SC2's own prices, written out apart from Jev's tables)."""
+    world = _gas_world(assimilator=1.0, gas_workers=3, zealots=8, hide_inside=False)
+    ready: dict[int, bool] = {}
+    run = _play(
+        world,
+        230,
+        _hooks(
+            _marks(ready, _ready_core),
+            _once(_tech_open(), _fund(minerals=150)),
+            _once(lambda w, c, i: _ready_core(w), _fund(minerals=2 * 125)),
+        ),
+    )
+    ((core_loop, core_build),) = run.sent(CORE_BUILD)
+    (core_event,) = run.commands(TECH_BUILD)
+    assert core_event.game_loop == core_loop and _actor(core_event) == core_build.unit.tag
+    assert CORE_BUILD in world.placement_abilities  # SC2 checked the placement
+    (core,) = world.own("CyberneticsCore")
+    assert core.progress >= 1.0 and world.powered(core)
+    ready_at = min(loop for loop, ok in ready.items() if ok)
+    stalkers = _stalker_loops(world)
+    assert len(stalkers) == 2 and core_loop < ready_at <= min(stalkers)  # Core, then Stalkers
+    for event in run.commands(STALKER_NODE):
+        facts = (event.facts["minerals"], event.facts["vespene"], event.facts["cost_committed"])
+        assert facts == (125, 50, True)
+    # The plan: started, a worker claimed, the 150 hold handed to the build, the Core
+    # acknowledged (the worker released), constructed, completed.
+    codes = [str(e.facts["transition"]) for e in _tech_events(run)]
+    for expected in ("started", "worker_assigned", "issued", "acknowledged", "constructed"):
+        assert expected in codes
+    assert codes[-1] == "completed"
+    issued = next(e for e in _tech_events(run) if e.facts["transition"] == "issued")
+    assert issued.node_id == TECH_BUILD and issued.facts["held_before"] == [150, 0]
+    assert run.controller is not None
+    record = run.controller.runtime.plan(TECH_PLAN)
+    assert record is not None and (record.kind, record.status) == ("tech", "completed")
+    # Accounting: every mineral, gas and supply charged exactly once.
+    assert world.overspent == [] and world.vespene_refusals == [] and world.sc2_refusals == []
+    assert world.minerals == 150 + 2 * 125 - 150 - 2 * 125
+    assert world.vespene == world.gas_mined - 2 * 50
+    assert world.supply_used == 30 + 2 * 2
+    assert len(world.own("Stalker")) == 2  # trained and spawned
+    summary = run.controller.metrics.summary(end_game_seconds=world.seconds)
+    for milestone in ("first_cybernetics_core", "first_stalker"):
+        reached = summary[milestone]
+        assert isinstance(reached, dict) and reached["status"] == "observed"
+    _assert_single_owner(run)
+
+
+def test_v2_a_destroyed_core_stops_stalkers_until_the_tech_plan_rebuilds_it() -> None:
+    world = _gas_world(
+        vespene=1000, assimilator=1.0, gas_workers=3, core=1.0, zealots=8, hide_inside=False
+    )
+    ready: dict[int, bool] = {}
+    killed: list[int] = []
+
+    def destroy(world: _GasWorld) -> None:
+        killed.append(world.state.game_loop)
+        world.kill(CORE)
+
+    run = _play(
+        world,
+        260,
+        _hooks(
+            _marks(ready, _ready_core),
+            _once(_at(2), _fund(minerals=2 * 125)),
+            _once(_at(10), destroy),
+            _once(_tech_open(), _fund(minerals=150)),
+            _once(lambda w, c, i: i > 10 and _ready_core(w), _fund(minerals=2 * 125)),
+        ),
+    )
+    stalkers = _stalker_loops(world)
+    assert len([loop for loop in stalkers if loop < killed[0]]) == 2  # the first Core's
+    rebuilt = min(loop for loop, ok in ready.items() if loop > killed[0] and ok)
+    assert [loop for loop in stalkers if killed[0] <= loop < rebuilt] == []  # none without it
+    gates = [
+        e for e in run.node_events("production.stalkers.core") if killed[0] <= e.game_loop < rebuilt
+    ]
+    assert gates and {e.status for e in gates} == {"failure"}  # ... visibly
+    assert len([loop for loop in stalkers if loop >= rebuilt]) == 2  # resumed on the new one
+    # The tech plan saw the Core missing and rebuilt it: one plan, one Core order.
+    ((core_loop, _),) = run.sent(CORE_BUILD)
+    assert killed[0] < core_loop < rebuilt
+    # (The expansion plan opened first, as the Core stood, and aborted: no site here.)
+    (started,) = [e for e in _tech_events(run) if e.facts["transition"] == "started"]
+    assert started.game_loop >= killed[0]
+    assert world.sc2_refusals == [] and world.overspent == []
+
+
+def test_v2_a_core_lost_under_construction_aborts_the_plan_then_it_is_rebuilt() -> None:
+    world = _gas_world(assimilator=1.0, gas_workers=3, zealots=8, hide_inside=False)
+    killed: list[int] = []
+
+    def warping(world: _GasWorld, controller: JevController, index: int) -> bool:
+        """The plan's Core stands, acknowledged, and is still far from finished."""
+        record = controller.runtime.plan(TECH_PLAN)
+        acknowledged = record is not None and record.acknowledged_game_seconds is not None
+        return acknowledged and any(b.progress < 0.5 for b in world.own("CyberneticsCore"))
+
+    def destroy(world: _GasWorld) -> None:
+        (core,) = world.own("CyberneticsCore")
+        killed.append(world.state.game_loop)
+        world.kill(core.tag)
+
+    run = _play(
+        world,
+        150,
+        _hooks(
+            _once(_tech_open(1), _fund(minerals=150)),
+            _once(warping, destroy),
+            _once(_tech_open(2), _fund(minerals=150)),
+        ),
+    )
+    (aborted,) = [e for e in _tech_events(run, 1) if e.status == "failed"]
+    assert aborted.facts["plan_status"] == "aborted" and aborted.game_loop >= killed[0]
+    assert aborted.facts["reason_code"] == "structure_lost"  # the acknowledged Core died
+    released = aborted.facts["released"]
+    assert isinstance(released, dict) and released["actor_tag"] is None  # freed at its ack
+    cooldown = aborted.facts["cooldown_until"]
+    assert isinstance(cooldown, float)
+    assert cooldown == pytest.approx(aborted.game_seconds + PLAN_COOLDOWN_SECONDS)
+    # After the cooldown the macro slot owes its next turn to the expansion (this world
+    # has no site, so it aborts at once), then the tech plan restarts.
+    (restarted,) = [e for e in _tech_events(run, 2) if e.facts["transition"] == "started"]
+    assert restarted.game_seconds >= cooldown - 1e-6  # the slot cooled down first
+    expansions = [
+        e
+        for e in run.events
+        if e.kind == "diagnostic"
+        and e.facts.get("plan_kind") == "expand"
+        and e.facts.get("transition") == "started"
+    ]
+    assert expansions and aborted.game_loop < expansions[0].game_loop < restarted.game_loop
+    builds = run.sent(CORE_BUILD)
+    assert len(builds) == 2 and builds[1][0] > restarted.game_loop  # rebuilt by the new plan
+    assert run.sent(STALKER_TRAIN) == []  # never without a finished Core
+    assert world.sc2_refusals == [] and world.overspent == []
+
+
+def test_v2_a_starved_tech_plan_times_out_and_releases_its_hold_at_once() -> None:
+    """100 minerals and no income: the plan holds them (production cannot touch them),
+    claims no worker while short, runs out its deadline -- bounded -- and the abort
+    releases the hold on that very tick, where production spends it."""
+    world = _gas_world(assimilator=1.0, gas_workers=3, zealots=8, hide_inside=False)
+    run = _play(world, 360, _once(_tech_open(), _fund(minerals=100)))
+    (aborted,) = [e for e in _tech_events(run, 1) if e.status == "failed"]
+    assert aborted.facts["reason_code"] == "timeout"
+    assert aborted.game_seconds == pytest.approx(PLAN_TIMEOUT_SECONDS, abs=1.0)
+    released = aborted.facts["released"]
+    assert released == {"actor_tag": None, "minerals": 100, "vespene": 0}
+    assert not [e for e in _tech_events(run, 1) if e.facts["transition"] == "worker_assigned"]
+    recoveries = [e for e in _tech_events(run, 1) if e.status == "warning"]
+    assert recoveries and all("budget_short" in e.reason for e in recoveries)
+    zealots = run.commands(ZEALOT_NODE)
+    assert zealots and min(e.game_loop for e in zealots) == aborted.game_loop
+    assert run.sent(CORE_BUILD) == [] and world.overspent == []
+
+
+def test_v2_an_unpowered_core_pauses_stalkers_until_it_is_repowered() -> None:
+    """Its Pylon dies: Stalkers stop (Jev treats an unpowered Core as a missing
+    prerequisite -- stricter than SC2, which counts build progress only), the idle
+    Gateways train Zealots meanwhile, the repower lane puts a Pylon beside the Core,
+    and Stalkers resume once it powers the Core."""
+    world = _gas_world(geysers=False, core=1.0, zealots=8)
+    powered: dict[int, bool] = {}
+    run = _play(
+        world,
+        150,
+        _hooks(
+            _marks(powered, lambda w: w.powered(w.bodies[CORE])),
+            _once(_at(2), lambda w: w.kill(CORE_PYLON)),
+            _once(_at(3), _fund(minerals=1000, vespene=500)),
+        ),
+    )
+    lost = min(loop for loop, ok in powered.items() if not ok)
+    back = min(loop for loop, ok in powered.items() if loop > lost and ok)
+    stalkers = _stalker_loops(world)
+    assert [loop for loop in stalkers if lost <= loop < back] == []
+    assert stalkers and min(stalkers) >= back  # resumed once repowered
+    paused = [e for e in run.node_events("production.stalkers.core") if lost <= e.game_loop < back]
+    assert paused and {e.status for e in paused} == {"failure"}
+    zealots = [lp for lp, c in world.sent if c.ability == AbilityId.GATEWAYTRAIN_ZEALOT]
+    assert [loop for loop in zealots if lost <= loop < back]  # the Gateways did not idle
+    ((_, pylon),) = run.sent(AbilityId.PROTOSSBUILD_PYLON)
+    assert distance((pylon.target.x, pylon.target.y), CORE_SITE) <= PYLON_POWER_RADIUS
+    choice = [e for e in run.node_events("construction.repower.structure") if e.status == "success"]
+    assert choice and choice[0].facts["tags"] == [str(CORE)]  # the Core was the one chosen
+    assert world.sc2_refusals == [] and world.overspent == []
+
+
+def test_the_stalker_train_itself_refuses_an_unpowered_core_the_selector_lets_through(
+    tmp_path: Path,
+) -> None:
+    """Defense in depth for the stricter, operational prerequisite: with ``powered``
+    removed from the production branch's Core check, the selector passes an unpowered
+    Core -- and the train node (``powered_prerequisite``) still refuses, visibly, so
+    no Stalker is ordered until the repower lane restores power."""
+    document = json.loads(load_v2_policy().policy_bytes)
+    for node in document["nodes"]:
+        if node["id"] == "production.stalkers.core":
+            del node["args"]["filter"]["powered"]
+    candidate = tmp_path / "policy.json"
+    candidate.write_text(json.dumps(document), encoding="utf-8")
+    world = _gas_world(geysers=False, core=1.0, zealots=8)
+    powered: dict[int, bool] = {}
+    run = _play(
+        world,
+        150,
+        _hooks(
+            _marks(powered, lambda w: w.powered(w.bodies[CORE])),
+            _once(_at(2), lambda w: w.kill(CORE_PYLON)),
+            _once(_at(3), _fund(minerals=1000, vespene=500)),
+        ),
+        bundle=load_v2_policy(candidate),
+    )
+    lost = min(loop for loop, ok in powered.items() if not ok)
+    back = min(loop for loop, ok in powered.items() if loop > lost and ok)
+    window = [e for e in run.node_events("production.stalkers.core") if lost <= e.game_loop < back]
+    assert window and {e.status for e in window} == {"success"}  # the selector lets it through
+    refused = [e for e in run.node_events(STALKER_NODE) if lost <= e.game_loop < back]
+    assert refused and {e.status for e in refused} == {"failure"}
+    assert {e.reason for e in refused} == {"Stalker requires a ready, powered CyberneticsCore"}
+    stalkers = _stalker_loops(world)
+    assert [loop for loop in stalkers if lost <= loop < back] == []
+    assert stalkers and min(stalkers) >= back  # resumed once repowered
+    assert world.sc2_refusals == [] and world.overspent == []
+
+
+def test_v2_unpowered_gateways_train_nothing_until_repowered() -> None:
+    """Their Pylon is gone from the start (the Core keeps its own): no Gateway trains
+    anything -- neither branch selects an unpowered producer and ``train`` refuses
+    one -- until the repower lane's Pylon beside the first Gateway completes."""
+    world = _gas_world(minerals=1000, vespene=1000, geysers=False, core=1.0, zealots=8)
+    world.kill(PYLON)
+    repowered: dict[int, bool] = {}
+    run = _play(
+        world, 120, _marks(repowered, lambda w: any(w.powered(g) for g in w.own("Gateway")))
+    )
+    pylons = run.sent(AbilityId.PROTOSSBUILD_PYLON)
+    first_loop, first = pylons[0]
+    assert first_loop == 0  # repower at once, beside the first unpowered Gateway
+    assert distance((first.target.x, first.target.y), _GATEWAY_SITES[0]) <= PYLON_POWER_RADIUS
+    trains = [
+        (loop, c)
+        for loop, c in world.sent
+        if c.ability in (STALKER_TRAIN, AbilityId.GATEWAYTRAIN_ZEALOT)
+    ]
+    back = min(loop for loop, ok in repowered.items() if ok)
+    assert trains and all(loop >= back for loop, _ in trains)
+    assert world.sc2_refusals == []  # SC2 never saw a train from an unpowered Gateway
+    assert any(c.ability == STALKER_TRAIN for _, c in trains)  # Stalkers once powered
+
+
+def test_v2_the_core_waits_for_a_finished_gateway() -> None:
+    """The opening's four Gateways are placed but none is finished: the tech plan
+    starts and waits, visibly, on its prerequisite (D4: live prerequisites); the Core
+    is ordered only once a Gateway completes."""
+    world = _gas_world(minerals=300, assimilator=1.0, gas_workers=3, zealots=8, hide_inside=False)
+    for tag in GATEWAYS:
+        world.bodies[tag].progress = 0.6
+    world.refresh()
+    finished: dict[int, bool] = {}
+    run = _play(world, 80, _marks(finished, lambda w: w.ready("Gateway")))
+    first_ready = min(loop for loop, ok in finished.items() if ok)
+    waits = [e for e in _tech_events(run, 1) if e.facts["transition"] == "prerequisite_missing"]
+    assert waits and {e.node_id for e in waits} == {"tech.prereq.wait"}
+    assert waits[0].facts["plan_status"] == "waiting"
+    assert all(e.game_loop < first_ready for e in waits)
+    ((core_loop, _),) = run.sent(CORE_BUILD)
+    assert core_loop >= first_ready
+    assert world.sc2_refusals == [] and world.overspent == []
+
+
+def test_v2_composition_guard_keeps_stalkers_at_most_one_per_zealot() -> None:
+    """Plenty of everything and one Zealot: at every step SC2's own queues and units
+    hold no more Stalkers than Zealots (planned counts: no tick with four idle
+    Gateways overshoots), and both are produced."""
+    world = _gas_world(minerals=5000, vespene=5000, geysers=False, core=1.0, zealots=1)
+    counts: list[tuple[int, int, int]] = []
+
+    def planned(world: _GasWorld, kind: str, ability: AbilityId) -> int:
+        queued = sum(1 for g in world.own("Gateway") for order in g.orders if order[0] == ability)
+        return len(world.own(kind)) + queued
+
+    def check(world: _GasWorld, controller: JevController, index: int) -> None:
+        stalkers = planned(world, "Stalker", STALKER_TRAIN)
+        zealots = planned(world, "Zealot", AbilityId.GATEWAYTRAIN_ZEALOT)
+        counts.append((world.state.game_loop, stalkers, zealots))
+
+    run = _play(world, 240, check)
+    assert all(stalkers <= zealots for _, stalkers, zealots in counts), counts
+    assert max(s for _, s, _ in counts) >= 3 and max(z for _, _, z in counts) >= 4
+    guarded = [e for e in run.node_events(STALKER_NODE) if "composition_bound" in e.facts]
+    assert guarded and all(e.facts["max_count"] == 16 for e in guarded)
+    blocked = [e for e in run.node_events(STALKER_NODE) if e.reason.startswith("composition guard")]
+    assert blocked  # the guard visibly held Gateways back for the Zealot branch
+    assert world.sc2_refusals == [] and world.overspent == []
 
 
 # ---------------------------------------------------------------------------
@@ -965,6 +1469,56 @@ def test_cost_tables_have_one_entry_per_buildable_and_trainable_type() -> None:
     assert MINERAL_COST["Assimilator"] == 75 and VESPENE_COST["Assimilator"] == 0
     assert MINERAL_COST["Nexus"] == 400 and VESPENE_COST["Nexus"] == 0  # SC2 5.0 game data
     assert operations.VESPENE_COST is VESPENE_COST  # the intents read this very table
+    # Step 218, SC2 5.0 game data (burnysc2 ships no static price table: BotAI's
+    # calculate_cost reads the running game's own data). The test worlds charge
+    # these same prices from their own, independent table.
+    assert (MINERAL_COST["CyberneticsCore"], VESPENE_COST["CyberneticsCore"]) == (150, 0)
+    price = (MINERAL_COST["Stalker"], VESPENE_COST["Stalker"], operations.SUPPLY_COST["Stalker"])
+    assert price == _SC2_TRAIN_PRICE["Stalker"] == (125, 50, 2)
+    for unit, (minerals, gas, supply) in _SC2_TRAIN_PRICE.items():
+        assert (MINERAL_COST[unit], VESPENE_COST[unit], operations.SUPPLY_COST[unit]) == (
+            minerals,
+            gas,
+            supply,
+        )
+
+
+def _unit_type(name: str) -> UnitTypeId:
+    """burnysc2's UnitTypeId for one of Jev's SC2 type names (``CyberneticsCore``)."""
+    return UnitTypeId[name.upper()]
+
+
+def test_tech_tables_agree_with_the_installed_burnysc2_game_data() -> None:
+    """D4: the central tables are authoritative for graph planning, verified here
+    against the installed burnysc2's own game data -- every producer, train and build
+    ability, the producers that need Pylon power, and SC2's tech requirements."""
+    from sc2.constants import PROTOSS_TECH_REQUIREMENT
+    from sc2.dicts.unit_train_build_abilities import TRAIN_INFO
+    from sc2.dicts.unit_trained_from import UNIT_TRAINED_FROM
+
+    for unit, producer in operations.PRODUCER_TYPE.items():
+        info = TRAIN_INFO[_unit_type(producer)][_unit_type(unit)]
+        assert info["ability"].name == TRAIN_ABILITY[unit], unit
+        assert bool(info.get("requires_power", False)) == (producer in operations.REQUIRES_POWER)
+        required = info.get("required_building")
+        expected = operations.TECH_REQUIREMENT.get(unit)
+        assert (required.name if required else None) == (
+            _unit_type(expected).name if expected else None
+        ), unit
+        assert _unit_type(producer) in UNIT_TRAINED_FROM[_unit_type(unit)]
+    worker = TRAIN_INFO[_unit_type(operations.WORKER_TYPE)]
+    for table in (BUILD_ABILITY, GAS_BUILD_ABILITY, EXPANSION_BUILD_ABILITY):
+        for structure, ability in table.items():
+            assert worker[_unit_type(structure)]["ability"].name == ability, structure
+    allowlisted = {*BUILD_ABILITY, *GAS_BUILD_ABILITY, *EXPANSION_BUILD_ABILITY, *TRAIN_ABILITY}
+    names = {_unit_type(name): name for name in allowlisted}
+    sc2_requirements = {
+        name: names[required]
+        for name in sorted(allowlisted)
+        if (required := PROTOSS_TECH_REQUIREMENT.get(_unit_type(name))) in names
+    }
+    assert dict(operations.TECH_REQUIREMENT) == sc2_requirements
+    assert sc2_requirements == {"CyberneticsCore": "Gateway", "Stalker": "CyberneticsCore"}
 
 
 def test_gas_slots_follow_sc2_ideal_and_close_when_unfinished_or_depleted() -> None:
@@ -1010,7 +1564,8 @@ def test_frozen_v1_reads_no_gas_and_v2_owns_the_gas_lanes() -> None:
         and "assigned_to" not in n.args  # the scout itself, not a new pick
         and n.id != "economy.idle_probes"  # idle only: never a gathering probe
     ]
-    assert len(probe_picks) == 9  # Step 217: the expansion worker and its transfer
+    # Step 217: the expansion worker and its transfer; Step 218: the tech plan's builder.
+    assert len(probe_picks) == 10
     for node in probe_picks:  # every builder, scout and gas pick leaves gas workers alone
         assert node.args["filter"]["gathering_gas"] is False, node.id
 

@@ -66,9 +66,10 @@ One :class:`JevRuntime` executes one validated policy for one run:
   the lane's status (its *frontier*, with the leaf's reason code) as the plan's
   stage. A plan's actor is busy for every other lane (selections skip it and their
   intents on it are refused); what the lane holds (``plan_reserve``) is the plan's
-  reservation, which its own build takes over; its build task's creation,
-  acknowledgement and failure, and its walk's give-up, drive the plan's recovery
-  attempts. An abort releases every
+  reservation, which its own build -- the lane's point build, a Nexus or (Step 218)
+  a Cybernetics Core -- takes over; its build task's creation, acknowledgement and
+  failure, and its walk's give-up, drive the plan's recovery attempts. An abort
+  releases every
   hold at once -- including this tick's held minerals -- and cancels the lane's
   tasks that have not started a structure, so no retry survives an abandoned
   branch. Selections may ask for SC2 path queries (:meth:`JevRuntime.path_requests`),
@@ -161,10 +162,12 @@ from jev.operations import (
     OP_GATHER_GAS,
     OP_RELEASE_GAS,
     OP_START_PLAN,
+    OP_TRAIN,
     OP_TRANSFER_WORKERS,
     OPERATIONS,
     PARAM_STRUCTURE,
     PARAM_TARGET_TAG,
+    PARAM_UNIT,
     POINT_MATCH_TOLERANCE,
     ActionOp,
     Binding,
@@ -183,7 +186,7 @@ from jev.operations import (
     resolve_args,
     tracked_nodes,
 )
-from jev.plans import BuildFailure, PlanCode, PlanRecord, PlanStore
+from jev.plans import PLAN_KINDS, BuildFailure, PlanCode, PlanRecord, PlanStore, SlotRecord
 from jev.policy import policy_hash, validate_policy
 
 __all__ = [
@@ -234,6 +237,10 @@ _GATHER_OPERATIONS: Final = frozenset(
 )
 #: Operations whose tasks build at a point target (their site and alternatives).
 _POINT_BUILD_OPERATIONS: Final = frozenset({OP_BUILD, OP_BUILD_EXPANSION})
+#: A plan lane's build: its task takes the plan's reservation over, and its
+#: acknowledgement, completion and failure drive the plan (an expansion's Nexus,
+#: Step 217; the tech plan's Cybernetics Core, Step 218).
+_PLAN_BUILD_OPERATIONS: Final = _POINT_BUILD_OPERATIONS
 #: Pseudo node id for runtime diagnostics that no policy node originated (it can
 #: never collide with an authored id: authored ids must match NODE_ID_RE).
 RUNTIME_NODE_ID: Final = "@runtime"
@@ -315,7 +322,13 @@ def _check_entity(path: str, entity: object) -> None:
         count = getattr(entity, field_name)
         if not _is_int(count) or not 0 <= count <= MAX_ABS_NUMBER:
             raise ValueError(f"observation {path}.{field_name} must be a non-negative int")
-    for field_name in ("is_structure", "is_flying", "carrying_vespene"):
+    for field_name in (
+        "is_structure",
+        "is_flying",
+        "carrying_vespene",
+        "can_attack_ground",
+        "can_attack_air",
+    ):
         if not isinstance(getattr(entity, field_name), bool):
             raise ValueError(f"observation {path}.{field_name} must be a bool")
     for field_name in ("ready", "idle", "powered"):
@@ -737,6 +750,13 @@ class _View:
                     found.append((str(task.params.get(PARAM_STRUCTURE, "")), site))
         return tuple(found)
 
+    def in_flight_trains(self) -> Mapping[str, int]:
+        counts: Counter[str] = Counter()
+        for task in self._runtime._active.values():
+            if task.operation == OP_TRAIN and task.committed():
+                counts[str(task.params.get(PARAM_UNIT, ""))] += 1
+        return counts
+
     def gather_assignments(self) -> Mapping[int, int]:
         counts: Counter[int] = Counter()
         for task in self._runtime._active.values():
@@ -899,7 +919,9 @@ class JevRuntime:
         self._tick_spends: list[tuple[str, str]] = []  # (root, node) of new commitments
         starts = [n.id for n in policy.nodes if n.operation == OP_START_PLAN]
         if starts:
-            self._plans = PlanStore(run_id)
+            named = {str(self._args[node_id]["kind"]) for node_id in starts}
+            # The kinds this policy can start: a slot yields only among them (jev.plans).
+            self._plans = PlanStore(run_id, kinds=[k for k in PLAN_KINDS if k in named])
             for root in policy.roots:
                 order: list[str] = []
                 stack = [root]
@@ -976,6 +998,11 @@ class JevRuntime:
     def plan(self, node_id: str) -> PlanRecord | None:
         """The latest plan ``start_plan`` node ``node_id`` started, if any."""
         return None if self._plans is None else self._plans.record(node_id)
+
+    def plan_slots(self) -> tuple[SlotRecord, ...]:
+        """Each plan slot's turn state (whose turn after an abort, cooldown, disabled
+        kinds; see :mod:`jev.plans`); empty for a policy that starts no plans."""
+        return () if self._plans is None else self._plans.slots()
 
     def plan_aborts(self) -> int | None:
         """Plans aborted so far this run; None for a policy that starts no plans."""
@@ -1660,7 +1687,7 @@ class JevRuntime:
                     task.target = ack.target
                 task.reason = "acknowledged by observation"
                 self._task_event(task)
-                if task.operation == OP_BUILD_EXPANSION and task.plan_id is not None:
+                if task.operation in _PLAN_BUILD_OPERATIONS and task.plan_id is not None:
                     key = self._plan_key(task)
                     if key is not None and self._plans is not None:
                         self._plans.build_acknowledged(key, task.node_id, now)
@@ -1983,7 +2010,7 @@ class JevRuntime:
         if waiting_reason is not None:
             return _NodeResult("running", waiting_reason, waiting=True, code=code)
         if active:
-            if spec.name == OP_BUILD_EXPANSION:
+            if plan_lane and spec.name in _PLAN_BUILD_OPERATIONS:
                 code = "issued"
             return _NodeResult(
                 "running", f"{active} task(s) in progress ({issued} issued now)", code=code
@@ -2233,7 +2260,7 @@ class JevRuntime:
         if record is None or not record.is_open:
             return
         task.plan_id = record.plan_id
-        if task.operation == OP_BUILD_EXPANSION:
+        if task.operation in _PLAN_BUILD_OPERATIONS:
             # Transfer: the task now commits the cost, so the plan's hold this tick is
             # returned (never both); build_committed zeroes it.
             held_minerals, held_vespene = plans.tick_hold(key)
@@ -2250,7 +2277,7 @@ class JevRuntime:
         now = self._last_game_seconds
         acknowledged = task.acknowledged_at is not None
         cause = task.failure_cause
-        if task.operation == OP_BUILD_EXPANSION:
+        if task.operation in _PLAN_BUILD_OPERATIONS:
             if status == "succeeded":
                 plans.build_completed(key, task.node_id, now)
             else:

@@ -100,6 +100,8 @@ def _unit(tag: int, name: str = "Probe", **fields: Any) -> SimpleNamespace:
         "is_powered": False,
         "is_visible": True,
         "is_carrying_vespene": False,
+        "can_attack_ground": False,
+        "can_attack_air": False,
     }
     values.update(fields)
     return SimpleNamespace(**values)
