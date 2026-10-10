@@ -652,13 +652,28 @@ the steps numerically and bypass 224's dependency before live tests.
 ### Step 219: Let Typesafe choose persistent strategic plans
 - **Problem:** Use real hosted strategic choices to direct the executable v2 graph.
 - **Type:** code
-- **Status:** PENDING
+- **Status:** DONE (2026-10-10)
 - **Issue:** #336
 - **Flags:** --reviewers deep
 - **Files:** src/jev/strategy.py (new), src/jev/decision.py, src/jev/plans.py, src/jev/bot.py, src/jev/runner.py, src/jev/runtime.py, bots/jev/v2/policy.json, tests/test_jev_decision.py, tests/test_jev_v2.py.
 - **Produces:** Strategy and army questions sharing one request budget, plan persistence and fallback diagnostics.
 - **Done when:** Actual controller/provider boundary tests demonstrate each feasible strategic choice selecting its graph branch; no unimplemented choice offered; delayed/out-of-order/low-confidence responses cannot affect the wrong plan; emergency defense continues during HTTP wait; v1 contract remains supported.
 - **Depends on:** 218
+- **Build notes (2026-10-10):**
+  - **Coordinator:** new `src/jev/strategy.py` runs a `strategy` question family (pressure / recover / expand / tech) and the army question on one shared budget (`--decision-max-requests`, default 450).
+    - Scheduling is fair, with starvation promotion. Requests are cancelled on stop.
+    - The offered choices are derived from the v2 graph.
+  - **Late or bad answers:** answers carry a signature that is revalidated on arrival, using the reason codes single-sourced in `decision.py`.
+  - **Graph guards:** `strategy_is` and `strategy_local` live in `src/jev/operations.py`. The strategy drives only plan start conditions; `plans.py` owns the macro-slot turn rule.
+  - **Clocks:**
+    - The macro slot waits for a hosted answer at most `answer_wait_seconds(config)`: strategy interval + starvation wait + max(dispatch spacing, request deadline) + 2 s, which is 24 wall seconds by default. After that it falls back to the local graph with reason `answer_wait_expired`.
+    - Every coordinator clock is wall time except `max_game_age`.
+  - **Hypothesis values, to tune at 222/223:** the pressure/recover hold of 30 game seconds and the 24 s answer wait.
+  - **Precedence:** pressure does not override the local few-units recovery. The Step 217 eight-unit expansion trigger applies only when no hosted answer holds the macro slot.
+  - **Evidence:** plan facts gain `decided_by` and `decision_request_id`. A "Strategy decision source" diagnostic sits on the `tech` lane, and scripted v2 runs emit one `local_graph` strategy diagnostic per game second. The hosted army context counts Stalkers.
+  - **Policy hashes:** v2 is now `5e837bbb…` (252 nodes). v1's request shape, policy hash and 700-step trace are unchanged.
+  - **Also touched:** `bots/jev/v2/__init__.py` (docstring) and the `tests/test_jev_army.py` module allowlist. The `_play_opening` test harness now captures events from `runtime.tick`.
+  - Reviewed by `/review-deep` (6 lenses) over 3 iterations. Evidence in `.build-step/jev-v2-219/` (gitignored).
 
 ### Step 220: Let Typesafe decide within execution branches
 - **Problem:** Apply hosted decisions to expansion recovery and production choices.

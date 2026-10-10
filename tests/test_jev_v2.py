@@ -33,6 +33,7 @@ and the mixed-army ones in ``test_jev_army.py``.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import os
@@ -40,19 +41,23 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import uuid
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from bots.jev.v1 import load_policy as load_v1_policy
 from bots.jev.v2 import load_policy as load_v2_policy
+from sc2.data import Result
 from sc2.ids.ability_id import AbilityId
 
 import jev.bot
-from jev.bot import JevController
-from jev.contracts import Entity, Observation, Order, Point, Policy
+from jev.bot import JevBot, JevController
+from jev.contracts import Entity, Event, Observation, Order, Point, Policy
+from jev.decision import ARMY_QUESTION, Answer, DecisionConfig, Question
 from jev.operations import (
     BUILD_ABILITY,
     MAX_COMPOSITION_RATIO,
@@ -69,11 +74,20 @@ from jev.operations import (
     planned_supply,
     validate_operation_args,
 )
-from jev.plans import PlanStore
+from jev.plans import PlanStore, StrategySlot
 from jev.policy import PolicyError
-from jev.runner import MatchOptions, run_match
-from jev.runtime import NODE_BUDGET_REASON
+from jev.runner import DIAGNOSTICS_FILE, MatchLimits, MatchOptions, run_match
+from jev.runtime import NODE_BUDGET_REASON, STRATEGY_DECISION_REASON
 from jev.sc2_adapter import GAME_LOOPS_PER_SECOND
+from jev.strategy import (
+    ANSWER_WAIT_EXPIRED_REASON,
+    STARVATION_SECONDS,
+    HostedQuestions,
+    StrategyBranch,
+    answer_wait_seconds,
+    strategy_branches,
+)
+from jev.telemetry import read_run_metadata, read_run_state
 from test_jev_economy import (
     STEP_LOOPS,
     V2Watch,
@@ -535,6 +549,15 @@ def _play_opening(steps: int) -> _Opening:
     first_pylon: list[float] = []
 
     def observe(world: _World, controller: JevController, index: int) -> None:
+        if index == 0:  # keep every tick's events, however many (Step 219's guards add some)
+            tick = controller.runtime.tick
+
+            def recording(observation: Observation) -> Any:
+                result = tick(observation)
+                watch.events.update((e.sequence, e) for e in result.events)
+                return result
+
+            controller.runtime.tick = recording  # type: ignore[method-assign]
         watch(world, controller, index)
         zealots[world.state.game_loop] = {z.tag: z.position for z in world.own("Zealot")}
         if not first_pylon and any(p.progress >= 1.0 for p in world.own("Pylon")):
@@ -1138,3 +1161,663 @@ def test_expansion_and_tech_share_the_macro_slot_and_never_double_spend() -> Non
     assert nexus_holds and min(nexus_holds) >= tech.finished_game_seconds
     assert world.overspent == [] and world.sc2_refusals == []
     assert len(world.own("Nexus")) == 2 and len(world.own("CyberneticsCore")) == 1
+
+
+# ---------------------------------------------------------------------------
+# Step 219: hosted strategic choices through the production controller
+# ---------------------------------------------------------------------------
+#
+# Every scenario runs the launched one-base world of the expansion suite (Nexus,
+# Pylon, four powered Gateways, an Assimilator, eight ready Zealots at home; without
+# a Core unless noted) through the production controller -- JevController ->
+# JevBot.on_step -> HostedQuestions -> the SC2 adapter and BotAIPort -- and, through
+# run_match, the production runner with --decision-provider typesafe, whose
+# TypesafeProvider talks HTTP to a scripted httpx transport (no network). Wall time
+# passes with game time and the event loop runs between steps, as in a realtime
+# match: a pending request progresses without any step awaiting it.
+
+_V2_BRANCHES = strategy_branches(load_v2_policy().policy)
+_STEP_SECONDS = STEP_LOOPS / GAME_LOOPS_PER_SECOND
+_LOOP_TURNS = 40  # event-loop turns between steps: an immediate HTTP reply completes
+
+
+class _Wall:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class _HostedLauncher(_Launcher):
+    """The economy suite's launcher, plus what a realtime match gives a request
+    (``game_per_wall`` above 1: the game outruns the wall clock, as without
+    ``--realtime``)."""
+
+    def __init__(
+        self, world: Any, steps: int, hook: Any, wall: _Wall, game_per_wall: float = 1.0
+    ) -> None:
+        super().__init__(world, steps, hook)
+        self.wall = wall
+        self.wall_step = _STEP_SECONDS / game_per_wall
+
+    async def _run(self, bot: JevBot, controller: JevController) -> None:
+        for index in range(self.steps):
+            if self.before_step is not None:
+                self.before_step(self.world, controller, index)
+            await bot.on_step(index)
+            if self.world.left:
+                break
+            self.world.advance()
+            self.wall.now += self.wall_step
+            for _ in range(_LOOP_TURNS):
+                await asyncio.sleep(0)
+        await bot.on_end(Result.Defeat if self.world.left else Result.Victory)
+
+
+def _service_body(question_id: str, choice: str, confidence: float, options: list[str]) -> Any:
+    rest = (1.0 - confidence) / max(1, len(options) - 1)
+    probabilities = {option: rest for option in options}
+    probabilities[choice] = confidence
+    return {
+        "answers": {
+            question_id: {
+                "type": "choice",
+                "choice": choice,
+                "confidence": confidence,
+                "probabilities": probabilities,
+            }
+        },
+        "model": "jev-test-model",
+        "usage": {"input_tokens": 50, "output_tokens": 5},
+    }
+
+
+@dataclass
+class _Hosted:
+    run: Any
+    outcome: Any
+    requests: list[dict[str, Any]]
+    run_dir: Path
+
+    def asked(self, question_id: str) -> list[tuple[int, list[str]]]:
+        """``(request id, offered options)`` of every request of ``question_id``."""
+        return [
+            (number, list(sent["questions"][question_id]["criteria"]))
+            for number, sent in enumerate(self.requests, start=1)
+            if question_id in sent["questions"]
+        ]
+
+
+def _hosted_match(
+    world: Any,
+    steps: int,
+    answer: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    run_root: Path,
+    *hooks: Any,
+    max_requests: int = 450,
+    game_per_wall: float = 1.0,
+) -> _Hosted:
+    """Play ``world`` through run_match with the Typesafe provider over a scripted
+    HTTP transport: ``answer(question_id, options)`` returns ``(choice, confidence)``
+    or an ``httpx.Response`` (a service failure)."""
+    from test_jev_macro import _Run
+
+    requests: list[dict[str, Any]] = []
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        sent = json.loads(request.content)
+        requests.append(sent)
+        ((question_id, question),) = sent["questions"].items()
+        options = list(question["criteria"])
+        reply = answer(question_id, options)
+        if isinstance(reply, httpx.Response):
+            return reply
+        choice, confidence = reply
+        return httpx.Response(200, json=_service_body(question_id, choice, confidence, options))
+
+    transport = httpx.MockTransport(respond)
+    original_client = httpx.AsyncClient
+
+    def mock_client(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
+        kwargs["transport"] = transport
+        return original_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", mock_client)
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-only-key")
+    run = _Run(world)
+
+    def every(world: Any, controller: JevController, index: int) -> None:
+        for hook in hooks:
+            hook(world, controller, index)
+
+    wall = _Wall()
+    launcher = _HostedLauncher(world, steps, run.hook(every), wall, game_per_wall)
+    options = MatchOptions(decision_provider="typesafe", decision_max_requests=max_requests)
+    outcome = run_match(options, load_v2_policy(), launcher=launcher, run_root=run_root, clock=wall)
+    (run_dir,) = [path for path in run_root.iterdir() if path.is_dir()]
+    return _Hosted(run, outcome, requests, run_dir)
+
+
+def _strategy_events(run: Any) -> list[Event]:
+    return [e for e in run.events if e.reason == STRATEGY_DECISION_REASON]
+
+
+def _node_successes(run: Any, node_id: str, after: int = -1) -> list[Event]:
+    return [
+        e
+        for e in run.events
+        if e.kind == "node"
+        and e.node_id == node_id
+        and e.status == "success"
+        and e.game_loop > after
+    ]
+
+
+@pytest.mark.parametrize("branch", _V2_BRANCHES, ids=lambda b: b.choice)
+def test_each_strategic_choice_selects_its_graph_branch(
+    branch: StrategyBranch, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With every choice executable (no Core yet, the natural free, the army launched),
+    the service is offered exactly the graph's choices; the one it answers opens its
+    branch -- a macro plan attributed to that request, or the army posture -- and no
+    other strategic branch opens."""
+    import test_jev_plans as expansion_suite
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        if question_id == "strategy":
+            return branch.choice, 0.9
+        return options[0], 0.2  # army intent below the floor: the local graph decides
+
+    hosted = _hosted_match(expansion_suite._world(core=False), 40, answer, monkeypatch, tmp_path)
+    run = hosted.run
+    assert hosted.outcome.exit_code == 0
+    ((request_id, offered), *_) = hosted.asked("strategy")
+    assert offered == [b.choice for b in _V2_BRANCHES]  # the graph's choices, all executable
+    accepted = [e for e in _strategy_events(run) if e.facts["source"] == "typesafe"]
+    assert accepted and accepted[0].facts["choice"] == branch.choice
+    assert accepted[0].facts["in_force_request_id"] == request_id
+    applied_at = accepted[0].game_loop
+    # The chosen branch's guard passes -- attributed to this request -- and no other
+    # choice's guard ever does.
+    passed = _node_successes(run, branch.guard, after=applied_at - 1)
+    assert passed
+    assert {(e.facts["source"], e.facts["request_id"]) for e in passed} == {
+        ("typesafe", request_id)
+    }
+    for other in _V2_BRANCHES:
+        if other.choice != branch.choice:
+            assert _node_successes(run, other.guard) == [], other.choice
+    assert run.controller is not None
+    runtime = run.controller.runtime
+    plans = runtime.plans()
+    if branch.slot == "macro":
+        assert branch.start is not None
+        (plan,) = plans  # exactly the chosen plan, and it is the request's
+        assert plan.node_id == branch.start and plan.kind == branch.choice
+        assert (plan.decided_by, plan.decision_request_id) == ("typesafe", request_id)
+        started = [e for e in _strategy_events(run) if e.facts.get("started_plan")]
+        assert started and started[-1].facts["started_plan"]["plan_id"] == plan.plan_id
+        return
+    assert plans == ()  # an army posture opens no macro plan, though both were offered
+    # The posture holds the macro slot back on the answer's own request id.
+    held_back = [
+        e
+        for e in run.events
+        if e.kind == "node" and e.node_id == "tech.start.chosen" and e.game_loop >= applied_at
+    ]
+    assert held_back and {e.facts["request_id"] for e in held_back} == {request_id}
+    if branch.choice == "recover":  # the whole army regroups: not the few-units trigger
+        assert [e for e in run.commands("army.recover.move") if e.game_loop >= applied_at]
+        assert _node_successes(run, "army.recover.few") == []
+        return
+    # Pressure: the attack's posture switches from the local path to the hosted guard
+    # at this request -- the local graph alone would have kept the local path.
+    posture = [
+        e
+        for e in run.events
+        if e.kind == "node" and e.node_id == "army.attack.posture" and e.status == "success"
+    ]
+    before = {str(e.facts["child"]) for e in posture if e.game_loop < applied_at}
+    after = {str(e.facts["child"]) for e in posture if e.game_loop >= applied_at}
+    assert before == {"army.attack.local"} and after == {"army.attack.pressure"}
+    assert _node_successes(run, "army.attack.local", after=applied_at - 1) == []
+    attacking = [t for t in runtime.active_tasks() if t.node_id == "army.attack.go"]
+    assert attacking or [e for e in run.commands("army.attack.go") if e.game_loop >= applied_at]
+
+
+def test_emergency_defense_runs_while_a_request_is_pending() -> None:
+    """The army acts on an accepted attack intent (the first answer is stale: the launch
+    changed the army's state); the next request then hangs. A raid at home expires the
+    attack intent at once (its threats changed) and the local graph defends -- every
+    step of it while the request is still pending."""
+    import test_jev_macro
+    import test_jev_plans as expansion_suite
+
+    gate = asyncio.Event()
+    calls: list[str] = []
+
+    class Service:
+        async def decide(
+            self, state: Any, choices: tuple[str, ...], question: Question = ARMY_QUESTION
+        ) -> Answer:
+            calls.append(question.question_id)
+            if calls.count("army_mode") > 2 or question.question_id == "strategy":
+                await gate.wait()  # never released: this request stays pending
+            probabilities: dict[str, Any] = dict.fromkeys(choices, 0.05)
+            probabilities["attack"] = 0.9
+            return Answer("attack", 0.9, probabilities, "jev-test-model", 9, 1)
+
+    world = expansion_suite._world()
+    wall = _Wall()
+    bundle = load_v2_policy()
+    questions = HostedQuestions(Service(), DecisionConfig(timeout=200), bundle.policy, clock=wall)
+    controller = JevController(
+        bundle,
+        run_id=uuid.uuid4().hex,
+        limits=MatchLimits(900, 1800),
+        clock=wall,
+        decisions=questions,
+    )
+    run = test_jev_macro._Run(world)
+    pending: dict[int, bool] = {}
+    raid_loop: list[int] = []
+
+    def raid(world: Any, controller: JevController, index: int) -> None:
+        pending[world.state.game_loop] = questions.task is not None and not questions.task.done()
+        if index == 30:
+            raid_loop.append(world.state.game_loop)
+            world.enemy("Marine", (33.0, 36.0))
+
+    launcher = _HostedLauncher(world, 50, run.hook(raid), wall)
+    launcher.play(controller, world, MatchOptions())
+    (loop,) = raid_loop
+    army_facts = [e for e in run.events if e.reason == "Army decision source"]
+    assert any(e.facts["source"] == "typesafe" for e in army_facts if e.game_loop < loop)
+    defended = [e for e in run.commands("army.defend.attack") if e.game_loop >= loop]
+    assert defended  # the local graph fought the raid
+    assert all(pending[e.game_loop] for e in defended)  # each while the request pended
+    assert calls == ["army_mode", "army_mode", "strategy"] and not gate.is_set()
+    expired = [e for e in army_facts if e.game_loop >= loop]
+    assert expired and expired[0].facts["reason"] == "expired_or_changed_state"
+    assert expired[0].facts["choice"] is None
+
+
+@pytest.mark.parametrize("failure", ["http_503", "low_confidence"])
+def test_an_unusable_strategy_answer_leaves_the_plan_to_the_attributed_fallback(
+    failure: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A failed or low-confidence strategy answer never opens its plan: the local
+    fallback (the graph's own order, tech first) decides, the plan records that, and
+    the archived run state says why."""
+    import test_jev_plans as expansion_suite
+
+    def answer(question_id: str, options: list[str]) -> Any:
+        if question_id == "army_mode":
+            return options[0], 0.2
+        if failure == "http_503":
+            return httpx.Response(503)
+        return "expand", 0.3  # below the 0.5 floor
+
+    hosted = _hosted_match(expansion_suite._world(core=False), 40, answer, monkeypatch, tmp_path)
+    run = hosted.run
+    assert hosted.asked("strategy")
+    assert run.controller is not None
+    plans = run.controller.runtime.plans()
+    assert plans and all(p.decided_by == "local_fallback" for p in plans)
+    assert all(p.decision_request_id is None for p in plans)
+    assert [p.kind for p in plans] == ["tech"]  # the fallback's order, never the answer
+    metadata = read_run_metadata(hosted.run_dir)
+    assert metadata is not None
+    state = read_run_state(hosted.run_dir, metadata)
+    archived = [e for e in state.recent_events if e.reason == STRATEGY_DECISION_REASON]
+    assert archived and archived[-1].facts["source"] == "local_fallback"
+    assert archived[-1].facts["reason"] == failure
+    assert archived[-1].facts["choice"] is None
+
+
+def test_strategy_and_army_share_the_runner_request_cap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import test_jev_plans as expansion_suite
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        return ("pressure" if question_id == "strategy" else options[0]), 0.9
+
+    hosted = _hosted_match(
+        expansion_suite._world(), 120, answer, monkeypatch, tmp_path, max_requests=5
+    )
+    asked = [next(iter(sent["questions"])) for sent in hosted.requests]
+    assert len(asked) == 5 and set(asked) == {"army_mode", "strategy"}  # one cap for both
+    diagnostics = json.loads((hosted.run_dir / DIAGNOSTICS_FILE).read_text("utf-8"))
+    decisions = diagnostics["metrics"]["decisions"]
+    assert (decisions["provider"], decisions["calls"], decisions["max_requests"]) == (
+        "typesafe",
+        5,
+        5,
+    )
+    assert decisions["answers"] == 5 and decisions["failures"] == {}
+    last = _strategy_events(hosted.run)[-1].facts
+    assert last["calls"] == 5 and last["max_requests"] == 5
+
+
+def test_a_delayed_strategy_reply_after_its_prerequisite_changed_opens_nothing() -> None:
+    """A tech reply held back while the Core appears (tech left the executable set) is
+    refused on arrival: the reply can never open a plan its request did not hold."""
+    import test_jev_macro
+    import test_jev_plans as expansion_suite
+
+    gate = asyncio.Event()
+    strategy_calls: list[tuple[str, ...]] = []
+
+    class Service:
+        async def decide(
+            self, state: Any, choices: tuple[str, ...], question: Question = ARMY_QUESTION
+        ) -> Answer:
+            probabilities: dict[str, Any] = dict.fromkeys(choices, 0.05)
+            if question.question_id == "army_mode":
+                probabilities[choices[0]] = 0.2
+                return Answer(choices[0], 0.2, probabilities, "jev-test-model", 9, 1)
+            strategy_calls.append(choices)
+            if len(strategy_calls) == 1:
+                await gate.wait()
+            probabilities["tech"] = 0.9
+            return Answer("tech", 0.9, probabilities, "jev-test-model", 9, 1)
+
+    world = expansion_suite._world(core=False)
+    wall = _Wall()
+    bundle = load_v2_policy()
+    questions = HostedQuestions(Service(), DecisionConfig(timeout=200), bundle.policy, clock=wall)
+    controller = JevController(
+        bundle,
+        run_id=uuid.uuid4().hex,
+        limits=MatchLimits(900, 1800),
+        clock=wall,
+        decisions=questions,
+    )
+    run = test_jev_macro._Run(world)
+
+    def core_appears(world: Any, controller: JevController, index: int) -> None:
+        if strategy_calls and not gate.is_set():
+            world.add("CyberneticsCore", expansion_suite.CORE_SITE)  # a finished Core
+            world.refresh()
+            gate.set()  # the held tech reply arrives after the change
+
+    launcher = _HostedLauncher(world, 40, run.hook(core_appears), wall)
+    launcher.play(controller, world, MatchOptions())
+    assert strategy_calls and "tech" in strategy_calls[0]
+    refused = [e for e in _strategy_events(run) if e.facts["answer_request_id"] is not None]
+    assert refused and refused[0].facts["answer"] == "tech"
+    assert refused[0].facts["reason"] == "stale_answer" and refused[0].facts["choice"] is None
+    plans = controller.runtime.plans()
+    assert controller.runtime.plan("tech.start.go") is None  # never opened by the old reply
+    assert all(p.decided_by != "typesafe" for p in plans)
+
+
+def test_v2_scripted_runs_leave_strategy_to_the_attributed_local_graph() -> None:
+    """The attribution panel's scripted provider (plan D6): no service call, every
+    strategy slot left to the graph's own conditions, and the plans say so."""
+    import test_jev_plans as expansion_suite
+
+    world = expansion_suite._world(core=False)
+    run = expansion_suite._expand(world, 30)
+    assert run.controller is not None
+    plans = run.controller.runtime.plans()
+    assert plans and {(p.kind, p.decided_by, p.decision_request_id) for p in plans} == {
+        ("tech", "local_graph", None)
+    }
+    sources = {e.facts["source"] for e in _strategy_events(run)}
+    assert sources == {"local_graph"}
+    summary = run.controller.metrics.summary(end_game_seconds=world.seconds)
+    decisions = summary["decisions"]
+    assert isinstance(decisions, dict)
+    assert (decisions["provider"], decisions["calls"]) == ("scripted", 0)
+
+
+def test_the_strategy_guards_read_the_slot_the_controller_set() -> None:
+    """At the operation level: strategy_is passes only for the hosted choice of its own
+    slot; strategy_local only while the slot is left to the local fallback; a hosted
+    slot without a choice holds every branch of the slot back."""
+    runtime = _runtime_for(load_v2_policy().policy)
+    view_slots = {
+        "local": StrategySlot(),
+        "awaiting": StrategySlot(local=False, source="typesafe"),
+        "tech": StrategySlot(local=False, choice="tech", request_id=7, source="typesafe"),
+    }
+    is_tech = OPERATIONS["strategy_is"]
+    local = OPERATIONS["strategy_local"]
+    for name, held in view_slots.items():
+        runtime.set_strategy({"macro": held}, {})
+        view = _StrategyView(runtime)
+        tech = is_tech.evaluate(view, {"choice": "tech"})  # type: ignore[union-attr]
+        expand = is_tech.evaluate(view, {"choice": "expand"})  # type: ignore[union-attr]
+        fallback = local.evaluate(view, {"slot": "macro"})  # type: ignore[union-attr]
+        assert (tech.ok, expand.ok, fallback.ok) == {
+            "local": (False, False, True),
+            "awaiting": (False, False, False),
+            "tech": (True, False, False),
+        }[name]
+        assert tech.facts["request_id"] == held.request_id
+    with pytest.raises(ValueError, match="does not belong"):
+        runtime.set_strategy(
+            {"army": StrategySlot(local=False, choice="tech", source="typesafe")}, {}
+        )
+    with pytest.raises(ValueError):
+        StrategySlot(local=True, choice="tech")
+
+
+class _StrategyView:
+    def __init__(self, runtime: Any) -> None:
+        self._runtime = runtime
+
+    def strategy(self, slot: str) -> StrategySlot:
+        return self._runtime.strategy(slot)  # type: ignore[no-any-return]
+
+
+def test_the_store_refusal_is_the_check_start_applies_and_changes_nothing() -> None:
+    """The coordinator offers a macro choice only when PlanStore.refusal is None: the
+    same check start() applies, read without opening or yielding anything."""
+    store = PlanStore(uuid.uuid4().hex, kinds=("expand", "tech"))
+    assert store.refusal("tech", 0.0) is None and store.records() == ()
+    record, _ = store.start(
+        "tech.start.go", "tech", "tech", 0.0, decided_by="typesafe", decision_request_id=3
+    )
+    assert record is not None
+    assert (record.decided_by, record.decision_request_id) == ("typesafe", 3)
+    assert record.facts()["decision_request_id"] == 3
+    refusal = store.refusal("expand", 1.0)
+    assert refusal is not None and "never a duplicate plan" in refusal
+    assert store.start("expansion.start.go", "expansion", "expand", 1.0) == (None, refusal)
+    assert len(store.records()) == 1
+
+
+# ---------------------------------------------------------------------------
+# Step 219 iteration 2: bounded waits and the local precedence rules, end to end
+# ---------------------------------------------------------------------------
+
+
+def test_a_flickering_threat_cannot_hold_the_macro_slot_past_its_bound(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A Marine appears at home on every other step, so the strategy state (its macro
+    options and the home threat) changes on every poll and never settles. The macro
+    slot waits for the hosted answer, but not past answer_wait_seconds() (here real time):
+    the question is still asked, its answer is stale, and the local fallback -- diagnosed
+    in the archived state -- opens the tech plan."""
+    import test_jev_plans as expansion_suite
+
+    marine: list[int] = []
+
+    def flicker(world: Any, controller: JevController, index: int) -> None:
+        if marine:
+            world.kill(marine.pop())
+        else:
+            marine.append(world.enemy("Marine", (33.0, 36.0)))
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        if question_id == "strategy":  # tech while offered: every reply meets a new state
+            return ("tech" if "tech" in options else options[0]), 0.9
+        return options[0], 0.2
+
+    hosted = _hosted_match(
+        expansion_suite._world(core=False), 100, answer, monkeypatch, tmp_path, flicker
+    )
+    events = _strategy_events(hosted.run)
+    waiting = next(e for e in events if e.facts["source"] == "awaiting_answer")
+    released = next(
+        e
+        for e in events
+        if e.game_seconds > waiting.game_seconds and e.facts["source"] == "local_fallback"
+    )
+    assert released.game_seconds - waiting.game_seconds <= answer_wait_seconds(DecisionConfig())
+    assert released.facts["reason"] in ("stale_answer", ANSWER_WAIT_EXPIRED_REASON)
+    assert hosted.asked("strategy")  # a churning question is still asked
+    assert hosted.run.controller is not None
+    (plan,) = hosted.run.controller.runtime.plans()
+    assert (plan.kind, plan.decided_by, plan.decision_request_id) == (
+        "tech",
+        "local_fallback",
+        None,
+    )
+    assert plan.started_game_seconds >= released.game_seconds
+    metadata = read_run_metadata(hosted.run_dir)
+    assert metadata is not None
+    archived = [
+        e
+        for e in read_run_state(hosted.run_dir, metadata).recent_events
+        if e.reason == STRATEGY_DECISION_REASON
+    ]
+    assert archived and archived[-1].facts["reason"] in (
+        "stale_answer",
+        ANSWER_WAIT_EXPIRED_REASON,
+    )
+
+
+def test_a_hosted_pressure_answer_never_overrides_the_few_units_recovery(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Pressure holds the army posture; when six of the eight Zealots die, the local
+    few-units recovery (D3's safety reaction) still pulls the rest home while pressure
+    stays in force."""
+    import test_jev_plans as expansion_suite
+
+    held: dict[int, StrategySlot] = {}
+    killed: list[int] = []
+
+    def losses(world: Any, controller: JevController, index: int) -> None:
+        held[world.state.game_loop] = controller.runtime.strategy("army")
+        if index == 30:
+            killed.append(world.state.game_loop)
+            for tag in expansion_suite.ZEALOTS[:6]:
+                world.kill(tag)
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        return ("pressure", 0.9) if question_id == "strategy" else (options[0], 0.2)
+
+    hosted = _hosted_match(expansion_suite._world(), 50, answer, monkeypatch, tmp_path, losses)
+    run = hosted.run
+    (loss,) = killed
+    assert held[loss].choice == "pressure"  # the posture was in force before the losses
+    recovering = _node_successes(run, "army.recover.few", after=loss - 1)
+    assert recovering  # the local safety trigger fired despite the hosted posture
+    for event in recovering:  # ... on ticks where pressure still held the army slot
+        assert held[event.game_loop].choice == "pressure"
+    assert _node_successes(run, "army.recover.chosen") == []  # not a recover answer
+    assert [e for e in run.commands("army.recover.move") if e.game_loop >= loss]
+
+
+@pytest.mark.parametrize(
+    ("provider", "zealots", "expands"),
+    [
+        ("scripted", 8, "local_graph"),  # the local trigger: eight ready combat units
+        ("scripted", 5, None),  # below the trigger: the local graph does not expand
+        ("pressure", 8, None),  # a hosted answer holds the slot: the trigger never applies
+        ("expand", 5, "typesafe"),  # a hosted expand needs no eight-unit trigger
+    ],
+)
+def test_the_eight_unit_expansion_trigger_applies_only_without_a_hosted_macro_answer(
+    provider: str,
+    zealots: int,
+    expands: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Step 217's local trigger (eight ready combat units) decides the expansion only
+    while no hosted answer holds the macro slot: a hosted pressure answer keeps it from
+    opening with eight units, and a hosted expand opens it with five."""
+    import test_jev_plans as expansion_suite
+
+    world = expansion_suite._world()  # the Core stands: only the expansion is a macro plan
+
+    def thin(world: Any, controller: JevController, index: int) -> None:
+        if index == 0:
+            for tag in expansion_suite.ZEALOTS[zealots:]:
+                world.kill(tag)
+
+    if provider == "scripted":
+        run = expansion_suite._expand(world, 40, thin)
+    else:
+
+        def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+            return (provider, 0.9) if question_id == "strategy" else (options[0], 0.2)
+
+        run = _hosted_match(world, 40, answer, monkeypatch, tmp_path, thin).run
+    assert run.controller is not None
+    plans = run.controller.runtime.plans()
+    trigger = _node_successes(run, "expansion.start.army")
+    if expands is None:
+        assert plans == ()
+    else:
+        (plan,) = plans
+        assert (plan.kind, plan.decided_by) == ("expand", expands)
+    if provider == "scripted":
+        assert bool(trigger) == (zealots >= 8)
+    else:  # hosted: the local trigger is never even evaluated
+        assert [e for e in run.events if e.node_id == "expansion.start.army"] == []
+        assert _node_successes(run, "expansion.start.local") == []
+
+
+def test_without_realtime_a_churning_strategy_question_is_asked_before_its_wait_expires(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The game runs ten times faster than the wall clock (no --realtime) while the
+    strategy state flickers. The answer-wait bound and the cadence share the wall
+    clock, so the starvation promotion dispatches the strategy question long before the
+    bound -- however much game time passes -- and the slot never falls back on
+    answer_wait_expired."""
+    import test_jev_plans as expansion_suite
+
+    marine: list[int] = []
+
+    def flicker(world: Any, controller: JevController, index: int) -> None:
+        if marine:
+            world.kill(marine.pop())
+        else:
+            marine.append(world.enemy("Marine", (33.0, 36.0)))
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        return (options[0], 0.9) if question_id == "strategy" else (options[0], 0.2)
+
+    game_per_wall = 10.0
+    config = DecisionConfig()
+    steps = round((STARVATION_SECONDS + 3 * config.interval) * game_per_wall / _STEP_SECONDS)
+    hosted = _hosted_match(
+        expansion_suite._world(core=False),
+        steps,
+        answer,
+        monkeypatch,
+        tmp_path,
+        flicker,
+        game_per_wall=game_per_wall,
+    )
+    events = _strategy_events(hosted.run)
+    waiting = next(e for e in events if e.facts["source"] == "awaiting_answer")
+    dispatched = next(e for e in events if e.facts["pending"])
+    expired = [e for e in events if e.facts["reason"] == ANSWER_WAIT_EXPIRED_REASON]
+    assert hosted.asked("strategy")
+    assert expired == []  # the question went out first: the backstop never fired
+    wall_waited = (dispatched.game_seconds - waiting.game_seconds) / game_per_wall
+    assert wall_waited <= STARVATION_SECONDS + config.interval + 0.5
+    # More game time passed than the whole wall bound: a game-time bound would have fired.
+    assert dispatched.game_seconds - waiting.game_seconds > answer_wait_seconds(config)

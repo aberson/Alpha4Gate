@@ -1502,7 +1502,7 @@
     },
     {
       "id": "tech.start",
-      "label": "Start a plan once the army launched, the opening and gas are placed, no Core stands and home is safe",
+      "label": "Start a plan once the army launched, the opening and gas are placed, no Core stands and home is safe, when Typesafe chose tech or the local fallback decides",
       "kind": "sequence",
       "children": [
         "tech.start.launched",
@@ -1510,6 +1510,7 @@
         "tech.start.opening",
         "tech.start.gas",
         "tech.start.home_safe",
+        "tech.start.strategy",
         "tech.start.go"
       ],
       "operation": null,
@@ -1598,6 +1599,37 @@
         },
         "op": "==",
         "value": 0
+      }
+    },
+    {
+      "id": "tech.start.strategy",
+      "label": "Strategy: Typesafe chose tech, or no hosted answer holds the macro slot",
+      "kind": "selector",
+      "children": [
+        "tech.start.chosen",
+        "tech.start.local"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "tech.start.chosen",
+      "label": "Typesafe chose tech: build the Cybernetics Core now",
+      "kind": "condition",
+      "children": [],
+      "operation": "strategy_is",
+      "args": {
+        "choice": "tech"
+      }
+    },
+    {
+      "id": "tech.start.local",
+      "label": "Local fallback (no hosted strategy holds the macro slot): the Core prerequisite comes first (D2)",
+      "kind": "condition",
+      "children": [],
+      "operation": "strategy_local",
+      "args": {
+        "slot": "macro"
       }
     },
     {
@@ -1902,15 +1934,15 @@
     },
     {
       "id": "expansion.start",
-      "label": "Start a plan once the opening and gas are placed, the army launched and grown, and home is safe (the macro slot decides turns with the tech plan)",
+      "label": "Start a plan once the opening and gas are placed, the army launched and home is safe, when Typesafe chose expand or the local fallback's army is grown (the macro slot decides turns with the tech plan)",
       "kind": "sequence",
       "children": [
         "expansion.start.launched",
         "expansion.start.opening",
         "expansion.start.gas",
-        "expansion.start.army",
         "expansion.start.one_base",
         "expansion.start.home_safe",
+        "expansion.start.strategy",
         "expansion.start.go"
       ],
       "operation": null,
@@ -1963,27 +1995,6 @@
       }
     },
     {
-      "id": "expansion.start.army",
-      "label": "Enough ready combat units, Zealots and Stalkers, to hold while the probe walks (D2 fallback: eight)",
-      "kind": "condition",
-      "children": [],
-      "operation": "count_compare",
-      "args": {
-        "collection": "own_units",
-        "filter": {
-          "types": [
-            "Zealot",
-            "Stalker"
-          ],
-          "ready": true
-        },
-        "op": ">=",
-        "value": {
-          "param": "expand_army_size"
-        }
-      }
-    },
-    {
       "id": "expansion.start.one_base",
       "label": "Fewer Nexuses than the base target (any build progress): never a third",
       "kind": "condition",
@@ -2022,6 +2033,69 @@
         },
         "op": "==",
         "value": 0
+      }
+    },
+    {
+      "id": "expansion.start.strategy",
+      "label": "Strategy: Typesafe chose expand, or the local fallback's trigger holds",
+      "kind": "selector",
+      "children": [
+        "expansion.start.chosen",
+        "expansion.start.local"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "expansion.start.chosen",
+      "label": "Typesafe chose expand: take the natural now",
+      "kind": "condition",
+      "children": [],
+      "operation": "strategy_is",
+      "args": {
+        "choice": "expand"
+      }
+    },
+    {
+      "id": "expansion.start.local",
+      "label": "Local fallback: expand once the army has grown",
+      "kind": "sequence",
+      "children": [
+        "expansion.start.local.unadvised",
+        "expansion.start.army"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "expansion.start.local.unadvised",
+      "label": "No hosted strategy holds the macro slot",
+      "kind": "condition",
+      "children": [],
+      "operation": "strategy_local",
+      "args": {
+        "slot": "macro"
+      }
+    },
+    {
+      "id": "expansion.start.army",
+      "label": "Local fallback trigger: enough ready combat units, Zealots and Stalkers, to hold while the probe walks (D2 fallback: eight)",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_units",
+        "filter": {
+          "types": [
+            "Zealot",
+            "Stalker"
+          ],
+          "ready": true
+        },
+        "op": ">=",
+        "value": {
+          "param": "expand_army_size"
+        }
       }
     },
     {
@@ -3484,11 +3558,11 @@
     },
     {
       "id": "army.recover",
-      "label": "After the launch, regroup every combat unit at home while fewer than the regroup size remain (overrides the attack intent)",
+      "label": "After the launch, regroup every combat unit at home when Typesafe chose recover, or while fewer than the regroup size remain (a local safety reaction no answer overrides; overrides the attack intent)",
       "kind": "sequence",
       "children": [
         "army.recover.launched",
-        "army.recover.few",
+        "army.recover.when",
         "army.recover.point",
         "army.recover.units",
         "army.recover.move"
@@ -3504,6 +3578,27 @@
       "operation": "latch_is_set",
       "args": {
         "latch": "attack_launched"
+      }
+    },
+    {
+      "id": "army.recover.when",
+      "label": "Recover: Typesafe chose it, or too few combat units remain",
+      "kind": "selector",
+      "children": [
+        "army.recover.chosen",
+        "army.recover.few"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "army.recover.chosen",
+      "label": "Typesafe chose recover: regroup and rebuild before pressing again",
+      "kind": "condition",
+      "children": [],
+      "operation": "strategy_is",
+      "args": {
+        "choice": "recover"
       }
     },
     {
@@ -3580,10 +3675,11 @@
     },
     {
       "id": "army.attack",
-      "label": "Attack once latched: the group fights on; reinforcements join only as a group",
+      "label": "Attack once latched while Typesafe chose pressure or the local fallback decides the posture: the group fights on; reinforcements join only as a group",
       "kind": "sequence",
       "children": [
         "army.attack.mode",
+        "army.attack.posture",
         "army.attack.launch",
         "army.attack.units",
         "army.attack.target",
@@ -3600,6 +3696,37 @@
       "operation": "army_mode_is",
       "args": {
         "mode": "attack"
+      }
+    },
+    {
+      "id": "army.attack.posture",
+      "label": "Posture: Typesafe chose pressure, or no hosted posture holds the army",
+      "kind": "selector",
+      "children": [
+        "army.attack.pressure",
+        "army.attack.local"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "army.attack.pressure",
+      "label": "Typesafe chose pressure: keep pressing the enemy",
+      "kind": "condition",
+      "children": [],
+      "operation": "strategy_is",
+      "args": {
+        "choice": "pressure"
+      }
+    },
+    {
+      "id": "army.attack.local",
+      "label": "Local fallback: no hosted posture holds the army",
+      "kind": "condition",
+      "children": [],
+      "operation": "strategy_local",
+      "args": {
+        "slot": "army"
       }
     },
     {

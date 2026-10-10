@@ -118,6 +118,17 @@ the graph waits for construction between acknowledgement and transfer.
 runtime emits as a ``diagnostic`` event at once, and every open plan is summarized
 once per game second, so the latest plan state survives the bounded recent-event
 window. Facts carry the plan id, stage node, status, reason code and holds.
+
+**Strategic choices (Step 219).** The D2 ``strategy`` question chooses among the
+plan kinds except the fixed opening (:data:`STRATEGY_CHOICES`); a choice's slot is
+what it decides: a macro choice (expand, tech) which macro plan the slot opens, an
+army choice (pressure, recover) the army's posture. What the graph's strategy
+guards read each tick is one :class:`StrategySlot` per slot: the local fallback
+(the graph's own conditions decide) or a hosted choice -- possibly none, which
+holds the slot's plan starts back. A plan records which strategic decision
+started it (``decided_by``, ``decision_request_id``: request-to-plan evidence), and
+:meth:`PlanStore.refusal` says, without starting anything, whether a kind could
+start now -- the same check :meth:`PlanStore.start` applies.
 """
 
 from __future__ import annotations
@@ -144,11 +155,14 @@ __all__ = [
     "PLAN_NO_PROGRESS_SECONDS",
     "PLAN_SITE_AVOID_SECONDS",
     "PLAN_SLOT",
+    "PLAN_SLOTS",
     "PLAN_STATUSES",
     "PLAN_TIMEOUT_SECONDS",
     "PLAN_YIELD_SECONDS",
     "SITE_TROUBLE",
     "STATIC_FAILURES",
+    "STRATEGY_CHOICES",
+    "STRATEGY_SOURCES",
     "WAIT_CODES",
     "BuildFailure",
     "PlanCode",
@@ -161,6 +175,9 @@ __all__ = [
     "PlanStore",
     "Released",
     "SlotRecord",
+    "StrategyChoice",
+    "StrategySlot",
+    "StrategySource",
     "WaitCode",
 ]
 
@@ -175,6 +192,7 @@ OPEN_PLAN_STATUSES: Final[frozenset[PlanStatus]] = frozenset({"active", "waiting
 #: Section 5: "max one macro plan plus one army plan" (the module docstring says
 #: which kind is which).
 PlanSlot = Literal["macro", "army"]
+PLAN_SLOTS: Final[tuple[PlanSlot, ...]] = get_args(PlanSlot)
 PLAN_SLOT: Final[Mapping[PlanKind, PlanSlot]] = {
     "opening": "army",
     "pressure": "army",
@@ -182,6 +200,53 @@ PLAN_SLOT: Final[Mapping[PlanKind, PlanSlot]] = {
     "expand": "macro",
     "tech": "macro",
 }
+#: The D2 ``strategy`` question's vocabulary: every plan kind but the fixed opening
+#: (module docstring: Strategic choices). Which of them a policy can execute is the
+#: policy's own (``jev.strategy.strategy_branches``).
+StrategyChoice = Literal["pressure", "recover", "expand", "tech"]
+STRATEGY_CHOICES: Final[tuple[StrategyChoice, ...]] = get_args(StrategyChoice)
+#: Who decides a slot's strategic choice: the graph's own conditions with no hosted
+#: provider (``local_graph``), the graph's conditions because the hosted answer is
+#: unavailable, failed or refused (``local_fallback``), or a hosted answer
+#: (``typesafe``).
+StrategySource = Literal["local_graph", "local_fallback", "typesafe"]
+STRATEGY_SOURCES: Final[tuple[StrategySource, ...]] = get_args(StrategySource)
+
+
+@dataclass(frozen=True)
+class StrategySlot:
+    """What the strategy guards of one slot read this tick (module docstring).
+
+    ``local``: the graph's own fallback conditions decide (``strategy_local``
+    passes). Otherwise a hosted decision holds the slot: ``choice`` is the hosted
+    choice in force (``strategy_is`` passes for it alone), or None -- no plan of the
+    slot starts while the hosted question decides. ``request_id`` is the request
+    whose answer is in force (None when local or none is)."""
+
+    local: bool = True
+    choice: StrategyChoice | None = None
+    request_id: int | None = None
+    source: StrategySource = "local_graph"
+
+    def __post_init__(self) -> None:
+        if self.choice is not None and self.choice not in STRATEGY_CHOICES:
+            raise ValueError(f"unknown strategic choice {self.choice!r}")
+        if self.source not in STRATEGY_SOURCES:
+            raise ValueError(f"unknown strategy source {self.source!r}")
+        if self.local and (self.choice is not None or self.source == "typesafe"):
+            raise ValueError("a local strategy slot holds no hosted choice")
+        if not self.local and self.source != "typesafe":
+            raise ValueError("a hosted strategy slot is decided by the hosted provider")
+
+    def facts(self) -> dict[str, JsonValue]:
+        return {
+            "local": self.local,
+            "choice": self.choice,
+            "request_id": self.request_id,
+            "source": self.source,
+        }
+
+
 #: Fixed reason codes (D5: never free text). The frontier's code, a transition's
 #: code or an outcome's code; ``blocker`` carries the human reason beside it.
 PlanCode = Literal[
@@ -298,6 +363,10 @@ class PlanRecord:
     build_in_flight: bool = False
     site_path_distance: float | None = None
     site_path_rank: int | None = None
+    #: Which strategic decision started the plan (module docstring: Strategic
+    #: choices): its source, and the hosted request when one did.
+    decided_by: StrategySource | None = None
+    decision_request_id: int | None = None
 
     @property
     def is_open(self) -> bool:
@@ -330,6 +399,8 @@ class PlanRecord:
             "second_base_defense": self.second_base_defense,
             "avoided_sites": [[p[0], p[1]] for p in self.avoided_sites],
             "build_in_flight": self.build_in_flight,
+            "decided_by": self.decided_by,
+            "decision_request_id": self.decision_request_id,
         }
 
 
@@ -421,6 +492,8 @@ class _Plan:
     summary_second: int = -1
     avoided_sites: tuple[Point, ...] = ()
     refused_sites: tuple[Point, ...] = ()
+    decided_by: StrategySource | None = None
+    decision_request_id: int | None = None
 
     @property
     def is_open(self) -> bool:
@@ -451,6 +524,8 @@ class _Plan:
             build_in_flight=self.in_flight,
             site_path_distance=self.site_path,
             site_path_rank=self.site_rank,
+            decided_by=self.decided_by,
+            decision_request_id=self.decision_request_id,
         )
 
 
@@ -553,33 +628,51 @@ class PlanStore:
 
     # -- starting -------------------------------------------------------------------
 
-    def start(
-        self, node_id: str, root_id: str, kind: PlanKind, now: float
-    ) -> tuple[PlanRecord | None, str]:
-        """Open a plan for start node ``node_id``; ``(record, reason)``, or ``(None,
-        refusal)`` when its slot already holds an open plan (never a duplicate),
-        cools down after an abort, or the kind is disabled for the match."""
+    def refusal(self, kind: PlanKind, now: float) -> str | None:
+        """Why a plan of ``kind`` could not start at ``now`` (None: it could): its slot
+        already holds an open plan (never a duplicate), cools down after an abort or
+        owes its turn to another kind, or the kind is disabled for the match. The one
+        check :meth:`start` applies; reading it changes nothing."""
         disabled = self._disabled.get(kind)
         if disabled is not None:
-            return None, f"{kind} plans are disabled for this match ({disabled})"
+            return f"{kind} plans are disabled for this match ({disabled})"
         slot = PLAN_SLOT[kind]
         for other in self._open.values():
             if PLAN_SLOT[other.kind] == slot:
-                return None, (
+                return (
                     f"the {slot} slot already holds open plan {other.plan_id} ({other.kind}); "
                     "never a duplicate plan"
                 )
         until = self._cooldown.get(slot)
         if until is not None and now < until:
-            return None, f"the {slot} slot cools down until {until:.2f}s after an abort"
+            return f"the {slot} slot cools down until {until:.2f}s after an abort"
         turn = self._yield.get(slot)
         if turn is not None and turn[0] == kind and now < turn[1]:
             others = self._others(kind)
             if others:
-                return None, (
+                return (
                     f"the {slot} slot yields to {', '.join(others)} until {turn[1]:.2f}s after "
                     f"a {kind} abort: one turn each"
                 )
+        return None
+
+    def start(
+        self,
+        node_id: str,
+        root_id: str,
+        kind: PlanKind,
+        now: float,
+        *,
+        decided_by: StrategySource | None = None,
+        decision_request_id: int | None = None,
+    ) -> tuple[PlanRecord | None, str]:
+        """Open a plan for start node ``node_id``; ``(record, reason)``, or ``(None,
+        refusal)`` for :meth:`refusal`'s reasons. ``decided_by`` and
+        ``decision_request_id`` record the strategic decision that started it."""
+        refused = self.refusal(kind, now)
+        if refused is not None:
+            return None, refused
+        slot = PLAN_SLOT[kind]
         self._yield.pop(slot, None)  # a start in the slot ends any yield
         plan = _Plan(
             plan_id=f"{self._run_id}:plan:{next(self._counter)}",
@@ -593,6 +686,8 @@ class PlanStore:
             deadline=now + PLAN_TIMEOUT_SECONDS,
             reason_code="started",
             avoided_sites=tuple(sorted(p for p, until in self._avoid.items() if until > now)),
+            decided_by=decided_by,
+            decision_request_id=decision_request_id,
         )
         self._open[node_id] = plan
         self._latest[node_id] = plan

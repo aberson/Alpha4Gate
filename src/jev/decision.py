@@ -2,6 +2,13 @@
 
 Only this module knows about the hosted service. The graph still selects actors,
 targets and legal commands. No credentials or raw service errors enter telemetry.
+
+Every hosted question is one :class:`Question` -- its stable id, the instructions
+sent in its body and a criterion per option -- asked as one Choice question per
+HTTP request (plan J2 D2). :data:`ARMY_QUESTION` is v1's ``army_mode`` question,
+whose request shape is unchanged; Jev v2's strategy and army questions share this
+module's HTTP boundary, answer validation and reason codes through
+:mod:`jev.strategy`, which schedules them on one request budget.
 """
 
 from __future__ import annotations
@@ -11,7 +18,7 @@ import json
 import math
 import time
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Protocol
 
@@ -44,6 +51,39 @@ CRITERIA = {
     "defend": "Fight visible ground threats near our home structures.",
     "regroup": "Gather the army at our home rally point before resuming pressure.",
 }
+#: Entities a question's state lists at most per collection (nearest home first).
+ENTITY_LIST_LIMIT: Final = 64
+
+
+@dataclass(frozen=True)
+class Question:
+    """One hosted Choice question: its stable id (the ``questions`` map key and the
+    ``answers`` key read back), the instructions sent in its body (the key alone
+    never reaches the model) and the criterion of every option it may offer."""
+
+    question_id: str
+    instructions: str
+    criteria: Mapping[str, str]
+
+    def __post_init__(self) -> None:
+        if not self.question_id.isidentifier() or len(self.question_id) > 40:
+            raise ValueError("question_id must be a short identifier")
+        if not self.instructions.strip() or not self.criteria:
+            raise ValueError("a question needs instructions and at least one option")
+        if any(not option or not text.strip() for option, text in self.criteria.items()):
+            raise ValueError("every option needs a criterion")
+
+    def body(self, choices: tuple[str, ...]) -> dict[str, JsonValue]:
+        """The question's request body offering ``choices`` (each one of its options)."""
+        return {
+            "type": "choice",
+            "instructions": self.instructions,
+            "criteria": {c: self.criteria[c] for c in choices},
+        }
+
+
+#: v1's army question (its request shape is the frozen JI contract).
+ARMY_QUESTION: Final = Question("army_mode", QUESTION, CRITERIA)
 
 
 @dataclass(frozen=True)
@@ -84,7 +124,12 @@ class DecisionError(Exception):
 
 
 class DecisionProvider(Protocol):
-    async def decide(self, state: dict[str, JsonValue], choices: tuple[str, ...]) -> Answer: ...
+    async def decide(
+        self,
+        state: dict[str, JsonValue],
+        choices: tuple[str, ...],
+        question: Question = ARMY_QUESTION,
+    ) -> Answer: ...
 
 
 class TypesafeProvider:
@@ -101,7 +146,12 @@ class TypesafeProvider:
         self._config = config
         self._transport = transport
 
-    async def decide(self, state: dict[str, JsonValue], choices: tuple[str, ...]) -> Answer:
+    async def decide(
+        self,
+        state: dict[str, JsonValue],
+        choices: tuple[str, ...],
+        question: Question = ARMY_QUESTION,
+    ) -> Answer:
         import httpx
 
         # Per-request context also closes the connection on task cancellation.
@@ -116,13 +166,7 @@ class TypesafeProvider:
                     json={
                         "model": self._config.model,
                         "state": state,
-                        "questions": {
-                            "army_mode": {
-                                "type": "choice",
-                                "instructions": QUESTION,
-                                "criteria": {c: CRITERIA[c] for c in choices},
-                            }
-                        },
+                        "questions": {question.question_id: question.body(choices)},
                     },
                 ) as response:
                     if response.status_code != 200:
@@ -132,7 +176,7 @@ class TypesafeProvider:
                         body.extend(chunk)
                         if len(body) > 65536:
                             raise DecisionError("response_too_large")
-                return parse_answer(json.loads(body), choices)
+                return parse_answer(json.loads(body), choices, question.question_id)
             except httpx.TimeoutException:
                 raise DecisionError("timeout") from None
             except httpx.HTTPError:
@@ -141,7 +185,9 @@ class TypesafeProvider:
                 raise DecisionError("invalid_response") from None
 
 
-def parse_answer(body: object, choices: tuple[str, ...]) -> Answer:
+def parse_answer(
+    body: object, choices: tuple[str, ...], question_id: str = ARMY_QUESTION.question_id
+) -> Answer:
     def probability(value: object) -> float:
         if isinstance(value, bool) or not isinstance(value, int | float) or not 0 <= value <= 1:
             raise ValueError("invalid probability")
@@ -149,7 +195,7 @@ def parse_answer(body: object, choices: tuple[str, ...]) -> Answer:
 
     if not isinstance(body, dict):
         raise ValueError("expected object")
-    answer = body["answers"]["army_mode"]
+    answer = body["answers"][question_id]
     choice = answer["choice"]
     if answer["type"] != "choice" or choice not in choices:
         raise ValueError("invalid choice")
@@ -176,6 +222,30 @@ def parse_answer(body: object, choices: tuple[str, ...]) -> Answer:
         usage["input_tokens"],
         usage["output_tokens"],
     )
+
+
+def entity_list(
+    items: tuple[Entity, ...], origin: tuple[float, float], *, anti_air: bool = False
+) -> list[JsonValue]:
+    """A question state's bounded entity list: nearest ``origin`` first (ties by tag),
+    at most :data:`ENTITY_LIST_LIMIT`; tags as strings. ``anti_air`` adds whether
+    each can hit air (v2's mixed army)."""
+    listed: list[JsonValue] = []
+    for e in sorted(items, key=lambda e: (math.dist(e.position, origin), e.tag))[
+        :ENTITY_LIST_LIMIT
+    ]:
+        item: dict[str, JsonValue] = {
+            "tag": str(e.tag),
+            "type": e.type_name,
+            "position": list(e.position),
+            "health": e.health,
+            "shield": e.shield,
+            "flying": e.is_flying,
+        }
+        if anti_air:
+            item["can_attack_air"] = e.can_attack_air
+        listed.append(item)
+    return listed
 
 
 def context(
@@ -205,19 +275,7 @@ def context(
     )
 
     def entities(items: tuple[Entity, ...]) -> list[JsonValue]:
-        return [
-            {
-                "tag": str(e.tag),
-                "type": e.type_name,
-                "position": list(e.position),
-                "health": e.health,
-                "shield": e.shield,
-                "flying": e.is_flying,
-            }
-            for e in sorted(
-                items, key=lambda e: (math.dist(e.position, observation.start_location), e.tag)
-            )[:64]
-        ]
+        return entity_list(items, observation.start_location)
 
     state: dict[str, JsonValue] = {
         "game_seconds": observation.game_seconds,
@@ -234,7 +292,7 @@ def context(
         "remembered_enemy_structures": entities(observation.remembered_enemy_structures),
         "home": list(observation.start_location),
         "enemy_starts": [list(p) for p in observation.enemy_start_locations],
-        "entity_list_limit": 64,
+        "entity_list_limit": ENTITY_LIST_LIMIT,
     }
     # Strategic changes invalidate a reply even if the time limit has not expired.
     signature = (

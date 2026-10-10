@@ -9,7 +9,10 @@ saturated up to SC2's ideal and emptied back to minerals when depleted (Step 216
 plus a persistent natural expansion (Step 217), plus limited tech and a mixed army: a
 tech plan that builds the Cybernetics Core before the expansion (one macro plan at a
 time), Stalkers trained within composition guards, and air threats engaged only by
-units that can hit air (Step 218).
+units that can hit air (Step 218), plus strategy guards at the start of the tech,
+expansion, recover and attack branches: with ``--decision-provider typesafe`` a hosted
+strategy answer (pressure, recover, expand or tech) chooses where they begin, and
+otherwise the graph's own conditions decide (Step 219, :mod:`jev.strategy`).
 Like v1, the policy is read through :mod:`importlib.resources` relative to this
 package, so it resolves the same way from a source checkout and from an installed
 wheel, never from the caller's working directory. The runtime itself lives in the shared ``jev``

@@ -106,6 +106,14 @@ never spells out a cost). ``attack`` never assigns a flying target to an actor w
 weapons cannot hit air (``Entity.can_attack_air``): such actors are blocked with a
 reason, so a Zealot is never ordered onto an air unit while a Stalker may be.
 
+Hosted strategic choices (Jev v2, plan J2 Step 219, D2; :mod:`jev.plans`): the
+graph enters each strategic branch through a guard. ``strategy_is`` passes when a
+hosted answer holds the choice's slot with exactly that choice
+(:meth:`RuntimeView.strategy`); ``strategy_local`` passes when the slot is left to
+the local fallback -- the graph's own conditions. A slot the hosted question holds
+without a choice passes neither, so its plan starts wait for the answer. Guards
+never issue commands; the strategy decides only where a branch may *begin*.
+
 There are deliberately no strategy helpers (``manage_economy``, ``rush``,
 ``expand_now``, ``distribute_workers`` ...): the node arguments carry every
 criterion, tie-break and limit, so the graph is the policy.
@@ -150,11 +158,16 @@ from jev.contracts import (
 )
 from jev.plans import (
     PLAN_KINDS,
+    PLAN_SLOT,
+    PLAN_SLOTS,
     PLAN_STATUSES,
+    STRATEGY_CHOICES,
     WAIT_CODES,
     PlanCode,
     PlanKind,
     PlanRecord,
+    PlanSlot,
+    StrategySlot,
 )
 
 __all__ = [
@@ -220,6 +233,8 @@ __all__ = [
     "OP_GATHER_GAS",
     "OP_RELEASE_GAS",
     "OP_START_PLAN",
+    "OP_STRATEGY_IS",
+    "OP_STRATEGY_LOCAL",
     "OP_TRAIN",
     "OP_TRANSFER_WORKERS",
     "OWN_TYPES",
@@ -447,6 +462,10 @@ OP_RELEASE_GAS: Final = "release_gas"
 OP_BUILD_EXPANSION: Final = "build_expansion"
 OP_TRANSFER_WORKERS: Final = "transfer_workers"
 OP_START_PLAN: Final = "start_plan"
+#: The strategic branch guards (Step 219): the runtime records which choices' guards
+#: a tick reached, the strategy coordinator offers only those (``jev.strategy``).
+OP_STRATEGY_IS: Final = "strategy_is"
+OP_STRATEGY_LOCAL: Final = "strategy_local"
 #: Why a gather task's target can no longer be gathered from (D4: visible outcome).
 GATHER_TARGET_LOST_REASON: Final = (
     "gather target lost: no longer an own gas building or a visible mineral field"
@@ -608,6 +627,11 @@ class RuntimeView(Protocol):
     def latch_is_set(self, latch: str) -> bool: ...
 
     def army_mode(self) -> str | None: ...
+
+    def strategy(self, slot: PlanSlot) -> StrategySlot:
+        """What the strategy guards of ``slot`` read this tick (:mod:`jev.plans`):
+        the local fallback unless a hosted strategic decision holds the slot."""
+        ...
 
     def own_unit_tags(self) -> frozenset[int]:
         """Tags of this tick's own units (actors for unit commands)."""
@@ -1444,6 +1468,60 @@ def _army_mode_is(view: RuntimeView, args: Args) -> OpOutcome:
     )
     return OpOutcome(ok, f"army mode {mode or 'scripted'}; branch {wanted}",
                      {"mode": mode, "branch": wanted})
+
+
+def _strategy_choice(name: str) -> tuple[str, PlanSlot]:
+    for choice in STRATEGY_CHOICES:
+        if choice == name:
+            return choice, PLAN_SLOT[choice]
+    raise ValueError(f"unknown strategic choice {safe_repr(name)}")
+
+
+def _plan_slot(name: str) -> PlanSlot:
+    for slot in PLAN_SLOTS:
+        if slot == name:
+            return slot
+    raise ValueError(f"unknown plan slot {safe_repr(name)}")
+
+
+def _strategy_facts(held: StrategySlot, slot: PlanSlot) -> dict[str, JsonValue]:
+    return {
+        "question_id": "strategy",
+        "slot": slot,
+        "choice": held.choice,
+        "source": held.source,
+        "request_id": held.request_id,
+    }
+
+
+def _strategy_is(view: RuntimeView, args: Args) -> OpOutcome:
+    choice, slot = _strategy_choice(_arg_str(args, "choice"))
+    held = view.strategy(slot)
+    ok = not held.local and held.choice == choice
+    if held.local:
+        reason = f"the {slot} slot is left to the local fallback; branch {choice} is not chosen"
+    elif held.choice is None:
+        reason = f"the hosted strategy holds the {slot} slot without a choice yet"
+    else:
+        verdict = "selects" if ok else "does not select"
+        reason = (
+            f"hosted strategy {held.choice} (request {held.request_id}) {verdict} branch {choice}"
+        )
+    facts = _strategy_facts(held, slot)
+    facts["branch"] = choice
+    return OpOutcome(ok, reason, facts)
+
+
+def _strategy_local(view: RuntimeView, args: Args) -> OpOutcome:
+    slot = _plan_slot(_arg_str(args, "slot"))
+    held = view.strategy(slot)
+    if held.local:
+        reason = f"the {slot} slot is left to the local fallback ({held.source})"
+    elif held.choice is None:
+        reason = f"the hosted strategy holds the {slot} slot without a choice yet"
+    else:
+        reason = f"hosted strategy {held.choice} (request {held.request_id}) holds the {slot} slot"
+    return OpOutcome(held.local, reason, _strategy_facts(held, slot))
 
 
 def _latch_is_set(view: RuntimeView, args: Args) -> OpOutcome:
@@ -3166,6 +3244,20 @@ _SPECS: Final[tuple[OperationSpec, ...]] = (
         "Branch on the current Typesafe army decision, or use the scripted baseline",
         {"mode": ArgSpec("enum", choices=("attack", "defend", "regroup"))},
         _army_mode_is,
+    ),
+    PredicateOp(
+        OP_STRATEGY_IS,
+        "Enter a strategic branch: whether a hosted strategy answer holds the choice's "
+        "slot (macro for expand/tech, army for pressure/recover) with exactly this choice",
+        {"choice": ArgSpec("enum", choices=STRATEGY_CHOICES)},
+        _strategy_is,
+    ),
+    PredicateOp(
+        OP_STRATEGY_LOCAL,
+        "Whether the slot's strategic choice is left to the local fallback (the graph's "
+        "own conditions decide); false while a hosted strategy answer holds the slot",
+        {"slot": ArgSpec("enum", choices=PLAN_SLOTS)},
+        _strategy_local,
     ),
     PredicateOp(
         "latch_is_set",

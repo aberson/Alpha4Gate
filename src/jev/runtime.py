@@ -74,6 +74,17 @@ One :class:`JevRuntime` executes one validated policy for one run:
   tasks that have not started a structure, so no retry survives an abandoned
   branch. Selections may ask for SC2 path queries (:meth:`JevRuntime.path_requests`),
   which the controller has the adapter answer before the next tick.
+* **Hosted strategic choices (Jev v2, plan J2 Step 219, D2).** Only for a policy
+  with strategy guards (``strategy_is`` / ``strategy_local``). The controller hands
+  the runtime what each plan slot's guards read (:meth:`JevRuntime.set_strategy`:
+  the local fallback by default, or a hosted decision); a tick records which
+  choices' ``strategy_is`` guards it reached (:meth:`JevRuntime.strategy_reach`:
+  the branch's own preconditions held), which -- with
+  :meth:`JevRuntime.plan_start_refusal` -- is how the coordinator knows which
+  choices the graph can execute now. A plan records the strategic decision that
+  started it (``decided_by``, and ``decision_request_id`` when a hosted choice
+  held its slot). The decision's facts are reported like the army's, as a
+  :data:`STRATEGY_DECISION_REASON` diagnostic on the first lane holding a guard.
 * **Bounded recovery from unreachable targets (D4).** A task that gives up
   makes its intent a fresh task on retry (the order SC2 still carries never
   counts as already done). For every action node a ``demotions`` argument
@@ -162,6 +173,7 @@ from jev.operations import (
     OP_GATHER_GAS,
     OP_RELEASE_GAS,
     OP_START_PLAN,
+    OP_STRATEGY_IS,
     OP_TRAIN,
     OP_TRANSFER_WORKERS,
     OPERATIONS,
@@ -186,7 +198,19 @@ from jev.operations import (
     resolve_args,
     tracked_nodes,
 )
-from jev.plans import PLAN_KINDS, BuildFailure, PlanCode, PlanRecord, PlanStore, SlotRecord
+from jev.plans import (
+    PLAN_KINDS,
+    PLAN_SLOT,
+    PLAN_SLOTS,
+    BuildFailure,
+    PlanCode,
+    PlanKind,
+    PlanRecord,
+    PlanSlot,
+    PlanStore,
+    SlotRecord,
+    StrategySlot,
+)
 from jev.policy import policy_hash, validate_policy
 
 __all__ = [
@@ -205,6 +229,7 @@ __all__ = [
     "REFUSAL_CAUSES",
     "RUNTIME_NODE_ID",
     "SITE_EXCLUSION_CAUSES",
+    "STRATEGY_DECISION_REASON",
     "TickConfig",
     "TickResult",
     "UNACKNOWLEDGED_STATUSES",
@@ -212,6 +237,9 @@ __all__ = [
 
 NODE_BUDGET_REASON: Final = "node evaluation budget exhausted; yielding until next tick"
 COMMAND_BUDGET_REASON: Final = "command budget exhausted; yielding until next tick"
+#: The reason of the diagnostic that reports the strategy decision's facts (Step 219),
+#: beside the army's ``Army decision source``.
+STRATEGY_DECISION_REASON: Final = "Strategy decision source"
 #: Typed cause recorded on every failed task (the reason text stays human-readable).
 FailureCause = Literal["lost", "unacknowledged", "rejected", "deadline", "no_progress"]
 FAILURE_CAUSES: Final[tuple[FailureCause, ...]] = get_args(FailureCause)
@@ -713,6 +741,9 @@ class _View:
     def army_mode(self) -> str | None:
         return self._runtime._army_mode
 
+    def strategy(self, slot: PlanSlot) -> StrategySlot:
+        return self._runtime._strategy[slot]
+
     def own_unit_tags(self) -> frozenset[int]:
         return self._runtime._own_unit_tags
 
@@ -882,6 +913,16 @@ class JevRuntime:
         self._decision_facts: dict[str, JsonValue] = {}
         self._decision_reported: dict[str, JsonValue] = {}
         self._decision_report_time = -1.0
+        # Hosted strategic choices (Step 219): what each slot's guards read, the
+        # choices whose guards this tick (and the latest one) reached, and the lane
+        # the strategy decision is reported on (None: the policy has no guards).
+        self._strategy: dict[PlanSlot, StrategySlot] = {slot: StrategySlot() for slot in PLAN_SLOTS}
+        self._strategy_facts: dict[str, JsonValue] = {}
+        self._strategy_reported: dict[str, JsonValue] = {}
+        self._strategy_report_time = -1.0
+        self._strategy_reached: set[str] = set()
+        self._last_strategy_reach: frozenset[str] = frozenset()
+        self._strategy_lane: str | None = None
         # Derive guarded task ownership from the graph, not action-node names.
         self._army_task_modes: dict[str, str] = {}
         for branch in policy.nodes:
@@ -933,6 +974,15 @@ class JevRuntime:
                 if lane_starts:  # validation allows one start_plan per root lane
                     self._plan_lanes[root] = lane_starts[0]
                     self._plan_rank.update((node_id, i) for i, node_id in enumerate(order))
+        for root in policy.roots:
+            pending = [root]
+            while pending and self._strategy_lane is None:
+                node = policy.node(pending.pop())
+                if node.operation == OP_STRATEGY_IS:
+                    self._strategy_lane = root
+                pending.extend(node.children)
+            if self._strategy_lane is not None:
+                break
 
     def _tracked_nodes(self, memory: TrackedMemory) -> frozenset[str]:
         return frozenset(
@@ -1021,6 +1071,37 @@ class JevRuntime:
         self._army_mode = mode
         self._decision_facts = dict(facts)
 
+    def set_strategy(
+        self, slots: Mapping[PlanSlot, StrategySlot] | None, facts: Mapping[str, JsonValue]
+    ) -> None:
+        """Supply what each slot's strategy guards read at the next graph evaluation
+        (None, or a slot left out: the local fallback) and the decision's facts.
+        Raises :class:`ValueError` for an unknown slot or a choice of another slot."""
+        chosen = dict(slots or {})
+        for slot, held in chosen.items():
+            if slot not in PLAN_SLOTS or not isinstance(held, StrategySlot):
+                raise ValueError(f"invalid strategy slot {safe_repr(slot)}")
+            if held.choice is not None and PLAN_SLOT[held.choice] != slot:
+                raise ValueError(f"strategic choice {held.choice} does not belong to slot {slot}")
+        self._strategy = {slot: chosen.get(slot, StrategySlot()) for slot in PLAN_SLOTS}
+        self._strategy_facts = dict(facts)
+
+    def strategy(self, slot: PlanSlot) -> StrategySlot:
+        """What ``slot``'s strategy guards read (the latest :meth:`set_strategy`)."""
+        return self._strategy[slot]
+
+    def strategy_reach(self) -> frozenset[str]:
+        """The strategic choices whose ``strategy_is`` guard the latest tick reached:
+        the branch's own preconditions held then, whatever the guard decided."""
+        return self._last_strategy_reach
+
+    def plan_start_refusal(self, kind: PlanKind) -> str | None:
+        """Why a plan of ``kind`` could not start now (the store's own check, at the
+        latest tick's game time); None if it could."""
+        if self._plans is None:
+            return "this policy starts no plans"
+        return self._plans.refusal(kind, self._last_game_seconds)
+
     def tick(self, observation: Observation) -> TickResult:
         """Run one policy tick if the cadence allows; return commands and events.
 
@@ -1050,6 +1131,25 @@ class JevRuntime:
                 )
                 self._decision_reported = stable
                 self._decision_report_time = observation.game_seconds
+        if self._strategy_facts and self._strategy_lane is not None:
+            reported = {
+                k: v for k, v in self._strategy_facts.items() if k != "response_age_game_seconds"
+            }
+            if (
+                reported != self._strategy_reported
+                or observation.game_seconds - self._strategy_report_time >= 1
+            ):
+                self._emit(
+                    self._strategy_lane,
+                    None,
+                    "diagnostic",
+                    "success",
+                    STRATEGY_DECISION_REASON,
+                    self._strategy_facts,
+                )
+                self._strategy_reported = reported
+                self._strategy_report_time = observation.game_seconds
+        self._strategy_reached = set()
         self._commands = []
         self._reserved_actors = set()
         self._held_minerals = 0
@@ -1105,6 +1205,7 @@ class JevRuntime:
         if self._plans is not None:
             self._plans.summarize(now)
             self._apply_plan_outcomes()
+        self._last_strategy_reach = frozenset(self._strategy_reached)
         events = tuple(self._events)
         self._events = []
         return TickResult(
@@ -1889,6 +1990,8 @@ class JevRuntime:
         spec = OPERATIONS[node.operation or ""]
         args = self._args[node.id]
         view = _View(self, frame, observation, node.id)
+        if node.operation == OP_STRATEGY_IS:  # the branch's preconditions held (Step 219)
+            self._strategy_reached.add(str(args["choice"]))
         if isinstance(spec, PredicateOp):
             outcome = spec.evaluate(view, args)
             facts.update(outcome.facts)
@@ -2219,7 +2322,15 @@ class JevRuntime:
         if effect.action == "start":
             if effect.kind is None:
                 return True, "start_plan without a kind"
-            record, reason = plans.start(node.id, frame.root_id, effect.kind, now)
+            held = self._strategy[PLAN_SLOT[effect.kind]]
+            record, reason = plans.start(
+                node.id,
+                frame.root_id,
+                effect.kind,
+                now,
+                decided_by=held.source,
+                decision_request_id=held.request_id if held.choice == effect.kind else None,
+            )
             refused = record is None
         elif effect.action == "site" and effect.point is not None:
             plans.set_site(

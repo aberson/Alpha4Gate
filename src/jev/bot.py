@@ -36,6 +36,12 @@ the controller to the live game and registers Ctrl+C as a clean-leave request,
 ``on_step`` steps the controller, ``on_end`` records SC2's result. There is no
 legacy gameplay code or RL policy on this path. The optional Typesafe coordinator
 supplies army intent; every command still comes from a graph node and runtime task.
+For a policy with strategic choices (Jev v2, plan J2 Step 219) the coordinator is
+:class:`jev.strategy.HostedQuestions`: strategy and army questions on one request
+budget, whose answers the runtime's strategy guards and army-mode guards read; with
+the scripted provider the strategy guards read the local fallback (the graph's own
+conditions) and the decision is reported as ``local_graph``. Frozen v1 keeps
+:class:`jev.decision.ArmyDecisions` and its exact request shape.
 
 **Benchmark metrics** (plan D6). On every policy tick the controller also feeds
 the tick's Observation and decision facts to its :class:`MatchMetrics`, which
@@ -92,6 +98,7 @@ from jev.policy import PolicyBundle
 from jev.runner import MatchLimits, exception_error
 from jev.runtime import JevRuntime, TickResult
 from jev.sc2_adapter import BotAIPort, GamePort, Sc2Adapter
+from jev.strategy import HostedQuestions, scripted_strategy_facts, uses_strategy
 from jev.telemetry import PersistenceFailed, RunRecorder
 
 __all__ = [
@@ -608,7 +615,7 @@ class JevController:
         limits: MatchLimits,
         clock: Callable[[], float] = time.monotonic,
         recorder: RunRecorder | None = None,
-        decisions: ArmyDecisions | None = None,
+        decisions: ArmyDecisions | HostedQuestions | None = None,
     ) -> None:
         if not isinstance(limits, MatchLimits):
             raise ValueError(f"limits must be MatchLimits, got {safe_repr(limits)}")
@@ -632,6 +639,7 @@ class JevController:
         self._evidence_failure: JevError | None = None
         self._decisions = decisions
         self._parameters = bundle.policy.parameters
+        self._strategic = uses_strategy(bundle.policy)  # Jev v2 (Step 219); never v1
         self.metrics = MatchMetrics()  # observation-only (plan D6)
 
     @property
@@ -771,7 +779,14 @@ class JevController:
             await self.adapter.query_paths(port, requests)
         observation = self.adapter.observe(self._game, port)
         facts: dict[str, JsonValue]
-        if self._decisions is not None:
+        if isinstance(self._decisions, HostedQuestions):
+            # Never awaits: a pending request leaves the graph (and its emergency
+            # defense) to the answers in force or the local fallback (plan D2).
+            decided = self._decisions.poll(observation, self.runtime)
+            self.runtime.set_army_decision(decided.army_mode, decided.army_facts)
+            self.runtime.set_strategy(decided.strategy, decided.strategy_facts)
+            facts = decided.metrics_facts  # every request of both questions
+        elif self._decisions is not None:
             mode, facts = self._decisions.poll(
                 observation,
                 launched=self.runtime.latches.get("attack_launched", False),
@@ -789,6 +804,8 @@ class JevController:
                 "calls": 0,
             }
             self.runtime.set_army_decision(None, facts)
+            if self._strategic:  # the graph's own conditions decide every slot
+                self.runtime.set_strategy(None, scripted_strategy_facts())
         result = self.runtime.tick(observation)
         if result.ticked:
             await self.adapter.issue(result.commands, port, self.runtime)

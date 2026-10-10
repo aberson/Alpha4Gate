@@ -109,6 +109,7 @@ from jev.launch import (
     ready_hook,
 )
 from jev.policy import PolicyBundle, PolicyError, describe_bundle
+from jev.strategy import HostedQuestions, uses_strategy
 from jev.telemetry import (
     EvidenceFiles,
     PersistenceFailed,
@@ -716,14 +717,16 @@ def _play(
     except (Exception, SystemExit) as exc:  # a broken burnysc2 is infrastructure, not a crash
         return _unavailable(run_id, _never_started("burnysc2 could not be imported", exc)), None
 
-    decisions = None
+    decisions: ArmyDecisions | HostedQuestions | None = None
     if options.decision_provider == "typesafe":
         config = DecisionConfig(
             model=options.decision_model, max_requests=options.decision_max_requests
         )
-        decisions = ArmyDecisions(
-            TypesafeProvider(os.environ["TYPESAFE_API_KEY"], config), config, clock=clock
-        )
+        provider = TypesafeProvider(os.environ["TYPESAFE_API_KEY"], config)
+        if uses_strategy(bundle.policy):  # v2: strategy and army share the request cap
+            decisions = HostedQuestions(provider, config, bundle.policy, clock=clock)
+        else:  # frozen v1: the army question alone, its request shape unchanged
+            decisions = ArmyDecisions(provider, config, clock=clock)
     controller = JevController(
         bundle, run_id=run_id, limits=options.limits(), clock=clock, recorder=recorder,
         decisions=decisions,
@@ -986,12 +989,14 @@ def build_parser(prog: str) -> argparse.ArgumentParser:
     parser.add_argument("--realtime", action="store_true", help="play at real-time speed")
     parser.add_argument(
         "--decision-provider", choices=("scripted", "typesafe"),
-        default="scripted", help="army decision source (default: scripted)",
+        default="scripted",
+        help="hosted decision source: army intent, plus strategy for a v2 policy "
+        "(default: scripted)",
     )
     parser.add_argument("--decision-model", default="jev-latest", help="Typesafe model identifier")
     parser.add_argument(
         "--decision-max-requests", type=_bounded_int(1, 10000), default=450,
-        help="maximum Typesafe requests per match (default: 450)",
+        help="maximum Typesafe requests per match, shared by every question (default: 450)",
     )
     parser.add_argument(
         "--run-root",

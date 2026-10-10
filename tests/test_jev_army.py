@@ -1621,6 +1621,8 @@ _GAMEPLAY_MODULES = frozenset(
         "jev.sc2_adapter",
         "jev.runtime",
         "jev.plans",
+        "jev.strategy",
+        "jev.decision",
         "jev.operations",
         "jev.policy",
         "jev.contracts",
