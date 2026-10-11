@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
 import time
 from pathlib import Path
@@ -191,12 +192,14 @@ def _start(
 
 
 def _lanes(page: Any) -> dict[str, tuple[int, int]]:
-    """Each lane's (active, waiting) node counts, as the legend shows them."""
+    """Each branch card's visible (active, waiting) node counts."""
     counts: dict[str, tuple[int, int]] = {}
     for chip in page.get_by_test_id("jev-graph-lane").all():
         lane = chip.get_attribute("data-lane")
-        active = int(chip.get_attribute("data-active"))
-        counts[lane] = (active, int(chip.get_attribute("data-waiting")))
+        label = chip.locator(".jev-branch-card-counts").inner_text()
+        match = re.search(r"(\d+) active.*?(\d+) waiting", label)
+        assert match is not None, f"Missing branch counts for {lane}: {label!r}"
+        counts[lane] = (int(match[1]), int(match[2]))
     return counts
 
 
@@ -252,6 +255,13 @@ class TestLiveGraphInBrowser:
                 expect(page.get_by_test_id("jev-live-badge")).to_be_visible(timeout=WAIT_MS)
                 # Live: several lanes at once, and the expansion plan waiting at its blocker.
                 _pump_until(page, lambda: len(_busy_lanes(page)) >= 3, timeout=30)
+                # The readable default shows one branch, while the cards still
+                # report simultaneous activity. Opt into the full forest below.
+                roots = page.locator('[role="treeitem"][aria-level="1"]')
+                expect(roots).to_have_count(1)
+                expect(page.get_by_test_id("jev-graph-zoom")).to_have_text("Zoom 100%")
+                page.get_by_test_id("jev-full-graph").click()
+                expect(roots).to_have_count(len(bundle.policy.roots))
                 waiting = page.locator('[data-testid="jev-plan-row"][data-plan-status="waiting"]')
                 expect(waiting).to_have_count(1, timeout=WAIT_MS)
                 expect(waiting.get_by_test_id("jev-plan-blocker")).to_contain_text(
@@ -298,6 +308,9 @@ class TestLiveGraphInBrowser:
                 # Node-attributed source: the plan's stage, shown in the graph.
                 waiting.get_by_test_id("jev-plan-stage").click()
                 expect(page.get_by_test_id("jev-node-id")).to_have_text("expansion.site_safe.wait")
+                expect(roots).to_have_count(1)
+                expansion_card = page.locator('.jev-branch-card[data-lane="expansion"]')
+                expect(expansion_card).to_have_attribute("aria-pressed", "true")
                 expect(page.get_by_test_id("jev-node-sources")).to_contain_text("Typesafe (request")
                 stage = page.locator('[role="treeitem"][aria-label^="expansion.site_safe.wait,"]')
                 expect(stage).to_have_attribute("data-source", "hosted")
@@ -306,6 +319,9 @@ class TestLiveGraphInBrowser:
                 expect(follow).not_to_be_checked()
                 follow.check()
                 expect(page.get_by_test_id("jev-follow-status")).to_contain_text("on: showing")
+                expect(page.get_by_test_id("jev-node-id")).to_have_text("expansion.site_safe.wait")
+                page.wait_for_timeout(1500)  # another live poll must not steal selection
+                expect(expansion_card).to_have_attribute("aria-pressed", "true")
                 expect(page.get_by_test_id("jev-node-id")).to_have_text("expansion.site_safe.wait")
                 evidence.shot(page, "02-follow-and-stage-source", step=game.step)
 
@@ -383,6 +399,7 @@ class TestLiveGraphInBrowser:
                 for page in pages.values():
                     page.goto(f"{server.base}/?tab=jev&run={run_id}")
                     expect(page.get_by_test_id("jev-live-badge")).to_be_visible(timeout=WAIT_MS)
+                    page.get_by_test_id("jev-full-graph").click()
                     _pump_until(
                         page,
                         lambda page=page: [e for e in _activity(page) if e["kind"] == "current"],
@@ -447,6 +464,10 @@ class TestLiveGraphInBrowser:
                 expect(page.get_by_test_id("jev-run-status")).to_have_text("Status: finished")
                 lanes = _lanes(page)
                 assert list(lanes) == list(bundle.policy.roots)  # one coloured lane per root
+                roots = page.locator('[role="treeitem"][aria-level="1"]')
+                expect(roots).to_have_count(1)
+                page.get_by_test_id("jev-full-graph").click()
+                expect(roots).to_have_count(len(bundle.policy.roots))
                 classes = page.evaluate(
                     """() => Array.from(document.querySelectorAll('.jev-graph-lane-band'))
                          .map((band) => band.getAttribute('class'))"""
