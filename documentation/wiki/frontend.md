@@ -162,7 +162,18 @@ recording when gameplay is ready. Both desktop launchers use Typesafe `jev-1.13.
 only recording differs. The preview is fixed
 2160×1200, with game-process audio and no microphone. Active dots have enlarged
 hit targets; the inspector shows the full ancestry path and the event panel shows
-six recent entries. See the
+six recent entries. The graph spans the full right column, with the unchanged
+125px ancestry inspector below it; decisions and events share a shorter left row.
+Archon Caster occupies the row beneath them. `src/jev/caster.py` reads bounded run
+evidence and uses local Ollama Qwen2.5 1.5B for commentary, with curated facts and
+dad jokes in a 70/15/15 mix. The existing bridge carries a `caster` object with
+`text`, `source`, `kind`, `game_seconds`, and recorded `node_ids`; it never controls
+gameplay. Purple subject halos are distinct from execution colors and selection.
+Independent rotation/highlight toggles default on; rotation pauses on hover/node
+focus, honors reduced motion, and both effects stop when the feed is not live.
+Desktop match timers are disabled; the hosted request budget remains. The observer
+selection logic lives in `src/jev/camera.py`; camera-status write contention is
+nonfatal. See the
 [operator guide](../operator/jev-battle-view.md) and
 [native capture findings](../investigations/jev-battle-view-feasibility-2026-10-11.md).
 

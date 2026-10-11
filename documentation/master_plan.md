@@ -81,13 +81,28 @@ Offline checks are not stronger-play acceptance.
 
 ## Jev Battle View preview — delivered 2026-10-11
 
+**Status:** COMPLETE (preview and README showcase, 2026-10-11).
+
 The separately authorized feasibility experiment and local operator launcher are
 complete. This does not mark JV/J2 gameplay gates complete. `JevBattleView.tsx`
-combines a native SC2 pane, expanded Branch faces graph, decision text and short
-event log; `scripts/probes/jev_battle_view.py` supplies the Windows host and OBS
+combines a native SC2 pane, full-height Branch faces graph, decision text, short
+event log and Archon Caster; `scripts/probes/jev_battle_view.py` supplies the Windows host and OBS
 capture; `scripts/launch-jev-battle.ps1` supplies an interactive Typesafe launch with
-optional automatic recording. Frontend suite 409 passed / 6 skipped, build/lint/Ruff and
-real SC2/OBS launch-record-stop checks passed (existing lint/build warnings remain).
+optional automatic recording. SC2 is an owned native popup; the automatic observer
+uses visible game activity without altering orders or fog. The 2160×1200 layout
+gives the graph the full right half and keeps the ancestry inspector underneath.
+
+`src/jev/caster.py` supplies local Qwen2.5 1.5B commentary plus curated facts/jokes
+(70/15/15). Recorded subject IDs drive optional purple node highlights; slow graph
+rotation has its own toggle and pauses for inspection. Desktop matches have no
+game/wall timer, while the Typesafe request budget and short developer-probe limits
+remain. Camera-status file contention is nonfatal. Scoped validation: 141 runner/
+launcher tests, three caster tests, 36 graph/Battle View tests; build, typecheck,
+Ruff and browser motion/highlight checks passed (existing lint/build warnings remain).
+
+The README now includes conceptual hero artwork and a short real hosted-match
+video. [Media provenance](media/README.md) records the source run and capture/edit
+details. The showcase is not a completed-match acceptance result.
 
 Use the [operator guide](operator/jev-battle-view.md). The
 [feasibility report](investigations/jev-battle-view-feasibility-2026-10-11.md)

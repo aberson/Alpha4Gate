@@ -1,10 +1,57 @@
 # Alpha4Gate
 
-![Python](https://img.shields.io/badge/python-3.12-blue) [![linux-tests](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml/badge.svg?branch=master)](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml) ![pytest](https://img.shields.io/badge/pytest-3310%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-409%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
+![Alpha4Gate: Play. Observe. Evolve.](documentation/images/alpha4gate-hero.png)
 
-An AI agent that teaches itself to get better at a task with — zero human input.
+![Python](https://img.shields.io/badge/python-3.12%2B-blue) [![linux-tests](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml/badge.svg?branch=master)](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml) ![Jev](https://img.shields.io/badge/Jev-Typesafe%20%2B%20decision%20graph-8b5cf6) ![Battle View](https://img.shields.io/badge/Battle%20View-Windows-22b8cf)
 
-It plays, diagnoses what went wrong, produces code-level proposals, and only keeps the ones that prove themselves in games. The task happens to be StarCraft II, but the loops are general. A live React dashboard streams every phase — every proposed fix, every rejection, every win-rate swing — while the agent runs unattended for hours. (Technically an iterative LLM-guided reinforcement learning model with a learned advisor.)
+**Play the game. See the decisions. Improve the player.**
+
+Alpha4Gate is a StarCraft II AI lab with two player families: an evolving, versioned
+bot with rules and optional reinforcement learning, and **Jev**, where the hosted
+Typesafe model chooses strategy and execution options through an inspectable decision
+graph. The graph checks and carries out the game commands. A React dashboard lets
+you watch live play, inspect recorded decisions, and follow improvement experiments.
+
+## Watch Jev think
+
+[![Battle View demo: live SC2, rotating decision graph, and Archon Caster](documentation/images/jev-battle-preview.gif)](documentation/media/jev-battle-view.mp4)
+
+**[Watch the short video](documentation/media/jev-battle-view.mp4)** ·
+[Open the video directly](https://raw.githubusercontent.com/aberson/Alpha4Gate/master-plan/phase-ev/documentation/media/jev-battle-view.mp4) ·
+[Battle View setup and controls](documentation/operator/jev-battle-view.md)
+
+One Windows window brings together:
+
+- **The match:** native SC2, with an automatic observer camera or manual camera control.
+- **The reasoning graph:** all nine branches in a rotating 3D view, live activity,
+  clickable nodes, and the full path behind each decision.
+- **The evidence:** current model decisions, their sources, and recent game events.
+- **Archon Caster:** free local Qwen commentary, AI facts, and dad jokes in a
+  70/15/15 mix. Purple rings mark its commentary subject; rotation and highlights
+  each have an on/off switch. *Two minds. Zero appearance fees.*
+- **Record Battle:** capture the whole view with game audio only, either on demand
+  or automatically at launch. Videos live beside the run's replay and decision trace.
+
+The desktop launcher uses **paid Typesafe Jev** (`jev-1.13.0`). The caster is a
+separate local model and never controls gameplay. Matches run until a result or
+**Stop battle**; the default 450-request Typesafe budget still applies, with local
+fallback after exhaustion. The video is an interrupted demonstration, not a
+win-rate benchmark. [Media provenance](documentation/media/README.md).
+
+```powershell
+# From the repository root, after the Battle View prerequisites are configured:
+powershell -File scripts/launch-jev-battle.ps1 -AutoRecord
+```
+
+Battle View is a Windows preview with workstation-specific OBS setup. The two
+one-click desktop shortcuts are installed on the development workstation; fresh
+clones should follow the [operator guide](documentation/operator/jev-battle-view.md).
+
+## Two ways to improve
+
+The versioned bot family plays, diagnoses failures, proposes code changes, and
+validates candidates in games. Its rules, PPO policy, and learned advisor support
+two complementary improvement loops. Jev's evolution integration remains future work.
 
 **Two complementary learning loops:**
 

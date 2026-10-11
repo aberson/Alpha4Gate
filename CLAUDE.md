@@ -109,10 +109,21 @@ beside the expanded 3D Branch faces graph. `-AutoRecord` records automatically;
 (authenticated websocket port 4457), installed on the development workstation.
 The launcher loads the saved DPAPI key; only the game child receives it.
 Uses `jev-1.13.0`, capped at 450 requests; missing key stops launch.
+Desktop matches have no game/wall timer (zero disables each runner timer); the
+request budget still falls back to the local graph after exhaustion. Developer
+probes retain their short bounds. SC2 is an owned popup, Edge a child; optional
+camera-status writes must not crash gameplay when Windows readers hold the file.
 `frontend/src/components/JevBattleView.tsx` is selected with `?battle=1`;
 `scripts/probes/jev_battle_view.py` owns native hosting and camera/capture controls.
-Use **Stop battle**, not console termination. Thirty focused frontend tests plus
-live launch/record/stop passed; this is not J2 acceptance or a full production host.
+`src/jev/camera.py` supplies the automatic observer; `src/jev/caster.py` supplies
+text-only local commentary through Ollama (`127.0.0.1:11434`, `qwen2.5:1.5b`, CPU).
+Caster has no paid fallback or gameplay authority. Its 70/15/15 commentary/facts/
+jokes mix carries recorded subject IDs for purple graph highlights. Graph rotation
+and highlights have separate toggles; rotation pauses for hover/node focus.
+Use **Stop battle**, not console termination. 36 focused frontend tests, 141 runner/
+launcher tests, three caster tests and live launch/record/stop checks passed;
+this is not J2 acceptance or a full production host. README media provenance is
+`documentation/media/README.md`; only optimized showcase media is committed.
 Guide: `documentation/operator/jev-battle-view.md`. Native geometry settling,
 continuous event pumping and audio-before-reparenting findings are in
 `documentation/investigations/jev-battle-view-feasibility-2026-10-11.md`.
