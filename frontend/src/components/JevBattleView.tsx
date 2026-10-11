@@ -69,6 +69,7 @@ export function JevBattleView() {
       <button className={native.recording ? "battle-recording" : ""} onClick={() => void action("record")}>
         {native.recording ? "Stop recording" : "Record Battle"}
       </button>
+      <button onClick={() => void action("stop")}>Stop battle</button>
     </header>
     <section className="battle-game" id="battle-game-slot" aria-label="SC2 game">
       <p>Waiting for the SC2 window…</p>

@@ -32,7 +32,7 @@ def write_json(path: Path, value: object) -> None:
     temporary.replace(path)
 
 
-def game_child(run_id: str, evidence: Path) -> None:
+def game_child(run_id: str, evidence: Path, interactive: bool = False) -> None:
     from bots.jev.v2 import load_policy
     from sc2.position import Point2
 
@@ -88,7 +88,11 @@ def game_child(run_id: str, evidence: Path) -> None:
 
     outcome = run_match(
         MatchOptions(
-            difficulty=3, seed=11, realtime=True, max_game_seconds=150, max_wall_seconds=210
+            difficulty=3,
+            seed=11,
+            realtime=True,
+            max_game_seconds=900 if interactive else 150,
+            max_wall_seconds=1200 if interactive else 210,
         ),
         load_policy(),
         run_root=ROOT / "data/jev/runs",
@@ -98,7 +102,7 @@ def game_child(run_id: str, evidence: Path) -> None:
     print(outcome, flush=True)
 
 
-async def probe(seconds: int) -> None:
+async def probe(seconds: int, interactive: bool = False, auto_record: bool = False) -> None:
     import obsws_python as obs
     import psutil
     import pygame
@@ -136,7 +140,8 @@ async def probe(seconds: int) -> None:
     log_path = ROOT / ".build-step/jev-live-validation" / f"battle-{run_id}.log"
     game_log = log_path.open("w", encoding="utf-8")
     game = subprocess.Popen(
-        [sys.executable, str(Path(__file__)), "--game-child", run_id],
+        [sys.executable, str(Path(__file__)), "--game-child", run_id]
+        + (["--interactive"] if interactive else []),
         cwd=ROOT,
         stdout=game_log,
         stderr=subprocess.STDOUT,
@@ -159,6 +164,7 @@ async def probe(seconds: int) -> None:
     record_path = None
     started = None
     metrics = []
+    stop_requested = False
     pygame.init()
     surface = pygame.display.set_mode((1920, 1080))
     pygame.display.set_caption("Alpha4Gate Battle Probe Host")
@@ -206,8 +212,11 @@ async def probe(seconds: int) -> None:
             await page.goto("http://localhost:3000/?battle=1&run=" + run_id)
 
         async def action(name: str) -> dict:
-            nonlocal recording, locked, message, record_path
-            if name == "lock":
+            nonlocal recording, locked, message, record_path, stop_requested
+            if name == "stop":
+                stop_requested = True
+                message = "Stopping battle"
+            elif name == "lock":
                 locked = not locked
                 write_json(evidence / "control.json", {"locked": locked})
                 message = "Camera locked" if locked else "Game controls enabled"
@@ -364,13 +373,23 @@ async def probe(seconds: int) -> None:
                 break
             pygame.event.pump()
             await asyncio.sleep(0.5)
-        await page.get_by_role("button", name="Record Battle", exact=True).click()
+        if not interactive or auto_record:
+            await page.get_by_role("button", name="Record Battle", exact=True).click()
         started = time.monotonic()
-        print("Recording started; testing graph input and camera auto-lock", flush=True)
+        print(
+            "Battle ready. Use Stop battle to leave cleanly."
+            if interactive
+            else "Recording started; testing graph input and camera auto-lock",
+            flush=True,
+        )
         previous_inside = False
         milestones = set()
         next_metric = 0.0
-        while time.monotonic() - started < seconds and game.poll() is None:
+        while (
+            time.monotonic() - started < (1200 if interactive else seconds)
+            and game.poll() is None
+            and not stop_requested
+        ):
             if page.is_closed() or not win32gui.IsWindow(sc2_hwnd):
                 break
             if any(event.type == pygame.QUIT for event in pygame.event.get()):
@@ -381,20 +400,20 @@ async def probe(seconds: int) -> None:
                 await action("lock")
             previous_inside = inside
             elapsed = time.monotonic() - started
-            if elapsed >= 5 and 5 not in milestones:
+            if not interactive and elapsed >= 5 and 5 not in milestones:
                 milestones.add(5)
                 await page.get_by_role("button", name="Rotate right", exact=True).click()
                 army = page.locator('[role="treeitem"][aria-level="1"][data-lane="army"]')
                 await army.focus()
                 await page.keyboard.press("Enter")
-            if elapsed >= 10 and 10 not in milestones:
+            if not interactive and elapsed >= 10 and 10 not in milestones:
                 milestones.add(10)
                 await action("lock")  # Explicitly enable camera input.
                 center = win32gui.ClientToScreen(sc2_hwnd, (80, rectangle[3] - 85))
                 win32api.SetCursorPos(center)
                 win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0)
                 win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0)
-            if elapsed >= 12 and 12 not in milestones:
+            if not interactive and elapsed >= 12 and 12 not in milestones:
                 milestones.add(12)
                 # Leave across the right edge, reproducing the operator's drift trigger.
                 win32api.SetCursorPos(
@@ -421,9 +440,10 @@ async def probe(seconds: int) -> None:
             await asyncio.sleep(0.05)
         if recording:
             await action("record")
-        client.save_source_screenshot(
-            "Battle window", "png", str(evidence / "composite.png"), 1920, 1080, -1
-        )
+        if win32gui.IsWindow(sc2_hwnd):
+            client.save_source_screenshot(
+                "Battle window", "png", str(evidence / "composite.png"), 1920, 1080, -1
+            )
 
         write_json(
             evidence / "probe.json",
@@ -439,7 +459,7 @@ async def probe(seconds: int) -> None:
                 "audio_inputs": client.get_input_list().inputs,
             },
         )
-        print(f"SAVED {record_path}", flush=True)
+        print(f"Evidence: {evidence}\nRecording: {record_path or 'none requested'}", flush=True)
     finally:
         write_json(evidence / "control.json", {"locked": True, "stop": True})
         if recording:
@@ -471,8 +491,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--record-seconds", type=int, default=40, choices=range(20, 91))
     parser.add_argument("--game-child")
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Operator-controlled local match; no automatic camera/graph movements",
+    )
+    parser.add_argument(
+        "--auto-record", action="store_true", help="Begin recording when the game is ready"
+    )
     args = parser.parse_args()
     if args.game_child:
-        game_child(args.game_child, ROOT / "data/jev/runs" / args.game_child / "battle")
+        game_child(
+            args.game_child, ROOT / "data/jev/runs" / args.game_child / "battle", args.interactive
+        )
     else:
-        asyncio.run(probe(args.record_seconds))
+        asyncio.run(probe(args.record_seconds, args.interactive, args.auto_record))

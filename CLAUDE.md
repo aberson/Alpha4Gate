@@ -11,7 +11,7 @@ Second player family: Jev (`src/jev/` + `bots/jev/v1/` + `bots/jev/v2/`), a deci
 - Python >=3.12 (dev venv runs 3.14, Linux CI runs 3.12), uv, burnysc2 v7.1.3, FastAPI, React+TypeScript+Vite
 - Deep learning: PyTorch, Stable Baselines 3 (PPO), SQLite for training data
 - Optional `[viewer]` extra (Windows only): pygame-ce + pywin32 + psutil — the themed self-play/evolve viewer container
-- Testing: pytest (131 test files; 3345 passing + 12 skipped with the optional `[viewer]` extra installed, 3310 passing + 32 skipped without it, 2026-10-10; `sc2`-marked tests are deselected by default; 9 of the skips are the opt-in real-browser Jev tests (6 launch, 3 live graph), which run only with `JEV_BROWSER_TESTS=1` and `uv run --with playwright`) + vitest (399 frontend tests: 393 passing, 6 skipped), ruff, mypy strict mode
+- Testing: pytest (131 test files; 3345 passing + 12 skipped with the optional `[viewer]` extra installed, 3310 passing + 32 skipped without it, 2026-10-10; `sc2`-marked tests are deselected by default; 9 of the skips are the opt-in real-browser Jev tests (6 launch, 3 live graph), which run only with `JEV_BROWSER_TESTS=1` and `uv run --with playwright`) + vitest (415 frontend tests: 409 passing, 6 skipped (2026-10-11)), ruff, mypy strict mode
 
 ## Commands
 
@@ -100,6 +100,22 @@ Wiki: `documentation/wiki/index.md` — system diagram and deep-dive pages.
 
 ## SC2 requirements
 
+### Jev Battle View preview
+
+`powershell -File scripts/launch-jev-battle.ps1` opens a local scripted v2 game
+beside the expanded 3D Branch faces graph. `-AutoRecord` records automatically;
+`-CheckOnly` checks local prerequisites without launching. Windows-only fixed
+1920×1080 preview; needs Edge and the isolated portable OBS `BattleProbe` profile
+(authenticated websocket port 4457), installed on the development workstation.
+The launcher strips the Typesafe key before starting helpers; no paid calls.
+`frontend/src/components/JevBattleView.tsx` is selected with `?battle=1`;
+`scripts/probes/jev_battle_view.py` owns native hosting and camera/capture controls.
+Use **Stop battle**, not console termination. Thirty focused frontend tests plus
+live launch/record/stop passed; this is not J2 acceptance or a full production host.
+Guide: `documentation/operator/jev-battle-view.md`. Native geometry settling,
+continuous event pumping and audio-before-reparenting findings are in
+`documentation/investigations/jev-battle-view-feasibility-2026-10-11.md`.
+
 - StarCraft II must be installed at `C:\Program Files (x86)\StarCraft II\`
 - Maps from Blizzard CDN (not GitHub — those are Git LFS pointers)
 - SC2 client must be running for integration tests (`pytest -m sc2`)
@@ -111,4 +127,4 @@ Wiki: `documentation/wiki/index.md` — system diagram and deep-dive pages.
 - [`.claude/rules/evolve.md`](.claude/rules/evolve.md) — reading evolve run state, pre-launch hygiene, snapshot import isolation, dev-apply sub-agent sanitization, fitness noise floor, training-imp pool restriction.
 - [`.claude/rules/wsl-evolve.md`](.claude/rules/wsl-evolve.md) — eight setup gotchas for Linux-SC2 evolve substrate. Each one breaks evolve differently; applying only a subset gives partial-success symptoms.
 
-Jev continuation (2026-10-11): build span 214-221 is DONE (#331-#338 closed, `f52d4f6`) and the branch-focused viewer shipped in `57f7274`; Step 213 stays operator-deferred, not passed. Immediate follow-up: adapt `tests/test_jev_live_graph.py` to branch cards and explicit full-graph mode, then rerun all nine opt-in Jev browser fixtures. Next gameplay gate: operator Step 222 (#339) = plan Manual UAT M1, at most three paid matches; then Step 223 (#340, wait). Resolve the unbuilt D3/section-5 scope items before freezing v2. See [handoff](documentation/plans/jev-v2-handoff.md).
+Jev continuation (2026-10-11): 214-221 DONE; browser fixtures repaired in `03c552a`; compact/radial/3D graph views and combined Battle View preview shipped. Step 213 stays deferred, 222/223 pending. Current UX follow-up is production Battle View integration. Recovery completion and measured strategy/army choice flattening remain separate, unbuilt follow-ups; preserve before/after evidence. See the Battle View guide and `documentation/investigations/jev-recovery-stall-2026-10-11.md`. Resolve D3/section-5 scope before freezing v2; interrupted visual tests are not acceptance matches.

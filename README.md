@@ -1,6 +1,6 @@
 # Alpha4Gate
 
-![Python](https://img.shields.io/badge/python-3.12-blue) [![linux-tests](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml/badge.svg?branch=master)](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml) ![pytest](https://img.shields.io/badge/pytest-3310%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-393%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
+![Python](https://img.shields.io/badge/python-3.12-blue) [![linux-tests](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml/badge.svg?branch=master)](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml) ![pytest](https://img.shields.io/badge/pytest-3310%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-409%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
 
 An AI agent that teaches itself to get better at a task with — zero human input.
 
@@ -241,7 +241,7 @@ cd frontend && npm run dev
 | Observable | Exhibition shell for Phase L: left/right version pickers and a placeholder card (replay-stream-as-live not shipped) |
 | Processes | Live system process monitor, resource gauge, WSL processes, port status, state files, backend restart, plus the severity-filtered alert list (ack/dismiss) the old Alerts tab held |
 | Help | Renders `documentation/wiki/operator-commands.md` from disk |
-| Jev | Jev decision graph: run selector, a **Branch overview** with one card per root lane (status, current action, latest blocker; click to focus), a graph of the focused branch with its lane colour, active/waiting nodes and only the recorded edge activity (the current path, and a 2-second fading trail labeled recent), **Full graph (debugging)** for every root and **Fullscreen**, an opt-in **Follow activity**, node details with each node's decision source (Typesafe request, fallback or local graph), Army decision panel, a **Plans and decisions** panel for v2 runs (plan stage, blocker or outcome, deciding request, slot turn, what may start next, each question's source), **Recent decisions** (the last six recorded question choices and sources), recent trace. Stale, offline and finished runs are labeled last known and never animate; reduced motion stops all animation. `?tab=jev&run=<run_id>` opens one exact run; `?tab=jev&launch=<session_id>` follows a dashboard-first launch (Preparing, Starting, Live, Finished; picking another run pauses following until **Resume live**) |
+| Jev | Archived/live run selector; independently toggled branch cards with Add all/Collapse all; compact Nodes or Boxes, Tree/Radial layouts and Dots 3D shapes; Start hub and labeled branch roots; full-width graph with inspector below or optional overlay; recorded activity, plan and decision sources. `?tab=jev&run=<run_id>` opens an exact run; `?tab=jev&launch=<session_id>` follows a dashboard-first launch. Standalone Windows Battle View at `?battle=1` combines native SC2 and the graph through the local launcher. |
 
 In-app `AlertToast` lives at the App root and shows new alerts as they fire, regardless of which tab is active.
 
@@ -266,6 +266,14 @@ uv run python -m bots.v0.runner --map Simple64
 ```
 
 ### Run the Jev player
+
+**Combined Battle View preview (Windows):** watch local Jev with the live 3D graph,
+decision text and event log in one window. Run
+`powershell -File scripts/launch-jev-battle.ps1`; add `-AutoRecord` for automatic
+1080p recording with game audio only. Desktop shortcuts are installed on the
+development workstation. [Try it yourself](documentation/operator/jev-battle-view.md).
+This preview uses scripted Jev (no credits), requires the isolated portable OBS
+setup, and does not complete the v2 gameplay acceptance gates.
 
 Jev is a separate player family executed by a decision graph (interpreted by `src/jev/`); there is no PPO in it. `v1.jev` (`bots/jev/v1/policy.json`, frozen) is a one-base, four-Gateway Zealot rush. `v2.jev` (`bots/jev/v2/policy.json`, Jev v2 Steps 214-221) is the adaptive player: nine lanes (economy, supply, construction, tech, expansion, scouting, production, army, reserve) with planned supply, grouped reinforcements, one Probe scout, a gas economy, persistent tech (Cybernetics Core) and natural-expansion plans, and a Zealot/Stalker army. The default `scripted` provider runs locally. Opt into the actual hosted Typesafe Jev model with `--decision-provider typesafe`: for v1 it chooses attack, defend or regroup; for v2 four question families (`strategy`, `army_mode`, `expansion_response`, `production_mix`) share one request budget and choose among the graph's own branches, while the graph keeps every legal command. Each match writes evidence to `data/jev/runs/<run_id>/`, served by the dashboard's Jev tab (`/?tab=jev`, or `/?tab=jev&run=<run_id>` for one exact run) and the `/api/jev` routes: read-only run evidence, plus the loopback launch-readiness receipt that the dashboard-first launcher uses.
 
@@ -445,4 +453,4 @@ Also thanks to all the creators and companies who made the mountain of tools thi
 
 </details>
 
-Jev continuation (2026-10-11): build span 214-221 and the branch-focused viewer are shipped; Step 213 stays operator-deferred. Next: adapt and rerun the opt-in browser fixtures for the new viewer, then operator Step 222 (#339) = Manual UAT M1, at most three paid matches. See [handoff](documentation/plans/jev-v2-handoff.md).
+Jev continuation (2026-10-11): build span 214-221, browser-fixture repair, compact/radial/3D graph views and the Windows combined Battle View preview are shipped. Thirty focused Battle View/graph tests pass; native recording and stop were smoke-tested. Step 213 stays deferred and Step 222 remains pending after the interrupted recovery-stall investigation. Next UX work is production Battle View integration; recovery completion and measured choice flattening remain separate follow-ups. See the [Battle View guide](documentation/operator/jev-battle-view.md) and [recovery findings](documentation/investigations/jev-recovery-stall-2026-10-11.md).

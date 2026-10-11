@@ -132,6 +132,11 @@ There is no automatic camera motion. Last-known states remain labeled and muted;
 reduced motion disables activity animation in this view too. The 3D view uses SVG
 projection and adds no rendering dependency or service calls.
 
+Shapes include Sphere, Hollow sphere, Branch faces and Cone. A visible Start hub
+and permanent branch-root labels orient the forest; an optional inspector overlay
+keeps selected-node details inside the graphic. These are presentation choices,
+not new runtime graph nodes.
+
 **JevGraph:** `d3-hierarchy` SVG tree of the archived policy forest with active
 and waiting node status. Supports pan, zoom, and collapse, and is a
 keyboard-navigable ARIA tree. Each root lane has a colour (a band, a node stripe,
@@ -144,6 +149,18 @@ without changing the selection.
 
 **ConnectionStatus:** Header connection dot + advised-run badge mounted at
 the App shell, outside the tab switch.
+
+**JevBattleView:** `?battle=1&run=<run_id>` selects a standalone Windows preview
+instead of the normal tab shell. Reuses `useJevRun` and `JevGraph` with Branch faces,
+all nodes initially expanded, decision summaries and a three-entry event log.
+`scripts/launch-jev-battle.ps1` starts/reuses dashboard and isolated OBS, then
+`scripts/probes/jev_battle_view.py --interactive` hosts Edge and SC2 as sibling
+native child windows. The injected `battleAction` binding supplies recording,
+camera lock and Stop battle; this is not a new HTTP API. `-AutoRecord` starts
+recording when gameplay is ready. The preview is local scripted only, fixed
+1920×1080, with game-process audio and no microphone. See the
+[operator guide](../operator/jev-battle-view.md) and
+[native capture findings](../investigations/jev-battle-view-feasibility-2026-10-11.md).
 
 **StaleDataBanner:** Reusable stale-data warning shown by tabs whose
 `useApi` hook reports a fetch error or staleness threshold exceeded.

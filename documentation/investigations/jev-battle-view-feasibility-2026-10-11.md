@@ -120,3 +120,18 @@ text and long-running capture need their own integrated smoke test.
 
 The separate strategy/army choice-flattening experiment remains deferred. Preserve
 its before/after policy, traces and benchmark configuration when that work starts.
+
+## Operator launcher follow-up
+
+`scripts/launch-jev-battle.ps1` now starts/reuses dashboard and isolated OBS and
+runs the probe's `--interactive` mode. It has manual recording by default and an
+`-AutoRecord` option; `-CheckOnly` checks local prerequisites. The two desktop
+shortcuts target this script. Interactive mode has no automated graph/camera
+movements, uses 900-game-second/1200-wall-second limits and provides **Stop battle**.
+This is a convenient local wrapper, not the completed production integration above.
+
+Live launcher smoke `db328a66559344259737f96c776cd777` verified the automatic-record
+path and exact pane fit. A native button click on **Stop battle** saved the MKV and
+stopped the match; the launcher exited zero and no SC2 client remained. Camera
+samples contain one unchanged position throughout, confirming the probe's automatic
+camera exercises were disabled. Details: [operator guide](../operator/jev-battle-view.md).

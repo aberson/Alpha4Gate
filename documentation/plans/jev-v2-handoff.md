@@ -1,34 +1,26 @@
-# Jev v2 handoff: browser fixture update, then operator Step 222
+# Jev v2 handoff: Battle View preview, then gameplay follow-up
 
-Status 2026-10-10: build span 214-221 (#331-#338 closed) is DONE on `master-plan/phase-ev` (`0b46350`..`f52d4f6`; Manual UAT appended in `b83fd69`), not merged to `master`. 10 of 13 J2 steps are DONE (212, 224, 214-221). Remaining: Step 213 (#330, operator-deferred, not passed), Step 222 (#339, operator) and Step 223 (#340, wait). No SC2 match and no hosted Typesafe call were made during 214-221. No build span is pending. After the build, `57f7274` (2026-10-11, dashboard only) made the Jev tab branch-focused: **Branch overview** cards, one focused branch with **Full graph (debugging)** and **Fullscreen** controls, and a **Recent decisions** list. The gates below were measured at `f52d4f6`; at `57f7274` vitest is 393 passed, 6 skipped (399 tests). The three live-graph browser fixtures (`tests/test_jev_live_graph.py`) predate `57f7274` and need updating: at least two read lane-legend attributes the focused page no longer renders.
+Status 2026-10-10: build span 214-221 (#331-#338 closed) is DONE on `master-plan/phase-ev` (`0b46350`..`f52d4f6`; Manual UAT appended in `b83fd69`), not merged to `master`. 10 of 13 J2 steps are DONE (212, 224, 214-221). Remaining: Step 213 (#330, operator-deferred, not passed), Step 222 (#339, operator) and Step 223 (#340, wait). No SC2 match and no hosted Typesafe call were made during 214-221. No build span is pending. After the build, `57f7274` (2026-10-11, dashboard only) made the Jev tab branch-focused: **Branch overview** cards, one focused branch with **Full graph (debugging)** and **Fullscreen** controls, and a **Recent decisions** list. The gates below were measured at `f52d4f6`; at `57f7274` vitest is 393 passed, 6 skipped (399 tests). At that historical checkpoint the live-graph fixtures required repair; `03c552a` subsequently repaired them (see current continuation below).
 
 Progress: [J2 inventory](../jev-v2-progress.html). Read the [plan](jev-v2-plan.md) (Build notes 214-221 and `## Manual UAT`), [v2 operator guide section 13](../operator/jev-v2-validation.md#13-the-v2-player-and-the-live-graph-steps-214-221) (its "Before Step 222" part) and the [validation report](jev-v2-validation.md).
 
-## Immediate action: adapt the browser fixtures
+## Current continuation ? 2026-10-11
 
-Update `tests/test_jev_live_graph.py` for the branch-focused viewer before the next
-live acceptance session. `_lanes()` currently reads `data-active`/`data-waiting`
-from the former legend; the new branch cards expose their counts as visible text.
-Tests that require every graph lane must click **Full graph (debugging)** explicitly.
-Keep assertions for the single-branch default and stable selection, rather than
-restoring the cramped default just to satisfy the old fixtures.
+Browser-fixture repair shipped in `03c552a`; later graph UI checks are recorded
+in the session's validation evidence. The earlier fixture-repair instructions are
+historical. Current frontend suite: 409 passed / 6 skipped. The Windows combined
+Battle View preview now has desktop launchers, optional automatic recording and a
+clean Stop battle control; see [the operator guide](../operator/jev-battle-view.md).
 
-Then run all nine browser fixtures from the repository root, using the harness's
-mock game and mock Typesafe transport (no real SC2 or paid service call):
+The operator is trying this local scripted preview before further development.
+Production Battle View integration remains next UX work. Keep recovery completion
+and measured strategy/army choice flattening separate; preserve before/after policy,
+trace and benchmark evidence for flattening. The [recovery investigation](../investigations/jev-recovery-stall-2026-10-11.md)
+explains the interrupted development match; it is not a win or Step 222 acceptance.
+No held-out evaluation or v2 freeze is authorized by this viewer wrap.
 
-```powershell
-$env:JEV_BROWSER_TESTS = '1'
-try {
-    uv run --with playwright pytest tests/test_jev_live_graph.py tests/test_jev_launch.py -k "LiveGraph or RealBrowser" -p no:cacheprovider
-} finally {
-    Remove-Item Env:JEV_BROWSER_TESTS
-}
-```
-
-Record the exit code and results before proceeding. Before freezing v2, explicitly
-resolve the unbuilt D3/section-5 items recorded in Step 218: saturation-based worker
-growth (current `probe_target` is 16), max health/shield facts and low-durability
-regrouping, and `available_abilities`. These are scope decisions, not shipped features.
+Before freezing v2, resolve the unowned D3/section-5 scope items in the plan.
+The gameplay gate below remains pending; it is not the immediate desktop-preview task.
 
 ## Next gameplay gate: operator Step 222 (Manual UAT M1)
 
@@ -68,6 +60,6 @@ The v1 policy hash `510a72dfb167b7200123cbc8436c912f02d3b0fb5798657db3c62e3f5f8f
 - pytest: 3345 passed, 12 skipped, 2 deselected with the `[viewer]` extra; 3310 passed, 32 skipped without it. The hygiene test fails only while the uncommitted derived `.claude/task-state/current.md` carries home paths.
 - vitest: 390 passed, 6 skipped (27 files).
 - mypy --strict clean (828 files); ruff clean; eslint 0 errors (1 pre-existing warning); vite build ok.
-- Opt-in real-browser suite (`JEV_BROWSER_TESTS=1`): 9/9 at `f52d4f6`, before `57f7274`; the 3 live-graph fixtures must be updated before they are run again.
+- Opt-in real-browser suite (`JEV_BROWSER_TESTS=1`): 9/9 at `f52d4f6`, before `57f7274`; the subsequent fixture repair is `03c552a`.
 
 Review evidence: `.build-step/jev-v2-214/` .. `.build-step/jev-v2-221/` (gitignored). `.claude/task-state/current.md` and `dev.code-workspace` remain excluded from commits.
