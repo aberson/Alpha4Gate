@@ -598,6 +598,7 @@ export interface JevGraphProps {
   compact?: boolean;
   layoutMode?: "tree" | "radial" | "dots3d";
   dotShape?: DotShape;
+  initiallyExpanded?: boolean;
   /** Roots to draw. The archived policy remains intact; this only limits presentation. */
   displayRootIds?: readonly string[];
   /** The parent branch overview already carries this information in the focused view. */
@@ -623,6 +624,7 @@ export function JevGraph({
   compact = false,
   layoutMode = "tree",
   dotShape = "sphere",
+  initiallyExpanded = false,
   displayRootIds,
   showLaneLegend = true,
   fitOnMount = false,
@@ -648,7 +650,7 @@ export function JevGraph({
     [policy, displayRootIds],
   );
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() =>
-    overviewCollapsed(structure),
+    initiallyExpanded ? new Set() : overviewCollapsed(structure),
   );
   const [transform, setTransform] = useState<Transform>(IDENTITY);
   const [focusedId, setFocusedId] = useState<string | null>(null);
