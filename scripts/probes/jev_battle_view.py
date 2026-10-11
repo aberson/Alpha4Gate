@@ -208,12 +208,35 @@ async def probe(
     )
     win32gui.SetWindowPos(native_host, 0, 0, 0, 0, 0, win32con.SWP_NOSIZE | win32con.SWP_NOZORDER)
     browser_hwnd = None
+    maintain_stacking = True
+    stacking_repairs = 0
+    stacking_checks = []
 
     async def pump_native_events() -> None:
+        nonlocal stacking_repairs
         # Embedded browser operations can wait for messages from their native parent.
         # Keep that parent responsive even while awaiting Playwright or browser close.
         while True:
             pygame.event.pump()
+            # Native browser activation raises its full-size surface above SC2.
+            # Restore sibling order without taking focus from browser controls.
+            if (
+                maintain_stacking
+                and sc2_hwnd
+                and win32gui.IsWindow(sc2_hwnd)
+                and win32gui.GetParent(sc2_hwnd) == native_host
+                and win32gui.GetTopWindow(native_host) != sc2_hwnd
+            ):
+                win32gui.SetWindowPos(
+                    sc2_hwnd,
+                    win32con.HWND_TOP,
+                    0,
+                    0,
+                    0,
+                    0,
+                    win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE,
+                )
+                stacking_repairs += 1
             await asyncio.sleep(0.02)
 
     event_pump = asyncio.create_task(pump_native_events())
@@ -432,6 +455,27 @@ async def probe(
             elapsed = time.monotonic() - started
             if not interactive and elapsed >= 5 and 5 not in milestones:
                 milestones.add(5)
+                # Reproduce native activation; synthetic DOM clicks alone do not
+                # raise Edge's HWND and missed this regression in the first probe.
+                for _ in range(3):
+                    win32gui.SetWindowPos(
+                        browser_hwnd,
+                        win32con.HWND_TOP,
+                        0,
+                        0,
+                        0,
+                        0,
+                        win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE,
+                    )
+                    foreground = win32gui.GetForegroundWindow()
+                    await asyncio.sleep(0.1)
+                    check = {
+                        "sc2_on_top": win32gui.GetTopWindow(native_host) == sc2_hwnd,
+                        "foreground_preserved": win32gui.GetForegroundWindow() == foreground,
+                    }
+                    stacking_checks.append(check)
+                    if not all(check.values()):
+                        raise RuntimeError(f"Native sibling stacking regression: {check}")
                 await page.get_by_role("button", name="Rotate right", exact=True).click()
                 army = page.locator('[role="treeitem"][aria-level="1"][data-lane="army"]')
                 await army.focus()
@@ -465,6 +509,7 @@ async def probe(
                     "game_parent": win32gui.GetParent(sc2_hwnd),
                     "game_client": win32gui.GetClientRect(sc2_hwnd),
                     "game_origin": win32gui.ClientToScreen(sc2_hwnd, (0, 0)),
+                    "game_on_top": win32gui.GetTopWindow(native_host) == sc2_hwnd,
                 }
             )
             await asyncio.sleep(0.05)
@@ -482,6 +527,8 @@ async def probe(
                 "video": record_path,
                 "duration": None if started is None else time.monotonic() - started,
                 "metrics": metrics,
+                "stacking_repairs": stacking_repairs,
+                "stacking_checks": stacking_checks,
                 "viewport": viewport,
                 "game_rect": rectangle,
                 "graph_nodes": await page.get_by_role("treeitem").count(),
@@ -491,6 +538,7 @@ async def probe(
         )
         print(f"Evidence: {evidence}\nRecording: {record_path or 'none requested'}", flush=True)
     finally:
+        maintain_stacking = False
         write_json(evidence / "control.json", {"locked": True, "stop": True})
         if recording:
             client.stop_record()

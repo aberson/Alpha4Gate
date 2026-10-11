@@ -157,3 +157,24 @@ recording was saved and Stop battle ended the launcher with exit zero. This one
 correction smoke was capped at 20 requests; normal desktop launches retain 450.
 Four provider/credential regression tests and four Battle View tests passed;
 build/typecheck, lint and Ruff passed (existing warnings unchanged).
+
+## Game hidden after viewer interaction - 2026-10-11
+
+Operator run `6095983ddd2f48408da9c28daae73564` retained its SC2 parent and
+pane geometry but showed the browser's waiting placeholder after interaction.
+Native reproduction in `f4ba656879894a6fa0e2ea6f672f3f34` confirmed that raising
+the full-size Edge sibling covers SC2; raising SC2 restores it. The earlier
+synthetic graph clicks did not exercise this native window activation behavior.
+
+The host event pump now restores SC2's sibling order when needed, using
+[`SetWindowPos` with `SWP_NOACTIVATE`](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowpos)
+to preserve input activation and pane geometry. Maintenance is disabled before
+cleanup and only applies to SC2 while attached to this host.
+
+Local display regression run `e2928ef6b7964bf4a00df098b87cdb76` deliberately
+raised Edge three times: all three repairs passed with foreground preserved.
+All 24 window-order samples had SC2 on top; graph rotation and Army inspection worked,
+and the recorded composite visibly contains SC2 and all 292 graph nodes.
+Evidence: that run's `battle/probe.json`, `composite.png`, and MKV. The short test
+used the scripted developer probe with zero paid requests; both desktop shortcuts
+continue to select hosted Typesafe. Four launcher tests and Ruff passed.
