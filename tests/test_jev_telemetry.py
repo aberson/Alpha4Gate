@@ -397,6 +397,50 @@ def test_trace_keeps_changes_actions_and_one_root_summary_per_game_second(
     assert _sequences(recorder.run_dir) == [1, 2, 3, 6, 8, 9, 10]
 
 
+def test_trace_keeps_a_guard_whose_decision_source_changed(tmp_path: Path) -> None:
+    """Plan J2 Step 221: a hosted-decision guard that a newer request (or the fallback)
+    keeps passing is traced again, so the browser never attributes the node to an old
+    request; node facts without ``source``/``request_id`` (every v1 node, e.g. the army
+    mode guard) trace exactly as before -- status and branch only."""
+    recorder = _started(tmp_path)
+    runtime = _runtime(recorder)
+
+    def guard(sequence: int, seconds: float, source: str, request: int | None) -> Event:
+        facts = {"question_id": "strategy", "slot": "macro", "choice": None}
+        facts.update({"source": source, "request_id": request})
+        return _event(
+            recorder,
+            sequence,
+            kind="node",
+            node_id="tech.start.chosen",
+            status="success",
+            game_seconds=seconds,
+            facts=facts,
+        )
+
+    def army(sequence: int, seconds: float, mode: str | None) -> Event:
+        return _event(
+            recorder,
+            sequence,
+            kind="node",
+            node_id="army.attack.mode",
+            status="success",
+            game_seconds=seconds,
+            facts={"mode": mode, "branch": "attack"},
+        )
+
+    ticks = [
+        [guard(1, 0.0, "typesafe", 4), army(2, 0.0, None)],
+        [guard(3, 0.25, "typesafe", 4), army(4, 0.25, "attack")],  # nothing the key reads
+        [guard(5, 0.5, "typesafe", 9), army(6, 0.5, "attack")],  # a newer request
+        [guard(7, 0.75, "local_fallback", None)],  # the fallback took over
+        [guard(8, 0.8, "local_fallback", None)],
+    ]
+    for events in ticks:
+        recorder.update(runtime, events)
+    assert _sequences(recorder.run_dir) == [1, 2, 5, 7]
+
+
 def _segments(run_dir: Path) -> list[int]:
     names = [p.name for p in run_dir.iterdir() if p.name.startswith("events.")]
     return sorted(int(name.split(".")[1]) for name in names)

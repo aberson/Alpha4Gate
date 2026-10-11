@@ -73,7 +73,12 @@ One :class:`JevRuntime` executes one validated policy for one run:
   hold at once -- including this tick's held minerals -- and cancels the lane's
   tasks that have not started a structure, so no retry survives an abandoned
   branch. Selections may ask for SC2 path queries (:meth:`JevRuntime.path_requests`),
-  which the controller has the adapter answer before the next tick.
+  which the controller has the adapter answer before the next tick. Once per game
+  second each plan slot the policy can start a plan in is also summarized
+  (:data:`PLAN_SLOT_SUMMARY_REASON`, plan J2 Step 221, D5): its turn state, whether
+  each of its kinds may start now (the store's own refusal check) and its latest
+  plans with their outcomes, so a finished plan and an owed turn survive the bounded
+  recent-event window as open plans' own summaries do.
 * **Hosted strategic choices (Jev v2, plan J2 Step 219, D2).** Only for a policy
   with strategy guards (``strategy_is`` / ``strategy_local``). The controller hands
   the runtime what each plan slot's guards read (:meth:`JevRuntime.set_strategy`:
@@ -133,6 +138,7 @@ command specifications it decided on.
 from __future__ import annotations
 
 import itertools
+import math
 from collections import Counter, deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -254,6 +260,7 @@ __all__ = [
     "MAX_TRACKED_GIVE_UPS",
     "MAX_TRACKED_VISITS",
     "NODE_BUDGET_REASON",
+    "PLAN_SLOT_SUMMARY_REASON",
     "REFUSAL_CAUSES",
     "RUNTIME_NODE_ID",
     "SITE_EXCLUSION_CAUSES",
@@ -274,6 +281,9 @@ EXECUTION_DECISION_REASONS: Final[Mapping[ExecutionQuestion, str]] = {
     "expansion_response": "Expansion response decision source",
     "production_mix": "Production mix decision source",
 }
+#: The reason of the once-per-game-second diagnostic summarizing one plan slot (Step
+#: 221, D5), on the first lane holding a start node of that slot's kinds.
+PLAN_SLOT_SUMMARY_REASON: Final = "Plan slot summary"
 #: Typed cause recorded on every failed task (the reason text stays human-readable).
 FailureCause = Literal["lost", "unacknowledged", "rejected", "deadline", "no_progress"]
 FAILURE_CAUSES: Final[tuple[FailureCause, ...]] = get_args(FailureCause)
@@ -320,6 +330,11 @@ _AllowedAgain = Literal["moved", "sighted_again", "search_cycle"]
 #: The choice an expansion-response branch runs under when the local graph decides
 #: (never a response name).
 _LOCAL_CHOICE: Final = "@local"
+
+
+#: One plan slot's summary source: the lane it is reported on, the kinds the policy
+#: can start in the slot, and those kinds' start nodes.
+type _SlotSummary = tuple[str, tuple[PlanKind, ...], tuple[str, ...]]
 
 
 #: Largest integer a config field may hold (keeps deque/allocation sizes sane).
@@ -1021,6 +1036,10 @@ class JevRuntime:
         self._plans: PlanStore | None = None
         self._plan_lanes: dict[str, str] = {}  # lane root -> its start_plan node
         self._plan_rank: dict[str, int] = {}  # plan-lane node -> pre-order position
+        # Slot -> (the lane its summary is reported on, the kinds the policy can start
+        # in it, those kinds' start nodes), for the once-per-second slot summary.
+        self._slot_summaries: dict[PlanSlot, _SlotSummary] = {}
+        self._slot_summary_second = -1
         self._path_requests: dict[Point, None] = {}
         self._tick_spends: list[tuple[str, str]] = []  # (root, node) of new commitments
         starts = [n.id for n in policy.nodes if n.operation == OP_START_PLAN]
@@ -1039,6 +1058,16 @@ class JevRuntime:
                 if lane_starts:  # validation allows one start_plan per root lane
                     self._plan_lanes[root] = lane_starts[0]
                     self._plan_rank.update((node_id, i) for i, node_id in enumerate(order))
+            for slot in PLAN_SLOTS:
+                kinds = tuple(k for k in PLAN_KINDS if k in named and PLAN_SLOT[k] == slot)
+                nodes = tuple(
+                    start
+                    for start in self._plan_lanes.values()
+                    if PLAN_SLOT[self._start_kind(start)] == slot
+                )
+                holders = [root for root, start in self._plan_lanes.items() if start in nodes]
+                if kinds and holders:  # policy root order: the first such lane reports it
+                    self._slot_summaries[slot] = (holders[0], kinds, nodes)
         for root in policy.roots:
             pending = [root]
             while pending and self._strategy_lane is None:
@@ -1069,6 +1098,11 @@ class JevRuntime:
                 allowed = {part.choice, _LOCAL_CHOICE} if part.local else {part.choice}
                 for member in part.nodes:
                     self._response_branches[member] = (point.plan, frozenset(allowed))
+
+    def _start_kind(self, node_id: str) -> PlanKind:
+        """The plan kind a ``start_plan`` node starts (validated by the policy)."""
+        name = str(self._args[node_id]["kind"])
+        return next(kind for kind in PLAN_KINDS if kind == name)
 
     def _tracked_nodes(self, memory: TrackedMemory) -> frozenset[str]:
         return frozenset(
@@ -1371,6 +1405,7 @@ class JevRuntime:
         if self._plans is not None:
             self._plans.summarize(now)
             self._apply_plan_outcomes()
+            self._summarize_slots(now)
         self._last_strategy_reach = frozenset(self._strategy_reached)
         events = tuple(self._events)
         self._events = []
@@ -2651,6 +2686,49 @@ class JevRuntime:
         elif status == "failed" and task.lifecycle.tracks_movement and cause != "lost":
             plans.move_failed(key, task.reason, now)  # a lost walker is begin_tick's
         self._apply_plan_outcomes()
+
+    def _summarize_slots(self, now: float) -> None:
+        """Once per game second, one :data:`PLAN_SLOT_SUMMARY_REASON` diagnostic per
+        slot the policy can start a plan in (module docstring: Persistent plans). Its
+        facts are read-only views of the store: the slot's turn state, per startable
+        kind whether :meth:`jev.plans.PlanStore.refusal` would let it start now (and
+        why not), and the latest plan of each of the slot's start nodes.
+
+        Each ``plans`` entry is exactly that plan's :meth:`jev.plans.PlanRecord.facts`,
+        the facts its own plan events carry (one contract for every plan fact on the
+        wire). This runs after :meth:`jev.plans.PlanStore.summarize` in the same tick,
+        so a reader that takes the newest event about a plan reads every fact, its
+        deadline and holds included."""
+        plans = self._plans
+        second = math.floor(now)
+        if plans is None or second <= self._slot_summary_second:
+            return
+        self._slot_summary_second = second
+        for slot, (lane, kinds, nodes) in self._slot_summaries.items():
+            kind_facts: list[JsonValue] = []
+            for kind in kinds:
+                refusal = plans.refusal(kind, now)
+                kind_facts.append({"kind": kind, "may_start": refusal is None, "refusal": refusal})
+            latest: list[JsonValue] = []
+            for node_id in nodes:
+                record = plans.record(node_id)
+                if record is None:
+                    continue
+                latest.append(record.facts())
+            self._emit(
+                lane,
+                None,
+                "diagnostic",
+                "success",
+                PLAN_SLOT_SUMMARY_REASON,
+                {
+                    "slot": slot,
+                    "slot_turn": plans.slot(slot).facts(),
+                    "kinds": kind_facts,
+                    "plans": latest,
+                    "summary": True,
+                },
+            )
 
     def _apply_plan_outcomes(self) -> None:
         """Emit the store's plan events, then apply what aborts and completions

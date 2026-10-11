@@ -708,7 +708,7 @@ the steps numerically and bypass 224's dependency before live tests.
 ### Step 221: Visualize active plans and execution paths
 - **Problem:** Make the live graph explain what Jev is doing and why progress waits.
 - **Type:** code
-- **Status:** PENDING
+- **Status:** DONE (2026-10-10)
 - **Issue:** #338
 - **Flags:** --reviewers full --ui
 - **Start-cmd:** bash scripts/start-dev.sh
@@ -717,6 +717,22 @@ the steps numerically and bypass 224's dependency before live tests.
 - **Produces:** Colored lanes, observed edge activity, follow toggle, plan/stage/blocker panel and node-attributed source evidence.
 - **Done when:** Actual recorder-reader-API roundtrip preserves diagnostic facts; browser fixtures demonstrate simultaneous active lanes, stale/offline/final handling, reduced motion and old v1 archives; no fabricated path transitions; UI tests, lint, types and build pass. Real match observation follows in 222.
 - **Depends on:** 220
+- **Build notes (2026-10-10):**
+  - **Graph view:** the Jev graph (`JevGraph.tsx`, `JevTab.tsx`) shows colored root lanes, observed edge activity and a follow toggle.
+    - "Current" edges join a recorded running parent and child. "Recent" edges come from a recorded `facts.child` within 2 game seconds; nothing is invented.
+    - Stale, offline and final states are handled, plus reduced motion. Old v1 archives still render.
+  - **Plan panel:** the new `JevPlanPanel.tsx` shows each plan's stage, blocker, outcome, deadline and holds, slot turn, and `decided_by` plus the request id. The pure evidence logic is in the new `frontend/src/components/jevEvidence.ts`, with unit tests.
+  - **Plan views:** a plan view merges its events fact by fact; a missing fact never erases a recorded one. Plans sort open first, then by their own time.
+  - **Backend:**
+    - `src/jev/runtime.py` emits a per-game-second "Plan slot summary" for policies with plans, carrying each plan's full record.
+    - `src/jev/telemetry.py` re-traces a node event when its `source` or `request_id` facts change. v1 traces are unchanged.
+    - API routes are unchanged.
+  - **Browser fixtures:** opt-in real-browser fixtures in the new `tests/test_jev_live_graph.py` (`JEV_BROWSER_TESTS=1`, `uv run --with playwright`) reuse the Step 224 harness. `JEV_BROWSER_EVIDENCE_DIR` saves screenshots.
+  - **Runtime evidence:** the operator's dashboard backend held `:8765`, so `start-dev.sh` was not used. Evidence came from that harness on free ports, plus an orchestrator-owned console and network capture plugin.
+  - **Docs:** README, CLAUDE.md (only facts this phase made false) and `documentation/operator/jev-v2-validation.md` are updated. The `src/jev/benchmark.py` change is comment-only.
+  - **Left for `/repo-update`:** the CLAUDE.md "Current state" and "Jev continuation" paragraphs, README "Next", and the test counts.
+  - **Not fixed (UI nits):** the browser-test Fit view opens at about 26% zoom. "Active" wording in finished runs now reads "active when the run ended".
+  - Reviewed by `--reviewers full` (5 code + 3 runtime) over 2 iterations. Evidence in `.build-step/jev-v2-221/` (gitignored).
 
 ### Step 222: Prove the full v2 decision cycle in SC2
 - **Problem:** Validate real strategic and execution decisions through service, graph, commands and viewer.

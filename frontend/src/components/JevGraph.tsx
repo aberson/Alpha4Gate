@@ -4,18 +4,22 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent,
   type PointerEvent,
 } from "react";
 import { hierarchy, tree } from "d3-hierarchy";
 import {
   JEV_NODE_RUNTIME_LABELS,
+  JEV_TRAIL_SECONDS,
   isCurrentRuntime,
+  laneToneClass,
   nodeRuntimeLabel,
   type JevNodeRuntime,
   type JevPolicy,
   type JevPolicyNode,
 } from "../types/jev";
+import { NO_ACTIVITY, type JevGraphActivity, type JevNodeSource } from "./jevEvidence";
 
 /**
  * Jev decision graph — the run's archived policy forest drawn as an SVG tree.
@@ -43,10 +47,36 @@ import {
  * current, and only its active nodes pulse. A stale, offline or final state
  * draws them muted and labels them "(last known)": cached nodes never look
  * live. Each tree item exposes ``data-status`` and ``data-live``.
+ *
+ * Lanes and observed activity (plan J2 Step 221, D5):
+ *   - colour identifies a node's root lane (a coloured band behind each lane,
+ *     a stripe on each node, and the lane legend with its active/waiting
+ *     counts); status stays outline, glyph and words;
+ *   - ``activity.edges`` are the only edges drawn as activity, each one
+ *     recorded by the caller from the run's evidence: ``current`` (the latest
+ *     state's running path) solid, ``recent`` (an event that named the edge
+ *     within ``JEV_TRAIL_SECONDS`` game seconds) dashed and fading, labeled
+ *     recent. Nothing between two polls is invented. Only a live state
+ *     animates the current path, never with reduced motion; otherwise the
+ *     activity is labeled last known;
+ *   - "Follow activity" (off by default) brings the newest active node into
+ *     view, expanding its branch, and keeps that node until it stops being a
+ *     target; it acts only while live, never changes the selection, and a manual
+ *     pan stays until the followed node changes. The view always jumps, never
+ *     animates;
+ *   - ``activity.sources`` names, per node, the decision its newest recorded
+ *     event carries (a Typesafe request, a fallback or the local graph);
+ *   - ``reveal`` asks the graph (from outside, e.g. the plan panel) to expand
+ *     a node's branch and bring it into view.
  */
 
 const NODE_WIDTH = 220;
 const NODE_HEIGHT = 52;
+/** Width of the lane-colour stripe at a node's left edge. */
+const LANE_STRIPE = 6;
+/** Space a lane band leaves around its nodes. */
+const BAND_PAD = 6;
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 const COLUMN_GAP = 280;
 const ROW_GAP = 64;
 const MARGIN = 24;
@@ -79,6 +109,12 @@ const RUNTIME_ORDER: JevNodeRuntime[] = [
   "idle",
 ];
 
+
+/** The key of a structural edge (the same one the layout gives its path). */
+function edgeId(parent: string, child: string): string {
+  return `${parent}>${child}`;
+}
+
 interface Transform {
   x: number;
   y: number;
@@ -91,6 +127,10 @@ interface Structure {
   byId: Map<string, JevPolicyNode>;
   parentOf: Map<string, string | null>;
   depthOf: Map<string, number>;
+  /** Each node's root lane. */
+  laneOf: Map<string, string>;
+  /** Each root lane's colour class. */
+  toneOf: Map<string, string>;
 }
 
 interface PlacedNode {
@@ -129,14 +169,75 @@ function describeStructure(policy: JevPolicy): Structure {
   const byId = new Map(policy.nodes.map((node) => [node.id, node]));
   const parentOf = new Map<string, string | null>();
   const depthOf = new Map<string, number>();
-  const pending: Array<[string, string | null, number]> = policy.roots.map((id) => [id, null, 1]);
+  const laneOf = new Map<string, string>();
+  const toneOf = new Map(policy.roots.map((root, index) => [root, laneToneClass(root, index)]));
+  const pending: Array<[string, string | null, number, string]> = policy.roots.map((id) => [
+    id,
+    null,
+    1,
+    id,
+  ]);
   while (pending.length > 0) {
-    const [id, parent, depth] = pending.pop() as [string, string | null, number];
+    const [id, parent, depth, lane] = pending.pop() as [string, string | null, number, string];
     parentOf.set(id, parent);
     depthOf.set(id, depth);
-    for (const child of byId.get(id)?.children ?? []) pending.push([child, id, depth + 1]);
+    laneOf.set(id, lane);
+    for (const child of byId.get(id)?.children ?? []) pending.push([child, id, depth + 1, lane]);
   }
-  return { byId, parentOf, depthOf };
+  return { byId, parentOf, depthOf, laneOf, toneOf };
+}
+
+/** ``collapsed`` without ``id``'s ancestors (the same set when none was collapsed). */
+function expandedTo(
+  id: string,
+  structure: Structure,
+  collapsed: ReadonlySet<string>,
+): ReadonlySet<string> {
+  const ancestors: string[] = [];
+  for (let at = structure.parentOf.get(id); at; at = structure.parentOf.get(at)) {
+    ancestors.push(at);
+  }
+  if (!ancestors.some((ancestor) => collapsed.has(ancestor))) return collapsed;
+  const next = new Set(collapsed);
+  for (const ancestor of ancestors) next.delete(ancestor);
+  return next;
+}
+
+/** Each lane's band: the vertical extent of its visible nodes, in graph coordinates. */
+function laneBands(
+  layout: Layout,
+  structure: Structure,
+): Array<{ lane: string; top: number; bottom: number }> {
+  const extent = new Map<string, { top: number; bottom: number }>();
+  for (const placed of layout.order) {
+    const lane = structure.laneOf.get(placed.node.id) ?? placed.node.id;
+    const band = extent.get(lane);
+    const top = placed.y - BAND_PAD;
+    const bottom = placed.y + NODE_HEIGHT + BAND_PAD;
+    if (band === undefined) extent.set(lane, { top, bottom });
+    else extent.set(lane, { top: Math.min(band.top, top), bottom: Math.max(band.bottom, bottom) });
+  }
+  return [...extent].map(([lane, band]) => ({ lane, ...band }));
+}
+
+function subscribeReducedMotion(onChange: () => void): () => void {
+  if (typeof window.matchMedia !== "function") return () => {};
+  const query = window.matchMedia(REDUCED_MOTION_QUERY);
+  query.addEventListener?.("change", onChange);
+  return () => query.removeEventListener?.("change", onChange);
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window.matchMedia === "function" && window.matchMedia(REDUCED_MOTION_QUERY).matches;
+}
+
+/** Whether the viewer asked for reduced motion (kept current while mounted). */
+function useReducedMotion(): boolean {
+  return useSyncExternalStore(subscribeReducedMotion, prefersReducedMotion, () => false);
+}
+
+function sourceText(source: JevNodeSource | undefined): string {
+  return source === undefined ? "" : `, source: ${source.detail}`;
 }
 
 function isComposite(node: JevPolicyNode): boolean {
@@ -206,7 +307,7 @@ function computeLayout(
       const endY = child.y + NODE_HEIGHT / 2;
       const middleX = (startX + child.x) / 2;
       edges.push({
-        id: `${placed.node.id}>${childId}`,
+        id: edgeId(placed.node.id, childId),
         path: `M${startX},${startY} C${middleX},${startY} ${middleX},${endY} ${child.x},${endY}`,
       });
     }
@@ -243,7 +344,7 @@ function viewportSize(svg: SVGSVGElement | null): { width: number; height: numbe
 }
 
 /** The smallest pan that brings ``placed``'s box fully into the viewport. */
-function reveal(
+function revealBox(
   transform: Transform,
   placed: PlacedNode,
   viewport: { width: number; height: number },
@@ -302,19 +403,42 @@ export interface JevGraphProps {
   live: boolean;
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string) => void;
+  /** Recorded activity (edges, node sources, follow targets); none by default. */
+  activity?: JevGraphActivity;
+  /** Expand ``nodeId``'s branch and bring it into view, once per new ``token``. */
+  reveal?: { nodeId: string; token: number } | null;
+  /** The run has ended (finished, stopped or failed): its last state is when it ended. */
+  ended?: boolean;
 }
 
-export function JevGraph({ policy, runtime, live, selectedNodeId, onSelectNode }: JevGraphProps) {
+export function JevGraph({
+  policy,
+  runtime,
+  live,
+  selectedNodeId,
+  onSelectNode,
+  activity = NO_ACTIVITY,
+  reveal = null,
+  ended = false,
+}: JevGraphProps) {
   const structure = useMemo(() => describeStructure(policy), [policy]);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() =>
     overviewCollapsed(structure),
   );
   const [transform, setTransform] = useState<Transform>(IDENTITY);
   const [focusedId, setFocusedId] = useState<string | null>(null);
+  const [following, setFollowing] = useState(false);
+  // What the view last brought into view for "Follow activity" and for ``reveal``
+  // (state, so a target is acted on once, in the render that first sees it).
+  const [followed, setFollowed] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState<number | null>(null);
+  const [viewport, setViewport] = useState(FALLBACK_VIEWPORT);
+  const reducedMotion = useReducedMotion();
   const svgRef = useRef<SVGSVGElement>(null);
   const nodeElements = useRef(new Map<string, SVGGElement>());
   const drag = useRef<DragStart | null>(null);
   const hintId = useId();
+  const followId = useId();
 
   const layout = useMemo(
     () => computeLayout(policy, structure, collapsed),
@@ -322,6 +446,46 @@ export function JevGraph({ policy, runtime, live, selectedNodeId, onSelectNode }
   );
   const tabStop =
     focusedId !== null && layout.byId.has(focusedId) ? focusedId : layout.order[0].node.id;
+
+  /** Expand ``id``'s branch and pan just enough to show it (a jump, never animated). */
+  const bringIntoView = (id: string) => {
+    if (!structure.byId.has(id)) return;
+    const nextCollapsed = expandedTo(id, structure, collapsed);
+    const nextLayout =
+      nextCollapsed === collapsed ? layout : computeLayout(policy, structure, nextCollapsed);
+    if (nextCollapsed !== collapsed) setCollapsed(nextCollapsed);
+    const placed = nextLayout.byId.get(id);
+    if (placed !== undefined) setTransform(revealBox(transform, placed, viewport));
+  };
+
+  // "Follow activity" acts once per new target and only while live; ``reveal`` once
+  // per token. Both adjust state while rendering (React's pattern for responding to
+  // changed props), so nothing moves between those changes. The followed node is kept
+  // while it is still a target, so the view does not hop between lanes every poll.
+  const candidates = activity.followTargets;
+  const followTarget =
+    following && live
+      ? followed !== null && candidates.includes(followed)
+        ? followed
+        : (candidates[0] ?? null)
+      : null;
+  if (followTarget !== followed) {
+    setFollowed(followTarget);
+    if (followTarget !== null) bringIntoView(followTarget);
+  }
+  if (reveal !== null && reveal.token !== revealed) {
+    setRevealed(reveal.token);
+    bringIntoView(reveal.nodeId);
+  }
+
+  // The measured viewport, for following (event handlers measure it directly).
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (svg === null || typeof ResizeObserver !== "function") return;
+    const observer = new ResizeObserver(() => setViewport(viewportSize(svg)));
+    observer.observe(svg);
+    return () => observer.disconnect();
+  }, []);
 
   // React registers wheel listeners as passive, which cannot stop the page
   // from scrolling; zooming needs a non-passive native listener.
@@ -367,8 +531,8 @@ export function JevGraph({ policy, runtime, live, selectedNodeId, onSelectNode }
     if (placed === undefined) return;
     setFocusedId(id);
     nodeElements.current.get(id)?.focus({ preventScroll: true });
-    const viewport = viewportSize(svgRef.current);
-    setTransform((current) => reveal(current, placed, viewport));
+    const size = viewportSize(svgRef.current);
+    setTransform((current) => revealBox(current, placed, size));
   };
 
   const onNodeKeyDown = (event: KeyboardEvent<SVGGElement>, placed: PlacedNode) => {
@@ -436,8 +600,39 @@ export function JevGraph({ policy, runtime, live, selectedNodeId, onSelectNode }
     if (drag.current?.pointerId === event.pointerId) drag.current = null;
   };
 
+  // Lanes: what each runs in the latest state, for the legend.
+  const laneCounts = new Map(policy.roots.map((root) => [root, { active: 0, waiting: 0 }]));
+  for (const [id, status] of runtime) {
+    const counts = laneCounts.get(structure.laneOf.get(id) ?? "");
+    if (counts === undefined) continue;
+    if (status === "active") counts.active += 1;
+    if (status === "waiting") counts.waiting += 1;
+  }
+  const activeLanes = policy.roots.filter((root) => {
+    const counts = laneCounts.get(root);
+    return counts !== undefined && counts.active + counts.waiting > 0;
+  });
+  const edgePaths = new Map(layout.edges.map((edge) => [edge.id, edge.path]));
+  const shownActivity = activity.edges.filter((edge) =>
+    edgePaths.has(edgeId(edge.parent, edge.child)),
+  );
+  const animate = live && !reducedMotion;
+  const lastKnown = live ? "" : " (last known)";
+  const laneWhen = live ? "" : ended ? " when the run ended" : " (last known)";
+  const currentEdges = activity.edges.filter((edge) => edge.kind === "current").length;
+  const recentEdges = activity.edges.length - currentEdges;
+  let followStatus = "off: the view moves only when you move it";
+  if (following && !live) followStatus = "paused: this state is not live";
+  else if (following && followed === null) followStatus = "on: no active node to follow";
+  else if (following) followStatus = `on: showing ${followed}`;
+
   return (
-    <div className="jev-graph" data-testid="jev-graph">
+    <div
+      className="jev-graph"
+      data-testid="jev-graph"
+      data-reduced-motion={reducedMotion}
+      data-following={following}
+    >
       <div className="jev-graph-toolbar" role="toolbar" aria-label="Graph view controls">
         <button
           type="button"
@@ -482,6 +677,23 @@ export function JevGraph({ policy, runtime, live, selectedNodeId, onSelectNode }
         <button type="button" onClick={() => setCollapsed(allCollapsed(structure))}>
           Collapse all
         </button>
+        <label className="jev-graph-follow">
+          <input
+            type="checkbox"
+            data-testid="jev-follow"
+            checked={following}
+            onChange={(event) => {
+              // Measure now, so the first follow never reveals against a guessed size.
+              if (event.target.checked) setViewport(viewportSize(svgRef.current));
+              setFollowing(event.target.checked);
+            }}
+            aria-describedby={followId}
+          />
+          Follow activity
+        </label>
+        <span className="jev-graph-follow-status" id={followId} data-testid="jev-follow-status">
+          {followStatus}
+        </span>
       </div>
       <p className="jev-graph-legend">
         {RUNTIME_ORDER.map((status) => (
@@ -490,6 +702,42 @@ export function JevGraph({ policy, runtime, live, selectedNodeId, onSelectNode }
           </span>
         ))}
         {!live && <span>(last known): from the last recorded state, not live</span>}
+      </p>
+      <p className="jev-graph-legend jev-graph-lanes" data-testid="jev-graph-lanes">
+        <span data-testid="jev-graph-active-lanes">
+          {activeLanes.length === 0
+            ? `No lane active${laneWhen}`
+            : `${activeLanes.length} lane(s) active${laneWhen}: ${activeLanes.join(", ")}`}
+        </span>
+        {policy.roots.map((root) => {
+          const counts = laneCounts.get(root) ?? { active: 0, waiting: 0 };
+          return (
+            <span
+              key={root}
+              className={`jev-graph-lane-chip ${structure.toneOf.get(root) ?? ""}`}
+              data-testid="jev-graph-lane"
+              data-lane={root}
+              data-active={counts.active}
+              data-waiting={counts.waiting}
+            >
+              <span className="jev-graph-lane-swatch" aria-hidden="true" />
+              {root} lane · {counts.active} active · {counts.waiting} waiting
+            </span>
+          );
+        })}
+      </p>
+      <p className="jev-graph-legend" data-testid="jev-graph-edge-legend">
+        <span>
+          ━ current path ({currentEdges}): both ends run in the latest state{lastKnown}
+        </span>
+        <span>
+          ┅ recent ({recentEdges}): recorded in the last {JEV_TRAIL_SECONDS} game s, fading; not
+          current
+        </span>
+        <span>
+          Only recorded edges are drawn; nothing between two refreshes is invented.
+          {reducedMotion ? " Reduced motion: nothing animates." : ""}
+        </span>
       </p>
       <p className="jev-graph-hint" id={hintId}>
         Arrow keys move between nodes · Enter or Space selects · Left / Right collapse and
@@ -516,10 +764,66 @@ export function JevGraph({ policy, runtime, live, selectedNodeId, onSelectNode }
           data-testid="jev-graph-canvas"
           transform={`translate(${transform.x},${transform.y}) scale(${transform.k})`}
         >
+          <g className="jev-graph-bands" aria-hidden="true">
+            {laneBands(layout, structure).map((band) => (
+              <rect
+                key={band.lane}
+                className={`jev-graph-lane-band ${structure.toneOf.get(band.lane) ?? ""}`}
+                data-lane={band.lane}
+                x={0}
+                y={band.top}
+                width={layout.width}
+                height={band.bottom - band.top}
+                rx={8}
+              />
+            ))}
+          </g>
           <g className="jev-graph-edges" data-testid="jev-graph-edges">
             {layout.edges.map((edge) => (
               <path key={edge.id} className="jev-graph-edge" d={edge.path} />
             ))}
+          </g>
+          <g
+            className={`jev-graph-activity${animate ? " jev-graph-activity-animated" : ""}`}
+            data-testid="jev-graph-activity"
+            aria-hidden="true"
+          >
+            {shownActivity.map((edge) => {
+              const id = edgeId(edge.parent, edge.child);
+              const flowing = animate && edge.kind === "current";
+              const classes = [
+                "jev-graph-edge-activity",
+                `jev-graph-edge-${edge.kind}`,
+                structure.toneOf.get(structure.laneOf.get(edge.parent) ?? "") ?? "",
+              ];
+              if (flowing) classes.push("jev-graph-edge-flow");
+              if (!live) classes.push("jev-graph-edge-last-known");
+              const fade =
+                edge.kind === "recent"
+                  ? 1 - 0.7 * Math.min(1, edge.ageSeconds / JEV_TRAIL_SECONDS)
+                  : 1;
+              const age = edge.ageSeconds.toFixed(1);
+              const label =
+                edge.kind === "current"
+                  ? `current path ${edge.parent} → ${edge.child}${lastKnown}`
+                  : `recent: ${edge.parent} → ${edge.child} recorded ${age} game s before ` +
+                    `the latest state (event ${edge.sequence}); not current${lastKnown}`;
+              return (
+                <path
+                  key={id}
+                  className={classes.join(" ")}
+                  d={edgePaths.get(id)}
+                  style={{ opacity: live ? fade : fade * 0.6 }}
+                  data-edge={id}
+                  data-activity={edge.kind}
+                  data-lane={structure.laneOf.get(edge.parent)}
+                  data-age={edge.ageSeconds.toFixed(2)}
+                  data-animated={flowing}
+                >
+                  <title>{label}</title>
+                </path>
+              );
+            })}
           </g>
           <g role="tree" aria-label="Policy nodes">
             {layout.order.map((placed) => {
@@ -532,11 +836,20 @@ export function JevGraph({ policy, runtime, live, selectedNodeId, onSelectNode }
                 : null;
               const statusText = `${node.kind} · ${nodeRuntimeLabel(status, live)}`;
               const drawnLive = live && isCurrentRuntime(status);
+              const lane = structure.laneOf.get(node.id) ?? node.id;
+              const tone = structure.toneOf.get(lane) ?? "";
+              const source = activity.sources.get(node.id);
               const name = summary === null ? statusText : `${statusText}, collapsed: ${summary}`;
               const classes = ["jev-graph-node", `jev-graph-node-${status}`];
               if (node.id === selectedNodeId) classes.push("jev-graph-node-selected");
               if (drawnLive && status === "active") classes.push("jev-graph-node-live");
               if (!live && isCurrentRuntime(status)) classes.push("jev-graph-node-last-known");
+              const sourceLine = source === undefined ? null : `⚑ ${source.badge}${lastKnown}`;
+              const thirdLine = summary ?? sourceLine;
+              const title =
+                `${node.id} — ${node.label} (lane ${lane})` +
+                (summary === null ? "" : ` (${summary})`) +
+                (source === undefined ? "" : ` — source: ${source.detail}`);
               return (
                 <g key={node.id} transform={`translate(${placed.x},${placed.y})`}>
                   <g
@@ -548,7 +861,10 @@ export function JevGraph({ policy, runtime, live, selectedNodeId, onSelectNode }
                     role="treeitem"
                     data-status={status}
                     data-live={drawnLive}
+                    data-lane={lane}
+                    data-source={source?.tone}
                     aria-label={`${node.id}, ${name}`}
+                    aria-description={`lane ${lane}${sourceText(source)}`}
                     aria-level={placed.level}
                     aria-setsize={placed.setSize}
                     aria-posinset={placed.posInSet}
@@ -559,19 +875,31 @@ export function JevGraph({ policy, runtime, live, selectedNodeId, onSelectNode }
                     onFocus={() => setFocusedId(node.id)}
                     onKeyDown={(event) => onNodeKeyDown(event, placed)}
                   >
-                    <title>
-                      {`${node.id} — ${node.label}${summary === null ? "" : ` (${summary})`}`}
-                    </title>
+                    <title>{title}</title>
                     <rect width={NODE_WIDTH} height={NODE_HEIGHT} rx={6} />
+                    <rect
+                      className={`jev-graph-node-lane ${tone}`}
+                      width={LANE_STRIPE}
+                      height={NODE_HEIGHT}
+                      rx={2}
+                    />
                     <text x={10} y={15} className="jev-graph-node-name">
                       {shortId(node.id)}
                     </text>
                     <text x={10} y={30} className="jev-graph-node-status">
                       {`${RUNTIME_GLYPHS[status]} ${statusText}`}
                     </text>
-                    {summary !== null && (
-                      <text x={10} y={44} className="jev-graph-node-hidden">
-                        {clip(summary, SUMMARY_CHARS)}
+                    {thirdLine !== null && (
+                      <text
+                        x={10}
+                        y={44}
+                        className={
+                          summary === null
+                            ? `jev-graph-node-source jev-source-${source?.tone ?? "unknown"}`
+                            : "jev-graph-node-hidden"
+                        }
+                      >
+                        {clip(thirdLine, SUMMARY_CHARS)}
                       </text>
                     )}
                   </g>

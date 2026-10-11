@@ -28,9 +28,12 @@ has all three records. Then:
   (``PermissionError``: a reader has the target open). Readers see the previous
   or the next document, never a torn one;
 * the trace records what changed, not every evaluation: every command, task and
-  diagnostic event; a node event only when that node's status or deciding child
-  (its branch) differs from the last one traced for it; and once per game second
-  each root lane's evaluation, as a summary. A RunState keeps the latest
+  diagnostic event; a node event only when that node's status, deciding child (its
+  branch) or decision source (its ``source`` and ``request_id`` facts, which only
+  the hosted-decision guards of Jev v2 carry: plan J2 Step 221) differs from the
+  last one traced for it, so a guard that a newer request keeps passing is traced
+  again with that request; and once per game second each root lane's evaluation,
+  as a summary. A RunState keeps the latest
   :data:`~jev.contracts.RECENT_EVENT_LIMIT` traced events and at most
   :data:`~jev.contracts.MAX_ACTIVE_TASKS` tasks (``tasks_omitted`` counts the rest);
 * trace lines are appended in one batch per update. A segment rotates to
@@ -137,6 +140,7 @@ from jev.policy import (
 __all__ = [
     "COMMIT_RE",
     "CorruptRun",
+    "DECISION_SOURCE_FACTS",
     "EvidenceFiles",
     "MAX_METADATA_BYTES",
     "MAX_STATE_BYTES",
@@ -189,6 +193,10 @@ MIN_STATE_INTERVAL_SECONDS: Final = 0.5
 #: violation; mirrors the ``os.replace`` backoff in ``orchestrator.baselines``
 #: (Jev imports no orchestrator code beyond the SC2 path resolver).
 SHARING_RETRY_DELAYS: Final = (0.05, 0.1, 0.2, 0.4, 0.8)
+#: The node-event facts that name the decision a guard node read (``source`` and
+#: ``request_id``): with status and deciding child they decide whether a node event
+#: changed (module docstring). Events without them -- every v1 node -- trace as before.
+DECISION_SOURCE_FACTS: Final = ("source", "request_id")
 #: Largest stored record a reader accepts and the writer produces (the policy
 #: archive's cap is ``jev.policy.MAX_POLICY_BYTES``). A state holds at most 200
 #: events and 128 tasks, far below its cap. Metadata is at most ~530 bytes (a
@@ -497,8 +505,9 @@ class RunRecorder:
         # built without a runtime still accounts for it.
         self._latest_sequence = 0
         self._latest_game_seconds = 0.0
-        # node id -> (status, deciding child) of the node's last traced event.
-        self._node_keys: dict[str, tuple[str, JsonValue]] = {}
+        # node id -> (status, deciding child, decision source facts) of the node's
+        # last traced event.
+        self._node_keys: dict[str, tuple[JsonValue, ...]] = {}
         self._summary_second = -1
         self._segment = 1
         self._segment_bytes = 0  # bytes of complete lines in the current segment
@@ -729,7 +738,11 @@ class RunRecorder:
             if event.kind != "node":
                 kept.append(event)
                 continue
-            key = (event.status, event.facts.get("child"))
+            key = (
+                event.status,
+                event.facts.get("child"),
+                *(event.facts.get(name) for name in DECISION_SOURCE_FACTS),
+            )
             changed = self._node_keys.get(event.node_id) != key
             self._node_keys[event.node_id] = key
             second = math.floor(event.game_seconds)

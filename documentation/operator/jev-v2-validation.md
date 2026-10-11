@@ -20,7 +20,13 @@ procedure and the Typesafe key setup remain in [the Jev operator guide](jev-vali
   play. The v1 baseline is frozen by the first real `--panel baseline` preflight, so
   its frozen source includes the launch hook.
 - **Step 213** is the first real baseline panel (six paid, realtime matches). Section
-  12 is its runbook; nothing before section 12 plays a paid match.
+  12 is its runbook; nothing before section 12 plays a paid match. The operator froze
+  v1 (`v1-b53039a693cadf75`) and deferred the rest of the baseline on 2026-10-09.
+- Ready (Steps 214-221): **`bots.jev.v2` is packaged** -- the adaptive player with
+  persistent plans and four hosted question families -- and the Jev tab's **live
+  graph** explains what it is doing and why progress waits (section 13). Section 13
+  also lists the hypothesis values to tune and what Step 222 needs before its first
+  match. v2 is not frozen yet: freeze it only when the candidate is final (section 1).
 
 Run every command from the Alpha4Gate repository root in Windows PowerShell.
 
@@ -36,9 +42,10 @@ Run every command from the Alpha4Gate repository root in Windows PowerShell.
 
 Each official panel is exactly six games on Simple64. Case IDs are
 `version-provider-map-race-difficulty-seed`, for example
-`v1-typesafe-simple64-terran-3-11`. `bots.jev.v2` does not exist yet, so every panel
-that needs it fails resolution with `version_not_packaged` and names the reason. It
-never falls back to v1 or to the current code.
+`v1-typesafe-simple64-terran-3-11`. `bots.jev.v2` is packaged (Step 214), but the
+panels that need it play only a **frozen** v2, so until `--freeze-candidate v2` they
+fail resolution with `candidate_not_frozen` and name the reason. A panel never falls
+back to v1 or to the current code.
 
 The held-out and attribution panels play **frozen** sources only. v1 is frozen by the
 `--panel baseline` preflight (section 2). A candidate is frozen once, explicitly, when
@@ -103,14 +110,16 @@ $plan = Join-Path (Get-Location) 'data\jev\baseline-plan.json'
 uv run python scripts/benchmark_jev.py --panel baseline --dry-run --json $plan
 ```
 
-A panel that needs v2 fails today, with exit code 1. That failure is expected:
+A panel that needs v2 fails until the v2 candidate is frozen, with exit code 1. That
+failure is expected:
 
 ```powershell
 uv run python scripts/benchmark_jev.py --panel heldout-a --dry-run
 ```
 
-The stderr output reads `version_not_packaged` and names both blockers:
-`bots.jev.v2 is not packaged` and the v1 baseline that is not yet frozen.
+The stderr output reads `candidate_not_frozen` and names the command that freezes v2
+(`--freeze-candidate v2`). In a checkout whose v1 baseline is not frozen either, it
+names that too.
 
 ## 3. Staging substrate check (exact command)
 
@@ -388,13 +397,15 @@ never pick a tab or a run by hand.
 Run in: fresh PowerShell window @ Alpha4Gate · Model: any (no build work)
 
 ```powershell
-powershell -File scripts/launch-jev.ps1 -Version v1 -DecisionProvider scripted -Difficulty 1 -Seed 1
+powershell -File scripts/launch-jev.ps1 -Version v2 -DecisionProvider scripted -Difficulty 1 -Seed 1
 ```
 
 The defaults are `-Version v2 -DecisionProvider typesafe -Difficulty 3 -Seed 11`
-(`-OpponentRace Terran`); `bots.jev.v2` does not exist yet, so until it does use
-`-Version v1`. Map, limits and model are fixed: Simple64, 900 game seconds, 1200
-wall seconds, `jev-1.13.0`, 450 requests, realtime. For `typesafe` the launcher
+(`-OpponentRace Terran`): with no arguments the launcher plays `bots.jev.v2`, packaged
+since Step 214, as a **paid** hosted match. `-DecisionProvider scripted` (above) makes
+no service call; `-Version v1` plays the frozen-era v1 player. Map, limits and model
+are fixed: Simple64, 900 game seconds, 1200 wall seconds, `jev-1.13.0`, 450 requests,
+realtime. For `typesafe` the launcher
 uses `TYPESAFE_API_KEY` if this process has it, otherwise the saved encrypted key
 (`%LOCALAPPDATA%\Alpha4Gate\typesafe-key.dpapi`). It never prints the key or puts it
 in a command line. Only the game process receives it (and the SC2 client that process
@@ -421,7 +432,9 @@ your session had when it ends.
    policy, renders it, and then acknowledges. Only then does SC2 start.
 5. The page shows **Starting** while SC2 launches (never Live before the game reports
    its first observation), then **Live** with the game clock, opponent, active
-   decision nodes and army intent, then **Finished** with the result.
+   decision nodes and army intent, then **Finished** with the result. For a v2 run the
+   live graph and the **Plans and decisions** panel (section 13) show what each lane
+   is doing and why a plan waits.
 
 A session the page cannot read at all (a mistyped or old link, a dashboard serving
 another checkout) shows **Launch unavailable** with the error code, never Preparing.
@@ -529,6 +542,7 @@ Remove-Item Env:JEV_BROWSER_TESTS
 ```
 
 Step 213 then proves the same order with real SC2 and your visible browser (section 12).
+The live graph's own real-browser fixtures are in section 13.
 
 ## 12. Step 213: run the harder-opponent baseline
 
@@ -538,11 +552,14 @@ It only observes: it changes no code and estimates no win rate. Its report goes 
 `documentation/plans/jev-v2-validation.md` (template at the end of this section). A
 missing prerequisite keeps the step pending.
 
-**Run it before any Step 214 work.** The frozen v1 baseline does not exist yet. The
-first real (not `--dry-run`) `--panel baseline` invocation captures the current v1
-runtime source and finalizes it, write-once, as
-`data\jev\benchmarks\baselines\v1.baseline.json` (section 4). That source includes
-every `src\jev` module, so any later change there would become part of "v1".
+**Status (2026-10-09): deferred, and v1 is already frozen.** The first real (not
+`--dry-run`) `--panel baseline` invocation captured the v1 runtime source and finalized
+it, write-once, as `data\jev\benchmarks\baselines\v1.baseline.json` (section 4),
+snapshot `v1-b53039a693cadf75`, before any Step 214 edit. The operator then stopped the
+baseline (batch `94ac2c35b17f4cbaa80020b1c859ba00`: one interrupted case, five pending)
+and authorized the v2 build. Steps 214-221 changed the shared runtime since; the frozen
+snapshot is unaffected, so a resumed baseline still plays exactly that v1. The stages
+below are kept as the procedure for finishing it.
 
 Run the stages in this order. Each must pass before the next starts. The paid stages
 come last. Stage 3 is an operator choice (see stage 3).
@@ -568,8 +585,9 @@ evolve run, daemon or other Jev match), and the dashboard where you can see it w
 SC2 runs (section 11, Batches). Allow up to two and a half hours: the baseline alone may
 use its whole 7200-second invocation budget.
 
-The v1 runtime source must be exactly what Step 224 left. This prints nothing on a
-clean checkout:
+Before v1 was frozen, the v1 runtime source had to be exactly what Step 224 left, and
+this printed nothing on a clean checkout. v1 is frozen now, so Steps 214-221's changes
+here are expected and do not matter to the baseline (expect `state=finalized` below):
 
 ```powershell
 git status --porcelain -- src/jev src/orchestrator bots/__init__.py bots/jev pyproject.toml uv.lock
@@ -775,9 +793,9 @@ findings.
    menu during a game shows **Following paused**, and its `Launcher: ...` line repeats the
    launcher's last message, which is not the game's live state. Click **Resume live**.
    Better, do not browse runs during Step 213.
-4. **`-Version v1`.** `scripts/launch-jev.ps1` defaults to `-Version v2`, which is not
-   packaged until Step 214. It prints
-   `jev launch: bots.jev.v2 is not packaged; nothing was started` and exits 1.
+4. **`-Version v1`.** `scripts/launch-jev.ps1` defaults to `-Version v2`, which is
+   packaged since Step 214: without `-Version v1` the stage 3 smoke would play the v2
+   player instead of the v1 baseline's.
 
 ### Cost and limits
 
@@ -867,3 +885,191 @@ Label each value as results.json does: observed or measured, not_reached, unavai
 
 Step 213: complete / pending (<missing prerequisite or open infrastructure finding>). Step 214 may start: yes / no.
 ```
+
+## 13. The v2 player and the live graph (Steps 214-221)
+
+`bots.jev.v2` is a separate package beside the frozen v1 (`bots/jev/v2/manifest.json` and
+`policy.json`, 292 nodes, policy hash `a1c73ea8...` at Step 220). Validate it without SC2:
+
+```powershell
+uv run python -m bots.jev.v2 --validate-policy
+```
+
+It prints the policy hash and the nine root lanes. v1's hash stays
+`510a72dfb167b7200123cbc8436c912f02d3b0fb5798657db3c62e3f5f8f68ee`.
+
+### Lanes
+
+Every root of the graph is a lane, evaluated every tick in this order with a fair share
+of the node and command budgets. Several lanes are normally active at once.
+
+| Lane | What it does |
+|---|---|
+| `economy` | Idle probes mine; gas stays saturated (up to 3 per Assimilator) |
+| `supply` | The opening Pylon, then planned free supply above the buffer |
+| `construction` | Re-power a Gateway, Gateways to four, then gas (one Assimilator) |
+| `tech` | The tech plan: one Cybernetics Core (runs before the expansion lane) |
+| `expansion` | The expansion plan: the natural, two bases at most |
+| `scouting` | One Probe scout; retreats when threatened; replaced at most every 60 s |
+| `production` | Stalkers within the Zealot:Stalker mix, else Zealots, then probes |
+| `army` | Defend (both bases), regroup when few remain, attack in groups, else rally |
+| `reserve` | After the launch, new combat units gather at home until a group forms |
+
+### Plans
+
+The `tech` and `expansion` lanes each run one **persistent plan**: a record with a
+stable `plan_id` (`<run_id>:plan:<n>`), a stage (the lane's frontier node), a status
+(`active`, `waiting`, `completed`, `aborted`), a reason code, a blocker while it waits,
+its site, worker and held minerals/gas, and who started it (`decided_by`,
+`decision_request_id`). Both are **macro** plans and share one slot: only one is open
+at a time, and after an abort the slot owes the other kind a turn. Limits (plan D3):
+120 game seconds to start its building and 120 to finish, 30 seconds without progress is
+a recovery attempt, 3 recovery attempts per stage, then abort, release and a 15-second
+cooldown; after an abort the slot yields to the other kind for 5 seconds past the
+cooldown; a site aborted over (or refused by SC2) is avoided for 120 seconds; the third
+abort of a kind disables it for the match. A hosted abandon is not an abort and has its
+own cap of 3.
+
+### Hosted questions
+
+With `--decision-provider typesafe` four question families share one request budget
+(`--decision-max-requests`, 450 by default), one request at a time, at least 2 wall
+seconds apart. The graph keeps every command and legality check; an answer only
+chooses which offered branch runs.
+
+| Question | Choices | Asked | Local fallback |
+|---|---|---|---|
+| `strategy` | pressure, recover, expand, tech | after the first launch, at most every 10 s, only choices the graph can execute now | the graph's own order: tech prerequisite, then the expansion after 4 Gateways and 8 ready combat units, recovery under 4 units, otherwise pressure |
+| `army_mode` | attack, defend, regroup | at most every 2 s | the graph's defaults (defense first) |
+| `expansion_response` | continue, delay, abandon | while an unissued expansion faces an enemy at its site or no free site, at most every 5 s | delay |
+| `production_mix` | zealot_heavy (2:1), balanced (1:1), stalker_heavy (1:2) | once a Core, gas and a ready Gateway allow Stalkers, at most every 10 s | balanced; stalker_heavy after an armed air unit was seen within 30 s |
+
+A question waiting 10 wall seconds is served next, so none starves. A stale,
+low-confidence, invalid or timed-out reply never applies; the fallback is used and
+visibly attributed. Without `--realtime` most hosted replies arrive stale, so hosted
+runs are always realtime.
+
+### Hypothesis values to tune at Steps 222 and 223
+
+These are the build's starting guesses (plan Build notes), not measured optima. Record
+any that Step 222's matches put in doubt; do not tune against the held-out seeds.
+
+| Value | Now | Where |
+|---|---|---|
+| Pressure/recover posture hold without a renewed answer | 30 game s | `jev.strategy.POSTURE_HOLD_SECONDS` |
+| Macro slot's wait for a strategy answer before the local fallback | 28 wall s (24 with two questions) | `jev.strategy.answer_wait_seconds` |
+| Expansion-response interval | 5 wall s | `jev.strategy.EXPANSION_RESPONSE_INTERVAL` |
+| Production-mix interval | 10 wall s | `jev.strategy.PRODUCTION_MIX_INTERVAL` |
+| Accepted execution choice hold | 30 game s | `jev.strategy.EXECUTION_HOLD_SECONDS` |
+| Flying types never counted as an air threat | Overlord, Overseer, Observer (and their modes) | `jev.strategy.HARMLESS_AIR_TYPES` |
+| Supply buffer; reinforcement group; regroup below | 4; 4; 4 units | v2 `policy.json` parameters |
+| Expansion trigger (local); farthest site taken | 8 combat units; 1.5 x the nearest path | v2 `policy.json` parameters |
+
+Known gaps (Build notes 217 and 218): the worker target stays at 16 and the natural gets
+no Assimilator; max health/shield facts and D3's 40% low-durability regroup are not
+built; SC2 path queries and the central Core/Stalker prices are unverified live.
+
+### The live graph
+
+Open `http://localhost:3000/?tab=jev&run=<run_id>`, or follow a launch. For every run:
+
+- **Coloured lanes.** Each root lane has its colour (economy green, expansion teal, army
+  red, tech purple, and one each for the others): a band behind the lane, a stripe on
+  each node and a chip in the lane legend, which counts each lane's active and waiting
+  nodes and lists the lanes active now. Status is still the outline, glyph and words.
+- **Observed edge activity.** Only recorded edges are drawn. A solid edge joins a node
+  and its child that both run in the latest state: that tick's path. A dashed edge
+  fades over 2 game seconds: an event named that child as the node's deciding branch,
+  and it is labeled recent, not current. Nothing between two one-second refreshes is
+  invented. A live run animates its current path.
+- **Follow activity** (toolbar, off by default) keeps the newest running node in view,
+  expanding its branch. It never changes the selection, and a manual pan stays until
+  the followed node changes. It pauses while the run is not live.
+- **Plans and decisions** (v2 runs): each plan's lane, status, stage (**Show in graph**
+  expands to it), blocker or outcome, who decided it and which request, and the
+  response in force; each slot's open plan, cooldown and owed turn, and per kind
+  whether it may start now or why not (the plan store's own check); the strategy
+  choices the graph can execute now; and per question the source (Typesafe, local
+  fallback, local graph or awaiting the answer), the choice in force, its request,
+  the reason and any pending request.
+- **Node sources.** A node whose recorded events name a decision shows it on its box
+  (for example `Typesafe req #12`, `local fallback`); the inspector lists that
+  evidence (a task or command created under a hosted choice, a plan started or answered
+  by a request, a guard's source) and the guards on the node's path with their latest
+  evaluations.
+- **Stale, offline and final.** Nothing animates; the graph, lane legend, plans and
+  sources are labeled last known. Reduced motion (the operating system setting) stops
+  every animation even for a live run.
+
+v1 runs and older archives record no plan or v2 decision facts: they keep their
+presentation (no plans panel) and gain the lane colours, the recorded edges and, on the
+`army` node only, the source its recorded `Army decision source` names (as the Army
+decision panel already does).
+
+The automated checks need no SC2 and no paid call:
+
+```powershell
+uv run pytest tests/test_jev_api.py tests/test_jev_telemetry.py -p no:cacheprovider
+```
+
+The real-browser fixtures (simultaneous lanes; live, offline, stale and final; reduced
+motion; an old v1 archive) are opt-in, like section 11's. Set the switch, and optionally
+an evidence folder for screenshots and a `timeline.jsonl`:
+
+```powershell
+$env:JEV_BROWSER_TESTS = '1'
+$env:JEV_BROWSER_EVIDENCE_DIR = "$env:TEMP\jev-live-graph"
+```
+
+```powershell
+uv run --with playwright pytest tests/test_jev_live_graph.py -p no:cacheprovider
+```
+
+```powershell
+Remove-Item Env:JEV_BROWSER_TESTS, Env:JEV_BROWSER_EVIDENCE_DIR
+```
+
+### Before Step 222
+
+Step 222 (issue #339) proves the full v2 decision cycle with real SC2 and the service
+(plan Step 222). Its prerequisites:
+
+1. Windows with SC2 and the Simple64 map, `uv sync --extra dev --inexact` and
+   `npm --prefix frontend ci` done, and both policies valid
+   (`uv run python -m bots.jev.v1 --validate-policy`, then `... bots.jev.v2 ...`).
+2. The automated checks above pass, and the real-browser fixtures pass once on this
+   machine (they prove the page this step watches).
+3. The Typesafe key is saved encrypted (`%LOCALAPPDATA%\Alpha4Gate\typesafe-key.dpapi`,
+   [the Jev operator guide](jev-validation.md)); the launcher loads it for the game
+   process only.
+4. v2 is **not** frozen: do not run `--freeze-candidate v2` until the Step 222/223
+   candidate is final.
+5. Budget: at most three development matches, Terran at difficulties 3, 4 and 5, seed 11,
+   in that order, each within the per-match limits (450 requests, 900 game seconds,
+   1200 wall seconds).
+
+Each match is one dashboard-first launch. The first uses the launcher's defaults
+(v2, Typesafe, Terran, difficulty 3, seed 11):
+
+Run in: fresh PowerShell window @ Alpha4Gate · Model: any (no build work)
+
+```powershell
+powershell -File scripts/launch-jev.ps1
+```
+
+```powershell
+powershell -File scripts/launch-jev.ps1 -Difficulty 4
+```
+
+```powershell
+powershell -File scripts/launch-jev.ps1 -Difficulty 5
+```
+
+Watch, and record with run IDs and game times: at least 60 seconds after a v2 question
+first becomes eligible; an accepted `strategy` answer and at least one accepted
+execution answer (`expansion_response` or `production_mix`) whose request ID appears on
+a plan and on the commands that followed (node sources and **Plans and decisions**);
+the second Nexus and the first Stalker; at least one worker or site recovery; and a
+pending request cancelled cleanly at the match's end or a Ctrl+C. Every answer must
+name `jev-1.13.0`. If natural play omits a required piece of evidence, record that gate
+as unverified and pending; never stage a scenario to force it.

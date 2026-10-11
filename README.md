@@ -241,7 +241,7 @@ cd frontend && npm run dev
 | Observable | Exhibition shell for Phase L: left/right version pickers and a placeholder card (replay-stream-as-live not shipped) |
 | Processes | Live system process monitor, resource gauge, WSL processes, port status, state files, backend restart, plus the severity-filtered alert list (ack/dismiss) the old Alerts tab held |
 | Help | Renders `documentation/wiki/operator-commands.md` from disk |
-| Jev | Jev decision graph: run selector, graph with active/waiting nodes, node details, Army decision panel, recent trace. `?tab=jev&run=<run_id>` opens one exact run; `?tab=jev&launch=<session_id>` follows a dashboard-first launch (Preparing, Starting, Live, Finished; picking another run pauses following until **Resume live**) |
+| Jev | Jev decision graph: run selector, graph with one coloured band per root lane, active/waiting nodes and only the recorded edge activity (the current path, and a 2-second fading trail labeled recent), an opt-in **Follow activity**, node details with each node's decision source (Typesafe request, fallback or local graph), Army decision panel, a **Plans and decisions** panel for v2 runs (plan stage, blocker or outcome, deciding request, slot turn, what may start next, each question's source), recent trace. Stale, offline and finished runs are labeled last known and never animate; reduced motion stops all animation. `?tab=jev&run=<run_id>` opens one exact run; `?tab=jev&launch=<session_id>` follows a dashboard-first launch (Preparing, Starting, Live, Finished; picking another run pauses following until **Resume live**) |
 
 In-app `AlertToast` lives at the App root and shows new alerts as they fire, regardless of which tab is active.
 
@@ -267,7 +267,7 @@ uv run python -m bots.v0.runner --map Simple64
 
 ### Run the Jev player
 
-Jev (`v1.jev`) is a separate player family: a one-base, four-Gateway Zealot rush executed by a decision graph (`bots/jev/v1/policy.json`, interpreted by `src/jev/`). The default `scripted` provider runs locally. Opt into the actual hosted Typesafe Jev model with `--decision-provider typesafe`: it chooses attack, defend or regroup while the graph handles legal commands and production. There is no PPO in this player. Each match writes evidence to `data/jev/runs/<run_id>/`, served by the dashboard's Jev tab (`/?tab=jev`, or `/?tab=jev&run=<run_id>` for one exact run) and the `/api/jev` routes: read-only run evidence, plus the loopback launch-readiness receipt that the dashboard-first launcher uses.
+Jev is a separate player family executed by a decision graph (interpreted by `src/jev/`); there is no PPO in it. `v1.jev` (`bots/jev/v1/policy.json`, frozen) is a one-base, four-Gateway Zealot rush. `v2.jev` (`bots/jev/v2/policy.json`, Jev v2 Steps 214-221) is the adaptive player: nine lanes (economy, supply, construction, tech, expansion, scouting, production, army, reserve) with planned supply, grouped reinforcements, one Probe scout, a gas economy, persistent tech (Cybernetics Core) and natural-expansion plans, and a Zealot/Stalker army. The default `scripted` provider runs locally. Opt into the actual hosted Typesafe Jev model with `--decision-provider typesafe`: for v1 it chooses attack, defend or regroup; for v2 four question families (`strategy`, `army_mode`, `expansion_response`, `production_mix`) share one request budget and choose among the graph's own branches, while the graph keeps every legal command. Each match writes evidence to `data/jev/runs/<run_id>/`, served by the dashboard's Jev tab (`/?tab=jev`, or `/?tab=jev&run=<run_id>` for one exact run) and the `/api/jev` routes: read-only run evidence, plus the loopback launch-readiness receipt that the dashboard-first launcher uses.
 
 From the repository root, in PowerShell. Terminal 1, the dashboard backend (it keeps running):
 
@@ -286,6 +286,7 @@ Terminal 3, validate the policy, play one match, then verify that run:
 
 ```powershell
 uv run python -m bots.jev.v1 --validate-policy      # validate the packaged policy, print its hash (no SC2)
+uv run python -m bots.jev.v2 --validate-policy      # the same for the v2 package
 uv run python -m bots.jev.v1 --map Simple64 --opponent-race Terran --difficulty 1 --seed 1 --max-game-seconds 900 --max-wall-seconds 1800
 $runId = (Get-ChildItem data\jev\runs -Directory | Sort-Object CreationTime | Select-Object -Last 1).Name  # the newest run's ID
 uv run python scripts\validate_jev.py --run-id $runId --api-base http://localhost:8765   # verify it: disk vs API
@@ -297,15 +298,15 @@ For actual Typesafe gameplay, configure `TYPESAFE_API_KEY` in terminal 3 and run
 uv run python -m bots.jev.v1 --decision-provider typesafe --decision-model jev-latest --decision-max-requests 450 --realtime
 ```
 
-The dashboard's **Army decision** panel identifies Typesafe decisions and scripted fallback, actual returned model, latency and token usage. Missing credentials fail before SC2 starts. Setup and the separate live integration gate: [Typesafe validation](documentation/operator/jev-validation.md#13-typesafe-jev-integration-phase-ji).
+The dashboard's **Army decision** panel identifies Typesafe decisions and scripted fallback, actual returned model, latency and token usage; for v2 the **Plans and decisions** panel and the graph's node sources show which request, fallback or local decision drove each plan and node. Missing credentials fail before SC2 starts. Setup and the separate live integration gate: [Typesafe validation](documentation/operator/jev-validation.md#13-typesafe-jev-integration-phase-ji).
 
 For an attended test, use the dashboard-first launcher. It starts or reuses the dashboard, opens the Jev tab on the exact run (`/?tab=jev&launch=<session_id>`), and starts SC2 only after that page has rendered the run and acknowledged it:
 
 ```powershell
-powershell -File scripts/launch-jev.ps1 -Version v1 -DecisionProvider scripted -Difficulty 1 -Seed 1
+powershell -File scripts/launch-jev.ps1 -Version v2 -DecisionProvider scripted -Difficulty 1 -Seed 1
 ```
 
-Its defaults are `-Version v2 -DecisionProvider typesafe -Difficulty 3 -Seed 11`. `bots.jev.v2` is not packaged until Jev v2 Step 214, so pass `-Version v1`. The launcher and the reproducible benchmark are documented in the [Jev v2 validation guide](documentation/operator/jev-v2-validation.md); for example, `uv run python scripts/benchmark_jev.py --panel baseline --dry-run` resolves the exact plan with no service call, SC2 launch or file write.
+Its defaults are `-Version v2 -DecisionProvider typesafe -Difficulty 3 -Seed 11`: with no arguments it plays `bots.jev.v2` as a paid hosted match (`-Version v1` plays v1). The v2 player, its lanes, plans and questions, the live graph and the Step 222 prerequisites are in section 13 of the [Jev v2 validation guide](documentation/operator/jev-v2-validation.md#13-the-v2-player-and-the-live-graph-steps-214-221). The launcher and the reproducible benchmark are documented in the [Jev v2 validation guide](documentation/operator/jev-v2-validation.md); for example, `uv run python scripts/benchmark_jev.py --panel baseline --dry-run` resolves the exact plan with no service call, SC2 launch or file write.
 
 Stop a match with Ctrl+C once in its own terminal (the bot leaves cleanly; never kill SC2 processes wholesale). Full smoke and acceptance procedure: [documentation/operator/jev-validation.md](documentation/operator/jev-validation.md).
 
@@ -369,7 +370,8 @@ Alpha4Gate/
 │   └── ...                  # scouting, config, macro, micro, etc.
 ├── bots/v1..v13/            # Promoted snapshots — each a self-contained stack with its own data/
 ├── bots/current/            # Thin pointer package (MetaPathFinder → active version, v13 today)
-├── bots/jev/v1/             # Jev player family: packaged decision-graph policy + manifest
+├── bots/jev/v1/             # Jev player family: packaged decision-graph policy + manifest (frozen v1)
+├── bots/jev/v2/             # Jev v2: the adaptive player's packaged policy + manifest
 ├── src/jev/                 # Jev runtime, SC2 adapter, runner, run evidence, benchmark, dashboard-first launch, /api/jev
 ├── src/orchestrator/        # Version registry, snapshots, self-play, Elo ladder, evolve
 ├── tests/                   # 2939 unit tests passing across 126 files (+ SC2 integration markers)

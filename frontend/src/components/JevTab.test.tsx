@@ -17,6 +17,7 @@ import {
 // The archived policy the API serves is the packaged policy document plus
 // its hash, so the policy responses below use the real shipped document.
 import shippedPolicyText from "../../../bots/jev/v1/policy.json?raw";
+import shippedV2PolicyText from "../../../bots/jev/v2/policy.json?raw";
 
 /**
  * JevTab tests: every run state the tab must label, the node inspector,
@@ -1124,5 +1125,423 @@ describe("launchPhase: every launch state x following/paused x fresh/old", () =>
     expect(launchLiveness({ ...running, state: "between_games" }, 119, null)).toBe("alive");
     expect(launchLiveness({ ...running, state: "finished" }, 10_000, null)).toBe("none");
     expect(launchLiveness({ ...running, state: "starting" }, null, null)).toBe("alive");
+  });
+});
+
+// --- Plan J2 Step 221: lanes, observed activity, plans and node sources -----------
+
+function v2PolicyDoc(hash: string): Doc {
+  return { ...(JSON.parse(shippedV2PolicyText) as Doc), policy_hash: hash };
+}
+
+function diagnostic(sequence: number, nodeId: string, reason: string, facts: Doc, extra: Doc = {}) {
+  return event(RUN_A, sequence, nodeId, {
+    kind: "diagnostic",
+    status: "success",
+    reason,
+    facts,
+    ...extra,
+  });
+}
+
+function activityEdges(): Array<[string | undefined, string | undefined]> {
+  return Array.from(
+    screen.getByTestId("jev-graph-activity").querySelectorAll<SVGPathElement>("path"),
+  ).map((path) => [path.dataset.edge, path.dataset.activity]);
+}
+
+describe("JevTab observed activity (plan J2 Step 221)", () => {
+  const policy = shippedPolicy();
+  const nodes = policy.nodes as Array<{ id: string; children: string[] }>;
+  const childOf = (id: string) => nodes.find((node) => node.id === id)?.children ?? [];
+  const [armyFirst] = childOf("army");
+  const [economyFirst, economySecond] = childOf("economy");
+
+  it("draws the latest state's running path and node events of the last 2 game s", async () => {
+    await renderRun(
+      runState(RUN_A, HASH_A, {
+        game_seconds: 12.5,
+        active_nodes: ["economy", economySecond],
+        recent_events: [
+          // Too old for the trail (3.5 game s before the state): never drawn.
+          event(RUN_A, 1, "army", {
+            status: "running",
+            game_seconds: 9.0,
+            facts: { child: armyFirst },
+          }),
+          // Recorded 1 game s before the state: the recent trail.
+          event(RUN_A, 2, "economy", {
+            status: "running",
+            game_seconds: 11.5,
+            facts: { child: economyFirst },
+          }),
+          // A child that is not this node's: never an edge.
+          event(RUN_A, 3, "army", {
+            status: "running",
+            game_seconds: 12.5,
+            facts: { child: economyFirst },
+          }),
+        ],
+      }),
+    );
+    expect(activityEdges()).toEqual([
+      [`economy>${economySecond}`, "current"],
+      [`economy>${economyFirst}`, "recent"],
+    ]);
+    expect(screen.getByTestId("jev-graph-active-lanes")).toHaveTextContent(
+      "1 lane(s) active: economy",
+    );
+  });
+
+  it("never invents a transition between two polls", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    await renderRun(
+      runState(RUN_A, HASH_A, { active_nodes: ["economy", economyFirst], game_seconds: 10 }),
+    );
+    expect(activityEdges()).toEqual([[`economy>${economyFirst}`, "current"]]);
+    // The next poll: the lane moved on, with no event naming how it got there.
+    route(
+      `/api/jev/runs/${RUN_A}`,
+      runState(RUN_A, HASH_A, { active_nodes: ["economy", economySecond], game_seconds: 11 }),
+    );
+    await act(() => vi.advanceTimersByTimeAsync(JEV_RUN_POLL_MS));
+    expect(activityEdges()).toEqual([[`economy>${economySecond}`, "current"]]);
+  });
+
+  it("labels the activity of a stale or final run as last known and animates nothing", async () => {
+    await renderRun(
+      runState(RUN_A, HASH_A, {
+        status: "finished",
+        result: "win",
+        active_nodes: ["economy", economyFirst],
+      }),
+    );
+    const [path] = Array.from(
+      screen.getByTestId("jev-graph-activity").querySelectorAll<SVGPathElement>("path"),
+    );
+    expect(path).toHaveAttribute("data-animated", "false");
+    expect(path.querySelector("title")).toHaveTextContent("(last known)");
+    expect(screen.getByTestId("jev-graph-active-lanes")).toHaveTextContent(
+      "1 lane(s) active when the run ended: economy",
+    );
+  });
+
+  it("keeps an old v1 archive's presentation: no plans panel and no invented sources", async () => {
+    await renderRun(runState(RUN_A, HASH_A, { recent_events: [event(RUN_A, 1, "economy")] }));
+    expect(screen.queryByTestId("jev-plans")).not.toBeInTheDocument();
+    expect(screen.getByTestId("jev-decision-unavailable")).toBeInTheDocument();
+    expect(screen.getAllByTestId("jev-graph-lane").map((chip) => chip.dataset.lane)).toEqual(
+      policy.roots,
+    );
+    fireEvent.click(treeitem("economy"));
+    expect(screen.getByTestId("jev-node-lane")).toHaveTextContent("economy");
+    expect(screen.getByTestId("jev-node-sources-none")).toBeInTheDocument();
+    expect(screen.getAllByRole("treeitem").every((item) => !item.hasAttribute("data-source"))).toBe(
+      true,
+    );
+  });
+});
+
+describe("JevTab plans and decisions (plan J2 Step 221)", () => {
+  const PLAN_TECH = `${RUN_A}:plan:1`;
+  const PLAN_EXPAND = `${RUN_A}:plan:2`;
+  const STAGE = "expansion.site_safe.wait";
+  const RETREAT = "expansion.site_safe.retreat";
+  const slotTurn = {
+    slot: "macro",
+    open_plan_id: PLAN_EXPAND,
+    open_kind: "expand",
+    cooldown_until: 265.0,
+    yield_from: "tech",
+    yield_to: ["expand"],
+    yield_until: 270.0,
+    disabled: {},
+  };
+  const expandFacts = {
+    plan_id: PLAN_EXPAND,
+    plan_node: "expansion.start.go",
+    plan_root: "expansion",
+    plan_kind: "expand",
+    plan_status: "waiting",
+    stage_node_id: STAGE,
+    reason_code: "site_threatened",
+    blocker: "waiting: 1 enemy seen near the expansion site",
+    site: [58.5, 30.5],
+    actor_tag: BIG_TAG,
+    started_game_seconds: 280.0,
+    last_progress_game_seconds: 290.0,
+    deadline_game_seconds: 400.0,
+    reserved_minerals: 75,
+    reserved_vespene: 0,
+    finished_game_seconds: null,
+    decided_by: "typesafe",
+    decision_request_id: 4,
+    response: "delay",
+    response_request_id: 6,
+  };
+  /** The expansion plan's own summary event (its PlanRecord facts plus the event's). */
+  const expandSummary = {
+    ...expandFacts,
+    slot_turn: slotTurn,
+    transition: "site_threatened",
+    summary: true,
+  };
+  const kinds = [
+    {
+      kind: "expand",
+      may_start: false,
+      refusal:
+        `the macro slot already holds open plan ${PLAN_EXPAND} (expand); ` +
+        "never a duplicate plan",
+    },
+    {
+      kind: "tech",
+      may_start: false,
+      refusal: "the macro slot yields to expand until 270.00s after a tech abort: one turn each",
+    },
+  ];
+  /** A Plan slot summary whose ``plans`` entries are ``entries``. */
+  const slotSummary = (sequence: number, entries: Doc[]) =>
+    diagnostic(sequence, "tech", "Plan slot summary", {
+      slot: "macro",
+      slot_turn: slotTurn,
+      kinds,
+      plans: entries,
+      summary: true,
+    });
+  const techFacts = {
+    plan_id: PLAN_TECH,
+    plan_node: "tech.start.go",
+    plan_root: "tech",
+    plan_kind: "tech",
+    plan_status: "aborted",
+    stage_node_id: "tech.reserve",
+    reason_code: "recoveries_exhausted",
+    blocker: "no_progress after 3 recovery attempts",
+    started_game_seconds: 120.0,
+    finished_game_seconds: 250.0,
+    decided_by: "local_graph",
+    decision_request_id: null,
+    response: null,
+    response_request_id: null,
+  };
+  // The runtime's real order within a tick: each open plan's summary, then the slot
+  // summary, whose entries carry every PlanRecord fact; the decision diagnostics lead
+  // the next tick.
+  const events = [
+    diagnostic(10, STAGE, "expand plan summary", expandSummary, { status: "running" }),
+    slotSummary(11, [techFacts, expandFacts]),
+    diagnostic(12, "tech", "Strategy decision source", {
+      decision_provider: "typesafe",
+      question_id: "strategy",
+      source: "typesafe",
+      choice: "expand",
+      in_force_request_id: 4,
+      reason: "accepted",
+      pending: false,
+      model: "jev-1.13.0",
+      available_options: ["pressure", "recover"],
+    }),
+    diagnostic(13, "expansion", "Expansion response decision source", {
+      question_id: "expansion_response",
+      source: "typesafe",
+      choice: "delay",
+      in_force_request_id: 6,
+      reason: "accepted",
+      pending: true,
+      pending_request_id: 7,
+      model: "jev-1.13.0",
+    }),
+    event(RUN_A, 14, "expansion.site_safe.delay.chosen", {
+      facts: {
+        question_id: "expansion_response",
+        choice: "delay",
+        source: "typesafe",
+        request_id: 6,
+        plan: "expansion.start.go",
+        applies: true,
+        branch: "delay",
+      },
+    }),
+    event(RUN_A, 15, RETREAT, {
+      task_id: `${RUN_A}:9`,
+      kind: "command",
+      status: "issued",
+      reason: "MOVE for task",
+      facts: {
+        intent_key: `${RETREAT}|x`,
+        attempt: 1,
+        decision_question_id: "expansion_response",
+        decision_request_id: 6,
+        decision_choice: "delay",
+        decision_plan_id: PLAN_EXPAND,
+      },
+      action: { ability: "MOVE", actor_tags: [BIG_TAG], target: [40, 40] },
+    }),
+    diagnostic(16, "production", "Production mix decision source", {
+      question_id: "production_mix",
+      source: "local_fallback",
+      choice: null,
+      in_force_request_id: null,
+      reason: "low_confidence",
+      pending: false,
+    }),
+  ];
+
+  async function renderV2(extra: Doc = {}): Promise<void> {
+    await renderRun(
+      runState(RUN_A, HASH_A, {
+        version: 2,
+        game_seconds: 291.0,
+        waiting_nodes: ["expansion", STAGE],
+        active_nodes: ["economy", "production"],
+        recent_events: events,
+        ...extra,
+      }),
+      v2PolicyDoc(HASH_A),
+    );
+  }
+
+  it("shows each plan's stage, blocker or outcome and the decision behind it", async () => {
+    await renderV2();
+    const panel = screen.getByTestId("jev-plans");
+    expect(within(panel).getByTestId("jev-plans-evidence")).toHaveTextContent("Live evidence");
+    const rows = within(panel).getAllByTestId("jev-plan-row");
+    expect(rows.map((row) => [row.dataset.planKind, row.dataset.planStatus])).toEqual([
+      ["expand", "waiting"],
+      ["tech", "aborted"],
+    ]);
+    const [expand, tech] = rows;
+    expect(expand).toHaveTextContent(PLAN_EXPAND);
+    expect(expand).toHaveTextContent(STAGE);
+    expect(within(expand).getByTestId("jev-plan-blocker")).toHaveTextContent(
+      "site_threatened: waiting: 1 enemy seen near the expansion site",
+    );
+    expect(within(expand).getByTestId("jev-plan-decided-by")).toHaveTextContent(
+      "Typesafe (request 4)",
+    );
+    expect(expand).toHaveTextContent("delay (request 6)");
+    expect(within(expand).getByTestId("jev-plan-holds")).toHaveTextContent(
+      "deadline 400.0 s · holds 75 minerals, 0 gas",
+    );
+    expect(within(tech).getByTestId("jev-plan-blocker")).toHaveTextContent(
+      "aborted (recoveries_exhausted) at 250.0 s",
+    );
+    expect(within(tech).getByTestId("jev-plan-decided-by")).toHaveTextContent("local graph");
+  });
+
+  // Iteration 2 regression: the slot summary follows the plan's own summary in the same
+  // tick, so its entry must never blank the deadline and holds the plan event gave --
+  // whether the entry carries every PlanRecord fact (today) or only the plan's identity
+  // and status (an archive from before the entries carried them all).
+  it.each([
+    ["every PlanRecord fact", expandFacts],
+    [
+      "only identity and status",
+      {
+        plan_id: PLAN_EXPAND,
+        plan_kind: "expand",
+        plan_status: "waiting",
+        stage_node_id: STAGE,
+        reason_code: "site_threatened",
+      },
+    ],
+  ])(
+    "keeps an open plan's deadline and holds when a slot summary entry with %s follows it",
+    async (_, entry) => {
+      await renderV2({
+        recent_events: [
+          diagnostic(10, STAGE, "expand plan summary", expandSummary, { status: "running" }),
+          slotSummary(11, [entry]),
+          diagnostic(20, STAGE, "expand plan summary", expandSummary, { status: "running" }),
+          slotSummary(21, [entry]),
+        ],
+      });
+      const [row] = screen.getAllByTestId("jev-plan-row");
+      expect(within(row).getByTestId("jev-plan-holds")).toHaveTextContent(
+        "deadline 400.0 s · holds 75 minerals, 0 gas",
+      );
+      expect(within(row).getByTestId("jev-plan-decided-by")).toHaveTextContent(
+        "Typesafe (request 4)",
+      );
+    },
+  );
+
+  it("explains the slot's turn and which kinds may start next", async () => {
+    await renderV2();
+    const slot = screen.getByTestId("jev-slot");
+    expect(slot).toHaveAttribute("data-slot", "macro");
+    expect(within(slot).getByTestId("jev-slot-open")).toHaveTextContent(
+      `holds expand plan ${PLAN_EXPAND}`,
+    );
+    expect(within(slot).getByTestId("jev-slot-turn")).toHaveTextContent(
+      "tech yields to expand until 270.0 s (passed)",
+    );
+    const kinds = within(slot).getAllByTestId("jev-slot-kind");
+    expect(kinds.map((kind) => kind.dataset.mayStart)).toEqual(["false", "false"]);
+    expect(kinds[1]).toHaveTextContent("tech: waits: the macro slot yields to expand");
+    expect(screen.getByTestId("jev-strategy-available")).toHaveTextContent(
+      "Strategy choices the graph can execute now: pressure, recover",
+    );
+  });
+
+  it("names each question's source, choice, request and pending request", async () => {
+    await renderV2();
+    const rows = screen.getAllByTestId("jev-decision-row");
+    expect(rows.map((row) => [row.dataset.question, row.dataset.source])).toEqual([
+      ["strategy", "typesafe"],
+      ["expansion_response", "typesafe"],
+      ["production_mix", "local_fallback"],
+    ]);
+    expect(rows[0]).toHaveTextContent("Typesafe · model jev-1.13.0");
+    expect(rows[1]).toHaveTextContent("delay");
+    expect(rows[1]).toHaveTextContent("request 7");
+    expect(rows[2]).toHaveTextContent("local fallback");
+    expect(rows[2]).toHaveTextContent("low_confidence");
+  });
+
+  it("shows a plan's stage in the graph and names the request behind its nodes", async () => {
+    await renderV2();
+    const stageName = new RegExp(`^${STAGE.replace(/\./g, "\\.")},`);
+    expect(screen.queryByRole("treeitem", { name: stageName })).toBeNull();
+    fireEvent.click(screen.getAllByTestId("jev-plan-stage")[0]);
+    expect(screen.getByTestId("jev-node-id")).toHaveTextContent(STAGE);
+    const stage = treeitem(STAGE); // its collapsed branch was expanded
+    expect(stage).toHaveAttribute("data-status", "waiting");
+    expect(stage).toHaveAttribute("data-source", "hosted");
+    expect(within(stage).getByText("⚑ Typesafe req #6")).toBeInTheDocument();
+    const list = screen.getByTestId("jev-node-sources");
+    const sources = within(list).getAllByTestId("jev-node-source");
+    expect(sources[0]).toHaveTextContent(
+      `plan ${PLAN_EXPAND} (expand) expansion_response = delay: Typesafe (request 6)`,
+    );
+    // The guards this node runs under, with what each last recorded.
+    const guards = screen.getAllByTestId("jev-node-guard");
+    expect(guards.map((guard) => guard.textContent?.split(" ")[0])).toEqual([
+      "expansion.site_safe.delay.chosen",
+      "expansion.site_safe.delay.local",
+    ]);
+    expect(guards[0]).toHaveTextContent("success at 3.5 s (event 14)");
+    expect(guards[0]).toHaveTextContent("Typesafe (request 6)");
+    expect(guards[1]).toHaveTextContent("no recent evaluation recorded");
+    // The command its sibling sent carries the same request: request -> plan -> command.
+    fireEvent.click(within(guards[0]).getByRole("button"));
+    expect(screen.getByTestId("jev-node-id")).toHaveTextContent(
+      "expansion.site_safe.delay.chosen",
+    );
+    expect(treeitem(RETREAT)).toHaveAttribute("data-source", "hosted");
+    expect(treeitem(RETREAT)).toHaveAccessibleDescription(
+      `lane expansion, source: command ${RUN_A}:9 created under expansion_response = delay ` +
+        `for plan ${PLAN_EXPAND}: Typesafe (request 6)`,
+    );
+  });
+
+  it("labels every plan and decision of a stale run as last known", async () => {
+    await renderV2({ stale: true });
+    expect(screen.getByTestId("jev-plans-evidence")).toHaveTextContent("Last known evidence");
+    expect(screen.getAllByTestId("jev-plan-status")[0]).toHaveTextContent("waiting (last known)");
+    expect(screen.getAllByTestId("jev-decision-row")[1]).toHaveTextContent(
+      "request 7 (when recorded)",
+    );
   });
 });

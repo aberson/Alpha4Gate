@@ -21,6 +21,7 @@ import contextlib
 import json
 import os
 import random
+import re
 import shutil
 import sys
 import time
@@ -45,7 +46,7 @@ from jev.api import (
     create_router,
 )
 from jev.bot import JevBot, JevController
-from jev.contracts import ErrorCode, RunMetadata
+from jev.contracts import RECENT_EVENT_LIMIT, ErrorCode, RunMetadata
 from jev.launch import (
     LAUNCH_ERROR_CODES,
     LAUNCH_ERROR_STATUS,
@@ -55,7 +56,12 @@ from jev.launch import (
 )
 from jev.policy import PolicyBundle
 from jev.runner import EXIT_FAILURE, MatchOptions, Sc2Launcher, run_match
-from jev.runtime import JevRuntime
+from jev.runtime import (
+    EXECUTION_DECISION_REASONS,
+    PLAN_SLOT_SUMMARY_REASON,
+    STRATEGY_DECISION_REASON,
+    JevRuntime,
+)
 from jev.telemetry import (
     MAX_STATE_BYTES,
     METADATA_FILE,
@@ -66,6 +72,7 @@ from jev.telemetry import (
     EvidenceFiles,
     RunRecorder,
     default_run_root,
+    read_trace_segment,
     repository_root,
     timestamp_seconds,
     utc_timestamp,
@@ -1237,3 +1244,218 @@ def test_the_readiness_receipt_is_handled_off_the_event_loop_and_still_validated
     assert _ready(client, writer.session_id, {"run_id": run_id}).status_code == 422
     ok = _ready(client, writer.session_id, {"run_id": run_id, "policy_hash": BUNDLE.policy_hash})
     assert ok.status_code == 200 and threads == ["worker", "worker"]
+
+
+# ---------------------------------------------------------------------------
+# Plan J2 Step 221: v2 plan and decision evidence, recorder -> reader -> API
+# ---------------------------------------------------------------------------
+
+#: Plan facts the dashboard's plan panel reads (jev.plans.PlanRecord.facts).
+_PLAN_PANEL_FACTS = (
+    "plan_id",
+    "plan_node",
+    "plan_root",
+    "plan_kind",
+    "plan_status",
+    "stage_node_id",
+    "reason_code",
+    "blocker",
+    "decided_by",
+    "decision_request_id",
+    "response",
+    "response_request_id",
+    "finished_game_seconds",
+)
+
+
+def _ts_constants(text: str) -> dict[str, Any]:
+    """The decision-reason vocabulary the dashboard reads (frontend/src/types/jev.ts)."""
+    block = re.search(r"JEV_DECISION_REASONS = \{(.*?)\} as const;", text, re.DOTALL)
+    assert block is not None
+    reasons = dict(re.findall(r'(\w+): "([^"]+)"', block[1]))
+    slot = re.search(r'JEV_PLAN_SLOT_SUMMARY_REASON = "([^"]+)";', text)
+    trail = re.search(r"JEV_TRAIL_SECONDS = (\d+);", text)
+    assert slot is not None and trail is not None
+    return {"reasons": reasons, "slot": slot[1], "trail": int(trail[1])}
+
+
+def test_v2_plan_and_decision_facts_round_trip_from_the_runner_through_the_router(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A hosted v2 match through the production runner (the Typesafe provider over a
+    scripted transport; nothing leaves the process): Typesafe chooses to expand, an
+    enemy at the site asks the expansion response, and ``continue`` builds the Nexus.
+    The real recorder wrote the archive; the real router serves it. Every event the API
+    serves is, fact for fact, the event the runtime emitted, and the window still holds
+    what the dashboard's plan panel and node attribution read: the plan's identity,
+    stage, outcome, deciding request and response; the slot's turn and which kinds may
+    start (the slot summary); each question's source; and request -> plan -> command."""
+    from test_jev_v2 import _threatened_expansion
+
+    hosted, _, _ = _threatened_expansion("continue", monkeypatch, tmp_path)
+    assert hosted.outcome.exit_code == 0
+    run_id = hosted.run_dir.name
+    run = hosted.run
+    assert run.controller is not None
+    (plan,) = run.controller.runtime.plans()
+    assert (plan.kind, plan.status, plan.decided_by, plan.response) == (
+        "expand",
+        "completed",
+        "typesafe",
+        "continue",
+    )
+    emitted = {event.sequence: event.to_dict() for event in run.events}
+
+    client = _client(tmp_path)
+    state = client.get(f"/api/jev/runs/{run_id}").json()
+    served = state["recent_events"]
+    assert len(served) == RECENT_EVENT_LIMIT  # the bounded window, full
+    for event in served:  # nothing lost, altered or invented between runtime and browser
+        assert event == emitted[event["sequence"]]
+
+    diagnostics = [e for e in served if e["kind"] == "diagnostic"]
+    reasons = {e["reason"] for e in diagnostics}
+    vocabulary = _ts_constants(
+        (repository_root() / "frontend" / "src" / "types" / "jev.ts").read_text(encoding="utf-8")
+    )
+    assert vocabulary["reasons"] == {
+        "army_mode": "Army decision source",
+        "strategy": STRATEGY_DECISION_REASON,
+        **EXECUTION_DECISION_REASONS,
+    }
+    assert vocabulary["slot"] == PLAN_SLOT_SUMMARY_REASON
+    # Each is summarized once per game second, so all of them survive the window.
+    assert {*vocabulary["reasons"].values(), PLAN_SLOT_SUMMARY_REASON} <= reasons
+
+    summaries = [e for e in diagnostics if e["reason"] == PLAN_SLOT_SUMMARY_REASON]
+    slot_summary = summaries[-1]
+    facts = slot_summary["facts"]
+    assert slot_summary["node_id"] == "tech"  # the slot's first lane in policy order
+    assert (facts["slot"], facts["summary"]) == ("macro", True)
+    assert facts["slot_turn"] == run.controller.runtime.plan_slots()[0].facts()
+    # Per kind the policy can start in the slot: the store's own check, its reason kept.
+    assert [kind["kind"] for kind in facts["kinds"]] == ["expand", "tech"]
+    for kind in facts["kinds"]:
+        assert kind["may_start"] == (kind["refusal"] is None)
+    (summarized,) = facts["plans"]
+    assert summarized == plan.facts()  # every PlanRecord fact, as the plan's own events
+    assert set(_PLAN_PANEL_FACTS) <= set(summarized)
+    assert summarized["plan_status"] == "completed"  # the outcome outlives the plan
+
+    questions = set(vocabulary["reasons"].values())
+    sources = {e["reason"]: e["facts"] for e in diagnostics if e["reason"] in questions}
+    strategy = sources[STRATEGY_DECISION_REASON]
+    assert {"source", "choice", "in_force_request_id", "available_options", "slots"} <= set(
+        strategy
+    )
+    response = sources[EXECUTION_DECISION_REASONS["expansion_response"]]
+    assert response["question_id"] == "expansion_response"
+    assert {"source", "choice", "in_force_request_id", "consumed", "released"} <= set(response)
+
+    # Request -> plan -> command, read back from the stored trace through the reader.
+    segment = read_trace_segment(hosted.run_dir, 1)
+    assert segment is not None and not segment.torn_tail
+    commanded = [
+        e for e in segment.events if e.kind == "command" and "decision_request_id" in e.facts
+    ]
+    assert {e.node_id for e in commanded} >= {"expansion.build"}
+    for event in commanded:
+        assert event.facts["decision_question_id"] == "expansion_response"
+        assert event.facts["decision_request_id"] == plan.response_request_id
+        assert event.facts["decision_plan_id"] == plan.plan_id
+        assert event.to_dict() == emitted[event.sequence]
+    started = [
+        e
+        for e in segment.events
+        if e.kind == "diagnostic" and e.facts.get("plan_id") == plan.plan_id
+    ]
+    assert started[0].facts["transition"] == "started"
+    assert plan.decision_request_id is not None
+    assert started[0].facts["decision_request_id"] == plan.decision_request_id
+
+
+def test_a_guard_kept_by_newer_requests_is_traced_with_each_request(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The recorder traces a node event again when its decision source changes: the
+    delay guard passes for request after request (the response is renewed while the
+    threat stays), and the stored trace -- what a later state's window and the browser
+    read -- names every one of those requests, not only the first."""
+    from test_jev_v2 import _threatened_expansion
+
+    hosted, _, _ = _threatened_expansion("delay", monkeypatch, tmp_path)
+    guard = "expansion.site_safe.delay.chosen"
+    emitted = {
+        e.facts["request_id"]
+        for e in hosted.run.events
+        if e.node_id == guard and e.kind == "node" and e.status == "success"
+    }
+    assert len(emitted) >= 2  # renewed at least once
+    segment = read_trace_segment(hosted.run_dir, 1)
+    assert segment is not None
+    traced = [
+        e.facts["request_id"]
+        for e in segment.events
+        if e.node_id == guard and e.kind == "node" and e.status == "success"
+    ]
+    assert sorted(traced) == sorted(emitted)  # each request once, none skipped
+    state = _client(tmp_path).get(f"/api/jev/runs/{hosted.run_dir.name}").json()
+    waiting = [
+        e
+        for e in state["recent_events"]
+        if e["reason"] == "expand plan summary" and e["facts"]["plan_status"] == "waiting"
+    ]
+    assert waiting and waiting[-1]["facts"]["stage_node_id"] == "expansion.site_safe.wait"
+    assert waiting[-1]["facts"]["response_request_id"] == max(emitted)
+
+
+def test_an_open_plan_keeps_its_deadline_and_holds_in_the_slot_summary_after_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Iteration 2 regression, in the real emission order the real recorder kept: each
+    tick a plan's own summary comes first and the slot summary after it, so the slot
+    summary is the newest word on the plan. Its entry must carry the same PlanRecord
+    facts -- deadline and holds included -- or the dashboard, which reads the newest
+    event about a plan, would blank them every game second."""
+    from test_jev_v2 import _threatened_expansion
+
+    hosted, _, _ = _threatened_expansion("delay", monkeypatch, tmp_path)
+    run = hosted.run
+    assert run.controller is not None
+    (plan,) = run.controller.runtime.plans()
+    assert plan.is_open and plan.status == "waiting"
+    served = _client(tmp_path).get(f"/api/jev/runs/{hosted.run_dir.name}").json()
+    events = served["recent_events"]
+    summaries = [e for e in events if e["reason"] == PLAN_SLOT_SUMMARY_REASON]
+    assert len(summaries) >= 2
+    checked = 0
+    for slot_summary in summaries:
+        own = [
+            e
+            for e in events
+            if e["facts"].get("plan_id") == plan.plan_id
+            and e["facts"].get("summary") is True
+            and e["game_loop"] == slot_summary["game_loop"]
+        ]
+        if not own:
+            continue  # that tick's plan summary is older than the window
+        (plan_summary,) = own
+        assert plan_summary["sequence"] < slot_summary["sequence"]  # the real order
+        (entry,) = [x for x in slot_summary["facts"]["plans"] if x["plan_id"] == plan.plan_id]
+        assert set(entry) == set(plan.facts())
+        for key in entry:  # the same plan, the same tick: the same facts
+            assert entry[key] == plan_summary["facts"][key], key
+        assert entry["deadline_game_seconds"] is not None
+        assert entry["reserved_minerals"] is not None and entry["reserved_vespene"] is not None
+        checked += 1
+    assert checked >= 2
+
+
+def test_a_v1_run_records_no_plan_or_v2_decision_evidence(tmp_path: Path) -> None:
+    """V1 keeps no plans and asks no v2 question: its archive carries no slot summary,
+    plan fact or v2 decision diagnostic (the dashboard renders it as before)."""
+    outcome = run_match(MatchOptions(), BUNDLE, run_root=tmp_path, launcher=_Launcher())
+    events = _client(tmp_path).get(f"/api/jev/runs/{outcome.run_id}").json()["recent_events"]
+    assert events
+    assert {e["reason"] for e in events if e["kind"] == "diagnostic"} <= {"Army decision source"}
+    assert not [e for e in events if "plan_id" in e["facts"] or "slot_turn" in e["facts"]]

@@ -13,8 +13,9 @@ difficulty 3 and 4, seed 11. ``heldout-a`` / ``heldout-b``: each race at difficu
 ``attribution``: the six v2 held-out cases with the scripted provider. Each is
 exactly six games. ``staging`` is a one-game, scripted, non-realtime substrate
 check of the current v1 source (no service call) -- never performance evidence.
-A panel needing a version that is not packaged (today ``bots.jev.v2``) or not
-frozen fails resolution with the reason; it never falls back.
+A panel needing a version that is not packaged or not frozen (the held-out and
+attribution panels need ``bots.jev.v2`` frozen by ``--freeze-candidate v2``) fails
+resolution with the reason; it never falls back.
 
 **Frozen source** (plan D1). The runtime source set of a version -- every module of
 the ``jev`` package, the SC2 path resolver it imports, the ``bots``/``bots.jev``

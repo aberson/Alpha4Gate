@@ -7,6 +7,7 @@
   --jev-waiting: #f59e0b;
   --jev-failure: #dc2626;
   --jev-stale: #fbbc04;
+  --jev-lane: #64748b;
 
   text-align: left;
   padding: 12px 16px 24px;
@@ -504,6 +505,226 @@
   color: var(--text-h);
 }
 
+/* Lanes (plan J2 Step 221, D5): colour identifies a root lane -- economy green,
+ * expansion teal, army red, tech purple -- on its band, node stripes, activity edges
+ * and legend chip. Status stays outline, glyph and words. Each lane class sets
+ * --jev-lane; roots the policy names otherwise get an "other" tone. */
+.jev-lane-economy {
+  --jev-lane: #22a06b;
+}
+
+.jev-lane-expansion {
+  --jev-lane: #0f9d9a;
+}
+
+.jev-lane-army {
+  --jev-lane: #d64545;
+}
+
+.jev-lane-tech {
+  --jev-lane: #8b5cf6;
+}
+
+.jev-lane-supply {
+  --jev-lane: #ca8a04;
+}
+
+.jev-lane-construction {
+  --jev-lane: #c2410c;
+}
+
+.jev-lane-scouting {
+  --jev-lane: #3b82f6;
+}
+
+.jev-lane-production {
+  --jev-lane: #db2777;
+}
+
+.jev-lane-reserve {
+  --jev-lane: #64748b;
+}
+
+.jev-lane-other-0 {
+  --jev-lane: #0891b2;
+}
+
+.jev-lane-other-1 {
+  --jev-lane: #65a30d;
+}
+
+.jev-lane-other-2 {
+  --jev-lane: #a16207;
+}
+
+.jev-lane-other-3 {
+  --jev-lane: #7c3aed;
+}
+
+.jev-lane-other-4 {
+  --jev-lane: #be123c;
+}
+
+.jev-lane-other-5 {
+  --jev-lane: #475569;
+}
+
+.jev-graph-lane-band {
+  fill: var(--jev-lane);
+  fill-opacity: 0.07;
+  stroke: var(--jev-lane);
+  stroke-opacity: 0.25;
+  stroke-width: 1;
+  pointer-events: none;
+}
+
+.jev-graph-node rect.jev-graph-node-lane {
+  fill: var(--jev-lane);
+  stroke: none;
+  opacity: 1;
+  animation: none;
+}
+
+.jev-graph-lane-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.jev-graph-lane-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--jev-lane);
+}
+
+/* Observed activity: only edges the evidence records. Current path solid, recent
+ * trail dashed and fading (labeled recent); muted and still once not live. */
+.jev-graph-edge-activity {
+  fill: none;
+  stroke: var(--jev-lane);
+  pointer-events: none;
+}
+
+.jev-graph-edge-current {
+  stroke-width: 4;
+}
+
+.jev-graph-edge-recent {
+  stroke-width: 2.5;
+  stroke-dasharray: 5 4;
+}
+
+.jev-graph-edge-last-known {
+  stroke-dasharray: 2 4;
+}
+
+.jev-graph-activity-animated .jev-graph-edge-recent {
+  transition: opacity 0.9s linear;
+}
+
+.jev-graph-edge-flow {
+  stroke-dasharray: 10 6;
+  animation: jev-flow 1.2s linear infinite;
+}
+
+.jev-graph-node-source {
+  font-size: 10px;
+}
+
+.jev-graph-follow {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  font-size: 13px;
+}
+
+.jev-graph-follow-status {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+/* Plans and decisions (plan J2 Step 221): plan, stage, blocker, slot and source. */
+.jev-plans {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--code-bg);
+}
+
+.jev-plans-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.jev-plans-title h3 {
+  margin-right: auto;
+}
+
+.jev-plans-scroll {
+  overflow-x: auto;
+}
+
+.jev-plans table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.jev-plans th,
+.jev-plans td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.jev-plans th {
+  color: var(--text-h);
+}
+
+.jev-plans td.jev-nowrap {
+  white-space: nowrap;
+}
+
+.jev-plan-lane {
+  border-left: 4px solid var(--jev-lane);
+  padding-left: 4px;
+}
+
+.jev-plans button,
+.jev-inspector button {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-h);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.jev-source-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.jev-source-list li {
+  margin-bottom: 4px;
+  overflow-wrap: anywhere;
+}
+
+@keyframes jev-flow {
+  to {
+    stroke-dashoffset: -16;
+  }
+}
+
 @keyframes jev-pulse {
   0%,
   100% {
@@ -528,7 +749,12 @@
 
 @media (prefers-reduced-motion: reduce) {
   .jev-graph-node-live rect,
-  .jev-badge-live::before {
+  .jev-badge-live::before,
+  .jev-graph-edge-flow {
     animation: none;
+  }
+
+  .jev-graph-activity-animated .jev-graph-edge-recent {
+    transition: none;
   }
 }

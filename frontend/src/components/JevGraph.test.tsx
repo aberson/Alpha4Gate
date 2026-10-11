@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, within } from "@testing-library/react";
 import { JevGraph } from "./JevGraph";
+import type { JevGraphActivity, JevNodeSource } from "./jevEvidence";
 import type { JevNodeRuntime, JevPolicy, JevPolicyNode } from "../types/jev";
 
 /**
@@ -52,18 +53,32 @@ interface RenderOptions {
   runtime?: Record<string, JevNodeRuntime>;
   live?: boolean;
   onSelectNode?: (id: string) => void;
+  activity?: JevGraphActivity;
+  reveal?: { nodeId: string; token: number } | null;
 }
 
-function renderGraph({ runtime = {}, live = true, onSelectNode = () => {} }: RenderOptions = {}) {
-  return render(
+function graph({
+  runtime = {},
+  live = true,
+  onSelectNode = () => {},
+  activity,
+  reveal = null,
+}: RenderOptions = {}) {
+  return (
     <JevGraph
       policy={POLICY}
       runtime={new Map(Object.entries(runtime))}
       live={live}
       selectedNodeId={null}
       onSelectNode={onSelectNode}
-    />,
+      activity={activity}
+      reveal={reveal}
+    />
   );
+}
+
+function renderGraph(options: RenderOptions = {}) {
+  return render(graph(options));
 }
 
 function item(id: string): HTMLElement {
@@ -224,5 +239,230 @@ describe("JevGraph", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Reset view" }));
     expect(canvasTransform()).toBe("translate(0,0) scale(1)");
+  });
+});
+
+/** A controllable ``prefers-reduced-motion`` answer for the graph's media query. */
+function stubReducedMotion(reduce: boolean): void {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: reduce && query === "(prefers-reduced-motion: reduce)",
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }));
+}
+
+function activityPaths(): HTMLElement[] {
+  return Array.from(
+    screen.getByTestId("jev-graph-activity").querySelectorAll<HTMLElement>("path"),
+  );
+}
+
+const ACTIVITY: JevGraphActivity = {
+  edges: [
+    { parent: "economy", child: "economy.build", kind: "current", ageSeconds: 0, sequence: null },
+    { parent: "army", child: "army.attack", kind: "recent", ageSeconds: 1.5, sequence: 41 },
+    // Recorded, but its child is hidden in a collapsed branch: nothing to draw it on.
+    {
+      parent: "economy.build",
+      child: "economy.build.pylon",
+      kind: "current",
+      ageSeconds: 0,
+      sequence: null,
+    },
+  ],
+  sources: new Map(),
+  followTargets: [],
+};
+
+describe("JevGraph lanes and observed activity (plan J2 Step 221)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("colours every node and band by its root lane and names the lanes active now", () => {
+    renderGraph({ runtime: { economy: "active", "economy.check": "waiting", army: "active" } });
+    expect(item("economy.check")).toHaveAttribute("data-lane", "economy");
+    expect(item("army.attack")).toHaveAttribute("data-lane", "army");
+    expect(item("economy.build").querySelector(".jev-graph-node-lane")).toHaveClass(
+      "jev-lane-economy",
+    );
+    const bands = document.querySelectorAll(".jev-graph-lane-band");
+    expect(Array.from(bands).map((band) => band.getAttribute("data-lane"))).toEqual([
+      "economy",
+      "army",
+    ]);
+    expect(bands[1]).toHaveClass("jev-lane-army");
+    // Simultaneous lanes: both are listed, each with its own counts.
+    expect(screen.getByTestId("jev-graph-active-lanes")).toHaveTextContent(
+      "2 lane(s) active: economy, army",
+    );
+    const chips = screen.getAllByTestId("jev-graph-lane");
+    expect(chips.map((chip) => chip.textContent)).toEqual([
+      "economy lane · 1 active · 1 waiting",
+      "army lane · 1 active · 0 waiting",
+    ]);
+    expect(item("economy")).toHaveAccessibleDescription("lane economy");
+  });
+
+  it("draws only the recorded edges: the current path solid, recent ones fading", () => {
+    renderGraph({ runtime: { economy: "active", "economy.build": "active" }, activity: ACTIVITY });
+    // The structural edges are unchanged; activity is drawn over them, never added to them.
+    expect(screen.getByTestId("jev-graph-edges").querySelectorAll("path")).toHaveLength(3);
+    const drawn = activityPaths();
+    expect(drawn.map((path) => [path.dataset.edge, path.dataset.activity])).toEqual([
+      ["economy>economy.build", "current"],
+      ["army>army.attack", "recent"],
+    ]);
+    const [current, recent] = drawn;
+    expect([current.dataset.lane, recent.dataset.lane]).toEqual(["economy", "army"]);
+    expect(Number(recent.style.opacity)).toBeLessThan(Number(current.style.opacity));
+    expect(recent.querySelector("title")).toHaveTextContent(
+      "recent: army → army.attack recorded 1.5 game s before the latest state (event 41); " +
+        "not current",
+    );
+    expect(screen.getByTestId("jev-graph-edge-legend")).toHaveTextContent(
+      "current path (2): both ends run in the latest state",
+    );
+  });
+
+  it("animates the current path only while live, and never with reduced motion", () => {
+    stubReducedMotion(false);
+    const { rerender } = renderGraph({ activity: ACTIVITY });
+    const current = () => activityPaths()[0];
+    expect(screen.getByTestId("jev-graph")).toHaveAttribute("data-reduced-motion", "false");
+    expect(current()).toHaveAttribute("data-animated", "true");
+
+    rerender(graph({ activity: ACTIVITY, live: false })); // stale, offline or final
+    expect(current()).toHaveAttribute("data-animated", "false");
+    expect(current().querySelector("title")).toHaveTextContent(
+      "current path economy → economy.build (last known)",
+    );
+    cleanup();
+
+    stubReducedMotion(true);
+    renderGraph({ activity: ACTIVITY });
+    expect(screen.getByTestId("jev-graph")).toHaveAttribute("data-reduced-motion", "true");
+    expect(current()).toHaveAttribute("data-animated", "false");
+    expect(screen.getByTestId("jev-graph-edge-legend")).toHaveTextContent(
+      "Reduced motion: nothing animates.",
+    );
+  });
+
+  it("follows activity only when asked, only while live, and never selects anything", () => {
+    const onSelectNode = vi.fn();
+    const following: JevGraphActivity = { ...ACTIVITY, followTargets: ["economy.build.pylon"] };
+    const { rerender } = renderGraph({ activity: following, onSelectNode });
+    const toggleFollow = screen.getByTestId("jev-follow");
+    expect(toggleFollow).not.toBeChecked(); // off by default: nothing moves
+    expect(itemNames()).not.toContain("economy.build.pylon");
+    expect(canvasTransform()).toBe("translate(0,0) scale(1)");
+    expect(screen.getByTestId("jev-follow-status")).toHaveTextContent("off");
+
+    fireEvent.click(toggleFollow);
+    expect(itemNames()).toContain("economy.build.pylon"); // its branch was expanded
+    expect(screen.getByTestId("jev-follow-status")).toHaveTextContent(
+      "on: showing economy.build.pylon",
+    );
+    expect(onSelectNode).not.toHaveBeenCalled();
+
+    // A manual pan stays while the target is unchanged (another poll, same activity).
+    fireEvent.click(screen.getByRole("button", { name: "Pan right" }));
+    const panned = canvasTransform();
+    rerender(graph({ activity: { ...following }, onSelectNode }));
+    expect(canvasTransform()).toBe(panned);
+
+    // The followed node stays followed while it is still a target: no hopping.
+    rerender(
+      graph({
+        activity: { ...following, followTargets: ["army.attack", "economy.build.pylon"] },
+        onSelectNode,
+      }),
+    );
+    expect(screen.getByTestId("jev-follow-status")).toHaveTextContent(
+      "on: showing economy.build.pylon",
+    );
+    expect(canvasTransform()).toBe(panned);
+
+    // Not live: following pauses and the view stays.
+    rerender(
+      graph({ activity: { ...following, followTargets: ["army.attack"] }, live: false }),
+    );
+    expect(screen.getByTestId("jev-follow-status")).toHaveTextContent(
+      "paused: this state is not live",
+    );
+    expect(canvasTransform()).toBe(panned);
+    expect(onSelectNode).not.toHaveBeenCalled();
+  });
+
+  it("brings a newly followed target into view with the smallest pan", () => {
+    const { rerender } = renderGraph({ activity: ACTIVITY });
+    fireEvent.click(screen.getByTestId("jev-follow"));
+    expect(screen.getByTestId("jev-follow-status")).toHaveTextContent(
+      "on: no active node to follow",
+    );
+    const panRight = screen.getByRole("button", { name: "Pan right" });
+    for (let i = 0; i < 20; i += 1) fireEvent.click(panRight);
+    const target = () => nodeBoxes()[itemNames().indexOf("army.attack")];
+    expect(target().right).toBeLessThan(0); // panned far off to the left
+    rerender(graph({ activity: { ...ACTIVITY, followTargets: ["army.attack"] } }));
+    // Without a measured viewport (no ResizeObserver here) the graph assumes 760 x 520.
+    const box = target();
+    expect(box.left).toBeGreaterThanOrEqual(0);
+    expect(box.right).toBeLessThanOrEqual(760);
+    expect(box.top).toBeGreaterThanOrEqual(0);
+    expect(box.bottom).toBeLessThanOrEqual(520);
+    expect(box.left).toBeLessThan(40); // the smallest pan: just inside the left margin
+    expect(screen.getByTestId("jev-follow-status")).toHaveTextContent("on: showing army.attack");
+  });
+
+  it("says when the lanes were active: live, last known, or when the run ended", () => {
+    const runtime = { economy: "active" as const };
+    const { rerender } = renderGraph({ runtime });
+    const lanes = () => screen.getByTestId("jev-graph-active-lanes");
+    expect(lanes()).toHaveTextContent("1 lane(s) active: economy");
+    rerender(graph({ runtime, live: false }));
+    expect(lanes()).toHaveTextContent("1 lane(s) active (last known): economy");
+    rerender(
+      <JevGraph
+        policy={POLICY}
+        runtime={new Map(Object.entries(runtime))}
+        live={false}
+        ended
+        selectedNodeId={null}
+        onSelectNode={() => {}}
+      />,
+    );
+    expect(lanes()).toHaveTextContent("1 lane(s) active when the run ended: economy");
+  });
+
+  it("names the decision a node's newest recorded event carries", () => {
+    const source: JevNodeSource = {
+      tone: "hosted",
+      badge: "Typesafe req #7",
+      detail: "command created under production_mix = balanced: Typesafe (request 7)",
+      sequence: 12,
+    };
+    renderGraph({
+      activity: { ...ACTIVITY, sources: new Map([["army.attack", source]]) },
+      live: false,
+    });
+    const attack = item("army.attack");
+    expect(attack).toHaveAttribute("data-source", "hosted");
+    expect(within(attack).getByText("⚑ Typesafe req #7 (last known)")).toBeInTheDocument();
+    expect(attack).toHaveAccessibleDescription(
+      "lane army, source: command created under production_mix = balanced: Typesafe (request 7)",
+    );
+    expect(item("army")).not.toHaveAttribute("data-source");
+  });
+
+  it("reveals a hidden node once per request, expanding its branch", () => {
+    const { rerender } = renderGraph();
+    expect(itemNames()).not.toContain("economy.build.wait");
+    rerender(graph({ reveal: { nodeId: "economy.build.wait", token: 1 } }));
+    expect(itemNames()).toContain("economy.build.wait");
+    fireEvent.click(screen.getByRole("button", { name: "Collapse economy.build" }));
+    rerender(graph({ reveal: { nodeId: "economy.build.wait", token: 1 } })); // same request
+    expect(itemNames()).not.toContain("economy.build.wait");
+    rerender(graph({ reveal: { nodeId: "economy.build.wait", token: 2 } }));
+    expect(itemNames()).toContain("economy.build.wait");
   });
 });

@@ -7,11 +7,26 @@ import {
   type JevResource,
 } from "../hooks/useJevRun";
 import { JevGraph } from "./JevGraph";
+import { PlanPanel } from "./JevPlanPanel";
 import {
+  NO_ACTIVITY,
+  eventSource,
+  factBoolean,
+  factNumber,
+  factString,
+  formatSeconds,
+  graphActivity,
+  pathGuards,
+  plansEvidence,
+  type JevNodeSource,
+} from "./jevEvidence";
+import {
+  JEV_DECISION_REASONS,
   isTerminalRunStatus,
   launchLiveness,
   launchPhase,
   nodeRuntimeLabel,
+  policyLanes,
   type JevLaunchFacts,
   type JevLaunchPhase,
   type JevShownRun,
@@ -24,7 +39,6 @@ import {
   type JevRunState,
   type JevTarget,
   type JevTask,
-  type JsonObject,
   type JsonValue,
 } from "../types/jev";
 import "./JevTab.css";
@@ -51,6 +65,16 @@ import "./JevTab.css";
  * live observations, Live, and Finished with the result; a batch moves on to
  * the next game in the same tab. Picking another run pauses following until
  * Resume live. ``?tab=jev&run=<run_id>`` shows exactly that run.
+ *
+ * Plan J2 Step 221 (D5) explains what Jev is doing and why progress waits: the
+ * graph colours each root lane and draws only the edge activity the evidence
+ * records (the latest state's running path, and node events of the last two game
+ * seconds as a fading "recent" trail), with an opt-in "Follow activity"; a v2 run
+ * adds a Plans and decisions panel (each plan's stage, blocker or outcome, the
+ * slot's turn and what may start next, each question's source and request); and
+ * the node inspector names the request, fallback or local decision behind a node.
+ * Older and v1 runs record no plan or v2 decision facts: they get lanes and recorded
+ * edges, but no plans panel and no source beyond their own army diagnostic.
  */
 
 /** Events per node, tasks per node, waiting IDs named, and trace rows shown. */
@@ -62,7 +86,9 @@ const TRACE_ROWS = 40;
 const JSON_PREVIEW_CHARS = 2000;
 /** The events of a run whose state has not loaded (one stable identity). */
 const NO_EVENTS: JevEvent[] = [];
-const ARMY_DECISION_REASON = "Army decision source";
+const ARMY_DECISION_REASON = JEV_DECISION_REASONS.army_mode;
+/** Recorded source evidence listed per node in the inspector. */
+const NODE_SOURCE_ROWS = 5;
 
 function describeError(error: JevLoadError): string {
   switch (error.kind) {
@@ -79,10 +105,6 @@ function formatTime(timestamp: string | Date): string {
   return new Date(timestamp).toLocaleTimeString();
 }
 
-function formatSeconds(seconds: number): string {
-  return `${seconds.toFixed(1)} s`;
-}
-
 function formatTarget(target: JevTarget): string {
   if (target === null) return "none";
   if (typeof target === "string") return `unit ${target}`;
@@ -94,21 +116,6 @@ function formatJson(value: JsonValue): string {
   return text.length > JSON_PREVIEW_CHARS
     ? `${text.slice(0, JSON_PREVIEW_CHARS)}\n… (cut at ${JSON_PREVIEW_CHARS} characters)`
     : text;
-}
-
-function factString(facts: JsonObject, key: string): string | null {
-  const value = facts[key];
-  return typeof value === "string" ? value : null;
-}
-
-function factNumber(facts: JsonObject, key: string): number | null {
-  const value = facts[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function factBoolean(facts: JsonObject, key: string): boolean | null {
-  const value = facts[key];
-  return typeof value === "boolean" ? value : null;
 }
 
 function sourceLabel(source: string | null): string {
@@ -532,12 +539,31 @@ interface RunViewProps {
 /** One run's view; keyed by run ID, so switching runs discards all of its state. */
 function RunView({ runId, run, policy, launchStarting = false, onRendered }: RunViewProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [reveal, setReveal] = useState<{ nodeId: string; token: number } | null>(null);
   const state = run.data;
   const events = state?.recent_events ?? NO_EVENTS;
   const runtime = useMemo(
     () => (state === null ? new Map<string, JevNodeRuntime>() : nodeRuntimes(state)),
     [state],
   );
+  const archivedPolicy = policy.data;
+  const matching =
+    state !== null && archivedPolicy !== null && archivedPolicy.policy_hash === state.policy_hash
+      ? archivedPolicy
+      : null;
+  const activity = useMemo(
+    () => (state === null || matching === null ? NO_ACTIVITY : graphActivity(state, matching)),
+    [state, matching],
+  );
+  const lanes = useMemo(
+    () => (matching === null ? new Map<string, string>() : policyLanes(matching)),
+    [matching],
+  );
+  const evidence = useMemo(() => plansEvidence(events), [events]);
+  const showNode = (nodeId: string) => {
+    setSelectedNodeId(nodeId);
+    setReveal((previous) => ({ nodeId, token: (previous?.token ?? 0) + 1 }));
+  };
   // The graph below is drawn exactly when this holds (same run, matching archive).
   const renderedHash =
     state !== null &&
@@ -593,6 +619,9 @@ function RunView({ runId, run, policy, launchStarting = false, onRendered }: Run
           live={live}
           selectedNodeId={selectedNodeId}
           onSelectNode={setSelectedNodeId}
+          activity={activity}
+          reveal={reveal}
+          ended={isTerminalRunStatus(state.status)}
         />
         <NodeInspector
           node={selectedNode}
@@ -600,15 +629,35 @@ function RunView({ runId, run, policy, launchStarting = false, onRendered }: Run
           runtime={selectedNode === null ? "idle" : (runtime.get(selectedNode.id) ?? "idle")}
           events={events}
           tasks={state.tasks}
+          policy={archived}
+          lane={selectedNode === null ? null : (lanes.get(selectedNode.id) ?? null)}
+          onShowNode={showNode}
         />
       </div>
     );
   }
 
+  // The plans panel is for policies that keep plans or hosted v2 questions (Jev v2);
+  // an older or v1 run keeps its presentation.
+  const plansShown =
+    matching !== null &&
+    (matching.nodes.some((node) => node.operation === "start_plan") ||
+      evidence.plans.length > 0 ||
+      evidence.decisions.some((view) => view.question !== "army_mode"));
   return (
     <>
       <RunSummary state={state} live={live} run={run} launchStarting={launchStarting} />
       <ArmyDecisionPanel events={events} live={live} />
+      {plansShown && (
+        <PlanPanel
+          evidence={evidence}
+          lanes={lanes}
+          roots={matching.roots}
+          live={live}
+          gameSeconds={state.game_seconds}
+          onShowNode={showNode}
+        />
+      )}
       {graph}
       <RecentTrace events={events} />
     </>
@@ -877,9 +926,21 @@ interface NodeInspectorProps {
   runtime: JevNodeRuntime;
   events: JevEvent[];
   tasks: JevTask[];
+  policy: JevPolicy;
+  lane: string | null;
+  onShowNode: (nodeId: string) => void;
 }
 
-function NodeInspector({ node, live, runtime, events, tasks }: NodeInspectorProps) {
+function NodeInspector({
+  node,
+  live,
+  runtime,
+  events,
+  tasks,
+  policy,
+  lane,
+  onShowNode,
+}: NodeInspectorProps) {
   if (node === null) {
     return (
       <aside className="jev-inspector" aria-label="Node details" data-testid="jev-node-panel">
@@ -891,6 +952,17 @@ function NodeInspector({ node, live, runtime, events, tasks }: NodeInspectorProp
   const latest = nodeEvents.findLast((event) => event.kind === "node") ?? null;
   const recent = nodeEvents.slice(-NODE_EVENT_ROWS).reverse();
   const nodeTasks = tasks.filter((task) => task.node_id === node.id);
+  // The newest recorded event of each distinct attribution (a plan summarized every
+  // game second names the same decision each time), newest first.
+  const distinct = new Map<string, { event: JevEvent; source: JevNodeSource }>();
+  for (const event of nodeEvents) {
+    const source = eventSource(event);
+    if (source === null) continue;
+    distinct.delete(source.detail);
+    distinct.set(source.detail, { event, source });
+  }
+  const sources = [...distinct.values()].slice(-NODE_SOURCE_ROWS).reverse();
+  const guards = pathGuards(policy, node.id);
   return (
     <aside className="jev-inspector" aria-label="Node details" data-testid="jev-node-panel">
       <h3>{node.label}</h3>
@@ -905,7 +977,54 @@ function NodeInspector({ node, live, runtime, events, tasks }: NodeInspectorProp
         <dd>{node.operation ?? "none (composite)"}</dd>
         <dt>Status</dt>
         <dd>{nodeRuntimeLabel(runtime, live)}</dd>
+        <dt>Lane</dt>
+        <dd data-testid="jev-node-lane">{lane ?? "unknown"}</dd>
       </dl>
+      <h4>Source evidence</h4>
+      {sources.length === 0 ? (
+        <p className="jev-note" data-testid="jev-node-sources-none">
+          No recorded event of this node names a decision (a Typesafe request, a fallback or the
+          local graph) among the run's recent events. Older and v1 runs record none.
+        </p>
+      ) : (
+        <ul className="jev-source-list" data-testid="jev-node-sources">
+          {sources.map(({ event, source }) => (
+            <li key={event.sequence} data-testid="jev-node-source" data-source={source.tone}>
+              #{event.sequence} · {formatSeconds(event.game_seconds)} · {source.detail}
+              {live ? "" : " (last known)"}
+            </li>
+          ))}
+        </ul>
+      )}
+      {guards.length > 0 && (
+        <>
+          <h4>Guards on this node's path</h4>
+          <p className="jev-note">
+            This node runs only after each guard below passes in the same tick; each shows its
+            latest recorded evaluation.
+          </p>
+          <ul className="jev-source-list">
+            {guards.map((guard) => {
+              const latestGuard =
+                events.findLast((event) => event.node_id === guard && event.kind === "node") ??
+                null;
+              const guardSource = latestGuard === null ? null : eventSource(latestGuard);
+              return (
+                <li key={guard} data-testid="jev-node-guard">
+                  <button type="button" onClick={() => onShowNode(guard)}>
+                    {guard}
+                  </button>{" "}
+                  {latestGuard === null
+                    ? "no recent evaluation recorded"
+                    : `${latestGuard.status} at ${formatSeconds(latestGuard.game_seconds)} (event ${
+                        latestGuard.sequence
+                      })${guardSource === null ? "" : ` — ${guardSource.detail}`}`}
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
       <h4>Arguments</h4>
       <pre>{formatJson(node.args)}</pre>
       <h4>Tasks</h4>

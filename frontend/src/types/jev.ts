@@ -904,3 +904,67 @@ export function nodeRuntimeLabel(status: JevNodeRuntime, live: boolean): string 
   const label = JEV_NODE_RUNTIME_LABELS[status];
   return live || !isCurrentRuntime(status) ? label : `${label} (last known)`;
 }
+
+// --- Lanes and diagnostic vocabulary (plan J2 Step 221, D5) ----------------------
+
+/**
+ * The reasons of the diagnostics the runtime emits about decisions and plans, each
+ * once per game second (and on every change), so the latest of each survives the
+ * bounded recent-event window: ``jev.runtime``'s ``Army decision source``,
+ * ``STRATEGY_DECISION_REASON``, ``EXECUTION_DECISION_REASONS`` and
+ * ``PLAN_SLOT_SUMMARY_REASON`` (a backend test pins these strings).
+ */
+export const JEV_DECISION_REASONS = {
+  army_mode: "Army decision source",
+  strategy: "Strategy decision source",
+  expansion_response: "Expansion response decision source",
+  production_mix: "Production mix decision source",
+} as const;
+export type JevDecisionQuestion = keyof typeof JEV_DECISION_REASONS;
+export const JEV_PLAN_SLOT_SUMMARY_REASON = "Plan slot summary";
+
+/**
+ * Game seconds an observed edge stays drawn as recent activity after the event
+ * that recorded it (plan D5: a two-second fading trail, labeled recent, never
+ * current).
+ */
+export const JEV_TRAIL_SECONDS = 2;
+
+/**
+ * Lane colours (plan D5: economy green, expansion teal, army red, tech purple),
+ * one per root lane. Each name is a CSS class suffix (``jev-lane-<tone>``); a root
+ * this list does not name gets one of the ``other`` tones by its position.
+ */
+const KNOWN_LANE_TONES: ReadonlySet<string> = new Set([
+  "economy",
+  "expansion",
+  "army",
+  "tech",
+  "supply",
+  "construction",
+  "scouting",
+  "production",
+  "reserve",
+]);
+const OTHER_LANE_TONES = 6;
+
+/** The CSS class naming the colour of root lane ``rootId`` (its ``index`` among the roots). */
+export function laneToneClass(rootId: string, index: number): string {
+  return KNOWN_LANE_TONES.has(rootId)
+    ? `jev-lane-${rootId}`
+    : `jev-lane-other-${index % OTHER_LANE_TONES}`;
+}
+
+/** Each node's root lane (the policy is a validated forest: every node has one). */
+export function policyLanes(policy: JevPolicy): Map<string, string> {
+  const byId = new Map(policy.nodes.map((node) => [node.id, node]));
+  const lanes = new Map<string, string>();
+  for (const root of policy.roots) {
+    const pending = [root];
+    for (let id = pending.pop(); id !== undefined; id = pending.pop()) {
+      lanes.set(id, root);
+      pending.push(...(byId.get(id)?.children ?? []));
+    }
+  }
+  return lanes;
+}

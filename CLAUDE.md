@@ -4,7 +4,7 @@
 
 SC2 Protoss bot: rule-based strategy + PPO neural policy + Claude AI advisor.
 Goal: AI-vs-AI competition with transparent model introspection and autonomous self-improvement.
-Second player family: Jev (`src/jev/` + `bots/jev/v1/`), a decision-graph Protoss player (v1 is a one-base four-Gateway Zealot rush) whose graph owns command legality and execution; an opt-in hosted Typesafe model chooses army intent. No PPO and no Claude play in-game. Phase J2 is building the adaptive v2.
+Second player family: Jev (`src/jev/` + `bots/jev/v1/` + `bots/jev/v2/`), a decision-graph Protoss player whose graph owns command legality and execution. v1 (frozen) is a one-base four-Gateway Zealot rush; v2 (packaged since J2 Step 214) adds scouting, gas, persistent tech and natural-expansion plans and a Zealot/Stalker army. An opt-in hosted Typesafe model chooses army intent for v1, and for v2 chooses among the graph's own branches through four question families (strategy, army_mode, expansion_response, production_mix). No PPO and no Claude play in-game. Phase J2 is building the adaptive v2.
 
 ## Stack
 
@@ -38,25 +38,26 @@ uv run python scripts/baseline.py add anchor-v13 v13  # Seed data/baselines.json
 
 ```powershell
 uv run python -m bots.jev.v1 --validate-policy  # Jev: validate the packaged policy and print its hash (no SC2)
+uv run python -m bots.jev.v2 --validate-policy  # Jev v2: the same for the v2 package
 uv run python -m bots.jev.v1 --map Simple64 --opponent-race Terran --difficulty 1 --seed 1 --max-game-seconds 900 --max-wall-seconds 1800  # Jev: one match; evidence in data\jev\runs\<run_id>
 $runId = (Get-ChildItem data\jev\runs -Directory | Sort-Object CreationTime | Select-Object -Last 1).Name  # Jev: the newest run's ID
 uv run python scripts\validate_jev.py --run-id $runId --api-base http://localhost:8765  # Jev: verify a run's disk evidence against the API (backend: bots.current.runner --serve)
 uv run python scripts/benchmark_jev.py --panel baseline --dry-run  # Jev v2: resolve the baseline panel's exact entrypoint, policy hash, model and options (no service call, no SC2, nothing written)
-powershell -File scripts/launch-jev.ps1 -Version v1 -DecisionProvider scripted -Difficulty 1 -Seed 1  # Jev: dashboard-first single match (plays SC2): opens ?tab=jev&launch=<session_id>, starts SC2 only after the page renders that run; default -Version v2 is unpackaged until Step 214
+powershell -File scripts/launch-jev.ps1 -Version v2 -DecisionProvider scripted -Difficulty 1 -Seed 1  # Jev: dashboard-first single match (plays SC2): opens ?tab=jev&launch=<session_id>, starts SC2 only after the page renders that run; defaults -Version v2 -DecisionProvider typesafe (a paid match)
 ```
 
 Typesafe integration: opt in with `uv run python -m bots.jev.v1 --decision-provider typesafe --realtime`; requires `TYPESAFE_API_KEY` in the process environment. Default remains local scripted. `--decision-model` defaults to `jev-latest`; `--decision-max-requests` defaults to 450. Model chooses army intent; graph owns command legality/execution. Dashboard Army decision panel distinguishes model and fallback.
 
 Jev live smoke/acceptance procedure (start, stop, Step 207/208 checklists, report template, section 13 Typesafe gate): `documentation/operator/jev-validation.md`.
 
-Jev v2 benchmark and dashboard-first launcher (Steps 212/224; the Step 213 baseline runbook, limits, resume, exit codes): `documentation/operator/jev-v2-validation.md`.
+Jev v2 benchmark and dashboard-first launcher (Steps 212/224; the Step 213 baseline runbook, limits, resume, exit codes), and the v2 player, its live graph, hypothesis values and the Step 222 prerequisites (section 13): `documentation/operator/jev-v2-validation.md`.
 
 ## Directory layout
 
 - `bots/v0/` — 56 Python modules (bot, decision engine, commands/, learning/). The FROZEN original tree; promoted snapshots `bots/v1/`–`bots/v13/` sit beside it, and production runs whatever `bots/current/current.txt` names.
 - `bots/current/` — thin pointer package (MetaPathFinder alias to the tree named in `bots/current/current.txt`, today `bots/v13/`)
 - `src/orchestrator/` — version registry, contracts, subprocess self-play stubs
-- `src/jev/` + `bots/jev/v1/` — the Jev decision-graph player (Phases JV/JI/J2): runtime, SC2 adapter, runner, run evidence, the benchmark (`benchmark.py`, Step 212), dashboard-first launch sessions (`launch.py`, Step 224) and the `/api/jev` router (read-only run evidence plus `GET /launches/{session_id}` and the loopback, same-origin `POST /launches/{session_id}/ready` receipt) in `src/jev`; the packaged policy in `bots/jev/v1` (no `VERSION`, so legacy discovery ignores it); runs land in `data/jev/runs/`, launch sessions in `data/jev/launches/`, benchmark batches and frozen sources in `data/jev/benchmarks/`
+- `src/jev/` + `bots/jev/v1/` — the Jev decision-graph player (Phases JV/JI/J2): runtime, SC2 adapter, runner, run evidence, v2's persistent plans (`plans.py`, Steps 217-220) and hosted question coordinator (`strategy.py`, Steps 219-220), the benchmark (`benchmark.py`, Step 212), dashboard-first launch sessions (`launch.py`, Step 224) and the `/api/jev` router (read-only run evidence plus `GET /launches/{session_id}` and the loopback, same-origin `POST /launches/{session_id}/ready` receipt) in `src/jev`; the packaged policies in `bots/jev/v1` and `bots/jev/v2` (no `VERSION`, so legacy discovery ignores them); runs land in `data/jev/runs/`, launch sessions in `data/jev/launches/`, benchmark batches and frozen sources in `data/jev/benchmarks/`
 - `src/selfplay_viewer/` — themed pygame container that hosts two SC2 clients (background, stats bar, live W-L overlay). Used by `scripts/selfplay.py` and, since Phase EV, by `scripts/evolve.py --viewer`. Imports pygame lazily inside methods, so the package imports fine without the `[viewer]` extra
 - `tests/` — 126 test files (125 `tests/test_*.py` + `tests/commands/test_dispatch_guard.py`); most bot-tree tests import from `bots.v0.*` (16 import `bots.current`, `bots.v10`, `bots.v13`, `bots.v3` or `bots.v4` directly), the 11 `test_jev_*.py` files import `jev` / `bots.jev`
 - `frontend/` — React dashboard, 7 tabs (`AdvisedControlPanel`, `EvolutionTab`, `ModelsTab`, `ObservableTab`, Processes panels, `HelpTab`, `JevTab`); tab list is `frontend/src/App.tsx:18-26`
@@ -74,7 +75,7 @@ Jev v2 benchmark and dashboard-first launcher (Steps 212/224; the Step 213 basel
 Seven layers: Claude Advisor -> Neural Engine -> Strategy (state machine) -> Command System -> Tactics -> Coherence -> Micro. "Tactics" is a grouping (`macro_manager.py`, `fortification.py`, `scouting.py`, build backlog), not a single module — there is no `tactics.py`.
 Three command modes: AI-Assisted, Human Only, Hybrid.
 WebSocket endpoints: /ws/game, /ws/decisions, /ws/commands.
-Jev (Phases JV/JI/J2) is a separate player family outside these seven layers. The packaged graph (`bots/jev/v1/policy.json`, validated by `jev.policy` against the `jev.operations` allowlist) is the policy; `jev.runtime` interprets it and `jev.sc2_adapter`, driven by `jev.bot`, issues commands through burnysc2. The only model in the loop is the opt-in hosted Typesafe provider (`--decision-provider typesafe`, `jev.decision` over httpx), which picks army intent while the graph owns command legality and execution. The dashboard reads Jev over HTTP only (`GET /api/jev/runs`, `/runs/{run_id}`, `/runs/{run_id}/policy`, `/launches/{session_id}`, plus the loopback `POST /launches/{session_id}/ready`); there is no Jev WebSocket.
+Jev (Phases JV/JI/J2) is a separate player family outside these seven layers. The packaged graph (`bots/jev/vN/policy.json`, validated by `jev.policy` against the `jev.operations` allowlist) is the policy; `jev.runtime` interprets it and `jev.sc2_adapter`, driven by `jev.bot`, issues commands through burnysc2. The only model in the loop is the opt-in hosted Typesafe provider (`--decision-provider typesafe`, `jev.decision` over httpx), which picks army intent for v1 and, through `jev.strategy`, answers v2's strategy, army, expansion-response and production-mix questions on one request budget, while the graph owns command legality and execution. Plan, slot and decision diagnostics travel in the existing event facts (D5); the Jev tab draws lanes, recorded edge activity, plans and node sources from them. The dashboard reads Jev over HTTP only (`GET /api/jev/runs`, `/runs/{run_id}`, `/runs/{run_id}/policy`, `/launches/{session_id}`, plus the loopback `POST /launches/{session_id}/ready`); there is no Jev WebSocket.
 
 ## Current state
 
