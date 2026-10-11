@@ -1,16 +1,26 @@
 #Requires -Version 5.1
-<# Local scripted Battle View. Uses the installed isolated OBS BattleProbe profile.
+<# Hosted Typesafe Jev Battle View. Uses the installed isolated OBS BattleProbe profile.
    Stop through the Battle View's Stop battle button, not by closing this console.
    -CheckOnly checks prerequisites without starting a game or changing OBS.
 #>
 [CmdletBinding()]
-param([switch]$AutoRecord, [switch]$CheckOnly)
+param([switch]$AutoRecord, [switch]$CheckOnly,
+    [ValidateRange(1, 450)][int]$DecisionMaxRequests = 450)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 $originalKey = [Environment]::GetEnvironmentVariable('TYPESAFE_API_KEY', 'Process')
 [Environment]::SetEnvironmentVariable('TYPESAFE_API_KEY', $null, 'Process')
 try {
+    $gameKey = $originalKey
+    if ([string]::IsNullOrWhiteSpace($gameKey)) {
+        $keyFile = Join-Path $env:LOCALAPPDATA 'Alpha4Gate\typesafe-key.dpapi'
+        if (-not (Test-Path -LiteralPath $keyFile)) { throw 'No saved Typesafe key. See documentation/operator/jev-validation.md.' }
+        $secret = ConvertTo-SecureString -String ((Get-Content -LiteralPath $keyFile -Raw).Trim())
+        try { $gameKey = [System.Net.NetworkCredential]::new('', $secret).Password }
+        finally { $secret.Dispose() }
+    }
+    if ([string]::IsNullOrWhiteSpace($gameKey)) { throw 'Typesafe API key is empty. Nothing started.' }
     foreach ($command in @('uv', 'npm')) { Get-Command $command -ErrorAction Stop | Out-Null }
     $obsRoot = Join-Path $env:LOCALAPPDATA 'Alpha4Gate\obs-portable'
     $obsExe = Join-Path $obsRoot 'bin\64bit\obs64.exe'
@@ -48,12 +58,15 @@ try {
         finally { $socket.Dispose() }
     }
     if (-not $obsReady) { throw 'The isolated OBS recorder is unavailable on port 4457. Close other OBS instances and retry.' }
-    Write-Host 'Local Jev v2: no paid requests. Use Record Battle, Unlock camera, and Stop battle in the viewer.' -ForegroundColor Cyan
+    Write-Host "Typesafe Jev v2 (jev-1.13.0), up to $DecisionMaxRequests paid requests. Use Stop battle to exit." -ForegroundColor Cyan
     $probeArgs = @('run', '--extra', 'viewer', '--with', 'playwright', '--with', 'obsws-python', 'python',
-        'scripts/probes/jev_battle_view.py', '--interactive')
+        'scripts/probes/jev_battle_view.py', '--interactive', '--decision-provider', 'typesafe',
+        '--decision-max-requests', "$DecisionMaxRequests")
     if ($AutoRecord) { $probeArgs += '--auto-record' }
+    [Environment]::SetEnvironmentVariable('TYPESAFE_API_KEY', $gameKey, 'Process')
     & uv @probeArgs
     if ($LASTEXITCODE -ne 0) { throw "Battle View exited with code $LASTEXITCODE. See the message above." }
 } finally {
     [Environment]::SetEnvironmentVariable('TYPESAFE_API_KEY', $originalKey, 'Process')
+    $gameKey = $null
 }

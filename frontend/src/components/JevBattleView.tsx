@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useJevRun } from "../hooks/useJevRun";
 import { JevGraph } from "./JevGraph";
-import { factString, graphActivity } from "./jevEvidence";
+import { factNumber, factString, graphActivity } from "./jevEvidence";
 import { isTerminalRunStatus, type JevNodeRuntime } from "../types/jev";
 import "./JevTab.css";
 import "./JevBattleView.css";
@@ -91,7 +91,10 @@ export function JevBattleView() {
     <section className="battle-decisions"><h3>{live ? "Current decisions" : "Last recorded decisions"}</h3>
       {[...decisions].map(([question, event]) => <p key={question}><strong>{question.replaceAll("_", " ")}</strong>
         <span>{factString(event.facts, "choice") ?? factString(event.facts, "answer") ?? (["local_graph", "scripted"].includes(factString(event.facts, "source") ?? "") ? "Local graph control" : "Waiting for a choice")}</span>
-        <small>{factString(event.facts, "source") ?? "Source not recorded"}</small></p>)}
+        <small>{factString(event.facts, "source") ?? "Source not recorded"}
+          {factString(event.facts, "model") ? ` · ${factString(event.facts, "model")}` : ""}
+          {factNumber(event.facts, "calls") !== null ? ` · ${factNumber(event.facts, "calls")} requests` : ""}
+        </small></p>)}
     </section>
   </main>;
 }

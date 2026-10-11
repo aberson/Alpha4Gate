@@ -157,7 +157,8 @@ all nodes initially expanded, decision summaries and a three-entry event log.
 `scripts/probes/jev_battle_view.py --interactive` hosts Edge and SC2 as sibling
 native child windows. The injected `battleAction` binding supplies recording,
 camera lock and Stop battle; this is not a new HTTP API. `-AutoRecord` starts
-recording when gameplay is ready. The preview is local scripted only, fixed
+recording when gameplay is ready. Both desktop launchers use Typesafe `jev-1.13.0` with the saved key;
+only recording differs. The preview is fixed
 1920×1080, with game-process audio and no microphone. See the
 [operator guide](../operator/jev-battle-view.md) and
 [native capture findings](../investigations/jev-battle-view-feasibility-2026-10-11.md).

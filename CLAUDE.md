@@ -102,12 +102,13 @@ Wiki: `documentation/wiki/index.md` — system diagram and deep-dive pages.
 
 ### Jev Battle View preview
 
-`powershell -File scripts/launch-jev-battle.ps1` opens a local scripted v2 game
+`powershell -File scripts/launch-jev-battle.ps1` opens a hosted Typesafe v2 game
 beside the expanded 3D Branch faces graph. `-AutoRecord` records automatically;
 `-CheckOnly` checks local prerequisites without launching. Windows-only fixed
 1920×1080 preview; needs Edge and the isolated portable OBS `BattleProbe` profile
 (authenticated websocket port 4457), installed on the development workstation.
-The launcher strips the Typesafe key before starting helpers; no paid calls.
+The launcher loads the saved DPAPI key; only the game child receives it.
+Uses `jev-1.13.0`, capped at 450 requests; missing key stops launch.
 `frontend/src/components/JevBattleView.tsx` is selected with `?battle=1`;
 `scripts/probes/jev_battle_view.py` owns native hosting and camera/capture controls.
 Use **Stop battle**, not console termination. Thirty focused frontend tests plus

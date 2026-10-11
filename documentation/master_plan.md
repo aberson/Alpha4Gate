@@ -85,14 +85,14 @@ The separately authorized feasibility experiment and local operator launcher are
 complete. This does not mark JV/J2 gameplay gates complete. `JevBattleView.tsx`
 combines a native SC2 pane, expanded Branch faces graph, decision text and short
 event log; `scripts/probes/jev_battle_view.py` supplies the Windows host and OBS
-capture; `scripts/launch-jev-battle.ps1` supplies an interactive local launch with
+capture; `scripts/launch-jev-battle.ps1` supplies an interactive Typesafe launch with
 optional automatic recording. Frontend suite 409 passed / 6 skipped, build/lint/Ruff and
 real SC2/OBS launch-record-stop checks passed (existing lint/build warnings remain).
 
 Use the [operator guide](operator/jev-battle-view.md). The
 [feasibility report](investigations/jev-battle-view-feasibility-2026-10-11.md)
 preserves measured capture evidence and native geometry/audio findings. Full
-production integration, hosted combined-view smoke, multi-monitor/DPI behavior
+production lifecycle integration, multi-monitor/DPI behavior
 and long-session validation remain unbuilt. Graph choice flattening is deferred;
 preserve a frozen before/after baseline when it starts. Recovery-stall diagnosis
 is recorded in [the investigation](investigations/jev-recovery-stall-2026-10-11.md).

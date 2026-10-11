@@ -135,3 +135,25 @@ path and exact pane fit. A native button click on **Stop battle** saved the MKV 
 stopped the match; the launcher exited zero and no SC2 client remained. Camera
 samples contain one unchanged position throughout, confirming the probe's automatic
 camera exercises were disabled. Details: [operator guide](../operator/jev-battle-view.md).
+
+## Typesafe launcher correction ? 2026-10-11
+
+The operator clarified that both desktop launchers must use hosted Typesafe Jev.
+The earlier scripted desktop default was an implementation mistake. Both shortcuts
+now select `typesafe`, model `jev-1.13.0`, and the production 450-request cap;
+only automatic recording differs. The launcher reads the existing encrypted DPAPI
+key, keeps it out of dashboard/OBS/browser helpers, and hands it to the game child.
+Missing credentials stop launch. The raw development probe remains scripted by
+explicit default; historical scripted capture evidence above is unchanged.
+
+The decision panel now shows each recorded source, returned model and request
+count. The existing local opening and explicitly labeled service fallbacks remain
+part of the production v2 policy; wiring Typesafe does not change its strategy.
+
+Hosted smoke run `9d67fcbdf3ea42448d5d59c0e913ca6b` confirmed a live accepted
+`army_mode=attack` response from `jev-1.13.0`, with eight requests visible at capture.
+Proof is in that run's `battle/hosted-proof.json` and `hosted-proof.png`; the OBS
+recording was saved and Stop battle ended the launcher with exit zero. This one
+correction smoke was capped at 20 requests; normal desktop launches retain 450.
+Four provider/credential regression tests and four Battle View tests passed;
+build/typecheck, lint and Ruff passed (existing warnings unchanged).

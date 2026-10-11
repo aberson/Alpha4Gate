@@ -12,7 +12,7 @@ historical. Current frontend suite: 409 passed / 6 skipped. The Windows combined
 Battle View preview now has desktop launchers, optional automatic recording and a
 clean Stop battle control; see [the operator guide](../operator/jev-battle-view.md).
 
-The operator is trying this local scripted preview before further development.
+The operator is trying this hosted Typesafe preview before further development.
 Production Battle View integration remains next UX work. Keep recovery completion
 and measured strategy/army choice flattening separate; preserve before/after policy,
 trace and benchmark evidence for flattening. The [recovery investigation](../investigations/jev-recovery-stall-2026-10-11.md)

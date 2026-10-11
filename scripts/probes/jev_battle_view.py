@@ -4,7 +4,8 @@ Run with: uv run --extra viewer --with playwright --with obsws-python python
 scripts/probes/jev_battle_view.py --record-seconds 40
 
 Requires the dashboard on localhost:3000/8765 and the isolated portable OBS
-profile described in the feasibility report. No Typesafe calls. Never kills SC2.
+profile described in the feasibility report. Scripted by default; the desktop
+launcher explicitly selects Typesafe. Never kills SC2.
 This is a development probe, not the production battle launcher.
 """
 
@@ -32,7 +33,24 @@ def write_json(path: Path, value: object) -> None:
     temporary.replace(path)
 
 
-def game_child(run_id: str, evidence: Path, interactive: bool = False) -> None:
+def game_environment(provider: str) -> dict[str, str]:
+    """Remove credentials from the host; supply them only to a hosted game child."""
+    key = os.environ.pop("TYPESAFE_API_KEY", None)
+    env = dict(os.environ)
+    if provider == "typesafe":
+        if not key or not key.strip():
+            raise RuntimeError("Typesafe selected but no API key supplied; no game started")
+        env["TYPESAFE_API_KEY"] = key
+    return env
+
+
+def game_child(
+    run_id: str,
+    evidence: Path,
+    interactive: bool = False,
+    provider: str = "scripted",
+    max_requests: int = 450,
+) -> None:
     from bots.jev.v2 import load_policy
     from sc2.position import Point2
 
@@ -93,6 +111,9 @@ def game_child(run_id: str, evidence: Path, interactive: bool = False) -> None:
             realtime=True,
             max_game_seconds=900 if interactive else 150,
             max_wall_seconds=1200 if interactive else 210,
+            decision_provider=provider,
+            decision_model="jev-1.13.0",
+            decision_max_requests=max_requests,
         ),
         load_policy(),
         run_root=ROOT / "data/jev/runs",
@@ -102,7 +123,14 @@ def game_child(run_id: str, evidence: Path, interactive: bool = False) -> None:
     print(outcome, flush=True)
 
 
-async def probe(seconds: int, interactive: bool = False, auto_record: bool = False) -> None:
+async def probe(
+    seconds: int,
+    interactive: bool = False,
+    auto_record: bool = False,
+    provider: str = "scripted",
+    max_requests: int = 450,
+) -> None:
+    child_env = game_environment(provider)
     import obsws_python as obs
     import psutil
     import pygame
@@ -141,12 +169,14 @@ async def probe(seconds: int, interactive: bool = False, auto_record: bool = Fal
     game_log = log_path.open("w", encoding="utf-8")
     game = subprocess.Popen(
         [sys.executable, str(Path(__file__)), "--game-child", run_id]
-        + (["--interactive"] if interactive else []),
+        + (["--interactive"] if interactive else [])
+        + ["--decision-provider", provider, "--decision-max-requests", str(max_requests)],
         cwd=ROOT,
         stdout=game_log,
         stderr=subprocess.STDOUT,
-        env={k: v for k, v in os.environ.items() if k != "TYPESAFE_API_KEY"},
+        env=child_env,
     )
+    child_env.pop("TYPESAFE_API_KEY", None)
     for _ in range(100):
         if (evidence.parent / "policy.json").exists():
             break
@@ -484,13 +514,15 @@ async def probe(seconds: int, interactive: bool = False, auto_record: bool = Fal
         await playwright.stop()
         game_log.close()
         if game.poll() is None:
-            print("Game still leaving; its own 210-second wall limit remains active", flush=True)
+            print("Game still leaving; its own wall limit remains active", flush=True)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--record-seconds", type=int, default=40, choices=range(20, 91))
     parser.add_argument("--game-child")
+    parser.add_argument("--decision-provider", choices=("scripted", "typesafe"), default="scripted")
+    parser.add_argument("--decision-max-requests", type=int, default=450)
     parser.add_argument(
         "--interactive",
         action="store_true",
@@ -502,7 +534,19 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.game_child:
         game_child(
-            args.game_child, ROOT / "data/jev/runs" / args.game_child / "battle", args.interactive
+            args.game_child,
+            ROOT / "data/jev/runs" / args.game_child / "battle",
+            args.interactive,
+            args.decision_provider,
+            args.decision_max_requests,
         )
     else:
-        asyncio.run(probe(args.record_seconds, args.interactive, args.auto_record))
+        asyncio.run(
+            probe(
+                args.record_seconds,
+                args.interactive,
+                args.auto_record,
+                args.decision_provider,
+                args.decision_max_requests,
+            )
+        )

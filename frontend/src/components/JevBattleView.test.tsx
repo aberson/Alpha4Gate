@@ -8,17 +8,32 @@ const mocked = vi.hoisted(() => ({ view: {} as object, rendered: vi.fn() }));
 vi.mock("../hooks/useJevRun", () => ({ useJevRun: () => mocked.view }));
 afterEach(() => { cleanup(); mocked.rendered.mockClear(); });
 
-function setup(status: string, stale = false, mismatch = false) {
+function setup(status: string, stale = false, mismatch = false, recentEvents: JevRunState["recent_events"] = []) {
   const policy = { ...JSON.parse(policyText), policy_hash: "a".repeat(64) };
   const state = {
     run_id: "a".repeat(32), policy_hash: mismatch ? "b".repeat(64) : policy.policy_hash,
-    status, stale, game_seconds: 0, recent_events: [], active_nodes: [], waiting_nodes: [],
+    status, stale, game_seconds: 0, recent_events: recentEvents, active_nodes: [], waiting_nodes: [],
   } as unknown as JevRunState;
   mocked.view = { run: { data: state, error: null }, policy: { data: policy, error: null }, reportRendered: mocked.rendered };
   return render(<JevBattleView />);
 }
 
 describe("Battle feasibility view", () => {
+  it("shows the recorded hosted model and calls, and keeps fallback attribution distinct", () => {
+    const event: JevRunState["recent_events"][number] = {
+      sequence: 1, game_loop: 1, game_seconds: 1, node_id: "army", task_id: null,
+      status: "success", action: null, kind: "diagnostic", reason: "Army decision source", facts: {
+      question_id: "army_mode", source: "typesafe", model: "jev-1.13.0", calls: 3, choice: "attack",
+    } };
+    setup("running", false, false, [event]);
+    expect(screen.getByText("typesafe · jev-1.13.0 · 3 requests")).toBeInTheDocument();
+    expect(screen.getByText("attack")).toBeInTheDocument();
+    cleanup();
+    setup("running", false, false, [{ ...event, facts: { ...event.facts, source: "scripted_fallback", model: null, choice: null } }]);
+    expect(screen.getByText("scripted_fallback · 3 requests")).toBeInTheDocument();
+    expect(screen.queryByText("typesafe · jev-1.13.0 · 3 requests")).not.toBeInTheDocument();
+  });
+
   it("renders all 292 branch-face nodes before acknowledging the exact starting run", () => {
     setup("starting");
     expect(screen.getAllByRole("treeitem")).toHaveLength(292);

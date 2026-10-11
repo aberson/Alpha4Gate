@@ -267,12 +267,12 @@ uv run python -m bots.v0.runner --map Simple64
 
 ### Run the Jev player
 
-**Combined Battle View preview (Windows):** watch local Jev with the live 3D graph,
+**Combined Battle View preview (Windows):** watch hosted Typesafe Jev with the live 3D graph,
 decision text and event log in one window. Run
 `powershell -File scripts/launch-jev-battle.ps1`; add `-AutoRecord` for automatic
 1080p recording with game audio only. Desktop shortcuts are installed on the
 development workstation. [Try it yourself](documentation/operator/jev-battle-view.md).
-This preview uses scripted Jev (no credits), requires the isolated portable OBS
+This preview uses your saved Typesafe key and credits, requires the isolated portable OBS
 setup, and does not complete the v2 gameplay acceptance gates.
 
 Jev is a separate player family executed by a decision graph (interpreted by `src/jev/`); there is no PPO in it. `v1.jev` (`bots/jev/v1/policy.json`, frozen) is a one-base, four-Gateway Zealot rush. `v2.jev` (`bots/jev/v2/policy.json`, Jev v2 Steps 214-221) is the adaptive player: nine lanes (economy, supply, construction, tech, expansion, scouting, production, army, reserve) with planned supply, grouped reinforcements, one Probe scout, a gas economy, persistent tech (Cybernetics Core) and natural-expansion plans, and a Zealot/Stalker army. The default `scripted` provider runs locally. Opt into the actual hosted Typesafe Jev model with `--decision-provider typesafe`: for v1 it chooses attack, defend or regroup; for v2 four question families (`strategy`, `army_mode`, `expansion_response`, `production_mix`) share one request budget and choose among the graph's own branches, while the graph keeps every legal command. Each match writes evidence to `data/jev/runs/<run_id>/`, served by the dashboard's Jev tab (`/?tab=jev`, or `/?tab=jev&run=<run_id>` for one exact run) and the `/api/jev` routes: read-only run evidence, plus the loopback launch-readiness receipt that the dashboard-first launcher uses.
