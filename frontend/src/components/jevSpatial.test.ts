@@ -21,6 +21,8 @@ describe("spatial policy layout", () => {
     expect(new Set(hollow.map((p) => `${p.x},${p.y},${p.z}`)).size).toBe(hollow.length);
     expect(dotPositions(policy, new Set(["army"]), "sphere").map((p) => p.id))
       .toEqual(["economy", "e", "army"]);
+    const army = hollow.find((p) => p.id === "army")!;
+    expect(hollow.find((p) => p.id === "a")!.y).toBeGreaterThan(army.y);
   });
 
   it("places each branch on its own prism face without changing ancestry", () => {

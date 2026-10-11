@@ -39,8 +39,16 @@ export function dotPositions(policy: JevPolicy, collapsed: ReadonlySet<string>, 
         return { ...point, x: 300 * Math.cos(angle) - u * Math.sin(angle),
           y: (progress - 0.5) * 600, z: 300 * Math.sin(angle) + u * Math.cos(angle) };
       }
-      const longitude = start + span * (((index + 0.5) * 0.61803398875) % 1);
-      const vertical = 1 - 2 * (index + 0.5) / group.length;
+      // On the shell, depth travels from the upper cap toward the bottom and
+      // siblings keep their tree order. This exposes paths instead of scattering
+      // ancestors across the globe. Filled spheres retain volume distribution.
+      const peers = group.filter((other) => other.depth === point.depth);
+      const longitude = shape === "hollow"
+        ? start + span * (peers.indexOf(point) + 0.5) / peers.length
+        : start + span * (((index + 0.5) * 0.61803398875) % 1);
+      const vertical = shape === "hollow"
+        ? -Math.cos(Math.PI * (0.18 + progress * 0.7))
+        : 1 - 2 * (index + 0.5) / group.length;
       const radius = shape === "hollow" ? 330 : 330 * (0.3 + 0.7 * progress);
       const ring = radius * Math.sqrt(1 - vertical * vertical);
       return { ...point, x: ring * Math.cos(longitude), y: radius * vertical,

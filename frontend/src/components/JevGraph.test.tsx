@@ -97,6 +97,9 @@ describe("spatial views", () => {
     view.rerender(graph({ compact: true, layoutMode: "dots3d" }));
     expect(itemNames().sort()).toEqual(ids);
     expect(screen.getByTestId("jev-graph")).toHaveAttribute("data-layout", "dots3d");
+    expect(screen.getByTestId("jev-start-hub")).toHaveTextContent("Start");
+    expect(screen.getByTestId("jev-start-hub")).not.toHaveAttribute("role", "treeitem");
+    expect(item("army").parentElement?.querySelector(".jev-dot-label")).toHaveTextContent("Army");
   });
 
   it("rotates projected dots and selects their original node IDs", () => {

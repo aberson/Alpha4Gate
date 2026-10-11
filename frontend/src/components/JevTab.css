@@ -1000,3 +1000,14 @@
   border-radius: 8px;
   box-shadow: 0 4px 18px #0006;
 }
+.jev-start-hub rect {
+  fill: var(--bg-secondary, #202129);
+  stroke: #aab3c5;
+  stroke-width: 1.5;
+}
+
+.jev-start-hub text {
+  fill: #e8edf5;
+  font-size: 12px;
+  font-weight: 700;
+}

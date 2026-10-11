@@ -152,6 +152,7 @@ interface Layout {
   byId: Map<string, PlacedNode>;
   edges: Array<{ id: string; path: string }>;
   guides?: string[];
+  entry?: { x: number; y: number };
   width: number;
   height: number;
   fitBounds?: { x: number; y: number; width: number; height: number };
@@ -370,7 +371,20 @@ function spatialLayout(
     fitBounds.width = radius * 2 + MARGIN * 2 + width;
     fitBounds.height = radius * 2 + MARGIN * 2 + height;
   }
-  return { order, byId, edges, guides, fitBounds, width: maxX - minX + width + MARGIN * 2 + TOGGLE_RADIUS,
+  const center = dots ? projectSpatial({ ...points[0], x: 0, y: 0, z: -halfZ }, yaw, pitch) : { x: 0, y: 0 };
+  const entry = { x: center.x + MARGIN - minX + width / 2, y: center.y + MARGIN - minY + height / 2 };
+  const entryLeft = Math.min(fitBounds.x, entry.x - 35);
+  const entryTop = Math.min(fitBounds.y, entry.y - 20);
+  fitBounds.width = Math.max(fitBounds.x + fitBounds.width, entry.x + 35) - entryLeft;
+  fitBounds.height = Math.max(fitBounds.y + fitBounds.height, entry.y + 20) - entryTop;
+  fitBounds.x = entryLeft; fitBounds.y = entryTop;
+  if (dots) {
+    for (const root of order.filter((node) => node.level === 1)) {
+      const labelRight = root.x + 18 + (root.node.id.length + 8) * 8;
+      fitBounds.width = Math.max(fitBounds.width, labelRight + MARGIN - fitBounds.x);
+    }
+  }
+  return { order, byId, edges, guides, entry, fitBounds, width: maxX - minX + width + MARGIN * 2 + TOGGLE_RADIUS,
     height: maxY - minY + height + MARGIN * 2 };
 }
 
@@ -1012,6 +1026,14 @@ export function JevGraph({
           {layout.guides?.map((path, index) => <path key={index} d={path}
             fill="none" stroke="currentColor" strokeOpacity={0.18} strokeWidth={1}
             pointerEvents="none" aria-hidden="true" />)}
+          {layout.entry && <g className="jev-start-hub" pointerEvents="none" data-testid="jev-start-hub">
+            <title>Visual entry point. Each branch is evaluated locally every tick; these links are orientation guides, not recorded activity.</title>
+            {layout.order.filter((node) => node.level === 1).map((node) => <path key={node.node.id}
+              d={`M${layout.entry!.x},${layout.entry!.y} L${node.x + nodeWidth / 2},${node.y + nodeHeight / 2}`}
+              fill="none" stroke="currentColor" strokeOpacity={0.25} strokeDasharray="3 7" />)}
+            <rect x={layout.entry.x - 28} y={layout.entry.y - 13} width={56} height={26} rx={13} />
+            <text x={layout.entry.x} y={layout.entry.y + 4} textAnchor="middle">Start</text>
+          </g>}
           <g className="jev-graph-bands" aria-hidden="true">
             {(layoutMode === "tree" ? laneBands(layout, structure, nodeHeight, nodeWidth) : []).map((band) => (
               <rect
@@ -1156,9 +1178,9 @@ export function JevGraph({
                     )}
                     </>}
                   </g>
-                  {dots && node.id === selectedNodeId && (
+                  {dots && (node.id === selectedNodeId || placed.level === 1) && (
                     <text className="jev-dot-label" x={18} y={12}>
-                      {codes.get(node.id)} · {shortId(node.id)}
+                      {codes.get(node.id)} · {placed.level === 1 ? lane.charAt(0).toUpperCase() + lane.slice(1) : shortId(node.id)}
                     </text>
                   )}
                 </g>

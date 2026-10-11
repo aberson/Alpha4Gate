@@ -287,3 +287,5 @@ as `*.test.tsx` / `*.test.ts`. Run with `npm test -- --run` or `npm run test:run
 Dots 3D offers Sphere (default, nodes throughout the volume), Hollow sphere (nodes on the surface), Branch faces (one planar prism face per branch), and the original Cone. Sphere sectors scale with visible branch size. All shapes preserve the same node IDs, selection, recorded edges, and live/stale status; shape outlines are decorative. Rotate to expose dots hidden behind others.
 
 Use **Node details ? In graph** for a scrollable inspector in the lower-right corner of the graphic, or **Below graph** for the full-width inspector. The overlay may cover dots; rotate/pan or switch it below when needed. Shape and placement choices last for the current run view.
+
+Radial and Dots 3D include a **Start** orientation hub with dashed guides to visible roots. This synthetic hub is not an executable policy node and its guides are never animated as telemetry. Dots 3D always labels branch roots by code and name (for example, A1 ? Army). Hollow sphere now orders levels from the upper cap downward within branch sectors to make ancestry easier to follow.
