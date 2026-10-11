@@ -255,11 +255,12 @@ class TestLiveGraphInBrowser:
                 expect(page.get_by_test_id("jev-live-badge")).to_be_visible(timeout=WAIT_MS)
                 # Live: several lanes at once, and the expansion plan waiting at its blocker.
                 _pump_until(page, lambda: len(_busy_lanes(page)) >= 3, timeout=30)
-                # The readable default shows one branch, while the cards still
-                # report simultaneous activity. Opt into the full forest below.
+                # The compact overview shows all branches; cards toggle them independently.
                 roots = page.locator('[role="treeitem"][aria-level="1"]')
-                expect(roots).to_have_count(1)
-                expect(page.get_by_test_id("jev-graph-zoom")).to_have_text("Zoom 100%")
+                expect(roots).to_have_count(len(bundle.policy.roots))
+                expect(page.get_by_role("button", name="Nodes", exact=True)).to_have_attribute(
+                    "aria-pressed", "true"
+                )
                 page.get_by_test_id("jev-full-graph").click()
                 expect(roots).to_have_count(len(bundle.policy.roots))
                 waiting = page.locator('[data-testid="jev-plan-row"][data-plan-status="waiting"]')
@@ -308,7 +309,7 @@ class TestLiveGraphInBrowser:
                 # Node-attributed source: the plan's stage, shown in the graph.
                 waiting.get_by_test_id("jev-plan-stage").click()
                 expect(page.get_by_test_id("jev-node-id")).to_have_text("expansion.site_safe.wait")
-                expect(roots).to_have_count(1)
+                expect(roots).to_have_count(len(bundle.policy.roots))
                 expansion_card = page.locator('.jev-branch-card[data-lane="expansion"]')
                 expect(expansion_card).to_have_attribute("aria-pressed", "true")
                 expect(page.get_by_test_id("jev-node-sources")).to_contain_text("Typesafe (request")
@@ -465,7 +466,7 @@ class TestLiveGraphInBrowser:
                 lanes = _lanes(page)
                 assert list(lanes) == list(bundle.policy.roots)  # one coloured lane per root
                 roots = page.locator('[role="treeitem"][aria-level="1"]')
-                expect(roots).to_have_count(1)
+                expect(roots).to_have_count(len(bundle.policy.roots))
                 page.get_by_test_id("jev-full-graph").click()
                 expect(roots).to_have_count(len(bundle.policy.roots))
                 classes = page.evaluate(

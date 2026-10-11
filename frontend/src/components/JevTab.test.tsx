@@ -1255,7 +1255,9 @@ describe("JevTab observed activity (plan J2 Step 221)", () => {
     const armyCard = screen
       .getAllByTestId("jev-graph-lane")
       .find((card) => card.dataset.lane === "army") as HTMLElement;
+    fireEvent.click(screen.getByRole("button", { name: "Collapse all" }));
     fireEvent.click(armyCard);
+    fireEvent.click(treeitem("army"));
     expect(armyCard).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByTestId("jev-node-id")).toHaveTextContent("army");
     expect(treeitem("army")).toBeInTheDocument();
@@ -1274,18 +1276,35 @@ describe("JevTab observed activity (plan J2 Step 221)", () => {
     expect(treeitem("army")).toBeInTheDocument();
   });
 
-  it("offers the complete archived forest only through the full graph debugging view", async () => {
+  it("keeps compact node codes stable when branches hide and boxes are restored", async () => {
+    await renderRun(runState(RUN_A, HASH_A));
+    expect(screen.getByRole("button", { name: "Nodes" })).toHaveAttribute("aria-pressed", "true");
+    const armyCode = treeitem("army").querySelector("text")?.textContent;
+    expect(armyCode).toMatch(/^A1/);
+    fireEvent.click(screen.getAllByTestId("jev-graph-lane").find((card) => card.dataset.lane === "economy")!);
+    expect(treeitem("army").querySelector("text")?.textContent).toBe(armyCode);
+    fireEvent.click(treeitem("army"));
+    expect(screen.getByTestId("jev-node-id")).toHaveTextContent("army");
+    fireEvent.click(screen.getByRole("button", { name: "Boxes" }));
+    expect(treeitem("army").querySelector("text")?.textContent).toBe("army");
+    expect(treeitem("army")).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("adds and removes branches independently, including an empty canvas", async () => {
     await renderRun(runState(RUN_A, HASH_A, { active_nodes: ["economy", economyFirst] }));
     const roots = () =>
       screen
         .getAllByRole("treeitem")
         .filter((node) => node.getAttribute("aria-level") === "1")
         .map((node) => node.dataset.lane);
-    expect(roots()).toEqual(["economy"]);
-    expect(screen.getByTestId("jev-graph-zoom")).toHaveTextContent("Zoom 100%");
-
+    expect(roots()).toEqual(policy.roots);
+    const cards = screen.getAllByTestId("jev-graph-lane");
+    fireEvent.click(cards.find((card) => card.dataset.lane === "economy")!);
+    expect(roots()).toEqual((policy.roots as string[]).filter((root) => root !== "economy"));
+    fireEvent.click(screen.getByRole("button", { name: "Collapse all" }));
+    expect(screen.queryAllByRole("treeitem")).toHaveLength(0);
+    expect(screen.getByText(/Choose branch cards above/)).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("jev-full-graph"));
-    expect(screen.getByTestId("jev-full-graph")).toHaveAttribute("aria-pressed", "true");
     expect(roots()).toEqual(policy.roots);
   });
 });
@@ -1565,7 +1584,7 @@ describe("JevTab plans and decisions (plan J2 Step 221)", () => {
     const stage = treeitem(STAGE); // its collapsed branch was expanded
     expect(stage).toHaveAttribute("data-status", "waiting");
     expect(stage).toHaveAttribute("data-source", "hosted");
-    expect(within(stage).getByText("⚑ Typesafe req #6")).toBeInTheDocument();
+    expect(stage.querySelector("title")).toHaveTextContent("Typesafe (request 6)");
     const list = screen.getByTestId("jev-node-sources");
     const sources = within(list).getAllByTestId("jev-node-source");
     expect(sources[0]).toHaveTextContent(

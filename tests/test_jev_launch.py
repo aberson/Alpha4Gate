@@ -2244,6 +2244,8 @@ class TestRealBrowser:
             dash.end("finished", "batch complete")
             expect(page.get_by_test_id("jev-launch-message")).to_contain_text("batch complete")
             evidence.shot(page, "12-batch-finished", run_id=run2)
+            page.get_by_text("Run details", exact=True).click()
+            expect(page.get_by_test_id("jev-run-id")).to_be_visible()
             assert page.get_by_test_id("jev-run-id").inner_text() == run2 != newer
             assert context.pages == [page] and page.url == dash.url  # one tab, never reopened
             assert all(isinstance(r, runner.MatchOutcome) for r in result)

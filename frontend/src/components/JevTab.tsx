@@ -10,6 +10,7 @@ import { JevGraph } from "./JevGraph";
 import { PlanPanel } from "./JevPlanPanel";
 import {
   NO_ACTIVITY,
+  nodeCodes,
   eventSource,
   factBoolean,
   factNumber,
@@ -170,13 +171,15 @@ function branchEvidence(
 
 function BranchOverview({
   branches,
-  selectedRoot,
+  codes,
+  selectedRoots,
   live,
   ended,
   onSelect,
 }: {
   branches: BranchEvidence[];
-  selectedRoot: string;
+  codes: ReadonlyMap<string, string>;
+  selectedRoots: readonly string[];
   live: boolean;
   ended: boolean;
   onSelect: (root: string) => void;
@@ -214,11 +217,12 @@ function BranchOverview({
               data-lane={branch.root}
               data-status={status}
               data-live={live && status !== "idle"}
-              aria-pressed={branch.root === selectedRoot}
+              aria-pressed={selectedRoots.includes(branch.root)}
               onClick={() => onSelect(branch.root)}
             >
               <span className="jev-branch-card-title">
                 <span className="jev-graph-lane-swatch" aria-hidden="true" />
+                <span className="jev-branch-code">{codes.get(branch.root)}</span>
                 {branch.root}
                 <span className={`jev-branch-state jev-branch-state-${status}`}>{status}</span>
               </span>
@@ -678,8 +682,8 @@ interface RunViewProps {
 /** One run's view; keyed by run ID, so switching runs discards all of its state. */
 function RunView({ runId, run, policy, launchStarting = false, onRendered }: RunViewProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
-  const [fullGraph, setFullGraph] = useState(false);
+  const [visibleRoots, setVisibleRoots] = useState<string[] | null>(null);
+  const [compact, setCompact] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
   const [reveal, setReveal] = useState<{ nodeId: string; token: number } | null>(null);
   const graphWorkspaceRef = useRef<HTMLDivElement>(null);
@@ -703,34 +707,17 @@ function RunView({ runId, run, policy, launchStarting = false, onRendered }: Run
     [matching],
   );
   const evidence = useMemo(() => plansEvidence(events), [events]);
-  const selectedBranch =
-    matching !== null && selectedBranchId !== null && matching.roots.includes(selectedBranchId)
-      ? selectedBranchId
-      : (matching?.roots.find((root) =>
-          [...(state?.active_nodes ?? []), ...(state?.waiting_nodes ?? [])].some(
-            (nodeId) => lanes.get(nodeId) === root,
-          ),
-        ) ?? matching?.roots[0] ?? "");
+  const roots = visibleRoots ?? matching?.roots ?? [];
   const branches = useMemo(
     () =>
       matching === null || state === null ? [] : branchEvidence(matching, state, lanes),
     [matching, state, lanes],
   );
-  const visibleActivity = useMemo(
-    () =>
-      fullGraph || selectedBranch.length === 0
-        ? activity
-        : {
-            ...activity,
-            followTargets: activity.followTargets.filter(
-              (nodeId) => lanes.get(nodeId) === selectedBranch,
-            ),
-          },
-    [activity, fullGraph, lanes, selectedBranch],
-  );
-  // Establish the default once as policy data arrives. React immediately retries this
-  // render with the branch stored, so later polling cannot move the user's view.
-  if (matching !== null && selectedBranchId === null) setSelectedBranchId(selectedBranch);
+  const visibleActivity = {
+    ...activity,
+    followTargets: activity.followTargets.filter((nodeId) => roots.includes(lanes.get(nodeId) ?? "")),
+  };
+  if (matching !== null && visibleRoots === null) setVisibleRoots([...matching.roots]);
   useEffect(() => {
     const changed = () => setFullscreen(document.fullscreenElement === graphWorkspaceRef.current);
     document.addEventListener("fullscreenchange", changed);
@@ -739,17 +726,13 @@ function RunView({ runId, run, policy, launchStarting = false, onRendered }: Run
   const showNode = (nodeId: string) => {
     const branch = lanes.get(nodeId);
     if (branch !== undefined) {
-      setSelectedBranchId(branch);
-      setFullGraph(false);
+      setVisibleRoots((current) => [...new Set([...(current ?? roots), branch])]);
     }
     setSelectedNodeId(nodeId);
     setReveal((previous) => ({ nodeId, token: (previous?.token ?? 0) + 1 }));
   };
   const selectBranch = (root: string) => {
-    setSelectedBranchId(root);
-    setFullGraph(false);
-    setSelectedNodeId(root);
-    setReveal((previous) => ({ nodeId: root, token: (previous?.token ?? 0) + 1 }));
+    setVisibleRoots(roots.includes(root) ? roots.filter((id) => id !== root) : [...roots, root]);
   };
   const toggleFullscreen = async () => {
     try {
@@ -813,42 +796,37 @@ function RunView({ runId, run, policy, launchStarting = false, onRendered }: Run
         data-testid="jev-graph-workspace"
       >
         <div className="jev-view-controls" role="group" aria-label="Graph scope controls">
-          <button
-            type="button"
-            aria-pressed={fullGraph}
-            data-testid="jev-full-graph"
-            onClick={() => setFullGraph((current) => !current)}
-          >
-            {fullGraph ? `Show ${selectedBranch} branch` : "Full graph (debugging)"}
-          </button>
+          <button type="button" data-testid="jev-full-graph" onClick={() => setVisibleRoots([...archived.roots])}>Add all</button>
+          <button type="button" onClick={() => setVisibleRoots([])}>Collapse all</button>
+          <button type="button" aria-pressed={!compact} onClick={() => setCompact(false)}>Boxes</button>
+          <button type="button" aria-pressed={compact} onClick={() => setCompact(true)}>Nodes</button>
           {typeof document.documentElement.requestFullscreen === "function" && (
             <button type="button" onClick={() => void toggleFullscreen()}>
               {fullscreen ? "Exit fullscreen" : "Fullscreen"}
             </button>
           )}
           <span>
-            {fullGraph ? "All archived roots" : `${selectedBranch} branch`}
+            {roots.length} / {archived.roots.length} branches
           </span>
         </div>
         <div className="jev-run-body">
-          <JevGraph
-            key={`${archived.policy_hash}:${fullGraph ? "full" : selectedBranch}`}
+          {roots.length === 0 ? <p className="jev-empty-graph">Choose branch cards above to add them to the graph.</p> : <JevGraph
+            key={archived.policy_hash}
             policy={archived}
-            displayRootIds={fullGraph ? undefined : [selectedBranch]}
+            displayRootIds={roots}
+            compact={compact}
             showLaneLegend={false}
-            fitOnMount={fullGraph}
+            fitOnMount
             runtime={runtime}
             live={live}
             selectedNodeId={selectedNodeId}
             onSelectNode={(nodeId) => {
               setSelectedNodeId(nodeId);
-              const branch = lanes.get(nodeId);
-              if (branch !== undefined) setSelectedBranchId(branch);
             }}
             activity={visibleActivity}
             reveal={reveal}
             ended={isTerminalRunStatus(state.status)}
-          />
+          />}
           <NodeInspector
             node={selectedNode}
             live={live}
@@ -877,7 +855,8 @@ function RunView({ runId, run, policy, launchStarting = false, onRendered }: Run
       {matching !== null && (
         <BranchOverview
           branches={branches}
-          selectedRoot={selectedBranch}
+          codes={nodeCodes(matching)}
+          selectedRoots={roots}
           live={live}
           ended={isTerminalRunStatus(state.status)}
           onSelect={selectBranch}
@@ -1112,6 +1091,7 @@ function RunSummary({ state, live, run, launchStarting }: RunSummaryProps) {
           .
         </p>
       )}
+      <details className="jev-disclosure"><summary>Run details</summary>
       <dl className="jev-facts">
         <dt>Run</dt>
         <dd>
@@ -1153,6 +1133,7 @@ function RunSummary({ state, live, run, launchStarting }: RunSummaryProps) {
             : `, incomplete (${trace.dropped_events} event(s) dropped)`}
         </dd>
       </dl>
+      </details>
     </section>
   );
 }
@@ -1202,7 +1183,7 @@ function NodeInspector({
   const guards = pathGuards(policy, node.id);
   return (
     <aside className="jev-inspector" aria-label="Node details" data-testid="jev-node-panel">
-      <h3>{node.label}</h3>
+      <h3>{nodeCodes(policy).get(node.id)} · {node.label}</h3>
       <dl className="jev-facts">
         <dt>Node ID</dt>
         <dd>

@@ -268,8 +268,9 @@
 
 .jev-run-body {
   display: flex;
+  flex-direction: column;
   gap: 12px;
-  align-items: flex-start;
+  align-items: stretch;
 }
 
 .jev-branches {
@@ -363,6 +364,12 @@
   opacity: 0.75;
 }
 
+.jev-branch-code {
+  font-family: var(--mono);
+  font-size: 11px;
+  opacity: 0.8;
+}
+
 .jev-graph-workspace {
   min-width: 0;
   padding: 8px;
@@ -406,6 +413,28 @@
 .jev-graph {
   flex: 1 1 auto;
   min-width: 0;
+  width: 100%;
+}
+
+.jev-disclosure {
+  margin: 8px 0;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.jev-disclosure summary {
+  cursor: pointer;
+  color: var(--text-dim);
+}
+
+.jev-empty-graph {
+  padding: 64px 20px;
+  text-align: center;
+}
+
+.jev-graph-node text.jev-graph-node-code {
+  font-size: 15px;
+  font-weight: 700;
 }
 
 .jev-graph-toolbar {
@@ -569,7 +598,8 @@
 }
 
 .jev-inspector {
-  flex: 0 0 340px;
+  flex: 0 0 auto;
+  width: 100%;
   max-width: 100%;
   max-height: 640px;
   overflow: auto;

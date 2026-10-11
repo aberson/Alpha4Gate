@@ -106,6 +106,15 @@ or local decision behind it. All of this is derived by the pure `jevEvidence.ts`
 (`graphActivity`, `plansEvidence`) from the latest state and recent events; nothing is
 interpolated between polls.
 
+The graph defaults to compact **Nodes**, with stable branch-prefixed IDs such as
+`A1` (Army) and `R1` (Reserve); **Boxes** restores the descriptive tiles. Branch
+cards toggle independently, **Add all** shows every branch, and **Collapse all**
+clears the canvas so branches can be added one at a time. Independent branches
+are arranged in columns. Node details appear below the full-width graph; run
+metadata and graph help are collapsed disclosures. Selecting a plan stage adds
+its branch without removing others. These controls change only the presentation,
+not the archived policy or gameplay.
+
 **JevGraph:** `d3-hierarchy` SVG tree of the archived policy forest with active
 and waiting node status. Supports pan, zoom, and collapse, and is a
 keyboard-navigable ARIA tree. Each root lane has a colour (a band, a node stripe,

@@ -23,6 +23,26 @@ import {
 
 // --- Shapes the graph draws -------------------------------------------------------
 
+/** Stable within an archived policy, independent of visible branches and runtime state. */
+export function nodeCodes(policy: JevPolicy): Map<string, string> {
+  const prefixes: Record<string, string> = {
+    economy: "E", supply: "S", construction: "C", tech: "T", expansion: "X",
+    scouting: "SC", production: "P", army: "A", reserve: "R",
+  };
+  const byId = new Map(policy.nodes.map((node) => [node.id, node]));
+  const codes = new Map<string, string>();
+  policy.roots.forEach((root, index) => {
+    let number = 0;
+    const visit = (id: string) => {
+      if (codes.has(id)) return;
+      codes.set(id, `${prefixes[root] ?? `B${index + 1}-`}${++number}`);
+      byId.get(id)?.children.forEach(visit);
+    };
+    visit(root);
+  });
+  return codes;
+}
+
 /** One edge the run's evidence shows as activity (never an invented traversal). */
 export interface JevEdgeActivity {
   parent: string;

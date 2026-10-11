@@ -19,7 +19,7 @@ import {
   type JevPolicy,
   type JevPolicyNode,
 } from "../types/jev";
-import { NO_ACTIVITY, type JevGraphActivity, type JevNodeSource } from "./jevEvidence";
+import { nodeCodes, NO_ACTIVITY, type JevGraphActivity, type JevNodeSource } from "./jevEvidence";
 
 /**
  * Jev decision graph — the run's archived policy forest drawn as an SVG tree.
@@ -35,7 +35,7 @@ import { NO_ACTIVITY, type JevGraphActivity, type JevNodeSource } from "./jevEvi
  *   - zoom with the wheel, the +/− buttons, or the + / − / 0 keys, bounded
  *     to ``MIN_SCALE``..``MAX_SCALE``;
  *   - collapse/expand a branch with its +/− toggle, ArrowLeft/ArrowRight,
- *     or Expand all / Collapse all. Composite nodes below the roots start
+ *     or Expand all / Fold nodes. Composite nodes below the roots start
  *     collapsed, so the first view is an overview of each lane; a collapsed
  *     node names how many hidden nodes are active or waiting;
  *   - nodes form an ARIA tree with one tab stop: arrow keys move focus,
@@ -207,15 +207,22 @@ function expandedTo(
 function laneBands(
   layout: Layout,
   structure: Structure,
-): Array<{ lane: string; top: number; bottom: number }> {
-  const extent = new Map<string, { top: number; bottom: number }>();
+  nodeHeight = NODE_HEIGHT,
+  nodeWidth = NODE_WIDTH,
+): Array<{ lane: string; top: number; bottom: number; left: number; right: number }> {
+  const extent = new Map<string, { top: number; bottom: number; left: number; right: number }>();
   for (const placed of layout.order) {
     const lane = structure.laneOf.get(placed.node.id) ?? placed.node.id;
     const band = extent.get(lane);
     const top = placed.y - BAND_PAD;
-    const bottom = placed.y + NODE_HEIGHT + BAND_PAD;
-    if (band === undefined) extent.set(lane, { top, bottom });
-    else extent.set(lane, { top: Math.min(band.top, top), bottom: Math.max(band.bottom, bottom) });
+    const bottom = placed.y + nodeHeight + BAND_PAD;
+    const left = placed.x - BAND_PAD;
+    const right = placed.x + nodeWidth + TOGGLE_RADIUS + BAND_PAD;
+    if (band === undefined) extent.set(lane, { top, bottom, left, right });
+    else extent.set(lane, {
+      top: Math.min(band.top, top), bottom: Math.max(band.bottom, bottom),
+      left: Math.min(band.left, left), right: Math.max(band.right, right),
+    });
   }
   return [...extent].map(([lane, band]) => ({ lane, ...band }));
 }
@@ -261,7 +268,59 @@ function computeLayout(
   policy: JevPolicy,
   structure: Structure,
   collapsed: ReadonlySet<string>,
+  compact = false,
 ): Layout {
+  const nodeWidth = compact ? 88 : NODE_WIDTH;
+  const nodeHeight = compact ? 32 : NODE_HEIGHT;
+  const rowGap = compact ? 42 : ROW_GAP;
+  const columnGap = compact ? 132 : COLUMN_GAP;
+  if (policy.roots.length === 0) {
+    return { order: [], byId: new Map(), edges: [], width: MARGIN * 2, height: MARGIN * 2 };
+  }
+  // Pack independent branches across the available canvas instead of one tall strip.
+  if (policy.roots.length > 1) {
+    const columns = compact ? 3 : 2;
+    const parts = policy.roots.map((root) =>
+      computeLayout({ ...policy, roots: [root] }, structure, collapsed, compact),
+    );
+    const widths = Array.from({ length: columns }, (_, column) =>
+      Math.max(0, ...parts.filter((_, i) => i % columns === column).map((part) => part.width)),
+    );
+    const order: PlacedNode[] = [];
+    const byId = new Map<string, PlacedNode>();
+    let top = 0;
+    for (let row = 0; row < parts.length; row += columns) {
+      let left = 0;
+      for (let column = 0; column < columns && row + column < parts.length; column++) {
+        for (const placed of parts[row + column].order) {
+          const shifted = {
+            ...placed, x: placed.x + left, y: placed.y + top,
+            ...(placed.level === 1 ? { setSize: policy.roots.length, posInSet: row + column + 1 } : {}),
+          };
+          order.push(shifted);
+          byId.set(shifted.node.id, shifted);
+        }
+        left += widths[column];
+      }
+      top += Math.max(...parts.slice(row, row + columns).map((part) => part.height));
+    }
+    const edges: Layout["edges"] = [];
+    for (const placed of order) {
+      for (const childId of placed.node.children) {
+        const child = byId.get(childId);
+        if (!child) continue;
+        const startX = placed.x + nodeWidth;
+        const startY = placed.y + nodeHeight / 2;
+        const endY = child.y + nodeHeight / 2;
+        const middleX = (startX + child.x) / 2;
+        edges.push({
+          id: edgeId(placed.node.id, childId),
+          path: `M${startX},${startY} C${middleX},${startY} ${middleX},${endY} ${child.x},${endY}`,
+        });
+      }
+    }
+    return { order, byId, edges, width: widths.reduce((sum, width) => sum + width, 0), height: top };
+  }
   const build = (id: string): DisplayNode => {
     const node = structure.byId.get(id) as JevPolicyNode;
     return { node, children: collapsed.has(id) ? [] : node.children.map(build) };
@@ -271,7 +330,7 @@ function computeLayout(
     (display) => display.children,
   );
   const positioned = tree<DisplayNode>()
-    .nodeSize([ROW_GAP, COLUMN_GAP])
+    .nodeSize([rowGap, columnGap])
     .separation((a, b) => (a.parent === b.parent ? 1 : 1.3))(root);
   const real = positioned.descendants().filter((d) => d.data.node !== null);
   const minRow = Math.min(...real.map((d) => d.x));
@@ -287,7 +346,7 @@ function computeLayout(
     const siblings = d.parent?.children ?? [d];
     const placed: PlacedNode = {
       node,
-      x: MARGIN + (d.depth - 1) * COLUMN_GAP,
+      x: MARGIN + (d.depth - 1) * columnGap,
       y: MARGIN + d.x - minRow,
       level: d.depth,
       setSize: siblings.length,
@@ -302,9 +361,9 @@ function computeLayout(
     for (const childId of placed.node.children) {
       const child = byId.get(childId);
       if (child === undefined) continue;
-      const startX = placed.x + NODE_WIDTH;
-      const startY = placed.y + NODE_HEIGHT / 2;
-      const endY = child.y + NODE_HEIGHT / 2;
+      const startX = placed.x + nodeWidth;
+      const startY = placed.y + nodeHeight / 2;
+      const endY = child.y + nodeHeight / 2;
       const middleX = (startX + child.x) / 2;
       edges.push({
         id: edgeId(placed.node.id, childId),
@@ -318,10 +377,10 @@ function computeLayout(
     edges,
     width:
       2 * MARGIN +
-      (maxDepth - 1) * COLUMN_GAP +
-      NODE_WIDTH +
+      (maxDepth - 1) * columnGap +
+      nodeWidth +
       TOGGLE_RADIUS,
-    height: 2 * MARGIN + maxRow - minRow + NODE_HEIGHT,
+    height: 2 * MARGIN + maxRow - minRow + nodeHeight,
   };
 }
 
@@ -348,12 +407,13 @@ function revealBox(
   transform: Transform,
   placed: PlacedNode,
   viewport: { width: number; height: number },
+  compact = false,
 ): Transform {
   const pad = MARGIN;
   const left = transform.x + placed.x * transform.k;
   const top = transform.y + placed.y * transform.k;
-  const right = left + NODE_WIDTH * transform.k;
-  const bottom = top + NODE_HEIGHT * transform.k;
+  const right = left + (compact ? 88 : NODE_WIDTH) * transform.k;
+  const bottom = top + (compact ? 32 : NODE_HEIGHT) * transform.k;
   let { x, y } = transform;
   if (left < pad) x += pad - left;
   else if (right > viewport.width - pad) x -= right - (viewport.width - pad);
@@ -397,11 +457,12 @@ function hiddenSummary(
 
 export interface JevGraphProps {
   policy: JevPolicy;
+  compact?: boolean;
   /** Roots to draw. The archived policy remains intact; this only limits presentation. */
   displayRootIds?: readonly string[];
   /** The parent branch overview already carries this information in the focused view. */
   showLaneLegend?: boolean;
-  /** Fit the initial view once, used by the optional full-graph debugging view. */
+  /** Fit on mount and when the user changes the visible branch set, never on polling. */
   fitOnMount?: boolean;
   /** Runtime status by node ID; a node without an entry is drawn as ``idle``. */
   runtime: ReadonlyMap<string, JevNodeRuntime>;
@@ -419,6 +480,7 @@ export interface JevGraphProps {
 
 export function JevGraph({
   policy,
+  compact = false,
   displayRootIds,
   showLaneLegend = true,
   fitOnMount = false,
@@ -430,6 +492,9 @@ export function JevGraph({
   reveal = null,
   ended = false,
 }: JevGraphProps) {
+  const nodeWidth = compact ? 88 : NODE_WIDTH;
+  const nodeHeight = compact ? 32 : NODE_HEIGHT;
+  const codes = useMemo(() => nodeCodes(policy), [policy]);
   const structure = useMemo(() => describeStructure(policy), [policy]);
   const displayPolicy = useMemo(
     () =>
@@ -453,26 +518,27 @@ export function JevGraph({
   const svgRef = useRef<SVGSVGElement>(null);
   const nodeElements = useRef(new Map<string, SVGGElement>());
   const drag = useRef<DragStart | null>(null);
-  const initiallyFitted = useRef(false);
+  const initiallyFitted = useRef<string | null>(null);
+  const scopeKey = `${compact ? "nodes" : "boxes"}:${displayPolicy.roots.join("|")}`;
   const hintId = useId();
   const followId = useId();
 
   const layout = useMemo(
-    () => computeLayout(displayPolicy, structure, collapsed),
-    [displayPolicy, structure, collapsed],
+    () => computeLayout(displayPolicy, structure, collapsed, compact),
+    [displayPolicy, structure, collapsed, compact],
   );
   const tabStop =
-    focusedId !== null && layout.byId.has(focusedId) ? focusedId : layout.order[0].node.id;
+    focusedId !== null && layout.byId.has(focusedId) ? focusedId : layout.order[0]?.node.id ?? null;
 
   /** Expand ``id``'s branch and pan just enough to show it (a jump, never animated). */
   const bringIntoView = (id: string) => {
     if (!structure.byId.has(id)) return;
     const nextCollapsed = expandedTo(id, structure, collapsed);
     const nextLayout =
-      nextCollapsed === collapsed ? layout : computeLayout(displayPolicy, structure, nextCollapsed);
+      nextCollapsed === collapsed ? layout : computeLayout(displayPolicy, structure, nextCollapsed, compact);
     if (nextCollapsed !== collapsed) setCollapsed(nextCollapsed);
     const placed = nextLayout.byId.get(id);
-    if (placed !== undefined) setTransform(revealBox(transform, placed, viewport));
+    if (placed !== undefined) setTransform(revealBox(transform, placed, viewport, compact));
   };
 
   // "Follow activity" acts once per new target and only while live; ``reveal`` once
@@ -505,12 +571,12 @@ export function JevGraph({
   }, []);
 
   useEffect(() => {
-    if (!fitOnMount || initiallyFitted.current) return;
-    initiallyFitted.current = true;
+    if (!fitOnMount || initiallyFitted.current === scopeKey) return;
+    initiallyFitted.current = scopeKey;
     const { width, height } = viewportSize(svgRef.current);
     const k = clampScale(Math.min(width / layout.width, height / layout.height));
     setTransform({ k, x: (width - layout.width * k) / 2, y: (height - layout.height * k) / 2 });
-  }, [fitOnMount, layout.height, layout.width]);
+  }, [fitOnMount, layout.height, layout.width, scopeKey]);
 
   // React registers wheel listeners as passive, which cannot stop the page
   // from scrolling; zooming needs a non-passive native listener.
@@ -557,7 +623,7 @@ export function JevGraph({
     setFocusedId(id);
     nodeElements.current.get(id)?.focus({ preventScroll: true });
     const size = viewportSize(svgRef.current);
-    setTransform((current) => revealBox(current, placed, size));
+    setTransform((current) => revealBox(current, placed, size, compact));
   };
 
   const onNodeKeyDown = (event: KeyboardEvent<SVGGElement>, placed: PlacedNode) => {
@@ -576,7 +642,7 @@ export function JevGraph({
         moveFocus(layout.order[index - 1]?.node.id);
         break;
       case "Home":
-        moveFocus(layout.order[0].node.id);
+        moveFocus(layout.order[0]?.node.id ?? null);
         break;
       case "End":
         moveFocus(layout.order[layout.order.length - 1].node.id);
@@ -704,7 +770,7 @@ export function JevGraph({
           Expand all
         </button>
         <button type="button" onClick={() => setCollapsed(allCollapsed(structure))}>
-          Collapse all
+          Fold nodes
         </button>
         <label className="jev-graph-follow">
           <input
@@ -724,6 +790,7 @@ export function JevGraph({
           {followStatus}
         </span>
       </div>
+      <details className="jev-disclosure"><summary>Graph help and legend</summary>
       <p className="jev-graph-legend">
         {RUNTIME_ORDER.map((status) => (
           <span key={status}>
@@ -774,6 +841,7 @@ export function JevGraph({
         Arrow keys move between nodes · Enter or Space selects · Left / Right collapse and
         expand · + / − zoom · drag the background to pan
       </p>
+      </details>
       <svg
         ref={svgRef}
         className="jev-graph-viewport"
@@ -796,14 +864,14 @@ export function JevGraph({
           transform={`translate(${transform.x},${transform.y}) scale(${transform.k})`}
         >
           <g className="jev-graph-bands" aria-hidden="true">
-            {laneBands(layout, structure).map((band) => (
+            {laneBands(layout, structure, nodeHeight, nodeWidth).map((band) => (
               <rect
                 key={band.lane}
                 className={`jev-graph-lane-band ${structure.toneOf.get(band.lane) ?? ""}`}
                 data-lane={band.lane}
-                x={0}
+                x={band.left}
                 y={band.top}
-                width={layout.width}
+                width={band.right - band.left}
                 height={band.bottom - band.top}
                 rx={8}
               />
@@ -907,20 +975,20 @@ export function JevGraph({
                     onKeyDown={(event) => onNodeKeyDown(event, placed)}
                   >
                     <title>{title}</title>
-                    <rect width={NODE_WIDTH} height={NODE_HEIGHT} rx={6} />
+                    <rect width={nodeWidth} height={nodeHeight} rx={6} />
                     <rect
                       className={`jev-graph-node-lane ${tone}`}
                       width={LANE_STRIPE}
-                      height={NODE_HEIGHT}
+                      height={nodeHeight}
                       rx={2}
                     />
-                    <text x={10} y={15} className="jev-graph-node-name">
-                      {shortId(node.id)}
+                    <text x={10} y={compact ? 21 : 15} className={compact ? "jev-graph-node-code" : "jev-graph-node-name"}>
+                      {compact ? `${codes.get(node.id)} ${RUNTIME_GLYPHS[status]}` : shortId(node.id)}
                     </text>
-                    <text x={10} y={30} className="jev-graph-node-status">
+                    {!compact && <text x={10} y={30} className="jev-graph-node-status">
                       {`${RUNTIME_GLYPHS[status]} ${statusText}`}
-                    </text>
-                    {thirdLine !== null && (
+                    </text>}
+                    {!compact && thirdLine !== null && (
                       <text
                         x={10}
                         y={44}
@@ -951,7 +1019,7 @@ export function JevGraph({
                     role="button"
                     aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${node.id}`}
                     tabIndex={-1}
-                    transform={`translate(${x + NODE_WIDTH},${y + NODE_HEIGHT / 2})`}
+                    transform={`translate(${x + nodeWidth},${y + nodeHeight / 2})`}
                     onClick={() => toggle(node.id)}
                     onKeyDown={(event) => {
                       if (event.key !== "Enter" && event.key !== " ") return;
