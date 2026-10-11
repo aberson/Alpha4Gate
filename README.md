@@ -270,7 +270,7 @@ uv run python -m bots.v0.runner --map Simple64
 **Combined Battle View preview (Windows):** watch hosted Typesafe Jev with the live 3D graph,
 decision text and event log in one window. Run
 `powershell -File scripts/launch-jev-battle.ps1`; add `-AutoRecord` for automatic
-1920×1200 recording with game audio only. Desktop shortcuts are installed on the
+2160×1200 recording with game audio only. Desktop shortcuts are installed on the
 development workstation. [Try it yourself](documentation/operator/jev-battle-view.md).
 This preview uses your saved Typesafe key and credits, requires the isolated portable OBS
 setup, and does not complete the v2 gameplay acceptance gates.

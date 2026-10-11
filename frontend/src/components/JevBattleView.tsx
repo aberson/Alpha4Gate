@@ -6,9 +6,12 @@ import { isTerminalRunStatus, type JevNodeRuntime } from "../types/jev";
 import "./JevTab.css";
 import "./JevBattleView.css";
 
+interface CasterLine { text: string; source: string; kind: string; game_seconds: number }
+interface NativeState { recording: boolean; locked: boolean; automatic?: boolean; message: string; caster?: CasterLine }
+
 declare global {
   interface Window {
-    battleAction?: (action: string) => Promise<{ recording: boolean; locked: boolean; automatic?: boolean; message: string }>;
+    battleAction?: (action: string) => Promise<NativeState>;
   }
 }
 
@@ -16,7 +19,7 @@ declare global {
 export function JevBattleView() {
   const { run, policy, reportRendered } = useJevRun();
   const [selected, setSelected] = useState<string | null>(null);
-  const [native, setNative] = useState({ recording: false, locked: true, automatic: false, message: "Connecting viewer…" });
+  const [native, setNative] = useState<NativeState>({ recording: false, locked: true, automatic: false, message: "Connecting viewer…" });
   const state = run.data;
   const archive = policy.data;
   const matching = state && archive?.policy_hash === state.policy_hash ? archive : null;
@@ -99,6 +102,7 @@ export function JevBattleView() {
         </li>)}</ol> : <p>Click a dot to inspect its path · Drag to rotate · Shift-drag to pan</p>}
       </div>
     </section>
+    <div className="battle-summary">
     <section className="battle-log"><h3>Recent game events</h3>
       {events.length ? events.map((event) => <p key={event.sequence}>
         <time>{event.game_seconds.toFixed(1)}s</time> {event.node_id} · {event.reason}
@@ -112,6 +116,12 @@ export function JevBattleView() {
           {factString(event.facts, "model") ? ` · ${factString(event.facts, "model")}` : ""}
           {factNumber(event.facts, "calls") !== null ? ` · ${factNumber(event.facts, "calls")} requests` : ""}
         </small></p>)}
+    </section>
+    </div>
+    <section className="battle-caster" aria-label="Archon Caster">
+      <h3>Archon Caster <small>Two minds. Zero appearance fees.</small></h3>
+      <p>{native.caster?.text ?? "Tuning into the Khala. Waiting for the local commentary feed."}</p>
+      <small>{native.caster ? `${native.caster.source} \u00b7 ${native.caster.game_seconds.toFixed(1)}s` : "Local commentary only"} &middot; Entertainment, not gameplay control{!live && native.caster ? " \u00b7 Last broadcast" : ""}</small>
     </section>
   </main>;
 }

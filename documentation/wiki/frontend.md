@@ -160,7 +160,7 @@ The injected `battleAction` binding supplies recording, automatic observer camer
 manual camera lock and Stop battle; this is not a new HTTP API. `-AutoRecord` starts
 recording when gameplay is ready. Both desktop launchers use Typesafe `jev-1.13.0` with the saved key;
 only recording differs. The preview is fixed
-1920×1200, with game-process audio and no microphone. Active dots have enlarged
+2160×1200, with game-process audio and no microphone. Active dots have enlarged
 hit targets; the inspector shows the full ancestry path and the event panel shows
 six recent entries. See the
 [operator guide](../operator/jev-battle-view.md) and

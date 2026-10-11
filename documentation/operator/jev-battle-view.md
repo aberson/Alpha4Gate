@@ -81,7 +81,7 @@ graph activity over time. If the dashboard is stopped, run
 
 ## Current limits
 
-This is a fixed 1920×1200 Windows preview and recording, tested on the development display.
+This is a fixed 2160×1200 Windows preview and recording, tested on the development display.
 Keep its size and monitor placement unchanged; adaptive resize and mixed-DPI
 monitor support are still pending. OBS must use the dedicated `BattleProbe`
 profile and authenticated local websocket on port 4457. The launcher will not
@@ -96,3 +96,24 @@ Hosted Jev is wired through the same production runner as `launch-jev.ps1`.
 A missing key fails the launch; service failures retain the existing labeled
 fallback behavior. Installation on a fresh machine, robust production lifecycle
 and long-session validation remain follow-up work. Interrupted preview matches are not benchmark evidence.
+
+## Archon Caster
+
+The graph now occupies the full right half, with the same-height path inspector
+beneath it. Recent events and current decisions share the shorter left summary
+row; Archon Caster occupies the row below. Recordings include all these panels.
+
+The caster is text-only entertainment, separate from paid Typesafe gameplay.
+It uses local Ollama at `127.0.0.1:11434`, model `qwen2.5:1.5b`, on two CPU threads.
+There are no caster API charges, keys, or cloud fallback. On this workstation
+Ollama runs in WSL. On another machine, install Ollama and run
+`ollama pull qwen2.5:1.5b`; without that service the panel uses a labeled local fallback.
+
+Every shuffled batch of 20 entries contains 14 game commentaries, three curated
+AI facts and three dad jokes (70/15/15). One background request runs at a time,
+with a 30-second timeout and 30-second pause between entries. Commentary sees
+only a bounded snapshot of recorded active nodes and recent command/task events.
+The game-time label identifies that snapshot, not the time generation finishes.
+Small-model commentary can be inaccurate; it never directs Jev or the camera.
+Cold model startup may show a fallback before subsequent commentary succeeds.
+Entries are saved beside the recording in `battle/caster.jsonl`.

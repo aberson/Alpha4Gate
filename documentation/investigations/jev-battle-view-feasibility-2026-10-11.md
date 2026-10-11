@@ -220,3 +220,38 @@ foreground/hit window before clicking, and asserts actual camera movement and
 pointer-exit locking. Normal developer probes no longer move the system cursor.
 Both desktop shortcuts retain hosted Typesafe defaults. All developer camera
 runs above were local scripted tests, not gameplay benchmarks.
+
+## Taller graph and Archon Caster follow-up
+
+Operator confirmed the owned-popup input/camera revision works. The next layout
+uses a 2160x1200 host and recording, equal columns, a graph spanning the entire
+right column, and the existing 125px ancestry inspector. Events and decisions
+share a 160px left row above a 105px caster box. Live run
+`3d11274058664f3eac2cceee50c71761` verified the native 1053x788 game pane,
+292 nodes, three ownership/foreground checks, and a 65-second recording.
+`36b6fe2d91654df5b42e45089534dea5` additionally recorded caster text in the composite.
+These were scripted developer display probes, not hosted gameplay acceptance.
+
+Archon Caster uses local Ollama Qwen2.5 1.5B on CPU, without credentials or a
+cloud fallback. The installed 7B model exceeded the startup timeout; 0.5B was
+fast but invented outcomes in sample commentary. The chosen 1.5B model produced
+a sensible summary from archived event evidence, with a roughly 25-second warm
+response in that check. This is entertainment, not a correctness guarantee or
+performance benchmark. Cold starts can initially show a labeled fallback.
+
+A shuffled 20-entry deck supplies 14 model commentaries, three curated AI facts,
+and three dad jokes. Requests run independently from the native pump and Jev;
+the viewer cancels the task on exit and discards replies after a run ends or
+its evidence becomes stale. Each line names its source and snapshot game time.
+The endpoint is fixed loopback, redirects/proxy environment are disabled, and
+only bounded game-event fields enter the prompt. There are no game orders or
+paid calls from the caster. Generated entries go to `battle/caster.jsonl`.
+
+Validation: seven Battle View frontend tests, six caster/launcher Python tests,
+frontend build/lint (existing warning only), strict caster mypy, and scoped Ruff
+passed. A browser fixture also checked near-dot selection, the real ancestry
+path, six events, and the enlarged graph geometry.
+
+Final chosen-model live probe `2eb7186969154749868a8ec42a26728d` recorded
+local Qwen commentary ("Probes are being trained to increase production
+capacity."), the full composite, and a 45-second video; it exited normally.

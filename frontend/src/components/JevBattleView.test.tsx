@@ -19,6 +19,19 @@ function setup(status: string, stale = false, mismatch = false, recentEvents: Je
 }
 
 describe("Battle feasibility view", () => {
+  it("attributes caster commentary separately and marks ended broadcasts", async () => {
+    window.battleAction = vi.fn(async () => ({
+      recording: false, locked: true, message: "Ready",
+      caster: { text: "A Gateway is on the agenda.", source: "Local Qwen",
+        kind: "commentary", game_seconds: 42 },
+    }));
+    setup("completed");
+    const caster = screen.getByLabelText("Archon Caster");
+    await within(caster).findByText("A Gateway is on the agenda.");
+    expect(caster).toHaveTextContent("Local Qwen · 42.0s");
+    expect(caster).toHaveTextContent("Last broadcast");
+  });
+
   it("shows observer status and switches to manual control through the native bridge", async () => {
     window.battleAction = vi.fn(async (name) => ({
       recording: false, locked: name !== "lock", automatic: name !== "lock",

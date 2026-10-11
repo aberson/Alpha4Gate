@@ -105,7 +105,7 @@ Wiki: `documentation/wiki/index.md` — system diagram and deep-dive pages.
 `powershell -File scripts/launch-jev-battle.ps1` opens a hosted Typesafe v2 game
 beside the expanded 3D Branch faces graph. `-AutoRecord` records automatically;
 `-CheckOnly` checks local prerequisites without launching. Windows-only fixed
-1920×1200 preview; needs Edge and the isolated portable OBS `BattleProbe` profile
+2160×1200 preview; needs Edge and the isolated portable OBS `BattleProbe` profile
 (authenticated websocket port 4457), installed on the development workstation.
 The launcher loads the saved DPAPI key; only the game child receives it.
 Uses `jev-1.13.0`, capped at 450 requests; missing key stops launch.

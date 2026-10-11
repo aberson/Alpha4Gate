@@ -24,7 +24,7 @@ from contextlib import suppress
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-VIEW_WIDTH, VIEW_HEIGHT = 1920, 1200
+VIEW_WIDTH, VIEW_HEIGHT = 2160, 1200
 sys.path.insert(0, str(ROOT))
 
 
@@ -299,6 +299,10 @@ async def probe(
         win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0)
         win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0)
 
+    from jev.caster import ArchonCaster
+
+    caster = ArchonCaster(evidence)
+    caster_task = asyncio.create_task(caster.run())
     event_pump = asyncio.create_task(pump_native_events())
     playwright = await async_playwright().start()
     try:
@@ -361,6 +365,7 @@ async def probe(
                 "locked": locked,
                 "automatic": automatic,
                 "message": camera_message,
+                "caster": caster.latest,
             }
 
         await page.expose_function("battleAction", action)
@@ -710,6 +715,9 @@ async def probe(
         )
         print(f"Evidence: {evidence}\nRecording: {record_path or 'none requested'}", flush=True)
     finally:
+        caster_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await caster_task
         maintain_stacking = False
         write_json(evidence / "control.json", {"locked": True, "stop": True})
         if recording:
