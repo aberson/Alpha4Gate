@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   useJevRun,
   type JevLaunchView,
@@ -23,6 +23,7 @@ import {
 import {
   JEV_DECISION_REASONS,
   isTerminalRunStatus,
+  laneToneClass,
   launchLiveness,
   launchPhase,
   nodeRuntimeLabel,
@@ -120,6 +121,7 @@ function formatJson(value: JsonValue): string {
 
 function sourceLabel(source: string | null): string {
   if (source === "typesafe") return "Typesafe response";
+  if (source === "local_fallback") return "local fallback";
   if (source === "scripted_fallback") return "Scripted fallback";
   if (source === "scripted") return "Scripted";
   return source ?? "unknown";
@@ -139,6 +141,143 @@ function nodeRuntimes(state: JevRunState): Map<string, JevNodeRuntime> {
   for (const id of state.active_nodes) runtime.set(id, "active");
   for (const id of state.waiting_nodes) runtime.set(id, "waiting");
   return runtime;
+}
+
+interface BranchEvidence {
+  root: string;
+  active: string[];
+  waiting: string[];
+  blocker: JevEvent | null;
+}
+
+/** Summarize a root only from the latest state and recorded events. */
+function branchEvidence(
+  policy: JevPolicy,
+  state: JevRunState,
+  lanes: ReadonlyMap<string, string>,
+): BranchEvidence[] {
+  return policy.roots.map((root) => {
+    const active = state.active_nodes.filter((id) => lanes.get(id) === root);
+    const waiting = state.waiting_nodes.filter((id) => lanes.get(id) === root);
+    const waitingSet = new Set(waiting);
+    const blocker =
+      state.recent_events.findLast(
+        (event) => waitingSet.has(event.node_id) && event.reason.trim().length > 0,
+      ) ?? null;
+    return { root, active, waiting, blocker };
+  });
+}
+
+function BranchOverview({
+  branches,
+  selectedRoot,
+  live,
+  ended,
+  onSelect,
+}: {
+  branches: BranchEvidence[];
+  selectedRoot: string;
+  live: boolean;
+  ended: boolean;
+  onSelect: (root: string) => void;
+}) {
+  const evidenceLabel = live ? "Live" : ended ? "When run ended" : "Last known";
+  const activeBranches = branches.filter(
+    (branch) => branch.active.length + branch.waiting.length > 0,
+  );
+  const laneWhen = live ? "" : ended ? " when the run ended" : " (last known)";
+  return (
+    <section className="jev-branches" aria-labelledby="jev-branches-heading">
+      <div className="jev-branches-title">
+        <h3 id="jev-branches-heading">Branch overview</h3>
+        <span className="jev-badge">{evidenceLabel} evidence</span>
+      </div>
+      <p className="jev-branch-summary" data-testid="jev-graph-active-lanes">
+        {activeBranches.length === 0
+          ? `No lane active${laneWhen}`
+          : `${activeBranches.length} lane(s) active${laneWhen}: ${activeBranches
+              .map((branch) => branch.root)
+              .join(", ")}`}
+      </p>
+      <div className="jev-branch-grid">
+        {branches.map((branch, index) => {
+          const current = branch.active.filter((id) => id !== branch.root);
+          const action = current.at(-1) ?? branch.active.at(-1) ?? null;
+          const blockerNode = branch.blocker?.node_id ?? branch.waiting.at(-1) ?? null;
+          const status = branch.active.length > 0 ? "active" : branch.waiting.length > 0 ? "waiting" : "idle";
+          return (
+            <button
+              key={branch.root}
+              type="button"
+              className={`jev-branch-card ${laneToneClass(branch.root, index)}`}
+              data-testid="jev-graph-lane"
+              data-lane={branch.root}
+              data-status={status}
+              data-live={live && status !== "idle"}
+              aria-pressed={branch.root === selectedRoot}
+              onClick={() => onSelect(branch.root)}
+            >
+              <span className="jev-branch-card-title">
+                <span className="jev-graph-lane-swatch" aria-hidden="true" />
+                {branch.root}
+                <span className={`jev-branch-state jev-branch-state-${status}`}>{status}</span>
+              </span>
+              <span className="jev-branch-card-line">
+                {action === null ? "No current action recorded" : `Action: ${action}`}
+              </span>
+              <span className="jev-branch-card-line">
+                {blockerNode === null
+                  ? "No blocker recorded"
+                  : `Blocked: ${blockerNode}${branch.blocker === null ? "" : ` — ${branch.blocker.reason}`}`}
+              </span>
+              <span className="jev-branch-card-counts">
+                {branch.active.length} active · {branch.waiting.length} waiting
+                {live ? "" : ended ? " when ended" : " (last known)"}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function RecentDecisions({ events, live }: { events: JevEvent[]; live: boolean }) {
+  const decisions = events
+    .filter((event) => {
+      const question = factString(event.facts, "question_id");
+      const choice = factString(event.facts, "choice");
+      const source = factString(event.facts, "source");
+      return question !== null && (choice !== null || source !== null);
+    })
+    .slice(-6)
+    .reverse();
+  return (
+    <section className="jev-recent-decisions" aria-labelledby="jev-recent-decisions-heading">
+      <div className="jev-branches-title">
+        <h3 id="jev-recent-decisions-heading">Recent decisions</h3>
+        <span className="jev-badge">{live ? "Live evidence" : "Last known evidence"}</span>
+      </div>
+      {decisions.length === 0 ? (
+        <p className="jev-note">No decision events recorded for this run.</p>
+      ) : (
+        <ol>
+          {decisions.map((event) => (
+            <li key={event.sequence} data-testid="jev-recent-decision">
+              <strong>{factString(event.facts, "question_id")}</strong>
+              {factString(event.facts, "choice") === null
+                ? " — no choice recorded"
+                : ` → ${factString(event.facts, "choice")}`}
+              {factString(event.facts, "source") === null
+                ? ""
+                : ` · ${sourceLabel(factString(event.facts, "source"))}`}
+              <span> · {formatSeconds(event.game_seconds)} · event {event.sequence}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
 }
 
 /**
@@ -539,7 +678,11 @@ interface RunViewProps {
 /** One run's view; keyed by run ID, so switching runs discards all of its state. */
 function RunView({ runId, run, policy, launchStarting = false, onRendered }: RunViewProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
+  const [fullGraph, setFullGraph] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const [reveal, setReveal] = useState<{ nodeId: string; token: number } | null>(null);
+  const graphWorkspaceRef = useRef<HTMLDivElement>(null);
   const state = run.data;
   const events = state?.recent_events ?? NO_EVENTS;
   const runtime = useMemo(
@@ -560,9 +703,61 @@ function RunView({ runId, run, policy, launchStarting = false, onRendered }: Run
     [matching],
   );
   const evidence = useMemo(() => plansEvidence(events), [events]);
+  const selectedBranch =
+    matching !== null && selectedBranchId !== null && matching.roots.includes(selectedBranchId)
+      ? selectedBranchId
+      : (matching?.roots.find((root) =>
+          [...(state?.active_nodes ?? []), ...(state?.waiting_nodes ?? [])].some(
+            (nodeId) => lanes.get(nodeId) === root,
+          ),
+        ) ?? matching?.roots[0] ?? "");
+  const branches = useMemo(
+    () =>
+      matching === null || state === null ? [] : branchEvidence(matching, state, lanes),
+    [matching, state, lanes],
+  );
+  const visibleActivity = useMemo(
+    () =>
+      fullGraph || selectedBranch.length === 0
+        ? activity
+        : {
+            ...activity,
+            followTargets: activity.followTargets.filter(
+              (nodeId) => lanes.get(nodeId) === selectedBranch,
+            ),
+          },
+    [activity, fullGraph, lanes, selectedBranch],
+  );
+  // Establish the default once as policy data arrives. React immediately retries this
+  // render with the branch stored, so later polling cannot move the user's view.
+  if (matching !== null && selectedBranchId === null) setSelectedBranchId(selectedBranch);
+  useEffect(() => {
+    const changed = () => setFullscreen(document.fullscreenElement === graphWorkspaceRef.current);
+    document.addEventListener("fullscreenchange", changed);
+    return () => document.removeEventListener("fullscreenchange", changed);
+  }, []);
   const showNode = (nodeId: string) => {
+    const branch = lanes.get(nodeId);
+    if (branch !== undefined) {
+      setSelectedBranchId(branch);
+      setFullGraph(false);
+    }
     setSelectedNodeId(nodeId);
     setReveal((previous) => ({ nodeId, token: (previous?.token ?? 0) + 1 }));
+  };
+  const selectBranch = (root: string) => {
+    setSelectedBranchId(root);
+    setFullGraph(false);
+    setSelectedNodeId(root);
+    setReveal((previous) => ({ nodeId: root, token: (previous?.token ?? 0) + 1 }));
+  };
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement === graphWorkspaceRef.current) await document.exitFullscreen();
+      else await graphWorkspaceRef.current?.requestFullscreen();
+    } catch {
+      setFullscreen(false);
+    }
   };
   // The graph below is drawn exactly when this holds (same run, matching archive).
   const renderedHash =
@@ -612,27 +807,59 @@ function RunView({ runId, run, policy, launchStarting = false, onRendered }: Run
     );
   } else {
     graph = (
-      <div className="jev-run-body">
-        <JevGraph
-          policy={archived}
-          runtime={runtime}
-          live={live}
-          selectedNodeId={selectedNodeId}
-          onSelectNode={setSelectedNodeId}
-          activity={activity}
-          reveal={reveal}
-          ended={isTerminalRunStatus(state.status)}
-        />
-        <NodeInspector
-          node={selectedNode}
-          live={live}
-          runtime={selectedNode === null ? "idle" : (runtime.get(selectedNode.id) ?? "idle")}
-          events={events}
-          tasks={state.tasks}
-          policy={archived}
-          lane={selectedNode === null ? null : (lanes.get(selectedNode.id) ?? null)}
-          onShowNode={showNode}
-        />
+      <div
+        className={`jev-graph-workspace${fullscreen ? " jev-graph-workspace-fullscreen" : ""}`}
+        ref={graphWorkspaceRef}
+        data-testid="jev-graph-workspace"
+      >
+        <div className="jev-view-controls" role="group" aria-label="Graph scope controls">
+          <button
+            type="button"
+            aria-pressed={fullGraph}
+            data-testid="jev-full-graph"
+            onClick={() => setFullGraph((current) => !current)}
+          >
+            {fullGraph ? `Show ${selectedBranch} branch` : "Full graph (debugging)"}
+          </button>
+          {typeof document.documentElement.requestFullscreen === "function" && (
+            <button type="button" onClick={() => void toggleFullscreen()}>
+              {fullscreen ? "Exit fullscreen" : "Fullscreen"}
+            </button>
+          )}
+          <span>
+            {fullGraph ? "All archived roots" : `${selectedBranch} branch`}
+          </span>
+        </div>
+        <div className="jev-run-body">
+          <JevGraph
+            key={`${archived.policy_hash}:${fullGraph ? "full" : selectedBranch}`}
+            policy={archived}
+            displayRootIds={fullGraph ? undefined : [selectedBranch]}
+            showLaneLegend={false}
+            fitOnMount={fullGraph}
+            runtime={runtime}
+            live={live}
+            selectedNodeId={selectedNodeId}
+            onSelectNode={(nodeId) => {
+              setSelectedNodeId(nodeId);
+              const branch = lanes.get(nodeId);
+              if (branch !== undefined) setSelectedBranchId(branch);
+            }}
+            activity={visibleActivity}
+            reveal={reveal}
+            ended={isTerminalRunStatus(state.status)}
+          />
+          <NodeInspector
+            node={selectedNode}
+            live={live}
+            runtime={selectedNode === null ? "idle" : (runtime.get(selectedNode.id) ?? "idle")}
+            events={events}
+            tasks={state.tasks}
+            policy={archived}
+            lane={selectedNode === null ? null : (lanes.get(selectedNode.id) ?? null)}
+            onShowNode={showNode}
+          />
+        </div>
       </div>
     );
   }
@@ -647,6 +874,16 @@ function RunView({ runId, run, policy, launchStarting = false, onRendered }: Run
   return (
     <>
       <RunSummary state={state} live={live} run={run} launchStarting={launchStarting} />
+      {matching !== null && (
+        <BranchOverview
+          branches={branches}
+          selectedRoot={selectedBranch}
+          live={live}
+          ended={isTerminalRunStatus(state.status)}
+          onSelect={selectBranch}
+        />
+      )}
+      {graph}
       <ArmyDecisionPanel events={events} live={live} />
       {plansShown && (
         <PlanPanel
@@ -658,7 +895,7 @@ function RunView({ runId, run, policy, launchStarting = false, onRendered }: Run
           onShowNode={showNode}
         />
       )}
-      {graph}
+      <RecentDecisions events={events} live={live} />
       <RecentTrace events={events} />
     </>
   );

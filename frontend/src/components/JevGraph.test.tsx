@@ -324,6 +324,23 @@ describe("JevGraph lanes and observed activity (plan J2 Step 221)", () => {
     );
   });
 
+  it("scopes activity counts to displayed roots while retaining collapsed branch evidence", () => {
+    render(
+      <JevGraph
+        policy={POLICY}
+        displayRootIds={["economy"]}
+        runtime={new Map()}
+        live
+        selectedNodeId={null}
+        onSelectNode={() => {}}
+        activity={ACTIVITY}
+      />,
+    );
+    expect(itemNames()).not.toContain("army");
+    expect(screen.getByTestId("jev-graph-edge-legend")).toHaveTextContent("current path (2)");
+    expect(screen.getByTestId("jev-graph-edge-legend")).toHaveTextContent("recent (0)");
+  });
+
   it("animates the current path only while live, and never with reduced motion", () => {
     stubReducedMotion(false);
     const { rerender } = renderGraph({ activity: ACTIVITY });

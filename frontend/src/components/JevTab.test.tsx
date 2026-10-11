@@ -1224,6 +1224,12 @@ describe("JevTab observed activity (plan J2 Step 221)", () => {
     expect(screen.getByTestId("jev-graph-active-lanes")).toHaveTextContent(
       "1 lane(s) active when the run ended: economy",
     );
+    const economyCard = screen
+      .getAllByTestId("jev-graph-lane")
+      .find((card) => card.dataset.lane === "economy");
+    expect(economyCard).toHaveAttribute("data-status", "active");
+    expect(economyCard).toHaveAttribute("data-live", "false");
+    expect(economyCard).toHaveTextContent("when ended");
   });
 
   it("keeps an old v1 archive's presentation: no plans panel and no invented sources", async () => {
@@ -1239,6 +1245,48 @@ describe("JevTab observed activity (plan J2 Step 221)", () => {
     expect(screen.getAllByRole("treeitem").every((item) => !item.hasAttribute("data-source"))).toBe(
       true,
     );
+  });
+
+  it("keeps an explicitly selected branch and node stable across polling updates", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    await renderRun(
+      runState(RUN_A, HASH_A, { active_nodes: ["economy", economyFirst], game_seconds: 10 }),
+    );
+    const armyCard = screen
+      .getAllByTestId("jev-graph-lane")
+      .find((card) => card.dataset.lane === "army") as HTMLElement;
+    fireEvent.click(armyCard);
+    expect(armyCard).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("jev-node-id")).toHaveTextContent("army");
+    expect(treeitem("army")).toBeInTheDocument();
+
+    route(
+      `/api/jev/runs/${RUN_A}`,
+      runState(RUN_A, HASH_A, {
+        active_nodes: ["production"],
+        waiting_nodes: ["construction"],
+        game_seconds: 11,
+      }),
+    );
+    await act(() => vi.advanceTimersByTimeAsync(JEV_RUN_POLL_MS));
+    expect(armyCard).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("jev-node-id")).toHaveTextContent("army");
+    expect(treeitem("army")).toBeInTheDocument();
+  });
+
+  it("offers the complete archived forest only through the full graph debugging view", async () => {
+    await renderRun(runState(RUN_A, HASH_A, { active_nodes: ["economy", economyFirst] }));
+    const roots = () =>
+      screen
+        .getAllByRole("treeitem")
+        .filter((node) => node.getAttribute("aria-level") === "1")
+        .map((node) => node.dataset.lane);
+    expect(roots()).toEqual(["economy"]);
+    expect(screen.getByTestId("jev-graph-zoom")).toHaveTextContent("Zoom 100%");
+
+    fireEvent.click(screen.getByTestId("jev-full-graph"));
+    expect(screen.getByTestId("jev-full-graph")).toHaveAttribute("aria-pressed", "true");
+    expect(roots()).toEqual(policy.roots);
   });
 });
 
@@ -1498,6 +1546,10 @@ describe("JevTab plans and decisions (plan J2 Step 221)", () => {
     expect(rows[1]).toHaveTextContent("request 7");
     expect(rows[2]).toHaveTextContent("local fallback");
     expect(rows[2]).toHaveTextContent("low_confidence");
+    const recent = screen.getAllByTestId("jev-recent-decision");
+    expect(recent[0]).toHaveTextContent("production_mix — no choice recorded · local fallback");
+    expect(recent[1]).toHaveTextContent("expansion_response → delay · Typesafe response");
+    expect(recent[2]).toHaveTextContent("expansion_response → delay · Typesafe response");
   });
 
   it("shows a plan's stage in the graph and names the request behind its nodes", async () => {
@@ -1505,6 +1557,10 @@ describe("JevTab plans and decisions (plan J2 Step 221)", () => {
     const stageName = new RegExp(`^${STAGE.replace(/\./g, "\\.")},`);
     expect(screen.queryByRole("treeitem", { name: stageName })).toBeNull();
     fireEvent.click(screen.getAllByTestId("jev-plan-stage")[0]);
+    const expansionCard = screen
+      .getAllByTestId("jev-graph-lane")
+      .find((card) => card.dataset.lane === "expansion");
+    expect(expansionCard).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByTestId("jev-node-id")).toHaveTextContent(STAGE);
     const stage = treeitem(STAGE); // its collapsed branch was expanded
     expect(stage).toHaveAttribute("data-status", "waiting");

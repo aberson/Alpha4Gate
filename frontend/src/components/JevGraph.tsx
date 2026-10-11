@@ -397,6 +397,12 @@ function hiddenSummary(
 
 export interface JevGraphProps {
   policy: JevPolicy;
+  /** Roots to draw. The archived policy remains intact; this only limits presentation. */
+  displayRootIds?: readonly string[];
+  /** The parent branch overview already carries this information in the focused view. */
+  showLaneLegend?: boolean;
+  /** Fit the initial view once, used by the optional full-graph debugging view. */
+  fitOnMount?: boolean;
   /** Runtime status by node ID; a node without an entry is drawn as ``idle``. */
   runtime: ReadonlyMap<string, JevNodeRuntime>;
   /** Whether the state is live: only then are active/waiting nodes drawn as current. */
@@ -413,6 +419,9 @@ export interface JevGraphProps {
 
 export function JevGraph({
   policy,
+  displayRootIds,
+  showLaneLegend = true,
+  fitOnMount = false,
   runtime,
   live,
   selectedNodeId,
@@ -422,6 +431,13 @@ export function JevGraph({
   ended = false,
 }: JevGraphProps) {
   const structure = useMemo(() => describeStructure(policy), [policy]);
+  const displayPolicy = useMemo(
+    () =>
+      displayRootIds === undefined
+        ? policy
+        : { ...policy, roots: policy.roots.filter((root) => displayRootIds.includes(root)) },
+    [policy, displayRootIds],
+  );
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() =>
     overviewCollapsed(structure),
   );
@@ -437,12 +453,13 @@ export function JevGraph({
   const svgRef = useRef<SVGSVGElement>(null);
   const nodeElements = useRef(new Map<string, SVGGElement>());
   const drag = useRef<DragStart | null>(null);
+  const initiallyFitted = useRef(false);
   const hintId = useId();
   const followId = useId();
 
   const layout = useMemo(
-    () => computeLayout(policy, structure, collapsed),
-    [policy, structure, collapsed],
+    () => computeLayout(displayPolicy, structure, collapsed),
+    [displayPolicy, structure, collapsed],
   );
   const tabStop =
     focusedId !== null && layout.byId.has(focusedId) ? focusedId : layout.order[0].node.id;
@@ -452,7 +469,7 @@ export function JevGraph({
     if (!structure.byId.has(id)) return;
     const nextCollapsed = expandedTo(id, structure, collapsed);
     const nextLayout =
-      nextCollapsed === collapsed ? layout : computeLayout(policy, structure, nextCollapsed);
+      nextCollapsed === collapsed ? layout : computeLayout(displayPolicy, structure, nextCollapsed);
     if (nextCollapsed !== collapsed) setCollapsed(nextCollapsed);
     const placed = nextLayout.byId.get(id);
     if (placed !== undefined) setTransform(revealBox(transform, placed, viewport));
@@ -486,6 +503,14 @@ export function JevGraph({
     observer.observe(svg);
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (!fitOnMount || initiallyFitted.current) return;
+    initiallyFitted.current = true;
+    const { width, height } = viewportSize(svgRef.current);
+    const k = clampScale(Math.min(width / layout.width, height / layout.height));
+    setTransform({ k, x: (width - layout.width * k) / 2, y: (height - layout.height * k) / 2 });
+  }, [fitOnMount, layout.height, layout.width]);
 
   // React registers wheel listeners as passive, which cannot stop the page
   // from scrolling; zooming needs a non-passive native listener.
@@ -613,14 +638,18 @@ export function JevGraph({
     return counts !== undefined && counts.active + counts.waiting > 0;
   });
   const edgePaths = new Map(layout.edges.map((edge) => [edge.id, edge.path]));
-  const shownActivity = activity.edges.filter((edge) =>
+  const displayedRoots = new Set(displayPolicy.roots);
+  const scopedActivity = activity.edges.filter((edge) =>
+    displayedRoots.has(structure.laneOf.get(edge.parent) ?? ""),
+  );
+  const shownActivity = scopedActivity.filter((edge) =>
     edgePaths.has(edgeId(edge.parent, edge.child)),
   );
   const animate = live && !reducedMotion;
   const lastKnown = live ? "" : " (last known)";
   const laneWhen = live ? "" : ended ? " when the run ended" : " (last known)";
-  const currentEdges = activity.edges.filter((edge) => edge.kind === "current").length;
-  const recentEdges = activity.edges.length - currentEdges;
+  const currentEdges = scopedActivity.filter((edge) => edge.kind === "current").length;
+  const recentEdges = scopedActivity.length - currentEdges;
   let followStatus = "off: the view moves only when you move it";
   if (following && !live) followStatus = "paused: this state is not live";
   else if (following && followed === null) followStatus = "on: no active node to follow";
@@ -703,29 +732,31 @@ export function JevGraph({
         ))}
         {!live && <span>(last known): from the last recorded state, not live</span>}
       </p>
-      <p className="jev-graph-legend jev-graph-lanes" data-testid="jev-graph-lanes">
-        <span data-testid="jev-graph-active-lanes">
-          {activeLanes.length === 0
-            ? `No lane active${laneWhen}`
-            : `${activeLanes.length} lane(s) active${laneWhen}: ${activeLanes.join(", ")}`}
-        </span>
-        {policy.roots.map((root) => {
-          const counts = laneCounts.get(root) ?? { active: 0, waiting: 0 };
-          return (
-            <span
-              key={root}
-              className={`jev-graph-lane-chip ${structure.toneOf.get(root) ?? ""}`}
-              data-testid="jev-graph-lane"
-              data-lane={root}
-              data-active={counts.active}
-              data-waiting={counts.waiting}
-            >
-              <span className="jev-graph-lane-swatch" aria-hidden="true" />
-              {root} lane · {counts.active} active · {counts.waiting} waiting
-            </span>
-          );
-        })}
-      </p>
+      {showLaneLegend && (
+        <p className="jev-graph-legend jev-graph-lanes" data-testid="jev-graph-lanes">
+          <span data-testid="jev-graph-active-lanes">
+            {activeLanes.length === 0
+              ? `No lane active${laneWhen}`
+              : `${activeLanes.length} lane(s) active${laneWhen}: ${activeLanes.join(", ")}`}
+          </span>
+          {policy.roots.map((root) => {
+            const counts = laneCounts.get(root) ?? { active: 0, waiting: 0 };
+            return (
+              <span
+                key={root}
+                className={`jev-graph-lane-chip ${structure.toneOf.get(root) ?? ""}`}
+                data-testid="jev-graph-lane"
+                data-lane={root}
+                data-active={counts.active}
+                data-waiting={counts.waiting}
+              >
+                <span className="jev-graph-lane-swatch" aria-hidden="true" />
+                {root} lane · {counts.active} active · {counts.waiting} waiting
+              </span>
+            );
+          })}
+        </p>
+      )}
       <p className="jev-graph-legend" data-testid="jev-graph-edge-legend">
         <span>
           ━ current path ({currentEdges}): both ends run in the latest state{lastKnown}
