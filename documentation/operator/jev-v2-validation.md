@@ -1050,7 +1050,8 @@ The real-browser fixtures (simultaneous lanes; live, offline, stale and final; r
 motion; an old v1 archive) are opt-in, like section 11's. They passed at `f52d4f6` but
 predate `57f7274`'s branch-focused tab and need updating before they are run again: at
 least two of the three read lane-legend counts (`data-active`) that the focused page no
-longer renders, so they fail on the fixtures, not on a regression. Once updated, set
+longer renders. These failures leave full browser verification incomplete; they do
+not by themselves establish whether other viewer regressions exist. Once updated, set
 the switch, and optionally an evidence folder for screenshots and a `timeline.jsonl`:
 
 ```powershell
@@ -1074,14 +1075,20 @@ Step 222 (issue #339) proves the full v2 decision cycle with real SC2 and the se
 1. Windows with SC2 and the Simple64 map, `uv sync --extra dev --inexact` and
    `npm --prefix frontend ci` done, and both policies valid
    (`uv run python -m bots.jev.v1 --validate-policy`, then `... bots.jev.v2 ...`).
-2. The automated checks above pass. Recommended once per machine (plan M1 marks it
-   optional): section 11's launch fixtures (`-k RealBrowser`, 6 tests; 6/6 at
-   `f52d4f6`, not re-run since `57f7274`). Skip the live-graph fixtures until they are
-   updated for `57f7274`'s branch-focused tab (see "The live graph" above); the plan's
-   M1 command still names them.
+2. First adapt the live-graph fixtures for `57f7274`'s branch-focused tab (see the
+   [handoff](../plans/jev-v2-handoff.md#immediate-action-adapt-the-browser-fixtures)).
+   Then run the automated checks above and all nine browser fixtures: section 11's
+   six launch tests plus the three live-graph tests. This is a repair verification
+   prerequisite for this viewer change; the original M1's once-per-machine browser
+   check remains optional for subsequent unchanged runs.
 
    ```powershell
-   $env:JEV_BROWSER_TESTS = '1'; uv run --with playwright pytest tests/test_jev_launch.py -k RealBrowser -p no:cacheprovider; Remove-Item Env:JEV_BROWSER_TESTS
+   $env:JEV_BROWSER_TESTS = '1'
+   try {
+       uv run --with playwright pytest tests/test_jev_live_graph.py tests/test_jev_launch.py -k "LiveGraph or RealBrowser" -p no:cacheprovider
+   } finally {
+       Remove-Item Env:JEV_BROWSER_TESTS
+   }
    ```
 3. The Typesafe key is saved encrypted (`%LOCALAPPDATA%\Alpha4Gate\typesafe-key.dpapi`,
    [the Jev operator guide](jev-validation.md)); the launcher loads it for the game

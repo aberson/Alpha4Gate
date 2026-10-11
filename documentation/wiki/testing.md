@@ -131,6 +131,14 @@ Plus `pyproject.toml` config for pytest, mypy, ruff.
 
 **Frontend tests:** vitest (399 tests: 393 passing, 6 skipped). Run via `cd frontend && npm test`.
 
+**Jev browser follow-up (2026-10-11):** the default suites pass after the branch-focused
+viewer (`57f7274`), but two opt-in live-graph fixtures still read removed legend
+attributes. Adapt their branch-card assertions and explicitly enter full-graph mode
+where simultaneous graph lanes are required, then rerun all nine Jev browser tests
+before the next live acceptance session. The [handoff](../plans/jev-v2-handoff.md)
+contains the command and coverage requirements; default pytest skips are not browser
+acceptance evidence.
+
 | File | Purpose |
 |------|---------|
 | `tests/test_*.py` | 130 Python test modules (plus `tests/commands/test_dispatch_guard.py`) |

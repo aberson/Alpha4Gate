@@ -1,10 +1,36 @@
-# Jev v2 handoff: operator Step 222 next
+# Jev v2 handoff: browser fixture update, then operator Step 222
 
 Status 2026-10-10: build span 214-221 (#331-#338 closed) is DONE on `master-plan/phase-ev` (`0b46350`..`f52d4f6`; Manual UAT appended in `b83fd69`), not merged to `master`. 10 of 13 J2 steps are DONE (212, 224, 214-221). Remaining: Step 213 (#330, operator-deferred, not passed), Step 222 (#339, operator) and Step 223 (#340, wait). No SC2 match and no hosted Typesafe call were made during 214-221. No build span is pending. After the build, `57f7274` (2026-10-11, dashboard only) made the Jev tab branch-focused: **Branch overview** cards, one focused branch with **Full graph (debugging)** and **Fullscreen** controls, and a **Recent decisions** list. The gates below were measured at `f52d4f6`; at `57f7274` vitest is 393 passed, 6 skipped (399 tests). The three live-graph browser fixtures (`tests/test_jev_live_graph.py`) predate `57f7274` and need updating: at least two read lane-legend attributes the focused page no longer renders.
 
 Progress: [J2 inventory](../jev-v2-progress.html). Read the [plan](jev-v2-plan.md) (Build notes 214-221 and `## Manual UAT`), [v2 operator guide section 13](../operator/jev-v2-validation.md#13-the-v2-player-and-the-live-graph-steps-214-221) (its "Before Step 222" part) and the [validation report](jev-v2-validation.md).
 
-## Next action: operator Step 222 (Manual UAT M1)
+## Immediate action: adapt the browser fixtures
+
+Update `tests/test_jev_live_graph.py` for the branch-focused viewer before the next
+live acceptance session. `_lanes()` currently reads `data-active`/`data-waiting`
+from the former legend; the new branch cards expose their counts as visible text.
+Tests that require every graph lane must click **Full graph (debugging)** explicitly.
+Keep assertions for the single-branch default and stable selection, rather than
+restoring the cramped default just to satisfy the old fixtures.
+
+Then run all nine browser fixtures from the repository root, using the harness's
+mock game and mock Typesafe transport (no real SC2 or paid service call):
+
+```powershell
+$env:JEV_BROWSER_TESTS = '1'
+try {
+    uv run --with playwright pytest tests/test_jev_live_graph.py tests/test_jev_launch.py -k "LiveGraph or RealBrowser" -p no:cacheprovider
+} finally {
+    Remove-Item Env:JEV_BROWSER_TESTS
+}
+```
+
+Record the exit code and results before proceeding. Before freezing v2, explicitly
+resolve the unbuilt D3/section-5 items recorded in Step 218: saturation-based worker
+growth (current `probe_target` is 16), max health/shield facts and low-durability
+regrouping, and `available_abilities`. These are scope decisions, not shipped features.
+
+## Next gameplay gate: operator Step 222 (Manual UAT M1)
 
 Owner: the operator, with SC2 + Simple64, the saved encrypted Typesafe key and a visible browser. Limit: at most three paid dashboard-first matches (Terran, difficulties 3, 4, 5, seed 11, in that order), each within 450 requests / 900 game s / 1200 wall s. Stop as soon as the evidence is complete. If natural play omits a required item, record that gate as unverified and pending; never stage a scenario, and never count offline fixtures. Write the report into the [validation report](jev-v2-validation.md).
 

@@ -7,7 +7,20 @@ Status: IN PROGRESS (2026-10-10). 10 of 13 steps are DONE: code Steps 212, 224 a
 Step 213 (#330) stays operator-deferred since 2026-10-09: staging and hosted smoke
 passed and v1 is frozen as `v1-b53039a693cadf75`, but there is no six-case baseline.
 
-Next is operator Step 222 (#339), carried as Manual UAT M1, then wait Step 223 (#340).
+Immediate follow-up (2026-10-11): adapt the opt-in browser fixtures to the shipped
+branch-focused viewer, then run all nine Jev browser checks. The next gameplay
+gate is operator Step 222 (#339), carried as Manual UAT M1, then wait Step 223 (#340).
+
+Viewer follow-up `57f7274` shipped nine branch cards, a readable selected branch,
+stable selection during polling, fullscreen and an optional full graph. Its default
+gates passed: 3345 Python tests (12 skipped, 2 deselected), 393 frontend tests
+(6 skipped), lint and build. The separate opt-in live-graph suite still needs
+adaptation: `_lanes()` reads removed legend count attributes, and multi-lane
+assertions must explicitly select **Full graph (debugging)**. Preserve checks for
+the focused default, simultaneous branch activity, cross-branch reveal, old v1
+archives, live/offline/stale/final states and reduced motion. Use the existing
+mocked game/service browser harness; this repair requires no paid match.
+Do not treat default-suite success as a pass for those opt-in fixtures.
 
 Approved for preparation 2026-10-08, including dashboard-first launch and automatic
 exact-game selection. Steps 212-224 follow JI's 209-211; no prior step is renumbered.

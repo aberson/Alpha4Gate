@@ -93,7 +93,7 @@ A different kind of loop from the advised one — instead of validating one impr
 
 What the diagram can't show: **stack-apply is a re-write, not a merge** — each fitness winner is re-implemented from its text description by a fresh sub-agent onto the new snapshot, in rank order, with a 30-second import check catching bad combinations; and **promotion commits before the regression gate** — the `[evo-auto]` commit lands first, and a regression loss (or a sweep loss against the frozen baseline panel, when armed) triggers a real `git revert`. Every arrow in the lineage is a commit on master; every rollback is a revert. Close-losers retry against the next parent; evicted imps get replaced at the generation-end pool refresh.
 
-**Read the mechanism:** [improve-bot-evolve SKILL.md](.claude/skills/improve-bot-evolve/SKILL.md) · [gate-reduction plan](documentation/plans/evolve-gate-reduction-plan.md)
+**Read the mechanism:** [improve-bot-evolve SKILL.md](.claude/skills/improve-bot-evolve/SKILL.md) · [gate-reduction plan](documentation/archived/evolve-gate-reduction-plan.md)
 
 ---
 
@@ -445,4 +445,4 @@ Also thanks to all the creators and companies who made the mountain of tools thi
 
 </details>
 
-Jev continuation (2026-10-10): build span 214-221 DONE; Step 213 stays operator-deferred. Next: operator Step 222 (#339) = Manual UAT M1, at most three paid matches. See [handoff](documentation/plans/jev-v2-handoff.md).
+Jev continuation (2026-10-11): build span 214-221 and the branch-focused viewer are shipped; Step 213 stays operator-deferred. Next: adapt and rerun the opt-in browser fixtures for the new viewer, then operator Step 222 (#339) = Manual UAT M1, at most three paid matches. See [handoff](documentation/plans/jev-v2-handoff.md).
