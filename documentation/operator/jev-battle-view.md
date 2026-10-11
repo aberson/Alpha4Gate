@@ -123,3 +123,18 @@ Desktop timer removal: zero in run metadata means unlimited. Developer display
 probes retain their short time bounds. Camera-status publication retries brief
 Windows file-sharing conflicts and skips that optional update if contention
 persists, rather than terminating the match.
+
+### Caster graph controls
+
+Archon Caster has independent **Rotate graph: On/Off** and **Highlight nodes:
+On/Off** buttons, initially on for each new viewer. Rotation is a slow continuous
+turn while the run is live, pauses while the pointer is over the graph or a graph
+node has keyboard focus, and respects the system reduced-motion preference.
+It does not move the SC2 camera.
+
+A purple ring and label mark the commentary subject without changing execution
+colors or your selected node. The caster chooses one recorded node before
+writing commentary and receives only evidence for that subject; its `node_ids`
+are saved with the text. The ring describes the timestamped commentary snapshot,
+not proof the node is executing now. Facts and jokes have no subject highlight.
+Highlights and rotation stop when the feed is no longer live.

@@ -34,6 +34,7 @@ def test_local_request_and_unavailable_fallback(tmp_path):
             item = await caster.compose(state, client)
             assert item["source"] == "Local Qwen"
             assert item["game_seconds"] == 12
+            assert item["node_ids"] == ["army.attack"]
         caster.deck = ["commentary"]
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(
@@ -43,5 +44,28 @@ def test_local_request_and_unavailable_fallback(tmp_path):
             item = await caster.compose(state, client)
             assert item["source"] == "Local fallback"
             assert "army" in item["text"]
+
+    asyncio.run(exercise())
+
+
+def test_commentary_subject_comes_from_evidence_and_jokes_have_no_nodes(tmp_path):
+    caster = ArchonCaster(tmp_path)
+    state = {
+        "active_nodes": ["army.attack"],
+        "recent_events": [
+            {"kind": "command", "node_id": "scouting.move", "reason": "move issued"},
+        ],
+    }
+
+    def respond(request):
+        assert b"scouting.move" in request.content
+        assert b"army.attack" not in request.content
+        return httpx.Response(200, json={"message": {"content": "The scout is on the move."}})
+
+    async def exercise():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            caster.deck = ["joke", "commentary"]
+            assert (await caster.compose(state, client))["node_ids"] == ["scouting.move"]
+            assert (await caster.compose(state, client))["node_ids"] == []
 
     asyncio.run(exercise())

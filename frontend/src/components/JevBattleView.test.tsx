@@ -19,6 +19,24 @@ function setup(status: string, stale = false, mismatch = false, recentEvents: Je
 }
 
 describe("Battle feasibility view", () => {
+  it("independently toggles caster rotation and evidence highlights without selecting a node", async () => {
+    window.battleAction = vi.fn(async () => ({
+      recording: false, locked: true, message: "Ready",
+      caster: { text: "The scout is on the move.", source: "Local Qwen",
+        kind: "commentary", game_seconds: 42, node_ids: ["scouting.move"] },
+    }));
+    setup("running");
+    const node = screen.getByRole("treeitem", { name: /^scouting.move,/ });
+    await waitFor(() => expect(node).toHaveAttribute("data-caster-highlight", "true"));
+    expect(node).toHaveAttribute("aria-selected", "false");
+    expect(node.querySelector(".jev-caster-halo")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Highlight nodes: On" }));
+    expect(node).not.toHaveAttribute("data-caster-highlight");
+    expect(screen.getByRole("button", { name: "Rotate graph: On" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Rotate graph: On" }));
+    expect(screen.getByTestId("jev-graph")).toHaveAttribute("data-auto-rotating", "false");
+  });
+
   it("attributes caster commentary separately and marks ended broadcasts", async () => {
     window.battleAction = vi.fn(async () => ({
       recording: false, locked: true, message: "Ready",

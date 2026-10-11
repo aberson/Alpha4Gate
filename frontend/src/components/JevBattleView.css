@@ -34,3 +34,8 @@
 .battle-decisions small { color: #98a2b8; font-size: 11px; }
 .battle-recording { color: #ff788a; border-color: #ff788a; }
 .battle-header button[aria-pressed="true"] { color: #8ce6b7; border-color: #58b68a; background: #183b30; }
+
+.battle-caster-heading { display: flex; align-items: center; gap: 8px; }
+.battle-caster-heading h3 { flex: 1; }
+.battle-caster-heading button { font-size: 11px; white-space: nowrap; }
+.battle-caster-heading button[aria-pressed="true"] { color: #e1b5ff; border-color: #9674bd; }

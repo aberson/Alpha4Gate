@@ -68,6 +68,15 @@ class ArchonCaster:
     async def compose(self, state: dict[str, Any], client: httpx.AsyncClient) -> dict[str, Any]:
         evidence = snapshot(state)
         kind = self.next_kind()
+        # Pick the subject before generation: prose cannot invent graph references.
+        candidates = [event["node"] for event in reversed(evidence["events"])]
+        candidates.extend(evidence["active_nodes"])
+        subject = next((node for node in candidates if isinstance(node, str) and node), None)
+        node_ids = [subject] if kind == "commentary" and subject else []
+        if node_ids:
+            evidence["active_nodes"] = [n for n in evidence["active_nodes"] if n == subject]
+            evidence["events"] = [e for e in evidence["events"] if e["node"] == subject]
+            evidence["subject_node"] = subject
         source = "AI fact" if kind == "fact" else "Dad joke"
         if kind == "fact":
             text = random.choice(FACTS)
@@ -93,7 +102,7 @@ class ArchonCaster:
                             {
                                 "role": "system",
                                 "content": "You are Archon Caster. Write ONE short sentence "
-                                "describing the recorded StarCraft activity, at most 30 words. "
+                                "describing only subject_node's activity, at most 30 words. "
                                 "Use present tense. Plans and issued commands are NOT completed "
                                 "actions. Never claim victory, completion, or destruction. "
                                 "Example input: active_nodes=[construction.gateway]. "
@@ -114,7 +123,7 @@ class ArchonCaster:
                 )
                 text = (
                     "The graph is working on "
-                    + (", ".join(branches) or "its next move")
+                    + (subject or ", ".join(branches) or "its next move")
                     + ". We await glorious results."
                 )
                 source = "Local fallback"
@@ -123,6 +132,7 @@ class ArchonCaster:
             "source": source,
             "kind": kind,
             "game_seconds": evidence["game_seconds"],
+            "node_ids": node_ids,
         }
 
     def live_state(self) -> dict[str, Any] | None:

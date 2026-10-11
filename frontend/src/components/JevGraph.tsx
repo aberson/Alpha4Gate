@@ -595,6 +595,8 @@ function hiddenSummary(
 
 export interface JevGraphProps {
   policy: JevPolicy;
+  autoRotate?: boolean;
+  highlightedNodeIds?: readonly string[];
   compact?: boolean;
   layoutMode?: "tree" | "radial" | "dots3d";
   dotShape?: DotShape;
@@ -622,6 +624,8 @@ export interface JevGraphProps {
 export function JevGraph({
   policy,
   compact = false,
+  autoRotate = false,
+  highlightedNodeIds = [],
   layoutMode = "tree",
   dotShape = "sphere",
   initiallyExpanded = false,
@@ -664,6 +668,16 @@ export function JevGraph({
   const svgRef = useRef<SVGSVGElement>(null);
   const nodeElements = useRef(new Map<string, SVGGElement>());
   const drag = useRef<DragStart | null>(null);
+  const hoverPaused = useRef(false);
+  useEffect(() => {
+    if (!autoRotate || !dots || !live || reducedMotion) return;
+    const timer = window.setInterval(() => {
+      if (!hoverPaused.current && !drag.current && !svgRef.current?.contains(document.activeElement)) {
+        setCamera((c) => ({ ...c, yaw: (c.yaw + 0.015) % (2 * Math.PI) }));
+      }
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, [autoRotate, dots, live, reducedMotion]);
   const initiallyFitted = useRef<string | null>(null);
   const scopeKey = `${compact ? "nodes" : "boxes"}:${layoutMode}:${dotShape}:${displayPolicy.roots.join("|")}`;
   const hintId = useId();
@@ -879,6 +893,9 @@ export function JevGraph({
       data-layout={layoutMode}
       data-shape={dots ? dotShape : undefined}
       data-testid="jev-graph"
+      data-auto-rotating={autoRotate && dots && live && !reducedMotion}
+      onPointerEnter={() => { hoverPaused.current = true; }}
+      onPointerLeave={() => { hoverPaused.current = false; }}
       data-reduced-motion={reducedMotion}
       data-following={following}
     >
@@ -1104,6 +1121,7 @@ export function JevGraph({
             }) : layout.order).map((placed) => {
               const { node } = placed;
               const status = runtime.get(node.id) ?? "idle";
+              const casterHighlighted = highlightedNodeIds.includes(node.id);
               const composite = isComposite(node);
               const isCollapsed = composite && collapsed.has(node.id);
               const summary = isCollapsed
@@ -1134,6 +1152,7 @@ export function JevGraph({
                     }}
                     className={`${classes.join(" ")} ${tone}`}
                     role="treeitem"
+                    data-caster-highlight={casterHighlighted || undefined}
                     data-status={status}
                     data-live={drawnLive}
                     data-lane={lane}
@@ -1152,6 +1171,9 @@ export function JevGraph({
                   >
                     <title>{title}</title>
                     {dots ? <>
+                      {casterHighlighted && <circle className="jev-caster-halo" cx={8} cy={8}
+                        r={15} fill="none" stroke="#e1b5ff" strokeWidth={3}
+                        vectorEffect="non-scaling-stroke" pointerEvents="none" />}
                       <circle className="jev-dot-hit" cx={8} cy={8}
                         r={Math.max(12, (drawnLive && status === "active" ? 16 : 9) / transform.k)} />
                       <circle className="jev-dot" cx={8} cy={8}
@@ -1185,7 +1207,7 @@ export function JevGraph({
                     )}
                     </>}
                   </g>
-                  {dots && (node.id === selectedNodeId || placed.level === 1) && (
+                  {dots && (node.id === selectedNodeId || placed.level === 1 || casterHighlighted) && (
                     <text className="jev-dot-label" x={18} y={12}>
                       {codes.get(node.id)} · {placed.level === 1 ? lane.charAt(0).toUpperCase() + lane.slice(1) : shortId(node.id)}
                     </text>

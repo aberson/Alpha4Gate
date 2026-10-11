@@ -6,7 +6,7 @@ import { isTerminalRunStatus, type JevNodeRuntime } from "../types/jev";
 import "./JevTab.css";
 import "./JevBattleView.css";
 
-interface CasterLine { text: string; source: string; kind: string; game_seconds: number }
+interface CasterLine { text: string; source: string; kind: string; game_seconds: number; node_ids?: string[] }
 interface NativeState { recording: boolean; locked: boolean; automatic?: boolean; message: string; caster?: CasterLine }
 
 declare global {
@@ -18,6 +18,8 @@ declare global {
 /** Windows feasibility surface. The probe attaches SC2 over the game slot. */
 export function JevBattleView() {
   const { run, policy, reportRendered } = useJevRun();
+  const [casterRotate, setCasterRotate] = useState(true);
+  const [casterHighlight, setCasterHighlight] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
   const [native, setNative] = useState<NativeState>({ recording: false, locked: true, automatic: false, message: "Connecting viewer…" });
   const state = run.data;
@@ -93,6 +95,7 @@ export function JevBattleView() {
     <section className="battle-graph" aria-label="Live decision graph">
       {matching && state ? <JevGraph key={matching.policy_hash} policy={matching} compact
         layoutMode="dots3d" dotShape="faces" initiallyExpanded fitOnMount showLaneLegend={false}
+        autoRotate={casterRotate} highlightedNodeIds={casterHighlight && live && native.caster?.kind === "commentary" ? native.caster.node_ids : undefined}
         runtime={runtime} live={live} selectedNodeId={selected} onSelectNode={setSelected}
         activity={graphActivity(state, matching)} ended={isTerminalRunStatus(state.status)} />
         : <p>{run.error || policy.error ? "Run evidence unavailable" : "Loading this run’s graph…"}</p>}
@@ -119,7 +122,9 @@ export function JevBattleView() {
     </section>
     </div>
     <section className="battle-caster" aria-label="Archon Caster">
-      <h3>Archon Caster <small>Two minds. Zero appearance fees.</small></h3>
+      <div className="battle-caster-heading"><h3>Archon Caster <small>Two minds. Zero appearance fees.</small></h3>
+        <button aria-pressed={casterRotate} title="Slow rotation; pauses while inspecting the graph. Respects reduced motion." onClick={() => setCasterRotate((v) => !v)}>Rotate graph: {casterRotate ? "On" : "Off"}</button>
+        <button aria-pressed={casterHighlight} title="Purple rings mark the commentary subject, not current execution." onClick={() => setCasterHighlight((v) => !v)}>Highlight nodes: {casterHighlight ? "On" : "Off"}</button></div>
       <p>{native.caster?.text ?? "Tuning into the Khala. Waiting for the local commentary feed."}</p>
       <small>{native.caster ? `${native.caster.source} \u00b7 ${native.caster.game_seconds.toFixed(1)}s` : "Local commentary only"} &middot; Entertainment, not gameplay control{!live && native.caster ? " \u00b7 Last broadcast" : ""}</small>
     </section>
