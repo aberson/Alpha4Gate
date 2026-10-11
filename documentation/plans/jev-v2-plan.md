@@ -678,13 +678,32 @@ the steps numerically and bypass 224's dependency before live tests.
 ### Step 220: Let Typesafe decide within execution branches
 - **Problem:** Apply hosted decisions to expansion recovery and production choices.
 - **Type:** code
-- **Status:** PENDING
+- **Status:** DONE (2026-10-10)
 - **Issue:** #337
 - **Flags:** --reviewers deep
 - **Files:** src/jev/strategy.py, src/jev/decision.py, src/jev/plans.py, src/jev/operations.py, bots/jev/v2/policy.json, tests/test_jev_decision.py, tests/test_jev_plans.py, tests/test_jev_v2.py.
 - **Produces:** expansion_response and production_mix nodes with request-to-plan-to-task evidence.
 - **Done when:** Controlled replies through the production controller cause continue/delay/abandon and each mix to change subsequent legal commands; late replies after worker/site/stage change are refused; starvation test serves all eligible questions; all four question families share 450 calls and cancel on stop.
 - **Depends on:** 219
+- **Build notes (2026-10-10):**
+  - **Question families:** `src/jev/strategy.py` adds `expansion_response` (continue / delay / abandon) and `production_mix` (zealot_heavy / balanced / stalker_heavy). All four families share the `--decision-max-requests` budget.
+    - `expansion_response` is asked only while the expansion is unissued and at least two executable responses exist. The blocked-site point offers delay and abandon.
+  - **One threat definition:** the coordinator's site-threat set comes from the graph's own `expansion.site_safe.clear` node, which the runtime applies through `JevRuntime.sightings_matching`.
+  - **Abandon:**
+    - A deliberate abandon has its own cap, `MAX_PLAN_ABANDONS = 3`, and does not count toward `abort_limit`.
+    - An abandon at a blocked site renews the avoidance of the sites that blocked it.
+  - **Held choices:**
+    - A held choice is rechecked every poll against plan, worker, site, the decision point reached and the site threats, but not stage. Stage is checked when the reply arrives.
+    - A reply that isn't accepted never releases the choice in force; the `released` and `refresh` facts record what happened.
+  - **Commit on success:** a hosted response is staged on the lane's frame and written to the plan, with its `responded` transition, only after the lane succeeds. The request id goes on tasks.
+  - **Policy hashes:** v2 is `a1c73ea8…` (292 nodes). v1's request shape, policy hash and 700-step trace are unchanged.
+  - **Local fallback:** scripted v2 switches the local production mix to stalker_heavy after seeing an armed air unit within `air_threat_age` (30 s).
+  - **Hypothesis values, to tune at 222/223:**
+    - Expansion-response interval 5 s; production-mix interval 10 s.
+    - Accepted-choice hold 30 game seconds; the harmless-air-unit list.
+    - The macro slot's wait for a strategy answer, now 28 s.
+  - **Also touched:** `src/jev/runtime.py` and `src/jev/bot.py`.
+  - Reviewed by `/review-deep` (6 lenses) over 3 iterations. Evidence in `.build-step/jev-v2-220/` (gitignored).
 
 ### Step 221: Visualize active plans and execution paths
 - **Problem:** Make the live graph explain what Jev is doing and why progress waits.

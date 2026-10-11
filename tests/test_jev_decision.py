@@ -4,7 +4,11 @@ Jev v2 (plan J2 Step 219): the shared provider boundary sends any typed question
 by its own key, and :class:`jev.strategy.HostedQuestions` schedules the strategy
 and army questions on one request budget -- exercised here against a scripted
 provider at the :class:`jev.decision.DecisionProvider` boundary (the production
-controller and graph scenarios are in ``test_jev_v2.py``).
+controller and graph scenarios are in ``test_jev_v2.py``). Step 220 adds the
+execution questions (``expansion_response``, ``production_mix``): their choice sets
+come from the graph's decision points, all four questions share the one budget and
+scheduler (no question starves), a late reply is refused when the plan's stage,
+worker or site changed, and close() cancels whichever question is pending.
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ from sc2.data import Result
 
 from jev import runner
 from jev.bot import JevBot, JevController
-from jev.contracts import Entity, Observation
+from jev.contracts import EnemySighting, Entity, Observation
 from jev.decision import (
     ARMY_QUESTION,
     CRITERIA,
@@ -38,19 +42,28 @@ from jev.decision import (
     context,
     parse_answer,
 )
-from jev.plans import STRATEGY_CHOICES, PlanRecord
+from jev.operations import execution_points
+from jev.plans import EXECUTION_QUESTIONS, STRATEGY_CHOICES, ExecutionDecision, PlanRecord
 from jev.runner import EXIT_FAILURE, MatchLimits, MatchOptions, run_match
 from jev.runtime import JevRuntime
 from jev.strategy import (
     ANSWER_WAIT_EXPIRED_REASON,
     ARMY_V2_QUESTION,
+    EXPANSION_RESPONSE_INTERVAL,
+    EXPANSION_RESPONSE_QUESTION,
+    HARMLESS_AIR_TYPES,
     POSTURE_HOLD_SECONDS,
+    PRODUCTION_MIX_INTERVAL,
+    QUESTION_PRIORITY,
     STARVATION_SECONDS,
     STRATEGY_INTERVAL,
     STRATEGY_QUESTION,
     HostedQuestions,
     answer_wait_seconds,
     army_context,
+    mix_ratios,
+    production_mix_question,
+    scripted_execution_facts,
     strategy_branches,
     uses_strategy,
 )
@@ -853,6 +866,29 @@ class _FakeRuntime:
     def plan_slots(self) -> tuple[Any, ...]:
         return ()
 
+    def reached(self, node_id: str) -> bool:  # Step 220: no execution decision point
+        return node_id in self.reached_nodes
+
+    reached_nodes: frozenset[str] = frozenset()
+    abandon_refusal: str | None = None
+
+    def plan_abandon_refusal(self, node_id: str) -> str | None:
+        return self.abandon_refusal
+
+    def sightings_matching(self, node_id: str, observation: Any, bindings: Any) -> Any:
+        # The graph's own check, applied by a real runtime: the fake cannot drift either.
+        return _graph_runtime().sightings_matching(node_id, observation, bindings)
+
+
+_GRAPH_RUNTIME: list[JevRuntime] = []
+
+
+def _graph_runtime() -> JevRuntime:
+    """One real v2 runtime (its graph and compiled filters), built on first use."""
+    if not _GRAPH_RUNTIME:
+        _GRAPH_RUNTIME.append(JevRuntime(V2_POLICY, run_id=uuid.uuid4().hex))
+    return _GRAPH_RUNTIME[0]
+
 
 def _plan_record(kind: str, node: str, request_id: int | None) -> PlanRecord:
     return PlanRecord(
@@ -1452,3 +1488,768 @@ def test_a_question_whose_options_dip_below_two_is_still_asked() -> None:
     assert asked and asked[0][1] == ("pressure", "tech")  # asked only with two options
     first = next(n for n, d in enumerate(polled) if d.strategy_facts["pending"])
     assert first * 0.5 <= STARVATION_SECONDS + config.interval + 0.5
+
+
+# ---------------------------------------------------------------------------
+# Jev v2 (Step 220): execution questions at the DecisionProvider boundary
+# ---------------------------------------------------------------------------
+
+#: The v2 graph's decision points (the threatened-site one and the mix one).
+_THREAT_POINT = "expansion.site_safe.respond"
+_BLOCKED_POINT = "expansion.blocked.respond"
+_MIX_POINT = "production.stalkers.mix"
+_EXPANSION_PLAN = "expansion.start.go"
+_SITE = (60.5, 30.5)
+_WORKER = 2050
+
+
+def _threatened_record(**changes: Any) -> PlanRecord:
+    """The open expansion plan, waiting at its threatened site with its worker."""
+    record = replace(
+        _plan_record("expand", _EXPANSION_PLAN, None),
+        status="waiting",
+        stage_node_id="expansion.site_safe.wait",
+        reason_code="site_threatened",
+        site=_SITE,
+        actor_tag=_WORKER,
+    )
+    return replace(record, **changes)
+
+
+def _execution_runtime(*, points: set[str] | None = None, **changes: Any) -> _FakeRuntime:
+    """A launched runtime whose latest tick reached the threat and mix points."""
+    runtime = _FakeRuntime()
+    runtime.reached_nodes = frozenset({_THREAT_POINT, _MIX_POINT} if points is None else points)
+    runtime.records[_EXPANSION_PLAN] = _threatened_record(**changes)
+    return runtime
+
+
+def _execution_observation(
+    seconds: float, *, extra: int = 0, air: bool = False, gas: bool = True
+) -> Observation:
+    """The decision suite's v2 world plus a finished Assimilator and a Marine seen at
+    the expansion site (``air``: a Banshee seen at home too)."""
+    obs = _v2_observation(seconds, extra=extra)
+    structures = obs.own_structures
+    if gas:
+        structures = (*structures, _entity(1500, "Assimilator", (40.5, 30.5), structure=True))
+    marine = _entity(7100, "Marine", (_SITE[0] + 3, _SITE[1]))
+    sightings = [EnemySighting(marine, seconds, True)]
+    if air:
+        banshee = _entity(7200, "Banshee", (32, 32), flying=True)
+        sightings.append(EnemySighting(banshee, seconds, True))
+    return replace(obs, own_structures=structures, enemy_sightings=tuple(sightings))
+
+
+def _execution(choice: str, confidence: float = 0.9, *, options: tuple[str, ...] = ()) -> Answer:
+    keys = options or (choice,)
+    probs: dict[str, Any] = dict.fromkeys(keys, 0.01)
+    probs[choice] = confidence
+    return Answer(choice, confidence, probs, "reported-model", 15, 3)
+
+
+def _quiet_scripts(**answers: list[Any]) -> dict[str, list[Any]]:
+    """Every question answered below the confidence floor unless ``answers`` says."""
+    scripts: dict[str, list[Any]] = {
+        "army_mode": [_army(0.1)],
+        "strategy": [_strategic("pressure", 0.1)],
+        "expansion_response": [_execution("delay", 0.1)],
+        "production_mix": [_execution("balanced", 0.1)],
+    }
+    scripts.update(answers)
+    return scripts
+
+
+def test_the_execution_choices_offered_are_derived_from_the_v2_graph() -> None:
+    """Each execution question is asked only at a graph decision point, offering that
+    point's branches: continue / delay / abandon where a threat was seen, delay /
+    abandon where the site is blocked (no continue branch there), and the three mixes
+    with the ratios their own Stalker trains carry. v1 has none of it."""
+    points = {p.node_id: p for p in execution_points(V2_POLICY)}
+    assert set(points) == {_BLOCKED_POINT, _THREAT_POINT, _MIX_POINT}
+    assert points[_THREAT_POINT].choices == ("continue", "delay", "abandon")
+    assert points[_BLOCKED_POINT].choices == ("delay", "abandon")
+    assert set(points[_MIX_POINT].choices) == {"zealot_heavy", "balanced", "stalker_heavy"}
+    assert {p.plan for p in points.values() if p.question == "expansion_response"} == {
+        _EXPANSION_PLAN
+    }
+    # D2: desired Zealot:Stalker 2:1, 1:1 and 1:2 -- read from the graph, never restated.
+    ratios = mix_ratios(V2_POLICY, points[_MIX_POINT])
+    assert ratios == {"zealot_heavy": 0.5, "balanced": 1.0, "stalker_heavy": 2.0}
+    question = production_mix_question(ratios)
+    assert (
+        "2:1" in question.criteria["zealot_heavy"] and "1:2" in question.criteria["stalker_heavy"]
+    )
+    assert set(EXPANSION_RESPONSE_QUESTION.criteria) == {"continue", "delay", "abandon"}
+    assert set(scripted_execution_facts(V2_POLICY)) == set(EXECUTION_QUESTIONS)
+    assert execution_points(load_policy().policy) == ()  # frozen v1: never asked
+    assert scripted_execution_facts(load_policy().policy) == {}
+
+
+def test_a_response_branch_the_graph_lacks_is_never_offered() -> None:
+    """With the threat point's abandon branch removed from a candidate graph, abandon
+    is never offered there; with only the balanced mix branch left, no mix is asked."""
+    from jev.policy import parse_policy
+
+    document = V2_POLICY.to_document()
+    nodes = document["nodes"]
+    assert isinstance(nodes, list)
+    for node in nodes:
+        assert isinstance(node, dict)
+        if node["id"] == "expansion.site_safe.respond":
+            node["children"] = ["expansion.site_safe.continue", "expansion.site_safe.delay"]
+        if node["id"] == "production.stalkers.mix":
+            node["children"] = ["production.mix.balanced"]
+    for node in list(nodes):
+        assert isinstance(node, dict)
+        if str(node["id"]).startswith(
+            ("expansion.site_safe.abandon", "production.mix.zealot", "production.mix.stalker")
+        ):
+            nodes.remove(node)
+    document["parameters"] = {
+        k: v
+        for k, v in dict(document["parameters"]).items()  # type: ignore[arg-type]
+        if not k.endswith("_heavy_stalkers_per_zealot") and k != "air_threat_age"
+    }
+    mutated = parse_policy(document)
+    provider = _QuestionProvider(_quiet_scripts())
+    clock = _Clock()
+    questions = HostedQuestions(provider, DecisionConfig(timeout=10), mutated, clock=clock)
+    _drive(
+        questions,
+        _execution_runtime(),
+        clock,
+        seconds=40,
+        observe=lambda i: _execution_observation(10 + i * 0.5),
+    )
+    offered = {q: options for q, options, _ in provider.calls}
+    assert offered["expansion_response"] == ("continue", "delay")
+    assert "production_mix" not in offered  # one executable mix: no alternative to ask
+    assert all(len(options) > 1 for options in offered.values())  # asked with alternatives
+
+
+def test_all_four_questions_share_one_budget_with_global_request_ids() -> None:
+    provider = _QuestionProvider(_quiet_scripts())
+    clock = _Clock()
+    config = DecisionConfig(interval=2, timeout=10, max_requests=8)
+    questions = HostedQuestions(provider, config, V2_POLICY, clock=clock)
+    assert questions.question_ids == QUESTION_PRIORITY
+    polled = _drive(
+        questions,
+        _execution_runtime(),
+        clock,
+        seconds=90,
+        observe=lambda i: _execution_observation(10 + i * 0.5),
+    )
+    asked = [question_id for question_id, _, _ in provider.calls]
+    assert len(asked) == 8 and set(asked) == set(QUESTION_PRIORITY)  # one cap for all four
+    assert asked[0] == "expansion_response"  # D2: immediate expansion danger first
+    assert provider.most_at_once == 1  # one request in flight across every question
+    assert [request_id for _, request_id in _dispatch_steps(polled)] == list(range(1, 9))
+    last = polled[-1]
+    for facts in (last.army_facts, last.strategy_facts, *last.execution_facts.values()):
+        assert facts["calls"] == 8 and facts["reason"] == "request_limit"
+    assert all(decided.local for decided in last.execution.values())
+
+
+def test_every_eligible_question_is_served_and_none_starves() -> None:
+    """The army and the expansion response are dirty on every poll (the army grows, a
+    new enemy keeps arriving at the site), so the unchanged strategy and production
+    mix only ever refresh; starvation promotion still serves all four, each within
+    its own interval plus the starvation bound plus one dispatch slot per other
+    question, again and again."""
+    provider = _QuestionProvider(_quiet_scripts())
+    clock = _Clock()
+    config = DecisionConfig(interval=2, timeout=10, max_requests=1000)
+    questions = HostedQuestions(provider, config, V2_POLICY, clock=clock)
+
+    def observe(i: int) -> Observation:
+        obs = _execution_observation(10 + i * 0.5, extra=i)
+        raider = _entity(8000 + i, "Zergling", (_SITE[0] - 2, _SITE[1]))
+        sightings = (*obs.enemy_sightings, EnemySighting(raider, obs.game_seconds, True))
+        return replace(obs, enemy_sightings=sightings)
+
+    _drive(questions, _execution_runtime(), clock, seconds=120, observe=observe)
+    times: dict[str, list[float]] = {q: [] for q in QUESTION_PRIORITY}
+    for question_id, _, state in provider.calls:
+        times[question_id].append(float(state["game_seconds"]) - 10)
+    intervals = {
+        "army_mode": config.interval,
+        "expansion_response": EXPANSION_RESPONSE_INTERVAL,
+        "strategy": STRATEGY_INTERVAL,
+        "production_mix": PRODUCTION_MIX_INTERVAL,
+    }
+    slots = (len(QUESTION_PRIORITY) - 1) * max(config.interval, config.timeout)
+    for question_id, asked in times.items():
+        assert len(asked) >= 5, question_id  # every eligible question is served, repeatedly
+        bound = intervals[question_id] + STARVATION_SECONDS + slots + 0.5
+        gaps = [b - a for a, b in zip(asked, asked[1:], strict=False)]
+        assert max(gaps) <= bound, (question_id, max(gaps))
+        assert min(gaps) >= intervals[question_id] - 1e-9, question_id  # never too often
+
+
+def test_close_cancels_a_pending_execution_request_and_stops_every_question() -> None:
+    cancelled = asyncio.Event()
+
+    class Hanging:
+        calls: list[str] = []
+
+        async def decide(
+            self, state: Any, choices: tuple[str, ...], question: Question = ARMY_QUESTION
+        ) -> Answer:
+            self.calls.append(question.question_id)
+            try:
+                await asyncio.Future()
+            finally:
+                cancelled.set()
+            raise AssertionError("unreachable")
+
+    async def scenario() -> None:
+        provider = Hanging()
+        questions = HostedQuestions(provider, DecisionConfig(timeout=10), V2_POLICY)
+        runtime = _execution_runtime()
+        questions.poll(_execution_observation(10), runtime)  # type: ignore[arg-type]
+        await asyncio.sleep(0)
+        assert questions.pending_question == "expansion_response"
+        await questions.close()
+        assert cancelled.is_set() and questions.task is None and questions.disabled
+        decided = questions.poll(_execution_observation(30), runtime)  # type: ignore[arg-type]
+        assert questions.task is None and provider.calls == ["expansion_response"]
+        assert all(d.local for d in decided.execution.values())
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("change", [None, "stage", "worker", "site", "plan", "threat"])
+def test_a_late_expansion_reply_is_refused_when_its_plan_state_changed(
+    change: str | None,
+) -> None:
+    """The reply is held while the plan moves on: a changed stage, worker, site, plan
+    or threat at the site refuses it on arrival (the single-sourced stale code) and it
+    never applies; unchanged, the same reply is accepted and bound to that plan."""
+    gate = asyncio.Event()
+    provider = _QuestionProvider(_quiet_scripts(expansion_response=[gate, _execution("continue")]))
+    clock = _Clock()
+    questions = HostedQuestions(provider, DecisionConfig(timeout=30), V2_POLICY, clock=clock)
+    runtime = _execution_runtime(points={_THREAT_POINT})
+    changes: dict[str | None, dict[str, Any]] = {
+        "stage": {"stage_node_id": "expansion.site_safe.retreat"},
+        "worker": {"actor_tag": _WORKER + 1},
+        "site": {"site": (_SITE[0] + 10, _SITE[1])},
+        "plan": {"plan_id": f"{'0' * 32}:plan:2"},
+    }
+    seen: list[int] = []
+
+    def before(i: int) -> None:
+        if questions.pending_question == "expansion_response" and not gate.is_set():
+            if change in changes:
+                runtime.records[_EXPANSION_PLAN] = _threatened_record(**changes[change])
+            seen.append(i)
+            gate.set()
+
+    def observe(i: int) -> Observation:
+        obs = _execution_observation(10 + i * 0.5)
+        if change == "threat" and seen:
+            raider = _entity(8000, "Zergling", (_SITE[0] - 2, _SITE[1]))
+            return replace(
+                obs, enemy_sightings=(*obs.enemy_sightings, EnemySighting(raider, 9, True))
+            )
+        return obs
+
+    polled = _drive(questions, runtime, clock, seconds=3, before=before, observe=observe)
+    assert seen  # the reply was held across the change
+    resolved = [d for d in polled if d.execution_facts["expansion_response"]["answer_request_id"]]
+    facts = resolved[0].execution_facts["expansion_response"]
+    if change is None:
+        assert facts["reason"] == "accepted" and facts["choice"] == "continue"
+        held = resolved[0].execution["expansion_response"]
+        assert (held.plan_id, held.site, held.actor_tag) == (
+            _threatened_record().plan_id,
+            _SITE,
+            _WORKER,
+        )
+        return
+    assert facts["reason"] == "stale_answer" and facts["answer"] == "continue"
+    for decided in polled:
+        assert decided.execution["expansion_response"].local  # never applied
+        assert decided.execution_facts["expansion_response"]["source"] == "local_fallback"
+
+
+def test_an_accepted_response_holds_only_for_the_plan_state_it_answered() -> None:
+    """Accepted continue holds while its plan, site and worker stand -- the plan may
+    move on to other stages -- and expires the moment the worker changes."""
+    provider = _QuestionProvider(_quiet_scripts(expansion_response=[_execution("continue")]))
+    clock = _Clock()
+    questions = HostedQuestions(provider, DecisionConfig(timeout=10), V2_POLICY, clock=clock)
+    runtime = _execution_runtime(points={_THREAT_POINT})
+    holding: list[int] = []
+
+    def before(i: int) -> None:
+        if i == 8:  # the worker walks on (no longer at the point: no renewal is asked)
+            runtime.records[_EXPANSION_PLAN] = _threatened_record(stage_node_id="expansion.move")
+            runtime.reached_nodes = frozenset()
+        if i == 16:  # the worker died; a replacement holds the plan now
+            runtime.records[_EXPANSION_PLAN] = _threatened_record(
+                stage_node_id="expansion.move", actor_tag=_WORKER + 1
+            )
+
+    polled = _drive(questions, runtime, clock, seconds=10, before=before)
+    for index, decided in enumerate(polled):
+        if decided.execution["expansion_response"].choice == "continue":
+            holding.append(index)
+    assert holding and min(holding) < 8 and max(holding) == 15  # held across stages, not 16
+    expired = polled[16].execution_facts["expansion_response"]
+    assert expired["reason"] == "expired_or_changed_state" and expired["choice"] is None
+
+
+@pytest.mark.parametrize(
+    ("choice", "record", "outcome"),
+    [
+        ("abandon", {"status": "aborted", "reason_code": "abandoned"}, "plan_abandoned"),
+        ("continue", {"build_in_flight": True}, "build_issued"),
+        ("delay", {"build_in_flight": True}, None),
+    ],
+)
+def test_a_response_its_plan_carried_out_is_consumed_never_reapplied(
+    choice: str, record: dict[str, Any], outcome: str | None
+) -> None:
+    provider = _QuestionProvider(_quiet_scripts(expansion_response=[_execution(choice)]))
+    clock = _Clock()
+    questions = HostedQuestions(provider, DecisionConfig(timeout=10), V2_POLICY, clock=clock)
+    runtime = _execution_runtime(points={_THREAT_POINT})
+    polled: list[Any] = []
+
+    def before(i: int) -> None:
+        if polled and polled[-1].execution["expansion_response"].choice == choice:
+            request_id = polled[-1].execution["expansion_response"].request_id
+            runtime.records[_EXPANSION_PLAN] = _threatened_record(
+                response=choice, response_request_id=request_id, **record
+            )
+
+    original = questions.poll
+
+    def poll(obs: Observation, rt: Any) -> Any:
+        decided = original(obs, rt)
+        polled.append(decided)
+        return decided
+
+    questions.poll = poll  # type: ignore[method-assign]
+    _drive(questions, runtime, clock, seconds=6, before=before)
+    applied = [d for d in polled if d.execution["expansion_response"].choice == choice]
+    assert applied
+    after = polled[polled.index(applied[-1]) + 1]
+    facts = after.execution_facts["expansion_response"]
+    assert after.execution["expansion_response"].local
+    if outcome is None:
+        assert facts["consumed"] is None and facts["reason"] == "expired_or_changed_state"
+    else:
+        consumed = facts["consumed"]
+        assert consumed["outcome"] == outcome and consumed["choice"] == choice
+        assert consumed["request_id"] == applied[-1].execution["expansion_response"].request_id
+
+
+@pytest.mark.parametrize(
+    ("record", "points"),
+    [
+        ({"build_in_flight": True}, {_THREAT_POINT}),  # ordered: no alternative left
+        ({"acknowledged_game_seconds": 30.0}, {_THREAT_POINT}),  # started: continues
+        ({}, set()),  # the graph did not reach a decision point
+        ({"status": "completed"}, {_THREAT_POINT}),  # no open plan
+    ],
+)
+def test_no_expansion_response_is_asked_without_alternatives(
+    record: dict[str, Any], points: set[str]
+) -> None:
+    provider = _QuestionProvider(_quiet_scripts())
+    clock = _Clock()
+    questions = HostedQuestions(provider, DecisionConfig(timeout=10), V2_POLICY, clock=clock)
+    _drive(
+        questions,
+        _execution_runtime(points=points, **record),
+        clock,
+        seconds=20,
+        observe=lambda i: _execution_observation(10 + i * 0.5),
+    )
+    assert "expansion_response" not in {q for q, _, _ in provider.calls}
+
+
+def test_the_blocked_point_offers_only_delay_and_abandon() -> None:
+    provider = _QuestionProvider(_quiet_scripts())
+    clock = _Clock()
+    questions = HostedQuestions(provider, DecisionConfig(timeout=10), V2_POLICY, clock=clock)
+    runtime = _execution_runtime(
+        points={_BLOCKED_POINT},
+        site=None,
+        stage_node_id="expansion.blocked.wait",
+        reason_code="site_blocked",
+    )
+    _drive(questions, runtime, clock, seconds=4)
+    ((offered, state),) = [(o, s) for q, o, s in provider.calls if q == "expansion_response"][:1]
+    assert offered == ("delay", "abandon")
+    assert (state["decision_point"], state["cause"]) == (_BLOCKED_POINT, "site_blocked")
+
+
+def test_a_production_mix_expires_when_air_appears_and_is_asked_again() -> None:
+    """Accepted zealot_heavy: an armed air unit seen afterwards is a relevant threat
+    change, so the mix expires to the local fallback at once and the question goes
+    dirty; harmless air (an Overlord) changes nothing. No gas building: not asked."""
+    provider = _QuestionProvider(
+        _quiet_scripts(production_mix=[_execution("zealot_heavy"), _execution("balanced", 0.1)])
+    )
+    clock = _Clock()
+    questions = HostedQuestions(provider, DecisionConfig(timeout=10), V2_POLICY, clock=clock)
+    runtime = _execution_runtime(points={_MIX_POINT})
+
+    def observe(i: int) -> Observation:
+        obs = _execution_observation(10 + i * 0.5, air=i >= 40)
+        if 20 <= i < 40:  # an Overlord: harmless air
+            overlord = _entity(7300, "Overlord", (32, 32), flying=True)
+            sightings = (*obs.enemy_sightings, EnemySighting(overlord, obs.game_seconds, True))
+            return replace(obs, enemy_sightings=sightings)
+        return obs
+
+    polled = _drive(questions, runtime, clock, seconds=30, observe=observe)
+    held = [
+        n for n, d in enumerate(polled) if d.execution["production_mix"].choice == "zealot_heavy"
+    ]
+    assert held and max(held) == 39  # held through the Overlord, dropped on armed air
+    dropped = polled[40].execution_facts["production_mix"]
+    assert dropped["reason"] == "expired_or_changed_state" and dropped["air_seen"] is True
+    asks = [s for q, _, s in provider.calls if q == "production_mix"]
+    assert asks[0]["air_seen"] is False and asks[-1]["air_seen"] is True  # asked again
+    assert "Overlord" in HARMLESS_AIR_TYPES
+    no_gas = _QuestionProvider(_quiet_scripts())
+    clock = _Clock()
+    questions = HostedQuestions(no_gas, DecisionConfig(timeout=10), V2_POLICY, clock=clock)
+    _drive(
+        questions,
+        _execution_runtime(points={_MIX_POINT}),
+        clock,
+        seconds=30,
+        observe=lambda i: _execution_observation(10 + i * 0.5, gas=False),
+    )
+    assert "production_mix" not in {q for q, _, _ in no_gas.calls}
+
+
+def test_an_execution_decision_in_force_is_bound_and_attributed() -> None:
+    """What the guards read: the hosted choice with its request id, and for a response
+    the plan, site and worker it answered; the local fallback otherwise."""
+    provider = _QuestionProvider(
+        _quiet_scripts(
+            expansion_response=[_execution("abandon")], production_mix=[_execution("stalker_heavy")]
+        )
+    )
+    clock = _Clock()
+    questions = HostedQuestions(provider, DecisionConfig(timeout=10), V2_POLICY, clock=clock)
+    polled = _drive(
+        questions,
+        _execution_runtime(),
+        clock,
+        seconds=12,
+        observe=lambda i: _execution_observation(10 + i * 0.5),
+    )
+    responses = [d.execution["expansion_response"] for d in polled if d.execution]
+    hosted = [r for r in responses if not r.local]
+    assert hosted and hosted[0] == ExecutionDecision(
+        "expansion_response",
+        "abandon",
+        hosted[0].request_id,
+        "typesafe",
+        plan_id=_threatened_record().plan_id,
+        site=_SITE,
+        actor_tag=_WORKER,
+    )
+    mixes = [
+        d.execution["production_mix"] for d in polled if not d.execution["production_mix"].local
+    ]
+    assert mixes and mixes[0].choice == "stalker_heavy" and mixes[0].plan_id is None
+    facts = [d.execution_facts["production_mix"] for d in polled][-1]
+    assert facts["mix_ratios"] == {"zealot_heavy": 0.5, "stalker_heavy": 2.0, "balanced": 1.0}
+
+
+def test_the_answer_wait_counts_a_slot_for_each_question_that_may_go_first() -> None:
+    config = DecisionConfig()
+    assert answer_wait_seconds(config, 2) == 24.0  # Step 219's two questions
+    assert answer_wait_seconds(config) == answer_wait_seconds(config, 4) == 28.0
+    assert answer_wait_seconds(config, 4) - answer_wait_seconds(config, 2) == 2 * max(
+        config.interval, config.timeout
+    )
+
+
+def test_typesafe_provider_asks_each_execution_question_by_its_own_key() -> None:
+    requests: list[httpx.Request] = []
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        sent = json.loads(request.content)
+        ((key, body),) = sent["questions"].items()
+        options = list(body["criteria"])
+        return httpx.Response(200, json=_choice_body(key, options[0], options))
+
+    provider = TypesafeProvider("key", DecisionConfig(), transport=httpx.MockTransport(respond))
+    mix = production_mix_question({"zealot_heavy": 0.5, "balanced": 1.0, "stalker_heavy": 2.0})
+    for question, offered in (
+        (EXPANSION_RESPONSE_QUESTION, ("delay", "abandon")),
+        (mix, ("zealot_heavy", "stalker_heavy")),
+    ):
+        answer = asyncio.run(provider.decide({"game_seconds": 1}, offered, question))
+        assert answer.choice == offered[0]
+        sent = json.loads(requests[-1].content)
+        assert list(sent) == ["model", "state", "questions"]
+        assert list(sent["questions"]) == [question.question_id]
+        body = sent["questions"][question.question_id]
+        assert body["instructions"] == question.instructions
+        assert body["criteria"] == {c: question.criteria[c] for c in offered}  # offered only
+
+
+# ---------------------------------------------------------------------------
+# Step 220 iteration 2: one site-threat source, revalidation, refused refreshes
+# ---------------------------------------------------------------------------
+
+
+def _sighting(tag: int, kind: str, position: tuple[float, float], **flags: Any) -> EnemySighting:
+    return EnemySighting(Entity(tag, kind, position, 100, **flags), 10.0, True)
+
+
+def test_the_site_threats_are_the_graphs_own_site_check_never_a_copy() -> None:
+    """The coordinator's site threats are the threat point's own sighting check (the
+    node the graph's site_safe selector tests), applied by the runtime with the site
+    bound: workers, Overlords and harmless structures are no threat there, a Marine and
+    a Photon Cannon are. Editing that one node in a candidate policy changes what the
+    coordinator counts -- there is no second filter to drift."""
+    from jev.policy import parse_policy
+    from jev.strategy import site_threat_check
+
+    points = {p.node_id: p for p in execution_points(V2_POLICY)}
+    assert site_threat_check(V2_POLICY, points[_THREAT_POINT]) == (
+        "expansion.site_safe.clear",
+        "natural",
+    )
+    assert V2_POLICY.node("expansion.site_safe").children[0] == "expansion.site_safe.clear"
+    assert V2_POLICY.node("expansion.site").args["bind"] == "natural"
+    assert site_threat_check(V2_POLICY, points[_BLOCKED_POINT]) is None  # no site there
+    near = (_SITE[0] + 3, _SITE[1])
+    sightings = (
+        _sighting(7101, "Marine", near),
+        _sighting(7102, "Probe", near),
+        _sighting(7103, "Drone", near),
+        _sighting(7104, "Overlord", near, is_flying=True),
+        _sighting(7105, "Pylon", near, is_structure=True),
+        _sighting(7106, "PhotonCannon", near, is_structure=True),
+        _sighting(7107, "Marine", (_SITE[0] + 30, _SITE[1])),  # far from the site
+    )
+    observation = replace(_execution_observation(10), enemy_sightings=sightings)
+
+    def threats(policy: Any) -> list[int]:
+        provider = _QuestionProvider(_quiet_scripts())
+        questions = HostedQuestions(provider, DecisionConfig(timeout=10), policy, clock=_Clock())
+        runtime = JevRuntime(policy, run_id=uuid.uuid4().hex)
+        found = questions._site_threats(_THREAT_POINT, _SITE, observation, runtime)
+        return sorted(e.tag for e in found)
+
+    assert threats(V2_POLICY) == [7101, 7106]
+    document = V2_POLICY.to_document()
+    nodes = document["nodes"]
+    assert isinstance(nodes, list)
+    for node in nodes:
+        assert isinstance(node, dict)
+        if node["id"] == "expansion.site_safe.clear":
+            node["args"]["filter"]["any_of"][0]["exclude_types"].remove("Probe")
+    assert threats(parse_policy(document)) == [7101, 7102, 7106]  # follows the node
+
+
+def test_a_harmless_unit_at_the_site_never_stales_a_reply() -> None:
+    """The reply is held while an enemy Probe and an Overlord wander to the site: not
+    threats to the graph, so not to the signature either -- the reply is accepted."""
+    gate = asyncio.Event()
+    provider = _QuestionProvider(_quiet_scripts(expansion_response=[gate, _execution("delay")]))
+    clock = _Clock()
+    questions = HostedQuestions(provider, DecisionConfig(timeout=30), V2_POLICY, clock=clock)
+    runtime = _execution_runtime(points={_THREAT_POINT})
+    arrived: list[int] = []
+
+    def before(i: int) -> None:
+        if questions.pending_question == "expansion_response" and not gate.is_set():
+            arrived.append(i)
+            gate.set()
+
+    def observe(i: int) -> Observation:
+        obs = _execution_observation(10 + i * 0.5)
+        if not arrived:
+            return obs
+        near = (_SITE[0] - 2, _SITE[1])
+        harmless = (
+            _sighting(7400, "Probe", near),
+            _sighting(7401, "Overlord", near, is_flying=True),
+        )
+        return replace(obs, enemy_sightings=(*obs.enemy_sightings, *harmless))
+
+    polled = _drive(questions, runtime, clock, seconds=3, before=before, observe=observe)
+    assert arrived
+    facts = [d.execution_facts["expansion_response"] for d in polled]
+    resolved = [f for f in facts if f["answer_request_id"] is not None]
+    assert resolved[0]["reason"] == "accepted" and resolved[0]["choice"] == "delay"
+
+
+def test_abandon_is_not_offered_once_the_plan_store_refuses_it() -> None:
+    provider = _QuestionProvider(_quiet_scripts())
+    clock = _Clock()
+    questions = HostedQuestions(provider, DecisionConfig(timeout=10), V2_POLICY, clock=clock)
+    runtime = _execution_runtime(points={_THREAT_POINT})
+    runtime.abandon_refusal = "expand plans were abandoned 3 times this match"
+    _drive(questions, runtime, clock, seconds=4)
+    offered = [o for q, o, _ in provider.calls if q == "expansion_response"]
+    assert offered and set(offered) == {("continue", "delay")}  # never abandon past the cap
+
+
+@pytest.mark.parametrize("change", ["threat_left", "other_threat", "point"])
+def test_a_held_response_is_released_before_it_meets_what_it_was_not_asked_about(
+    change: str,
+) -> None:
+    """A continue was accepted about the Marine at the site. Then the Marine is gone,
+    or another enemy took its place, or the plan reached its blocked point instead:
+    the poll that sees it releases the continue (visibly) before any tick could apply
+    it to a threat or a point it was never asked about."""
+    provider = _QuestionProvider(
+        _quiet_scripts(expansion_response=[_execution("continue"), _execution("continue", 0.1)])
+    )
+    clock = _Clock()
+    questions = HostedQuestions(provider, DecisionConfig(timeout=10), V2_POLICY, clock=clock)
+    runtime = _execution_runtime(points={_THREAT_POINT})
+    switch = 10
+
+    def before(i: int) -> None:
+        if change == "point" and i == switch:
+            runtime.reached_nodes = frozenset({_BLOCKED_POINT})
+            runtime.records[_EXPANSION_PLAN] = _threatened_record(
+                stage_node_id="expansion.blocked.wait", reason_code="site_blocked"
+            )
+
+    def observe(i: int) -> Observation:
+        obs = _execution_observation(10 + i * 0.5)
+        if i < switch or change == "point":
+            return obs
+        if change == "threat_left":
+            return replace(obs, enemy_sightings=())
+        raider = _sighting(8100, "Zergling", (_SITE[0] - 2, _SITE[1]))
+        return replace(obs, enemy_sightings=(raider,))
+
+    polled = _drive(questions, runtime, clock, seconds=6, before=before, observe=observe)
+    held = [n for n, d in enumerate(polled) if d.execution["expansion_response"].choice]
+    assert held and max(held) == switch - 1  # held until the change, not one poll more
+    released = polled[switch].execution_facts["expansion_response"]
+    assert released["reason"] == "expired_or_changed_state"
+    why = {"threat_left": "threat_changed", "other_threat": "threat_changed"}
+    assert released["released"]["why"] == why.get(change, "decision_point_changed")
+    assert released["released"]["choice"] == "continue"
+
+
+@pytest.mark.parametrize("refresh", ["low_confidence", "stale", "invalid", "failed"])
+def test_a_refused_refresh_never_releases_a_choice_still_in_force(refresh: str) -> None:
+    """A continue is in force; its refresh is refused (low confidence, stale -- the
+    plan's stage moved on while it was pending, which does not invalidate the held
+    continue --, an unoffered choice, a timeout). The continue stays, the refusal is
+    reported, and only the next accepted answer (delay) replaces it."""
+    gate = asyncio.Event()
+    replies: dict[str, list[Any]] = {
+        "low_confidence": [_execution("continue", 0.1)],
+        "stale": [gate, _execution("continue")],
+        "invalid": [_execution("attack")],
+        "failed": [DecisionError("timeout")],
+    }
+    script = [_execution("continue"), *replies[refresh], _execution("delay")]
+    provider = _QuestionProvider(_quiet_scripts(expansion_response=script))
+    clock = _Clock()
+    questions = HostedQuestions(provider, DecisionConfig(timeout=30), V2_POLICY, clock=clock)
+    runtime = _execution_runtime(points={_THREAT_POINT})
+    asks: list[int] = []
+
+    def before(i: int) -> None:
+        if questions.pending_question == "expansion_response" and i not in asks:
+            asks.append(i)
+            if refresh == "stale" and len(asks) == 2:  # the continue walks the worker on
+                runtime.records[_EXPANSION_PLAN] = _threatened_record(
+                    stage_node_id="expansion.move"
+                )
+        if refresh == "stale" and len(asks) >= 2 and not gate.is_set():
+            gate.set()
+
+    polled = _drive(
+        questions,
+        runtime,
+        clock,
+        seconds=20,
+        before=before,
+        observe=lambda i: _execution_observation(10 + i * 0.5),
+    )
+    facts = [d.execution_facts["expansion_response"] for d in polled]
+    first = next(n for n, f in enumerate(facts) if f["choice"] == "continue")
+    accepted_id = facts[first]["in_force_request_id"]
+    refused = next(n for n, f in enumerate(facts) if f["refresh"] is not None)
+    expected = {
+        "low_confidence": "low_confidence",
+        "stale": "stale_answer",
+        "invalid": "invalid_response",
+        "failed": "timeout",
+    }[refresh]
+    assert facts[refused]["refresh"]["reason"] == expected
+    assert facts[refused]["refresh"]["kept_request_id"] == accepted_id
+    assert facts[refused]["reason"] == expected  # visible
+    for decided in polled[first : refused + 1]:  # never released by the refusal
+        held = decided.execution["expansion_response"]
+        assert (held.choice, held.request_id) == ("continue", accepted_id)
+    replaced = next(n for n, f in enumerate(facts) if f["choice"] == "delay")
+    assert replaced > refused  # the next accepted answer, a different choice, replaces it
+    assert facts[replaced]["refresh"] is None
+
+
+def test_a_refused_mix_refresh_keeps_the_mix_in_force() -> None:
+    provider = _QuestionProvider(
+        _quiet_scripts(
+            production_mix=[_execution("stalker_heavy"), DecisionError("connection_error")]
+        )
+    )
+    clock = _Clock()
+    questions = HostedQuestions(provider, DecisionConfig(timeout=10), V2_POLICY, clock=clock)
+    polled = _drive(
+        questions,
+        _execution_runtime(points={_MIX_POINT}),
+        clock,
+        seconds=40,
+        observe=lambda i: _execution_observation(10 + i * 0.5),
+    )
+    facts = [d.execution_facts["production_mix"] for d in polled]
+    refused = next(n for n, f in enumerate(facts) if f["refresh"] is not None)
+    assert facts[refused]["refresh"]["reason"] == "connection_error"
+    after = polled[refused].execution["production_mix"]
+    assert after.choice == "stalker_heavy"  # the failed refresh released nothing
+
+
+def test_a_newly_accepted_choice_clears_the_previous_release_record() -> None:
+    """A continue is released when another enemy takes the Marine's place; the question
+    goes dirty, is asked again and delay is accepted: the facts then show delay in
+    force and no longer the older request's release record beside it."""
+    provider = _QuestionProvider(
+        _quiet_scripts(expansion_response=[_execution("continue"), _execution("delay")])
+    )
+    clock = _Clock()
+    questions = HostedQuestions(provider, DecisionConfig(timeout=10), V2_POLICY, clock=clock)
+    runtime = _execution_runtime(points={_THREAT_POINT})
+    switch = 10
+
+    def observe(i: int) -> Observation:
+        obs = _execution_observation(10 + i * 0.5)
+        if i < switch:
+            return obs
+        raider = _sighting(8100, "Zergling", (_SITE[0] - 2, _SITE[1]))
+        return replace(obs, enemy_sightings=(raider,))
+
+    polled = _drive(questions, runtime, clock, seconds=20, observe=observe)
+    facts = [d.execution_facts["expansion_response"] for d in polled]
+    released = facts[switch]["released"]
+    assert released is not None and released["choice"] == "continue"
+    assert released["why"] == "threat_changed"
+    replaced = next(n for n, f in enumerate(facts) if f["choice"] == "delay")
+    assert replaced > switch
+    assert facts[replaced]["released"] is None  # cleared by the new acceptance
+    assert facts[replaced]["in_force_request_id"] != released["request_id"]

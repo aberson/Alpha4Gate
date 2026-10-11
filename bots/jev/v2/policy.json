@@ -46,7 +46,10 @@
     "natural_transfer_workers": 6,
     "natural_defense_radius": 15,
     "stalkers_per_zealot": 1,
-    "stalker_cap": 16
+    "stalker_cap": 16,
+    "zealot_heavy_stalkers_per_zealot": 0.5,
+    "stalker_heavy_stalkers_per_zealot": 2,
+    "air_threat_age": 30
   },
   "nodes": [
     {
@@ -1884,7 +1887,7 @@
       "children": [
         "expansion.home",
         "expansion.plan",
-        "expansion.stages"
+        "expansion.course"
       ],
       "operation": null,
       "args": {}
@@ -2235,12 +2238,12 @@
     },
     {
       "id": "expansion.site_safe",
-      "label": "No threat seen at the site lately (rechecked every tick, so again once the worker sees it), or the build is already in flight; else pull the worker back and wait",
+      "label": "No threat seen at the site lately (rechecked every tick, so again once the worker sees it), or the build is already in flight; else Typesafe's expansion response or the local delay",
       "kind": "selector",
       "children": [
         "expansion.site_safe.clear",
         "expansion.site_safe.issued",
-        "expansion.site_safe.delay"
+        "expansion.site_safe.respond"
       ],
       "operation": null,
       "args": {}
@@ -2314,9 +2317,10 @@
     },
     {
       "id": "expansion.site_safe.delay",
-      "label": "Threat at the site: the worker comes home, then the plan waits (the delay is bounded by the plan's deadlines)",
+      "label": "Delay (Typesafe's choice or the local fallback): the worker comes home, then the plan waits (bounded by the plan's deadlines)",
       "kind": "sequence",
       "children": [
+        "expansion.site_safe.delay.decide",
         "expansion.site_safe.home",
         "expansion.site_safe.retreat",
         "expansion.site_safe.wait"
@@ -2957,7 +2961,7 @@
     },
     {
       "id": "production",
-      "label": "Production: Stalkers while the Core, gas and the Zealot/Stalker mix allow, else Zealots, then probes with leftover minerals",
+      "label": "Production: Stalkers in the Zealot:Stalker mix Typesafe chose (else the local fallback's) while the Core and gas allow, else Zealots, then probes with leftover minerals",
       "kind": "selector",
       "children": [
         "production.stalkers",
@@ -2969,13 +2973,12 @@
     },
     {
       "id": "production.stalkers",
-      "label": "Train Stalkers from idle powered Gateways while the Core stands and the mix allows (gas ready: a Stalker holds minerals before a Zealot)",
+      "label": "Train Stalkers from idle powered Gateways while the Core stands, within the mix's composition guards (gas ready: a Stalker holds minerals before a Zealot)",
       "kind": "sequence",
       "children": [
         "production.stalkers.core",
-        "production.stalkers.gas",
-        "production.stalkers.gateways",
-        "production.stalkers.train"
+        "production.stalkers.producers",
+        "production.stalkers.mix"
       ],
       "operation": null,
       "args": {}
@@ -3039,7 +3042,7 @@
     },
     {
       "id": "production.stalkers.train",
-      "label": "Train Stalkers (holds minerals and gas while short) from a ready, powered Core, within the composition guards: at most stalkers_per_zealot per Zealot and stalker_cap",
+      "label": "Train Stalkers within the balanced guards (holds minerals and gas while short) from a ready, powered Core: at most stalkers_per_zealot per Zealot and stalker_cap",
       "kind": "action",
       "children": [],
       "operation": "train",
@@ -4275,6 +4278,522 @@
         },
         "preempt": false
       }
+    },
+    {
+      "id": "expansion.course",
+      "label": "The plan's course: at a blocked site, Typesafe's expansion response or the local wait; else its stages",
+      "kind": "selector",
+      "children": [
+        "expansion.blocked",
+        "expansion.stages"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "expansion.blocked",
+      "label": "No free site within the path bound (every reachable site near enough is refused, avoided or occupied): respond instead of walking anywhere",
+      "kind": "sequence",
+      "children": [
+        "expansion.blocked.check",
+        "expansion.blocked.respond"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "expansion.blocked.check",
+      "label": "The plan's site selection (the same arguments as expansion.site) finds no free site within the path bound",
+      "kind": "condition",
+      "children": [],
+      "operation": "plan_site_blocked",
+      "args": {
+        "plan": "expansion.start.go",
+        "candidates": 8,
+        "clearance": {
+          "param": "expansion_clearance"
+        },
+        "max_path_ratio": {
+          "param": "expansion_max_path_ratio"
+        }
+      }
+    },
+    {
+      "id": "expansion.blocked.respond",
+      "label": "Decision point (expansion_response): Typesafe's response to the blocked site, else the local wait",
+      "kind": "selector",
+      "children": [
+        "expansion.blocked.delay",
+        "expansion.blocked.abandon"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "expansion.blocked.delay",
+      "label": "Delay: the plan waits (bounded by its deadlines) in case a site frees up",
+      "kind": "sequence",
+      "children": [
+        "expansion.blocked.delay.decide",
+        "expansion.blocked.wait"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "expansion.blocked.delay.decide",
+      "label": "Typesafe chose delay, or no hosted response applies to the plan as it stands",
+      "kind": "selector",
+      "children": [
+        "expansion.blocked.delay.chosen",
+        "expansion.blocked.delay.local"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "expansion.blocked.delay.chosen",
+      "label": "Typesafe chose delay for this plan, site and worker",
+      "kind": "condition",
+      "children": [],
+      "operation": "expansion_response_is",
+      "args": {
+        "plan": "expansion.start.go",
+        "response": "delay"
+      }
+    },
+    {
+      "id": "expansion.blocked.delay.local",
+      "label": "Local fallback: no hosted expansion response applies to the plan as it stands",
+      "kind": "condition",
+      "children": [],
+      "operation": "expansion_response_local",
+      "args": {
+        "plan": "expansion.start.go"
+      }
+    },
+    {
+      "id": "expansion.blocked.wait",
+      "label": "Wait: the site is blocked (no free site within the path bound)",
+      "kind": "action",
+      "children": [],
+      "operation": "plan_wait",
+      "args": {
+        "plan": "expansion.start.go",
+        "reason": "site_blocked"
+      }
+    },
+    {
+      "id": "expansion.blocked.abandon",
+      "label": "Abandon: Typesafe stops the unissued plan; its worker and minerals are released and the site is avoided for a while",
+      "kind": "sequence",
+      "children": [
+        "expansion.blocked.abandon.chosen",
+        "expansion.blocked.abandon.go"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "expansion.blocked.abandon.chosen",
+      "label": "Typesafe chose abandon for this plan, site and worker",
+      "kind": "condition",
+      "children": [],
+      "operation": "expansion_response_is",
+      "args": {
+        "plan": "expansion.start.go",
+        "response": "abandon"
+      }
+    },
+    {
+      "id": "expansion.blocked.abandon.go",
+      "label": "Abandon the plan at the blocked site (never a Nexus already ordered or started)",
+      "kind": "action",
+      "children": [],
+      "operation": "plan_abandon",
+      "args": {
+        "plan": "expansion.start.go",
+        "reason": "site_blocked"
+      }
+    },
+    {
+      "id": "expansion.site_safe.respond",
+      "label": "Decision point (expansion_response): a threat at the site -- Typesafe's response (continue, delay or abandon), else the local delay",
+      "kind": "selector",
+      "children": [
+        "expansion.site_safe.continue",
+        "expansion.site_safe.delay",
+        "expansion.site_safe.abandon"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "expansion.site_safe.continue",
+      "label": "Continue: Typesafe chose to build despite the threat; the worker walks on to the site",
+      "kind": "condition",
+      "children": [],
+      "operation": "expansion_response_is",
+      "args": {
+        "plan": "expansion.start.go",
+        "response": "continue"
+      }
+    },
+    {
+      "id": "expansion.site_safe.delay.decide",
+      "label": "Typesafe chose delay, or no hosted response applies to the plan as it stands",
+      "kind": "selector",
+      "children": [
+        "expansion.site_safe.delay.chosen",
+        "expansion.site_safe.delay.local"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "expansion.site_safe.delay.chosen",
+      "label": "Typesafe chose delay for this plan, site and worker",
+      "kind": "condition",
+      "children": [],
+      "operation": "expansion_response_is",
+      "args": {
+        "plan": "expansion.start.go",
+        "response": "delay"
+      }
+    },
+    {
+      "id": "expansion.site_safe.delay.local",
+      "label": "Local fallback: no hosted expansion response applies to the plan as it stands",
+      "kind": "condition",
+      "children": [],
+      "operation": "expansion_response_local",
+      "args": {
+        "plan": "expansion.start.go"
+      }
+    },
+    {
+      "id": "expansion.site_safe.abandon",
+      "label": "Abandon: Typesafe stops the unissued plan; its worker and minerals are released and the threatened site is avoided for a while",
+      "kind": "sequence",
+      "children": [
+        "expansion.site_safe.abandon.chosen",
+        "expansion.site_safe.abandon.go"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "expansion.site_safe.abandon.chosen",
+      "label": "Typesafe chose abandon for this plan, site and worker",
+      "kind": "condition",
+      "children": [],
+      "operation": "expansion_response_is",
+      "args": {
+        "plan": "expansion.start.go",
+        "response": "abandon"
+      }
+    },
+    {
+      "id": "expansion.site_safe.abandon.go",
+      "label": "Abandon the plan at the threatened site (never a Nexus already ordered or started)",
+      "kind": "action",
+      "children": [],
+      "operation": "plan_abandon",
+      "args": {
+        "plan": "expansion.start.go",
+        "reason": "site_threatened"
+      }
+    },
+    {
+      "id": "production.stalkers.producers",
+      "label": "A ready, powered Gateway stands (with the Core: the mix's decision point is reached whenever Stalkers are possible, not only while a Gateway idles)",
+      "kind": "condition",
+      "children": [],
+      "operation": "count_compare",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Gateway"
+          ],
+          "ready": true,
+          "powered": true
+        },
+        "op": ">=",
+        "value": 1
+      }
+    },
+    {
+      "id": "production.stalkers.mix",
+      "label": "Decision point (production_mix): the Zealot:Stalker mix Typesafe chose, else the local fallback's (balanced; Stalker-heavy once air is seen)",
+      "kind": "selector",
+      "children": [
+        "production.mix.zealot_heavy",
+        "production.mix.stalker_heavy",
+        "production.mix.balanced"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "production.mix.zealot_heavy",
+      "label": "Zealot-heavy (2:1): at most half a Stalker per Zealot",
+      "kind": "sequence",
+      "children": [
+        "production.mix.zealot_heavy.chosen",
+        "production.mix.zealot_heavy.gas",
+        "production.mix.zealot_heavy.gateways",
+        "production.mix.zealot_heavy.train"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "production.mix.zealot_heavy.chosen",
+      "label": "Typesafe chose the Zealot-heavy mix",
+      "kind": "condition",
+      "children": [],
+      "operation": "production_mix_is",
+      "args": {
+        "mix": "zealot_heavy"
+      }
+    },
+    {
+      "id": "production.mix.zealot_heavy.gas",
+      "label": "A Stalker's gas is available after reservations (the central cost table)",
+      "kind": "condition",
+      "children": [],
+      "operation": "affordable",
+      "args": {
+        "item": "Stalker",
+        "resources": [
+          "vespene"
+        ]
+      }
+    },
+    {
+      "id": "production.mix.zealot_heavy.gateways",
+      "label": "Ready, idle, powered Gateways by tag",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Gateway"
+          ],
+          "ready": true,
+          "idle": true,
+          "powered": true
+        },
+        "sort": {
+          "by": "tag"
+        },
+        "limit": {
+          "param": "gateway_target"
+        },
+        "bind": "stalker_gateways"
+      }
+    },
+    {
+      "id": "production.mix.zealot_heavy.train",
+      "label": "Train Stalkers within the Zealot-heavy guards: at most zealot_heavy_stalkers_per_zealot per Zealot and stalker_cap",
+      "kind": "action",
+      "children": [],
+      "operation": "train",
+      "args": {
+        "unit": "Stalker",
+        "producers": "$stalker_gateways",
+        "hold_reservation": true,
+        "ratio_of": "Zealot",
+        "max_ratio": {
+          "param": "zealot_heavy_stalkers_per_zealot"
+        },
+        "max_count": {
+          "param": "stalker_cap"
+        },
+        "powered_prerequisite": true
+      }
+    },
+    {
+      "id": "production.mix.stalker_heavy",
+      "label": "Stalker-heavy (1:2): up to two Stalkers per Zealot",
+      "kind": "sequence",
+      "children": [
+        "production.mix.stalker_heavy.decide",
+        "production.mix.stalker_heavy.gas",
+        "production.mix.stalker_heavy.gateways",
+        "production.mix.stalker_heavy.train"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "production.mix.stalker_heavy.decide",
+      "label": "Typesafe chose the Stalker-heavy mix, or the local fallback has seen air",
+      "kind": "selector",
+      "children": [
+        "production.mix.stalker_heavy.chosen",
+        "production.mix.stalker_heavy.air"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "production.mix.stalker_heavy.chosen",
+      "label": "Typesafe chose the Stalker-heavy mix",
+      "kind": "condition",
+      "children": [],
+      "operation": "production_mix_is",
+      "args": {
+        "mix": "stalker_heavy"
+      }
+    },
+    {
+      "id": "production.mix.stalker_heavy.air",
+      "label": "Local fallback against air (D2): no hosted mix is in force and an armed air unit was seen lately",
+      "kind": "sequence",
+      "children": [
+        "production.mix.stalker_heavy.local",
+        "production.mix.stalker_heavy.air_seen"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "production.mix.stalker_heavy.local",
+      "label": "Local fallback: no hosted production mix is in force",
+      "kind": "condition",
+      "children": [],
+      "operation": "production_mix_local",
+      "args": {}
+    },
+    {
+      "id": "production.mix.stalker_heavy.air_seen",
+      "label": "An enemy air unit that can carry a weapon was seen within the air threat age (Zealots cannot hit it)",
+      "kind": "condition",
+      "children": [],
+      "operation": "sighting_count_compare",
+      "args": {
+        "filter": {
+          "flying": true,
+          "structure": false,
+          "exclude_types": [
+            "Overlord",
+            "OverlordTransport",
+            "Overseer",
+            "OverseerSiegeMode",
+            "Observer",
+            "ObserverSiegeMode"
+          ]
+        },
+        "max_age": {
+          "param": "air_threat_age"
+        },
+        "op": ">=",
+        "value": 1
+      }
+    },
+    {
+      "id": "production.mix.stalker_heavy.gas",
+      "label": "A Stalker's gas is available after reservations (the central cost table)",
+      "kind": "condition",
+      "children": [],
+      "operation": "affordable",
+      "args": {
+        "item": "Stalker",
+        "resources": [
+          "vespene"
+        ]
+      }
+    },
+    {
+      "id": "production.mix.stalker_heavy.gateways",
+      "label": "Ready, idle, powered Gateways by tag",
+      "kind": "select",
+      "children": [],
+      "operation": "select_entities",
+      "args": {
+        "collection": "own_structures",
+        "filter": {
+          "types": [
+            "Gateway"
+          ],
+          "ready": true,
+          "idle": true,
+          "powered": true
+        },
+        "sort": {
+          "by": "tag"
+        },
+        "limit": {
+          "param": "gateway_target"
+        },
+        "bind": "stalker_gateways"
+      }
+    },
+    {
+      "id": "production.mix.stalker_heavy.train",
+      "label": "Train Stalkers within the Stalker-heavy guards: at most stalker_heavy_stalkers_per_zealot per Zealot and stalker_cap",
+      "kind": "action",
+      "children": [],
+      "operation": "train",
+      "args": {
+        "unit": "Stalker",
+        "producers": "$stalker_gateways",
+        "hold_reservation": true,
+        "ratio_of": "Zealot",
+        "max_ratio": {
+          "param": "stalker_heavy_stalkers_per_zealot"
+        },
+        "max_count": {
+          "param": "stalker_cap"
+        },
+        "powered_prerequisite": true
+      }
+    },
+    {
+      "id": "production.mix.balanced",
+      "label": "Balanced (1:1): at most one Stalker per Zealot -- Typesafe's choice or the local fallback",
+      "kind": "sequence",
+      "children": [
+        "production.mix.balanced.decide",
+        "production.stalkers.gas",
+        "production.stalkers.gateways",
+        "production.stalkers.train"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "production.mix.balanced.decide",
+      "label": "Typesafe chose the balanced mix, or no hosted mix is in force",
+      "kind": "selector",
+      "children": [
+        "production.mix.balanced.chosen",
+        "production.mix.balanced.local"
+      ],
+      "operation": null,
+      "args": {}
+    },
+    {
+      "id": "production.mix.balanced.chosen",
+      "label": "Typesafe chose the balanced mix",
+      "kind": "condition",
+      "children": [],
+      "operation": "production_mix_is",
+      "args": {
+        "mix": "balanced"
+      }
+    },
+    {
+      "id": "production.mix.balanced.local",
+      "label": "Local fallback: no hosted production mix is in force (D2: balanced once Stalkers are feasible)",
+      "kind": "condition",
+      "children": [],
+      "operation": "production_mix_local",
+      "args": {}
     }
   ]
 }

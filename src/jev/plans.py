@@ -129,6 +129,27 @@ holds the slot's plan starts back. A plan records which strategic decision
 started it (``decided_by``, ``decision_request_id``: request-to-plan evidence), and
 :meth:`PlanStore.refusal` says, without starting anything, whether a kind could
 start now -- the same check :meth:`PlanStore.start` applies.
+
+**Execution choices (Step 220).** Two more D2 questions decide *within* an
+execution branch (:data:`EXECUTION_QUESTIONS`): ``expansion_response`` (continue /
+delay / abandon an expansion plan whose site is threatened or blocked) and
+``production_mix`` (the Zealot:Stalker mix production trains toward). What their
+guards read each tick is one :class:`ExecutionDecision` per question: the local
+fallback, or a hosted choice -- for ``expansion_response`` bound to the plan state
+it answered (plan id, site, worker), so it never applies to another plan, site or
+worker. A hosted response that applies is recorded on the plan (``response``,
+``response_request_id``; a ``responded`` transition), and
+:meth:`PlanStore.abandon` -- the ``abandon`` branch -- stops an *unissued* plan only
+(D4: there is no in-game building cancel, and a started Nexus continues unless
+destroyed), with code ``abandoned`` and the request that chose it.
+
+An abandon is a deliberate choice, not a failure: it releases every hold, cools the
+slot down and avoids the site (at a blocked site, the sites that blocked it: their
+avoidance is renewed), but it never counts toward :data:`MAX_PLAN_ABORTS`, so
+abandons alone never disable a kind. Its own bound keeps the restart loop finite:
+after :data:`MAX_PLAN_ABANDONS` abandons of a kind in a match, abandon is refused
+(:meth:`PlanStore.abandon_refusal`, which the coordinator reads to stop offering it)
+and the plan's own deadlines and failure limit decide from then on.
 """
 
 from __future__ import annotations
@@ -143,9 +164,13 @@ from typing import Final, Literal, get_args
 from jev.contracts import JsonValue, Point, render_text
 
 __all__ = [
+    "EXECUTION_CHOICES",
+    "EXECUTION_QUESTIONS",
+    "EXPANSION_RESPONSES",
     "MAX_AVOIDED_SITES",
     "MAX_BLOCKER_CHARS",
     "MAX_FINISHED_PLANS",
+    "MAX_PLAN_ABANDONS",
     "MAX_PLAN_ABORTS",
     "MAX_STAGE_RECOVERIES",
     "OPEN_PLAN_STATUSES",
@@ -159,12 +184,16 @@ __all__ = [
     "PLAN_STATUSES",
     "PLAN_TIMEOUT_SECONDS",
     "PLAN_YIELD_SECONDS",
+    "PRODUCTION_MIXES",
     "SITE_TROUBLE",
     "STATIC_FAILURES",
     "STRATEGY_CHOICES",
     "STRATEGY_SOURCES",
     "WAIT_CODES",
     "BuildFailure",
+    "ExecutionDecision",
+    "ExecutionQuestion",
+    "ExpansionResponse",
     "PlanCode",
     "PlanEvent",
     "PlanEventStatus",
@@ -173,6 +202,7 @@ __all__ = [
     "PlanSlot",
     "PlanStatus",
     "PlanStore",
+    "ProductionMix",
     "Released",
     "SlotRecord",
     "StrategyChoice",
@@ -247,6 +277,88 @@ class StrategySlot:
         }
 
 
+#: The D2 execution questions (module docstring: Execution choices), whose ids are
+#: the stable question ids section 5 names.
+ExecutionQuestion = Literal["expansion_response", "production_mix"]
+EXECUTION_QUESTIONS: Final[tuple[ExecutionQuestion, ...]] = get_args(ExecutionQuestion)
+#: D2 ``expansion_response``: an expansion plan facing a threatened or blocked site.
+ExpansionResponse = Literal["continue", "delay", "abandon"]
+EXPANSION_RESPONSES: Final[tuple[ExpansionResponse, ...]] = get_args(ExpansionResponse)
+#: D2 ``production_mix``: the Zealot:Stalker mixes (their ratios are the graph's).
+ProductionMix = Literal["zealot_heavy", "balanced", "stalker_heavy"]
+PRODUCTION_MIXES: Final[tuple[ProductionMix, ...]] = get_args(ProductionMix)
+#: Every choice each execution question's vocabulary has (which of them a policy
+#: can execute is the policy's own: ``jev.strategy.execution_points``).
+EXECUTION_CHOICES: Final[Mapping[ExecutionQuestion, tuple[str, ...]]] = {
+    "expansion_response": EXPANSION_RESPONSES,
+    "production_mix": PRODUCTION_MIXES,
+}
+
+
+@dataclass(frozen=True)
+class ExecutionDecision:
+    """What one execution question's guards read this tick (module docstring).
+
+    ``choice`` None: the local fallback decides (the ``*_local`` guards pass).
+    Otherwise the hosted choice in force and its ``request_id``; an
+    ``expansion_response`` also carries the plan state it answered -- ``plan_id``,
+    ``site`` and ``actor_tag`` -- and applies only while the plan still matches
+    (:meth:`applies_to`), so it never steers another plan, site or worker."""
+
+    question: ExecutionQuestion
+    choice: str | None = None
+    request_id: int | None = None
+    source: StrategySource = "local_graph"
+    plan_id: str | None = None
+    site: Point | None = None
+    actor_tag: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.question not in EXECUTION_QUESTIONS:
+            raise ValueError(f"unknown execution question {self.question!r}")
+        if self.choice is not None and self.choice not in EXECUTION_CHOICES[self.question]:
+            raise ValueError(f"{self.choice!r} is not a {self.question} choice")
+        if self.source not in STRATEGY_SOURCES:
+            raise ValueError(f"unknown decision source {self.source!r}")
+        if self.choice is None:
+            if self.source == "typesafe" or self.request_id is not None:
+                raise ValueError("a local execution decision holds no hosted request")
+            if self.plan_id is not None or self.site is not None or self.actor_tag is not None:
+                raise ValueError("a local execution decision is bound to no plan")
+        elif self.source != "typesafe" or self.request_id is None:
+            raise ValueError("a hosted execution choice names its hosted request")
+        if self.question != "expansion_response" and self.plan_id is not None:
+            raise ValueError("only an expansion response is bound to a plan")
+
+    @property
+    def local(self) -> bool:
+        return self.choice is None
+
+    def applies_to(self, record: PlanRecord | None) -> bool:
+        """Whether this hosted expansion response answers ``record`` as it stands:
+        the open plan it was asked about, at the same site with the same worker."""
+        return (
+            self.choice is not None
+            and record is not None
+            and record.is_open
+            and record.plan_id == self.plan_id
+            and record.site == self.site
+            and record.actor_tag == self.actor_tag
+        )
+
+    def facts(self) -> dict[str, JsonValue]:
+        site = self.site
+        return {
+            "question_id": self.question,
+            "choice": self.choice,
+            "request_id": self.request_id,
+            "source": self.source,
+            "plan_id": self.plan_id,
+            "site": None if site is None else [site[0], site[1]],
+            "actor_tag": None if self.actor_tag is None else str(self.actor_tag),
+        }
+
+
 #: Fixed reason codes (D5: never free text). The frontier's code, a transition's
 #: code or an outcome's code; ``blocker`` carries the human reason beside it.
 PlanCode = Literal[
@@ -281,10 +393,13 @@ PlanCode = Literal[
     "recoveries_exhausted",
     "abort_limit",
     "completed",
+    "responded",
+    "abandoned",
 ]
 PLAN_CODES: Final[tuple[PlanCode, ...]] = get_args(PlanCode)
 #: The codes a ``plan_wait`` node may name: why the plan holds still on that branch
-#: (the node Step 220's expansion_response will decide at).
+#: (Step 220's expansion_response decides at the site_threatened and site_blocked
+#: waits; a ``plan_abandon`` names the same code as the trouble it abandons).
 WaitCode = Literal[
     "site_threatened", "home_threatened", "site_blocked", "budget_short", "prerequisite_missing"
 ]
@@ -311,7 +426,12 @@ MAX_STAGE_RECOVERIES: Final = 3
 #: D3: a slot stays closed this long after an abort.
 PLAN_COOLDOWN_SECONDS: Final = 15.0
 #: Aborts of one kind a match allows; the last disables the kind (``abort_limit``).
+#: Failures only: a deliberate abandon never counts (module docstring).
 MAX_PLAN_ABORTS: Final = 3
+#: Deliberate (hosted) abandons of one kind a match allows; after them abandon is
+#: refused and the plan's deadlines decide, so abandons never disable a kind yet the
+#: abandon-and-restart loop stays bounded (module docstring: Execution choices).
+MAX_PLAN_ABANDONS: Final = 3
 #: After an abort, the slot's other kinds' turn lasts this long beyond the cooldown:
 #: the aborted kind may not start again before that unless another kind started, or
 #: none is left enabled (module docstring: Turns). Many ticks for an eligible kind.
@@ -367,6 +487,10 @@ class PlanRecord:
     #: choices): its source, and the hosted request when one did.
     decided_by: StrategySource | None = None
     decision_request_id: int | None = None
+    #: The latest hosted expansion response that applied to the plan, and its request
+    #: (module docstring: Execution choices); None while only the local graph decided.
+    response: ExpansionResponse | None = None
+    response_request_id: int | None = None
 
     @property
     def is_open(self) -> bool:
@@ -401,6 +525,8 @@ class PlanRecord:
             "build_in_flight": self.build_in_flight,
             "decided_by": self.decided_by,
             "decision_request_id": self.decision_request_id,
+            "response": self.response,
+            "response_request_id": self.response_request_id,
         }
 
 
@@ -494,6 +620,8 @@ class _Plan:
     refused_sites: tuple[Point, ...] = ()
     decided_by: StrategySource | None = None
     decision_request_id: int | None = None
+    response: ExpansionResponse | None = None
+    response_request_id: int | None = None
 
     @property
     def is_open(self) -> bool:
@@ -526,6 +654,8 @@ class _Plan:
             site_path_rank=self.site_rank,
             decided_by=self.decided_by,
             decision_request_id=self.decision_request_id,
+            response=self.response,
+            response_request_id=self.response_request_id,
         )
 
 
@@ -550,7 +680,8 @@ class PlanStore:
         self._finished: deque[_Plan] = deque(maxlen=MAX_FINISHED_PLANS)
         self._cooldown: dict[PlanSlot, float] = {}
         self._disabled: dict[PlanKind, PlanCode] = {}
-        self._kind_aborts: Counter[PlanKind] = Counter()
+        self._kind_aborts: Counter[PlanKind] = Counter()  # failures (abort_limit)
+        self._kind_abandons: Counter[PlanKind] = Counter()  # deliberate abandons
         self._avoid: dict[Point, float] = {}  # site -> avoided until (game seconds)
         self._events: list[PlanEvent] = []
         self._released: list[Released] = []
@@ -615,8 +746,12 @@ class PlanStore:
 
     @property
     def aborts(self) -> int:
-        """Plans aborted so far this run (plan D6 metric)."""
+        """Plans aborted so far this run, abandons included (plan D6 metric)."""
         return self._aborts
+
+    def abandons(self, kind: PlanKind) -> int:
+        """Deliberate abandons of ``kind`` so far this match (never failures)."""
+        return self._kind_abandons[kind]
 
     def drain_events(self) -> list[PlanEvent]:
         events, self._events = self._events, []
@@ -882,13 +1017,64 @@ class PlanStore:
         return None
 
     def abort(self, node_id: str, code: PlanCode, reason: str, now: float) -> bool:
-        """Abort the open plan (the hook Step 220's abandon will use). Refused, and
-        False, while its build command is in flight (module docstring)."""
+        """Abort the open plan. Refused, and False, while its build command is in
+        flight (module docstring)."""
         plan = self._open.get(node_id)
         if plan is None or plan.in_flight:
             return False
         self._abort(plan, code, reason, now)
         return True
+
+    def respond(self, node_id: str, response: ExpansionResponse, request_id: int) -> None:
+        """A hosted expansion response (request ``request_id``) applied to the open plan
+        this tick (module docstring: Execution choices); a change is a transition."""
+        plan = self._open.get(node_id)
+        if plan is None or (plan.response, plan.response_request_id) == (response, request_id):
+            return
+        plan.response, plan.response_request_id = response, request_id
+        self._event(
+            plan,
+            "running",
+            f"Typesafe response {response} (request {request_id}) applies to plan {plan.plan_id}",
+            transition="responded",
+        )
+
+    def abandon_refusal(self, node_id: str) -> str | None:
+        """Why the open plan of ``node_id`` could not be abandoned now (None: it could):
+        no open plan, its build command is in flight or its structure stands (D4: only
+        an *unissued* plan is abandoned; there is no building cancel), or its kind
+        used its :data:`MAX_PLAN_ABANDONS`. The one check :meth:`abandon` applies."""
+        plan = self._open.get(node_id)
+        if plan is None:
+            return "no open plan to abandon"
+        if plan.in_flight:
+            return "its build command is in flight: SC2's answer decides it, never an abandon"
+        if plan.acknowledged is not None:
+            return "its structure already stands and continues unless destroyed (no cancel)"
+        if self._kind_abandons[plan.kind] >= MAX_PLAN_ABANDONS:
+            return (
+                f"{plan.kind} plans were abandoned {MAX_PLAN_ABANDONS} times this match: the "
+                "plan's own deadlines decide from here"
+            )
+        return None
+
+    def abandon(
+        self, node_id: str, cause: PlanCode, request_id: int | None, now: float
+    ) -> str | None:
+        """Stop the open plan at once on a hosted ``abandon`` (request ``request_id``):
+        a deliberate abort with code ``abandoned`` that releases every hold, cools the
+        slot down and avoids its trouble site -- at a blocked site, the sites that
+        blocked it -- but never counts as a failure (module docstring). None, or why it
+        is refused (:meth:`abandon_refusal`)."""
+        refusal = self.abandon_refusal(node_id)
+        plan = self._open.get(node_id)
+        if refusal is not None or plan is None:
+            return refusal
+        plan.response, plan.response_request_id = "abandon", request_id
+        source = "the local graph" if request_id is None else f"Typesafe request {request_id}"
+        reason = f"abandoned by {source} at {cause}"
+        self._abort(plan, "abandoned", reason, now, cause=cause, deliberate=True)
+        return None
 
     # -- task hooks (the plan lane's tasks) ----------------------------------------------
 
@@ -1023,13 +1209,24 @@ class PlanStore:
             del self._avoid[next(iter(self._avoid))]
 
     def _abort(
-        self, plan: _Plan, code: PlanCode, reason: str, now: float, cause: PlanCode | None = None
+        self,
+        plan: _Plan,
+        code: PlanCode,
+        reason: str,
+        now: float,
+        cause: PlanCode | None = None,
+        *,
+        deliberate: bool = False,
     ) -> None:
-        """Abort and release (module docstring); ``cause`` is the recovery that ran out."""
+        """Abort and release (module docstring); ``cause`` is the recovery that ran out,
+        or the trouble a ``deliberate`` abandon answers (never a failure: it counts
+        toward :data:`MAX_PLAN_ABANDONS`, not :data:`MAX_PLAN_ABORTS`)."""
         trouble = cause if cause in SITE_TROUBLE else plan.reason_code
         avoided: list[Point] = list(plan.refused_sites)
         if trouble in SITE_TROUBLE and plan.site is not None and plan.acknowledged is None:
             avoided.append(plan.site)
+        if deliberate and cause == "site_blocked":  # the sites that blocked it, renewed
+            avoided.extend(p for p in plan.avoided_sites if p not in avoided)
         for site in avoided:
             self._avoid_site(site, now)
         released = Released(
@@ -1046,13 +1243,16 @@ class PlanStore:
         }
         self._finish(plan, "aborted", code, now)
         self._aborts += 1
-        self._kind_aborts[plan.kind] += 1
+        if deliberate:
+            self._kind_abandons[plan.kind] += 1
+        else:
+            self._kind_aborts[plan.kind] += 1
         plan.blocker = _blocker(reason)
         slot = PLAN_SLOT[plan.kind]
         self._cooldown[slot] = now + PLAN_COOLDOWN_SECONDS
         if code in STATIC_FAILURES:
             self._disabled[plan.kind] = code
-        elif self._kind_aborts[plan.kind] >= MAX_PLAN_ABORTS:
+        elif not deliberate and self._kind_aborts[plan.kind] >= MAX_PLAN_ABORTS:
             self._disabled.setdefault(plan.kind, "abort_limit")
         disabled = self._disabled.get(plan.kind)
         yield_to = self._others(plan.kind)
@@ -1071,6 +1271,9 @@ class PlanStore:
                 "disabled": disabled is not None,
                 "disabled_by": disabled,
                 "kind_aborts": self._kind_aborts[plan.kind],
+                "deliberate": deliberate,
+                "kind_abandons": self._kind_abandons[plan.kind],
+                "abandons_left": max(0, MAX_PLAN_ABANDONS - self._kind_abandons[plan.kind]),
                 "yield_to": list(yield_to),
                 "yield_until": self._yield[slot][1] if yield_to else None,
                 "avoided_sites": [[p[0], p[1]] for p in avoided],

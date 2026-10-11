@@ -37,10 +37,11 @@ the controller to the live game and registers Ctrl+C as a clean-leave request,
 legacy gameplay code or RL policy on this path. The optional Typesafe coordinator
 supplies army intent; every command still comes from a graph node and runtime task.
 For a policy with strategic choices (Jev v2, plan J2 Step 219) the coordinator is
-:class:`jev.strategy.HostedQuestions`: strategy and army questions on one request
-budget, whose answers the runtime's strategy guards and army-mode guards read; with
-the scripted provider the strategy guards read the local fallback (the graph's own
-conditions) and the decision is reported as ``local_graph``. Frozen v1 keeps
+:class:`jev.strategy.HostedQuestions`: strategy, army and (Step 220) execution
+questions on one request budget, whose answers the runtime's strategy, army-mode and
+execution guards read; with the scripted provider those guards read the local
+fallback (the graph's own conditions) and each decision is reported as
+``local_graph``. Frozen v1 keeps
 :class:`jev.decision.ArmyDecisions` and its exact request shape.
 
 **Benchmark metrics** (plan D6). On every policy tick the controller also feeds
@@ -98,7 +99,12 @@ from jev.policy import PolicyBundle
 from jev.runner import MatchLimits, exception_error
 from jev.runtime import JevRuntime, TickResult
 from jev.sc2_adapter import BotAIPort, GamePort, Sc2Adapter
-from jev.strategy import HostedQuestions, scripted_strategy_facts, uses_strategy
+from jev.strategy import (
+    HostedQuestions,
+    scripted_execution_facts,
+    scripted_strategy_facts,
+    uses_strategy,
+)
 from jev.telemetry import PersistenceFailed, RunRecorder
 
 __all__ = [
@@ -640,6 +646,8 @@ class JevController:
         self._decisions = decisions
         self._parameters = bundle.policy.parameters
         self._strategic = uses_strategy(bundle.policy)  # Jev v2 (Step 219); never v1
+        # Jev v2 (Step 220): the execution questions' scripted facts (the graph decides).
+        self._scripted_execution = scripted_execution_facts(bundle.policy)
         self.metrics = MatchMetrics()  # observation-only (plan D6)
 
     @property
@@ -785,7 +793,8 @@ class JevController:
             decided = self._decisions.poll(observation, self.runtime)
             self.runtime.set_army_decision(decided.army_mode, decided.army_facts)
             self.runtime.set_strategy(decided.strategy, decided.strategy_facts)
-            facts = decided.metrics_facts  # every request of both questions
+            self.runtime.set_execution(decided.execution, decided.execution_facts)  # Step 220
+            facts = decided.metrics_facts  # every request of every question
         elif self._decisions is not None:
             mode, facts = self._decisions.poll(
                 observation,
@@ -806,6 +815,7 @@ class JevController:
             self.runtime.set_army_decision(None, facts)
             if self._strategic:  # the graph's own conditions decide every slot
                 self.runtime.set_strategy(None, scripted_strategy_facts())
+                self.runtime.set_execution(None, self._scripted_execution)
         result = self.runtime.tick(observation)
         if result.ticked:
             await self.adapter.issue(result.commands, port, self.runtime)

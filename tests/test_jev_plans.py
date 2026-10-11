@@ -76,9 +76,11 @@ from jev.operations import (
     SelectOp,
     Visit,
     distance,
+    execution_points,
     expansion_candidates,
 )
 from jev.plans import (
+    MAX_PLAN_ABANDONS,
     MAX_PLAN_ABORTS,
     MAX_STAGE_RECOVERIES,
     PLAN_COOLDOWN_SECONDS,
@@ -86,6 +88,7 @@ from jev.plans import (
     PLAN_SITE_AVOID_SECONDS,
     PLAN_TIMEOUT_SECONDS,
     PLAN_YIELD_SECONDS,
+    ExecutionDecision,
     PlanKind,
     PlanRecord,
     PlanStore,
@@ -772,10 +775,12 @@ def test_v2_never_walks_to_a_far_base_and_stops_after_the_abort_limit() -> None:
     natural = [NATURAL[0], NATURAL[1]]
     assert walks and all(e.action is not None and e.action["target"] == natural for e in walks)
     assert run.sent(NEXUS_BUILD) == []
+    # Step 220: a blocked site is now the expansion_response decision point; its check
+    # (expansion.blocked.check) runs the same selection and carries the selection's facts.
     beyond = [
         e
-        for e in run.node_events("expansion.site")
-        if e.status == "failure" and e.facts.get("beyond_bound") == 1
+        for e in run.node_events("expansion.blocked.check")
+        if e.status == "success" and e.facts.get("beyond_bound") == 1
     ]
     assert beyond and "not taken" in beyond[0].reason
     assert beyond[0].facts["nearest_path"] == 30.0 and beyond[0].facts["path_bound"] == 45.0
@@ -1582,6 +1587,10 @@ class _View:
     builds: tuple[tuple[str, Point], ...] = ()
     trains: dict[str, int] = field(default_factory=dict)  # unconfirmed train tasks (Step 218)
     busy: frozenset[int] = frozenset()  # actors a task holds
+    executions: dict[str, ExecutionDecision] = field(default_factory=dict)  # Step 220
+
+    def execution(self, question: Any) -> ExecutionDecision:
+        return self.executions.get(question) or ExecutionDecision(question)
 
     def binding(self, name: str) -> Binding | None:
         return self.bindings.get(name)
@@ -2163,3 +2172,325 @@ def test_v2_runs_macro_plan_lanes_before_production_and_v1_none() -> None:
         "worker": "$expander",
         "site": "$natural",
     }
+
+
+# ---------------------------------------------------------------------------
+# Step 220: expansion responses -- the plan store, the operations, the v2 graph
+# ---------------------------------------------------------------------------
+
+
+def _threatened_store() -> PlanStore:
+    """A plan waiting at its threatened site, its worker held and minerals reserved."""
+    store = _store_with_plan()
+    store.set_site("lane.start", NATURAL, 10.5, replaced=None)
+    store.claim_actor("lane.start", 2000)
+    store.hold("lane.start", 300, 0)
+    store.after_lane(
+        "lane.start",
+        stage="lane.wait",
+        rank=3,
+        failed=False,
+        waiting=True,
+        code="site_threatened",
+        reason="threat",
+        now=11.0,
+    )
+    store.drain_events()
+    store.drain_released()
+    return store
+
+
+def test_abandon_stops_an_unissued_plan_with_its_request_and_releases_every_hold() -> None:
+    store = _threatened_store()
+    store.begin_tick(12.0, frozenset({2000}), {})  # the next tick: its own hold, then abandon
+    store.hold("lane.start", 300, 0)
+    assert store.abandon("lane.start", "site_threatened", 7, 12.0) is None
+    record = store.record("lane.start")
+    assert record is not None and not record.is_open
+    assert (record.status, record.reason_code) == ("aborted", "abandoned")
+    assert (record.response, record.response_request_id) == ("abandon", 7)
+    assert (record.actor_tag, record.reserved_minerals, record.reserved_vespene) == (None, 0, 0)
+    (released,) = store.drain_released()
+    assert (released.minerals, released.cancel_tasks) == (300, True)  # back to the bank now
+    (aborted,) = [e for e in store.drain_events() if e.status == "failed"]
+    assert aborted.facts["released"] == {"actor_tag": "2000", "minerals": 300, "vespene": 0}
+    assert aborted.facts["avoided_sites"] == [list(NATURAL)]  # the threatened site
+    assert aborted.facts["response_request_id"] == 7 and "Typesafe request 7" in aborted.reason
+    # Deliberate, not a failure: it never counts toward the abort limit (its own bound).
+    assert (aborted.facts["deliberate"], aborted.facts["kind_aborts"]) == (True, 0)
+    assert (aborted.facts["kind_abandons"], aborted.facts["abandons_left"]) == (
+        1,
+        MAX_PLAN_ABANDONS - 1,
+    )
+    cooling, reason = store.start("lane.start", "lane", "expand", 12.0 + 1.0)
+    assert cooling is None and "cools down" in reason
+    later, _ = store.start("lane.start", "lane", "expand", 12.0 + PLAN_COOLDOWN_SECONDS)
+    assert later is not None and later.avoided_sites == (NATURAL,)
+
+
+def test_abandon_never_cancels_an_ordered_or_started_structure() -> None:
+    """D4: abandonment stops an *unissued* plan; there is no building cancel and a
+    started Nexus continues unless destroyed."""
+    store = _threatened_store()
+    store.build_committed("lane.start", "lane.build", "t:1", 400, 0)
+    refusal = store.abandon("lane.start", "site_threatened", 7, 12.0)
+    assert refusal is not None and "in flight" in refusal
+    store.build_acknowledged("lane.start", "lane.build", 14.0)
+    refusal = store.abandon("lane.start", "site_threatened", 7, 15.0)
+    assert refusal is not None and "no cancel" in refusal
+    record = store.record("lane.start")
+    assert record is not None and record.is_open and record.response is None
+    assert store.abandon("other.start", "site_blocked", 7, 15.0) == "no open plan to abandon"
+
+
+def test_a_hosted_response_is_recorded_on_its_plan_once_per_change() -> None:
+    store = _threatened_store()
+    store.respond("lane.start", "delay", 3)
+    store.respond("lane.start", "delay", 3)  # the same response, the same request: no event
+    store.respond("lane.start", "continue", 5)
+    responded = [e for e in store.drain_events() if e.facts["transition"] == "responded"]
+    assert [(e.facts["response"], e.facts["response_request_id"]) for e in responded] == [
+        ("delay", 3),
+        ("continue", 5),
+    ]
+    record = store.record("lane.start")
+    assert record is not None and (record.response, record.response_request_id) == ("continue", 5)
+    assert record.facts()["response_request_id"] == 5
+
+
+def test_an_execution_decision_applies_only_to_the_plan_state_it_answered() -> None:
+    record = _open_record(site=NATURAL, actor_tag=2000)
+    held = ExecutionDecision(
+        "expansion_response",
+        "continue",
+        4,
+        "typesafe",
+        plan_id=record.plan_id,
+        site=NATURAL,
+        actor_tag=2000,
+    )
+    assert held.applies_to(record) and not held.local
+    for change in (
+        {"actor_tag": 2001},
+        {"site": THIRD},
+        {"plan_id": f"{_RUN}:plan:2"},
+        {"status": "aborted"},
+    ):
+        assert not held.applies_to(dataclasses.replace(record, **change)), change
+    assert not held.applies_to(None)
+    assert not ExecutionDecision("expansion_response").applies_to(record)
+    assert held.facts()["actor_tag"] == "2000" and held.facts()["site"] == list(NATURAL)
+    bad: list[dict[str, Any]] = [
+        {"question": "expansion_response", "choice": "balanced"},  # another question's
+        {"question": "production_mix", "choice": None, "request_id": 3},  # local + request
+        {"question": "production_mix", "choice": "balanced", "source": "typesafe"},  # no id
+        {"question": "expansion_response", "choice": "delay", "request_id": 1},  # not hosted
+        {
+            "question": "production_mix",
+            "choice": "balanced",
+            "request_id": 1,
+            "source": "typesafe",
+            "plan_id": "x",
+        },
+        {"question": "strategy"},
+    ]
+    for fields in bad:
+        with pytest.raises(ValueError):
+            ExecutionDecision(**fields)
+
+
+def _guard(operation: str, view: RuntimeView, **args: JsonValue) -> OpOutcome:
+    spec = OPERATIONS[operation]
+    assert isinstance(spec, PredicateOp)
+    return spec.evaluate(view, args)
+
+
+def test_the_response_guards_apply_a_response_only_to_the_plan_it_answered() -> None:
+    record = _open_record(site=NATURAL, actor_tag=2000)
+    view = _View(_obs(), record=record)
+    is_continue = {"plan": "lane.start", "response": "continue"}
+    assert not _guard("expansion_response_is", view, **is_continue).ok
+    assert _guard("expansion_response_local", view, plan="lane.start").ok
+    bound = {"plan_id": record.plan_id, "site": NATURAL, "actor_tag": 2000}
+    view.executions["expansion_response"] = ExecutionDecision(
+        "expansion_response", "continue", 9, "typesafe", **bound
+    )
+    chosen = _guard("expansion_response_is", view, **is_continue)
+    assert chosen.ok and chosen.facts["request_id"] == 9 and chosen.facts["applies"] is True
+    assert not _guard("expansion_response_is", view, plan="lane.start", response="delay").ok
+    assert not _guard("expansion_response_local", view, plan="lane.start").ok
+    # Another worker holds the plan now: the response no longer applies -- local again.
+    moved = _View(_obs(), record=dataclasses.replace(record, actor_tag=2001))
+    moved.executions = dict(view.executions)
+    stale = _guard("expansion_response_is", moved, **is_continue)
+    assert not stale.ok and stale.facts["applies"] is False and "the local graph" in stale.reason
+    assert _guard("expansion_response_local", moved, plan="lane.start").ok
+
+
+def test_the_mix_guards_read_the_hosted_mix_in_force() -> None:
+    view = _View(_obs())
+    assert _guard("production_mix_local", view).ok
+    assert not _guard("production_mix_is", view, mix="balanced").ok
+    view.executions["production_mix"] = ExecutionDecision(
+        "production_mix", "stalker_heavy", 4, "typesafe"
+    )
+    assert _guard("production_mix_is", view, mix="stalker_heavy").ok
+    assert not _guard("production_mix_is", view, mix="balanced").ok
+    assert not _guard("production_mix_local", view).ok
+
+
+def test_the_blocked_site_check_is_the_site_selection_read_without_committing() -> None:
+    """Blocked: the natural refused (avoided) and the only other site beyond the path
+    bound. The check passes with the selection's code and facts and commits nothing;
+    a free site, a pending path query or a static map failure is not a blocked site."""
+    record = _open_record(avoided_sites=(NATURAL,))
+    args: dict[str, JsonValue] = {
+        "plan": "lane.start",
+        "candidates": 8,
+        "clearance": 6.0,
+        "max_path_ratio": 1.5,
+    }
+    far = _View(_obs(expansion_paths=(PathFact(NATURAL, 30.0), PathFact(THIRD, 60.0))), record)
+    blocked = _guard("plan_site_blocked", far, **args)
+    selection = _select_expansion(far)
+    assert blocked.ok and blocked.code == selection.code == "site_blocked"
+    assert blocked.facts["beyond_bound"] == 1 and blocked.facts["blocked"] is True
+    assert {k: v for k, v in blocked.facts.items() if k != "blocked"} == dict(selection.facts)
+    near = _View(_obs(expansion_paths=(PathFact(NATURAL, 30.0), PathFact(THIRD, 40.0))), record)
+    free = _guard("plan_site_blocked", near, **args)
+    assert not free.ok and free.code is None and free.facts["site"] == list(THIRD)
+    assert not _guard("plan_site_blocked", _View(_obs(), record), **args).ok  # path_pending
+    nowhere = _obs(expansion_paths=(PathFact(NATURAL, None), PathFact(THIRD, None)))
+    assert not _guard("plan_site_blocked", _View(nowhere, _open_record()), **args).ok
+    occupied = _obs(
+        expansion_paths=(PathFact(NATURAL, 30.0), PathFact(THIRD, 40.0)),
+        remembered_enemy_structures=(
+            Entity(9001, "Pylon", NATURAL, 200.0, is_structure=True),
+            Entity(9002, "Pylon", THIRD, 200.0, is_structure=True),
+        ),
+    )
+    taken = _guard("plan_site_blocked", _View(occupied, _open_record()), **args)
+    assert taken.ok and taken.code == "site_occupied"
+
+
+def test_plan_abandon_stops_an_unissued_plan_and_never_an_ordered_one() -> None:
+    spec = OPERATIONS["plan_abandon"]
+    assert isinstance(spec, ActionOp)
+    args: dict[str, JsonValue] = {"plan": "lane.start", "reason": "site_threatened"}
+    plan = spec.plan(_View(_obs(), _open_record()), args)
+    assert plan.effect is not None and plan.effect.action == "abandon"
+    assert (plan.effect.plan, plan.effect.cause, plan.code) == (
+        "lane.start",
+        "site_threatened",
+        "abandoned",
+    )
+    assert plan.wait_reason is not None  # the lane holds for the tick (running)
+    for changes in ({"build_in_flight": True}, {"acknowledged_game_seconds": 30.0}):
+        refused = spec.plan(_View(_obs(), _open_record(**changes)), args)
+        assert refused.effect is None and refused.failure_reason is not None
+        assert "no building cancel" in refused.failure_reason
+    gone = spec.plan(_View(_obs(), None), args)
+    assert gone.effect is None and gone.failure_reason == "lane.start has no open plan"
+    assert spec.outcomes == frozenset({"running", "failure"})  # never a success
+
+
+def test_the_v2_graph_decides_expansion_responses_at_its_threat_and_blocked_points() -> None:
+    points = {p.node_id: p for p in execution_points(_V2) if p.question == "expansion_response"}
+    threat, blocked = points["expansion.site_safe.respond"], points["expansion.blocked.respond"]
+    assert set(points) == {threat.node_id, blocked.node_id}
+    assert (threat.choices, threat.cause, threat.plan) == (
+        ("continue", "delay", "abandon"),
+        "site_threatened",
+        PLAN_NODE,
+    )
+    assert (blocked.choices, blocked.cause, blocked.plan) == (
+        ("delay", "abandon"),
+        "site_blocked",
+        PLAN_NODE,
+    )
+    # The local fallback is the graph's own delay at both points; continue and abandon
+    # are hosted only.
+    for point in points.values():
+        assert {b.choice for b in point.branches if b.local} == {"delay"}
+    for node_id, cause in (
+        ("expansion.site_safe.abandon.go", "site_threatened"),
+        ("expansion.blocked.abandon.go", "site_blocked"),
+    ):
+        assert dict(_V2.node(node_id).args) == {"plan": PLAN_NODE, "reason": cause}
+    # The blocked check runs the very selection the site stage commits (one argument set).
+    check = dict(_V2.node("expansion.blocked.check").args)
+    site = dict(_V2.node("expansion.site").args)
+    assert site.pop("bind") == "natural" and check == site
+    # Only an unissued plan reaches the threat point: an issued build passes first.
+    assert _V2.node("expansion.site_safe").children == (
+        "expansion.site_safe.clear",
+        "expansion.site_safe.issued",
+        threat.node_id,
+    )
+    assert _V2.node("expansion.course").children == ("expansion.blocked", "expansion.stages")
+
+
+# ---------------------------------------------------------------------------
+# Step 220 iteration 2: a deliberate abandon is not a failure, yet stays bounded
+# ---------------------------------------------------------------------------
+
+
+def test_abandons_never_disable_a_kind_yet_are_bounded_by_their_own_cap() -> None:
+    """MAX_PLAN_ABANDONS deliberate abandons (as many as the failure limit) never trip
+    abort_limit -- expansion stays allowed -- and the next abandon is refused, so the
+    abandon-and-restart loop is finite; failures keep their own limit."""
+    assert MAX_PLAN_ABANDONS >= MAX_PLAN_ABORTS  # enough abandons to have tripped it
+    store = PlanStore(_RUN, kinds=("expand",))
+    now = 10.0
+    for request_id in range(1, MAX_PLAN_ABANDONS + 1):
+        record, reason = store.start("lane.start", "lane", "expand", now)
+        assert record is not None, reason
+        assert store.abandon_refusal("lane.start") is None
+        assert store.abandon("lane.start", "site_threatened", request_id, now + 1.0) is None
+        now += 1.0 + PLAN_COOLDOWN_SECONDS
+    assert store.slot("macro").disabled == ()  # never abort_limit
+    assert store.abandons("expand") == MAX_PLAN_ABANDONS and store.aborts == MAX_PLAN_ABANDONS
+    record, _ = store.start("lane.start", "lane", "expand", now)
+    assert record is not None  # still allowed to expand
+    refusal = store.abandon_refusal("lane.start")
+    assert refusal is not None and f"abandoned {MAX_PLAN_ABANDONS} times" in refusal
+    assert store.abandon("lane.start", "site_threatened", 99, now + 1.0) == refusal
+    open_record = store.record("lane.start")
+    assert open_record is not None and open_record.is_open  # the deadlines decide now
+    for failure in range(MAX_PLAN_ABORTS):  # failures still disable on their own count
+        if failure:
+            now += 1.0 + PLAN_COOLDOWN_SECONDS
+            again, reason = store.start("lane.start", "lane", "expand", now)
+            assert again is not None, reason
+        assert store.abort("lane.start", "timeout", "deadline", now + 1.0)
+    assert store.slot("macro").disabled == (("expand", "abort_limit"),)
+
+
+def test_a_blocked_abandon_renews_the_avoidance_of_the_sites_that_blocked_it() -> None:
+    """Plan 1 is aborted over the natural (avoided until 20 + PLAN_SITE_AVOID_SECONDS).
+    Plan 2 starts with the natural avoided -- blocked -- and is abandoned there at 100:
+    the natural's avoidance is renewed from 100, so plan 3, started after the first
+    avoidance lapsed, still avoids it."""
+    store = _store_with_plan()
+    store.set_site("lane.start", NATURAL, 10.5, replaced=None)
+    store.after_lane(
+        "lane.start",
+        stage="lane.wait",
+        rank=3,
+        failed=False,
+        waiting=True,
+        code="site_threatened",
+        reason="threat",
+        now=11.0,
+    )
+    assert store.abort("lane.start", "timeout", "threat persisted", 20.0)
+    second, _ = store.start("lane.start", "lane", "expand", 40.0)
+    assert second is not None and second.avoided_sites == (NATURAL,) and second.site is None
+    assert store.abandon("lane.start", "site_blocked", 5, 100.0) is None
+    (aborted,) = [e for e in store.drain_events() if e.facts.get("transition") == "abandoned"]
+    assert aborted.facts["avoided_sites"] == [list(NATURAL)]  # renewed, though no own site
+    third, _ = store.start("lane.start", "lane", "expand", 20.0 + PLAN_SITE_AVOID_SECONDS + 1.0)
+    assert third is not None and third.avoided_sites == (NATURAL,)  # still avoided
+    store.complete("lane.start", 150.0)
+    fourth, _ = store.start("lane.start", "lane", "expand", 100.0 + PLAN_SITE_AVOID_SECONDS)
+    assert fourth is not None and fourth.avoided_sites == ()  # the renewal lapses too

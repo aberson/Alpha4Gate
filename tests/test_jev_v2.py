@@ -21,6 +21,12 @@ Grouped reinforcement, recovery, bounded build failures and the Pylon plan are
 also exercised scenario by scenario in ``test_jev_army.py`` and
 ``test_jev_economy.py`` through the same production path.
 
+Step 220 (hosted execution choices) closes the module: through the production
+controller and the HTTP provider boundary, each expansion response (continue, delay,
+abandon) and each production mix changes the subsequent legal commands; late replies
+after the plan's worker, site or stage changed are refused; a stop cancels whichever
+question is pending; and request -> plan -> task evidence is recorded.
+
 Step 218 (limited tech and a mixed army): the graph's contract (a tech plan lane
 before the expansion's, Stalker production within composition guards, combat lanes
 of Zealots and Stalkers, air threats for anti-air units only), the new operation
@@ -36,6 +42,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -56,7 +63,7 @@ from sc2.ids.ability_id import AbilityId
 
 import jev.bot
 from jev.bot import JevBot, JevController
-from jev.contracts import Entity, Event, Observation, Order, Point, Policy
+from jev.contracts import EnemySighting, Entity, Event, Observation, Order, Point, Policy
 from jev.decision import ARMY_QUESTION, Answer, DecisionConfig, Question
 from jev.operations import (
     BUILD_ABILITY,
@@ -71,20 +78,29 @@ from jev.operations import (
     Binding,
     PredicateOp,
     distance,
+    execution_points,
     planned_supply,
     validate_operation_args,
 )
-from jev.plans import PlanStore, StrategySlot
+from jev.plans import (
+    MAX_PLAN_ABANDONS,
+    PLAN_TIMEOUT_SECONDS,
+    PlanStore,
+    StrategySlot,
+)
 from jev.policy import PolicyError
 from jev.runner import DIAGNOSTICS_FILE, MatchLimits, MatchOptions, run_match
-from jev.runtime import NODE_BUDGET_REASON, STRATEGY_DECISION_REASON
+from jev.runtime import EXECUTION_DECISION_REASONS, NODE_BUDGET_REASON, STRATEGY_DECISION_REASON
 from jev.sc2_adapter import GAME_LOOPS_PER_SECOND
 from jev.strategy import (
     ANSWER_WAIT_EXPIRED_REASON,
+    HARMLESS_AIR_TYPES,
+    QUESTION_PRIORITY,
     STARVATION_SECONDS,
     HostedQuestions,
     StrategyBranch,
     answer_wait_seconds,
+    mix_ratios,
     strategy_branches,
 )
 from jev.telemetry import read_run_metadata, read_run_state
@@ -1258,6 +1274,7 @@ def _hosted_match(
     *hooks: Any,
     max_requests: int = 450,
     game_per_wall: float = 1.0,
+    bundle: Any = None,
 ) -> _Hosted:
     """Play ``world`` through run_match with the Typesafe provider over a scripted
     HTTP transport: ``answer(question_id, options)`` returns ``(choice, confidence)``
@@ -1295,7 +1312,8 @@ def _hosted_match(
     wall = _Wall()
     launcher = _HostedLauncher(world, steps, run.hook(every), wall, game_per_wall)
     options = MatchOptions(decision_provider="typesafe", decision_max_requests=max_requests)
-    outcome = run_match(options, load_v2_policy(), launcher=launcher, run_root=run_root, clock=wall)
+    chosen = load_v2_policy() if bundle is None else bundle  # a candidate policy, if given
+    outcome = run_match(options, chosen, launcher=launcher, run_root=run_root, clock=wall)
     (run_dir,) = [path for path in run_root.iterdir() if path.is_dir()]
     return _Hosted(run, outcome, requests, run_dir)
 
@@ -1489,7 +1507,9 @@ def test_strategy_and_army_share_the_runner_request_cap(
         expansion_suite._world(), 120, answer, monkeypatch, tmp_path, max_requests=5
     )
     asked = [next(iter(sent["questions"])) for sent in hosted.requests]
-    assert len(asked) == 5 and set(asked) == {"army_mode", "strategy"}  # one cap for both
+    # One cap for every question (Step 220: this world's Core and gas also make the
+    # production mix eligible, and it shares the same five requests).
+    assert len(asked) == 5 and {"army_mode", "strategy"} <= set(asked) <= set(QUESTION_PRIORITY)
     diagnostics = json.loads((hosted.run_dir / DIAGNOSTICS_FILE).read_text("utf-8"))
     decisions = diagnostics["metrics"]["decisions"]
     assert (decisions["provider"], decisions["calls"], decisions["max_requests"]) == (
@@ -1821,3 +1841,724 @@ def test_without_realtime_a_churning_strategy_question_is_asked_before_its_wait_
     assert wall_waited <= STARVATION_SECONDS + config.interval + 0.5
     # More game time passed than the whole wall bound: a game-time bound would have fired.
     assert dispatched.game_seconds - waiting.game_seconds > answer_wait_seconds(config)
+
+
+# ---------------------------------------------------------------------------
+# Step 220: hosted execution choices through the production controller
+# ---------------------------------------------------------------------------
+#
+# The same production path as Step 219's scenarios (run_match -> JevController ->
+# JevBot.on_step -> HostedQuestions -> the SC2 adapter and BotAIPort, the Typesafe
+# provider over a scripted HTTP transport). Each scenario changes only the hosted
+# reply and compares the legal commands that follow it.
+
+_EXPANSION_SOURCE = EXECUTION_DECISION_REASONS["expansion_response"]
+_MIX_SOURCE = EXECUTION_DECISION_REASONS["production_mix"]
+_THREAT_POINT = "expansion.site_safe.respond"
+_BLOCKED_POINT = "expansion.blocked.respond"
+_RETREAT = "expansion.site_safe.retreat"
+_STALKER_TRAINS = frozenset(
+    {
+        "production.stalkers.train",
+        "production.mix.stalker_heavy.train",
+        "production.mix.zealot_heavy.train",
+    }
+)
+
+
+def _point(node_id: str) -> Any:
+    return next(p for p in execution_points(load_v2_policy().policy) if p.node_id == node_id)
+
+
+def _actor_of(event: Event) -> int | None:
+    actors = None if event.action is None else event.action.get("actor_tags")
+    return int(str(actors[0])) if isinstance(actors, list) and actors else None
+
+
+def _decision_facts(event: Event) -> dict[str, Any]:
+    return {k: v for k, v in event.facts.items() if k.startswith("decision_")}
+
+
+def test_v2_production_mix_branches_carry_each_mix_ratio_and_the_local_fallback() -> None:
+    """The mix decision point: reached whenever a ready, powered Core and Gateway
+    stand (stable conditions, so the question is not asked about a flickering state);
+    each mix's branch is Step 218's Stalker sequence with its own ratio, and the local
+    fallback is balanced, Stalker-heavy once armed air is seen (D2)."""
+    policy = load_v2_policy().policy
+    point = _point("production.stalkers.mix")
+    assert policy.node("production.stalkers").children == (
+        "production.stalkers.core",
+        "production.stalkers.producers",
+        point.node_id,
+    )
+    producers = policy.node("production.stalkers.producers").args["filter"]
+    assert producers == {"types": ["Gateway"], "ready": True, "powered": True}
+    assert mix_ratios(policy, point) == {"zealot_heavy": 0.5, "stalker_heavy": 2.0, "balanced": 1.0}
+    assert {b.choice for b in point.branches if b.local} == {"stalker_heavy", "balanced"}
+    balanced = policy.node("production.stalkers.train").args
+    for branch in point.branches:
+        (train,) = [policy.node(n) for n in branch.nodes if policy.node(n).operation == "train"]
+        same = {k: v for k, v in train.args.items() if k != "max_ratio"}
+        assert same == {k: v for k, v in balanced.items() if k != "max_ratio"}, branch.choice
+        (select,) = [
+            policy.node(n) for n in branch.nodes if policy.node(n).operation == "select_entities"
+        ]
+        assert select.args == policy.node("production.stalkers.gateways").args  # idle only
+    # The balanced (local) branch is Step 218's exact gas -> idle Gateways -> train tail.
+    assert policy.node("production.mix.balanced").children[1:] == (
+        "production.stalkers.gas",
+        "production.stalkers.gateways",
+        "production.stalkers.train",
+    )
+    air = policy.node("production.mix.stalker_heavy.air_seen").args
+    assert (air["filter"]["flying"], air["filter"]["structure"]) == (True, False)
+    assert set(air["filter"]["exclude_types"]) == HARMLESS_AIR_TYPES  # the coordinator's
+    assert air["max_age"] == {"param": "air_threat_age"}
+
+
+def _mix_observation(sightings: tuple[EnemySighting, ...]) -> Observation:
+    zealots = tuple(
+        Entity(6000 + i, "Zealot", (34.0 + i, 38.0), 150, ready=True, can_attack_ground=True)
+        for i in range(4)
+    )
+    stalkers = tuple(
+        Entity(
+            6100 + i,
+            "Stalker",
+            (34.0 + i, 41.0),
+            160,
+            ready=True,
+            can_attack_ground=True,
+            can_attack_air=True,
+        )
+        for i in range(2)
+    )
+    gas = Entity(1500, "Assimilator", (40.5, 30.5), 450, is_structure=True, ready=True)
+    observation = _observation(
+        10.0,
+        minerals=1000,
+        supply_used=30,
+        supply_cap=100,
+        units=(*zealots, *stalkers),
+        structures=(_nexus(), _pylon(1200, (24.0, 36.0)), *_gates(), _core(), gas),
+    )
+    return dataclasses.replace(observation, vespene=400, enemy_sightings=sightings)
+
+
+@pytest.mark.parametrize(
+    ("seen", "node", "stalkers"),
+    [
+        (None, "production.stalkers.train", 2),  # balanced: up to one Stalker per Zealot
+        ("Banshee", "production.mix.stalker_heavy.train", 4),  # armed air: Stalker-heavy
+        ("Overlord", "production.stalkers.train", 2),  # harmless air changes nothing
+    ],
+)
+def test_the_local_mix_is_balanced_and_stalker_heavy_once_armed_air_is_seen(
+    seen: str | None, node: str, stalkers: int
+) -> None:
+    """D2's production fallback with four Zealots and two Stalkers at home and four
+    idle Gateways: balanced trains two more Stalkers, Stalker-heavy four."""
+    sightings: tuple[EnemySighting, ...] = ()
+    if seen is not None:
+        flyer = Entity(7200, seen, (32.0, 32.0), 140, is_flying=True)
+        sightings = (EnemySighting(flyer, 9.0, True),)
+    runtime = _runtime_for(load_v2_policy().policy)
+    runtime.set_strategy(None, {})
+    runtime.set_execution(None, {})
+    result = runtime.tick(_mix_observation(sightings))
+    trains = [c for c in result.commands if c.ability == "GATEWAYTRAIN_STALKER"]
+    assert len(trains) == stalkers and {c.node_id for c in trains} == {node}
+    commanded = [e for e in result.events if e.kind == "command"]
+    assert all(_decision_facts(e) == {} for e in commanded)  # the local graph decided
+
+
+def _threatened_expansion(
+    response: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, steps: int = 100
+) -> tuple[Any, Any, list[int]]:
+    """The launched world with a Marine (unseen yet) at the natural: Typesafe chooses to
+    expand, then answers the expansion response ``response``. 400 minerals arrive once a
+    hosted response is in force (so they test what the response does with them)."""
+    import test_jev_plans as plans_suite
+
+    world = plans_suite._world()
+    world.enemy("Marine", (plans_suite.NATURAL[0] + 3.0, plans_suite.NATURAL[1] + 4.0))
+    funded: list[int] = []
+
+    def fund(world: Any, controller: JevController, index: int) -> None:
+        if controller.runtime.execution("expansion_response").choice and not funded:
+            funded.append(world.state.game_loop)
+            world.minerals += 400
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        if question_id == "strategy":
+            return ("expand", 0.9) if "expand" in options else (options[0], 0.2)
+        if question_id == "expansion_response":
+            return response, 0.9
+        return options[0], 0.2
+
+    hosted = _hosted_match(world, steps, answer, monkeypatch, tmp_path, fund)
+    return hosted, world, funded
+
+
+@pytest.mark.parametrize("response", ["continue", "delay", "abandon"])
+def test_each_expansion_response_changes_the_subsequent_legal_commands(
+    response: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The plan's worker sees the Marine at the site and the local graph delays (the
+    worker retreats). The service is offered exactly the threat point's branches and
+    its accepted reply changes what follows: continue walks the worker back and builds
+    the Nexus at the threatened site; delay keeps the worker back and the plan waiting
+    while production spends the minerals; abandon aborts the unissued plan at once,
+    releasing its worker to the economy. The request id reaches the plan and the
+    commands it caused."""
+    import test_jev_plans as plans_suite
+
+    hosted, world, funded = _threatened_expansion(response, monkeypatch, tmp_path)
+    run = hosted.run
+    assert hosted.outcome.exit_code == 0
+    ((first_id, offered), *_) = hosted.asked("expansion_response")
+    assert offered == list(_point(_THREAT_POINT).choices) == ["continue", "delay", "abandon"]
+    state = hosted.requests[first_id - 1]["state"]
+    assert (state["decision_point"], state["cause"]) == (_THREAT_POINT, "site_threatened")
+    accepted = [
+        e for e in run.events if e.reason == _EXPANSION_SOURCE and e.facts["source"] == "typesafe"
+    ]
+    assert accepted and accepted[0].facts["choice"] == response
+    request_ids = {e.facts["in_force_request_id"] for e in accepted}
+    applied_at = accepted[0].game_loop
+    assert run.controller is not None
+    plan = next(r for r in run.controller.runtime.plans() if r.plan_id.endswith(":plan:1"))
+    assert state["plan"]["plan_id"] == plan.plan_id
+    (worker,) = plans_suite._workers_claimed(run, 1)
+    restarted = [e.game_loop for e in plans_suite._transitions(run, 2)]
+    until = min(restarted, default=math.inf)  # a later plan may claim the worker again
+    after = [
+        e
+        for e in run.events
+        if e.kind == "command" and applied_at <= e.game_loop < until and _actor_of(e) == worker
+    ]
+    retreats_after = [e for e in run.commands(_RETREAT) if e.game_loop >= applied_at]
+    nexus = run.sent(plans_suite.NEXUS_BUILD)
+    trains = [e for e in plans_suite._production_trains(run) if funded and e.game_loop >= funded[0]]
+    if response == "continue":
+        ((_, build),) = nexus  # built at the threatened natural, by the plan's worker
+        assert (build.unit.tag, (build.target.x, build.target.y)) == (worker, plans_suite.NATURAL)
+        commanded = {e.node_id for e in after}
+        assert {plans_suite.MOVE_NODE, plans_suite.BUILD_NODE} <= commanded  # back, and built
+        assert not {n for n in commanded if n.startswith("expansion")} - {
+            plans_suite.MOVE_NODE,
+            plans_suite.BUILD_NODE,
+        }
+        assert retreats_after == []
+        (built,) = run.commands(plans_suite.BUILD_NODE)
+        facts = _decision_facts(built)
+        assert facts["decision_question_id"] == "expansion_response"
+        assert facts["decision_choice"] == "continue" and facts["decision_plan_id"] == plan.plan_id
+        assert facts["decision_request_id"] in request_ids  # request -> plan -> command
+        assert plan.response == "continue" and plan.response_request_id in request_ids
+        assert trains == []  # the plan held the 400 for its Nexus
+        consumed = [e.facts["consumed"] for e in run.events if e.reason == _EXPANSION_SOURCE]
+        assert {"outcome": "build_issued", "choice": "continue"}.items() <= consumed[-1].items()
+    elif response == "delay":
+        assert nexus == []
+        assert {e.node_id for e in after} <= {_RETREAT}  # never back toward the site
+        assert (plan.status, plan.reason_code) == ("waiting", "site_threatened")
+        assert plan.response == "delay" and plan.response_request_id in request_ids
+        assert trains  # a delayed plan holds nothing: production spent the minerals
+    else:
+        assert nexus == [] and retreats_after == []
+        assert (plan.status, plan.reason_code) == ("aborted", "abandoned")
+        assert (plan.response, plan.response_request_id) == ("abandon", min(request_ids))
+        (aborted,) = [e for e in plans_suite._transitions(run, 1) if e.status == "failed"]
+        assert aborted.game_loop == applied_at  # the very tick the answer applied
+        assert aborted.facts["released"]["actor_tag"] == str(worker)  # type: ignore[index]
+        assert aborted.facts["avoided_sites"] == [list(plans_suite.NATURAL)]
+        assert after and not [e for e in after if e.node_id.startswith("expansion")]
+        assert trains  # its minerals were free for production
+        consumed = [e.facts["consumed"] for e in run.events if e.reason == _EXPANSION_SOURCE]
+        assert consumed[-1]["outcome"] == "plan_abandoned"
+    responded = [
+        e for e in plans_suite._transitions(run, 1) if e.facts["transition"] == "responded"
+    ]
+    assert bool(responded) == (response != "abandon")  # abandon: its abort says it
+    assert world.overspent == [] and world.sc2_refusals == []
+
+
+@pytest.mark.parametrize(
+    ("mix", "zealots", "stalkers", "node"),
+    [
+        ("zealot_heavy", 4, 0, None),  # 2 Stalkers already = 4 Zealots x 0.5
+        ("balanced", 2, 2, "production.stalkers.train"),  # up to 4 = 4 x 1
+        ("stalker_heavy", 0, 4, "production.mix.stalker_heavy.train"),  # up to 8 = 4 x 2
+    ],
+)
+def test_each_production_mix_changes_which_units_are_trained(
+    mix: str,
+    zealots: int,
+    stalkers: int,
+    node: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Four Zealots and two Stalkers at home, four idle Gateways; minerals and gas
+    arrive once the hosted mix is in force. Each accepted mix trains a different
+    first round within its composition guard, and every Stalker command carries the
+    request that chose the mix (a Zealot fills in under the local Zealot lane)."""
+    import test_jev_plans as plans_suite
+
+    funded: list[int] = []
+
+    def setup(world: Any, controller: JevController, index: int) -> None:
+        if index == 0:
+            for tag in plans_suite.ZEALOTS[4:]:
+                world.kill(tag)
+            for i in range(2):
+                world.add("Stalker", (34.0 + i, 41.0))
+            world.refresh()
+        if controller.runtime.execution("production_mix").choice and not funded:
+            funded.append(world.state.game_loop)
+            world.minerals += 1000
+            world.vespene += 400
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        if question_id == "strategy":  # pressure: no macro plan holds the minerals
+            return ("pressure", 0.9) if "pressure" in options else (options[0], 0.2)
+        if question_id == "production_mix":
+            return mix, 0.9
+        return options[0], 0.2
+
+    world = plans_suite._world()
+    hosted = _hosted_match(world, 30, answer, monkeypatch, tmp_path, setup)
+    run = hosted.run
+    ((request_id, offered), *_) = hosted.asked("production_mix")
+    assert offered == list(_point("production.stalkers.mix").choices)
+    criteria = hosted.requests[request_id - 1]["questions"]["production_mix"]["criteria"]
+    assert "2:1" in criteria["zealot_heavy"] and "1:2" in criteria["stalker_heavy"]
+    assert funded
+    first_round = [e for e in run.events if e.kind == "command" and funded[0] <= e.game_loop]
+    first_round = [e for e in first_round if e.game_loop < funded[0] + 2 * STEP_LOOPS]
+    trained = [
+        str(e.action["ability"])
+        for e in first_round
+        if e.action and str(e.action["ability"]).startswith("GATEWAYTRAIN")
+    ]
+    assert trained.count("GATEWAYTRAIN_ZEALOT") == zealots
+    assert trained.count("GATEWAYTRAIN_STALKER") == stalkers
+    stalker_commands = [e for e in first_round if e.node_id in _STALKER_TRAINS]
+    assert {e.node_id for e in stalker_commands} == ({node} if node else set())
+    for event in stalker_commands:  # request -> task: the mix that chose them
+        assert _decision_facts(event) == {
+            "decision_question_id": "production_mix",
+            "decision_request_id": request_id,
+            "decision_choice": mix,
+            "decision_plan_id": None,
+        }
+    zealot_commands = [e for e in first_round if e.node_id == "production.zealots.train"]
+    assert all(_decision_facts(e) == {} for e in zealot_commands)
+    mix_facts = [
+        e for e in run.events if e.reason == _MIX_SOURCE and e.facts["source"] == "typesafe"
+    ]
+    assert mix_facts and mix_facts[0].facts["in_force_request_id"] == request_id
+    assert world.overspent == [] and world.sc2_refusals == []
+
+
+def test_a_hosted_abandon_at_a_blocked_site_ends_the_plan_before_its_deadlines(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """SC2 refuses the natural and the only other site is beyond the path bound: the
+    plan is blocked. Only delay and abandon are offered there (no continue branch); the
+    hosted abandon ends the plan at once -- the local graph would have waited out its
+    deadlines -- and the far base is never walked to."""
+    import test_jev_plans as plans_suite
+
+    world = plans_suite._world(paths={plans_suite.NATURAL: 30.0, plans_suite.THIRD: 60.0})
+    world.illegal = lambda site: site == plans_suite.NATURAL
+    funded: list[int] = []
+
+    def fund(world: Any, controller: JevController, index: int) -> None:
+        if controller.runtime.plan(plans_suite.PLAN_NODE) is not None and not funded:
+            funded.append(index)
+            world.minerals += 400
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        if question_id == "strategy":
+            return ("expand", 0.9) if "expand" in options else (options[0], 0.2)
+        if question_id == "expansion_response":
+            return "abandon", 0.9
+        return options[0], 0.2
+
+    hosted = _hosted_match(world, 110, answer, monkeypatch, tmp_path, fund)
+    run = hosted.run
+    asked = hosted.asked("expansion_response")
+    assert asked and {tuple(options) for _, options in asked} == {("delay", "abandon")}
+    state = hosted.requests[asked[0][0] - 1]["state"]
+    assert (state["decision_point"], state["cause"]) == (_BLOCKED_POINT, "site_blocked")
+    assert run.controller is not None
+    plan = next(r for r in run.controller.runtime.plans() if r.plan_id.endswith(":plan:1"))
+    assert (plan.status, plan.reason_code, plan.response) == ("aborted", "abandoned", "abandon")
+    assert plan.response_request_id == asked[0][0]
+    assert plan.finished_game_seconds is not None
+    assert plan.finished_game_seconds < plan.started_game_seconds + PLAN_TIMEOUT_SECONDS / 2
+    sent = run.sent(plans_suite.NEXUS_BUILD)
+    assert all((c.target.x, c.target.y) == plans_suite.NATURAL for _, c in sent)  # never THIRD
+    waits = [e for e in run.node_events("expansion.blocked.wait") if e.status == "running"]
+    assert waits  # the local delay held the plan at the blocked point until the answer
+
+
+@pytest.mark.parametrize("change", [None, "harmless", "worker", "site", "stage", "armed"])
+def test_a_late_response_after_the_worker_site_or_stage_changed_is_refused(
+    change: str | None,
+) -> None:
+    """The expansion response request is held while the world moves on -- the plan's
+    worker dies (a replacement is claimed), an enemy structure is found on the site (the
+    plan re-chooses), home is raided (the plan's stage changes), or a Zealot passing the
+    site sees another armed enemy there (the threat changed). The late continue is
+    refused (stale_answer) and nothing it would have commanded happens. Unchanged -- or
+    when the Zealot sees only an enemy worker there, which the graph's own site check
+    never counts as a threat -- the same reply applies."""
+    import test_jev_macro
+    import test_jev_plans as plans_suite
+
+    gate = asyncio.Event()
+    held: list[int] = []  # the request id held: the first one asked at the threat wait
+
+    class Service:
+        async def decide(
+            self, state: Any, choices: tuple[str, ...], question: Question = ARMY_QUESTION
+        ) -> Answer:
+            probabilities: dict[str, Any] = dict.fromkeys(choices, 0.05)
+            choice, confidence = choices[0], 0.2
+            if question.question_id == "strategy" and "expand" in choices:
+                choice, confidence = "expand", 0.9
+            elif question.question_id == "expansion_response":
+                at_wait = state["plan"]["stage_node_id"] == "expansion.site_safe.wait"
+                if not held and at_wait:  # a stable stage: only the change can stale it
+                    held.append(questions.calls)
+                    await gate.wait()
+                if held:
+                    choice, confidence = "continue", 0.9
+            probabilities[choice] = confidence
+            return Answer(choice, confidence, probabilities, "jev-test-model", 9, 1)
+
+    world = plans_suite._world()
+    world.enemy("Marine", (plans_suite.NATURAL[0] + 3.0, plans_suite.NATURAL[1] + 4.0))
+    wall = _Wall()
+    bundle = load_v2_policy()
+    questions = HostedQuestions(Service(), DecisionConfig(timeout=200), bundle.policy, clock=wall)
+    controller = JevController(
+        bundle,
+        run_id=uuid.uuid4().hex,
+        limits=MatchLimits(900, 1800),
+        clock=wall,
+        decisions=questions,
+    )
+    run = test_jev_macro._Run(world)
+    changed: list[int] = []
+
+    def hold(world: Any, controller: JevController, index: int) -> None:
+        if gate.is_set() or not held:
+            return
+        if change is None:
+            gate.set()
+            return
+        natural = plans_suite.NATURAL
+        if changed:
+            if index >= changed[0] + 2:
+                gate.set()  # the reply arrives after the change, well inside its freshness
+            return
+        changed.append(index)
+        record = controller.runtime.plan(plans_suite.PLAN_NODE)
+        assert record is not None and record.actor_tag is not None
+        if change == "worker":
+            world.kill(record.actor_tag)
+        elif change == "stage":
+            world.enemy("Marine", (33.0, 36.0))  # a raid at home: the plan holds elsewhere
+        else:  # a Zealot passing the natural sees what stands there
+            world.bodies[plans_suite.ZEALOTS[0]].position = (natural[0] - 6.0, natural[1])
+            if change == "site":
+                world.enemy("Pylon", natural)  # an enemy structure on the site
+            beyond = (natural[0] + 2.0, natural[1] - 4.0)  # past the site: no home threat
+            if change == "armed":
+                world.enemy("Marine", beyond)  # a new threat at the site
+            elif change == "harmless":
+                world.enemy("Probe", beyond)  # a worker: never a site threat
+
+    launcher = _HostedLauncher(world, 70, run.hook(hold), wall)
+    launcher.play(controller, world, MatchOptions())
+    assert held and gate.is_set()
+    first = held[0]
+    facts = [e.facts for e in run.events if e.reason == _EXPANSION_SOURCE]
+    resolved = [f for f in facts if f["answer_request_id"] == first]
+    assert resolved and resolved[0]["answer"] == "continue"
+    caused = [e for e in run.events if _decision_facts(e).get("decision_request_id") == first]
+    responded = [
+        e
+        for e in plans_suite._transitions(run, 1)
+        if e.facts["transition"] == "responded" and e.facts["response_request_id"] == first
+    ]
+    if change in (None, "harmless"):
+        assert resolved[0]["reason"] == "accepted"
+        assert caused and responded  # applied: the worker walked on under that request
+        return
+    assert resolved[0]["reason"] == "stale_answer"  # the single-sourced stale code
+    assert caused == [] and responded == []  # the late reply never reached the graph
+    record = controller.runtime.plan(plans_suite.PLAN_NODE)
+    assert record is not None
+    if change == "worker":
+        assert len(plans_suite._workers_claimed(run, 1)) >= 2
+    if change == "site":
+        assert record.site == plans_suite.THIRD
+
+
+def test_an_applying_continue_cancels_the_retreat_before_the_lanes_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Through the production runner and the HTTP provider: the worker sees the Marine
+    and retreats under the local delay; a slow probe keeps the retreat under way while
+    the service's continue for that very plan, site and worker arrives. On the tick the
+    continue comes into force the retreat task is cancelled before the lanes run (it
+    could otherwise hold the worker against the continue) and the walk back to the site
+    is commanded on that same tick, carrying the accepted request id."""
+    import test_jev_plans as plans_suite
+
+    monkeypatch.setitem(plans_suite._SPEED, "Probe", 1.0)  # a long retreat
+    world = plans_suite._world()
+    world.enemy("Marine", (plans_suite.NATURAL[0] + 3.0, plans_suite.NATURAL[1] + 4.0))
+    retreating: dict[int, bool] = {}
+
+    def watch(world: Any, controller: JevController, index: int) -> None:
+        active = controller.runtime.active_tasks()
+        retreating[world.state.game_loop] = any(t.node_id == _RETREAT for t in active)
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        if question_id == "strategy":
+            return ("expand", 0.9) if "expand" in options else (options[0], 0.2)
+        if question_id == "expansion_response":
+            return "continue", 0.9
+        return options[0], 0.2
+
+    hosted = _hosted_match(world, 200, answer, monkeypatch, tmp_path, watch)
+    run = hosted.run
+    accepted = [
+        e for e in run.events if e.reason == _EXPANSION_SOURCE and e.facts["source"] == "typesafe"
+    ]
+    assert accepted
+    request_id, applied_at = accepted[0].facts["in_force_request_id"], accepted[0].game_loop
+    assert retreating[applied_at]  # the reply came into force mid-retreat
+    (cancelled,) = [e for e in run.tasks(_RETREAT, "cancelled") if e.game_loop >= applied_at]
+    assert cancelled.game_loop == applied_at
+    assert cancelled.reason == f"expansion response changed to continue (request {request_id})"
+    walks = [e for e in run.commands(plans_suite.MOVE_NODE) if e.game_loop >= applied_at]
+    assert walks and walks[0].game_loop == applied_at  # the walk back, the same tick
+    assert cancelled.sequence < walks[0].sequence  # cancelled before the lanes ran
+    assert _decision_facts(walks[0])["decision_request_id"] == request_id
+    responded = [
+        e for e in plans_suite._transitions(run, 1) if e.facts["transition"] == "responded"
+    ]
+    assert responded and responded[0].facts["response_request_id"] == request_id
+
+
+def test_a_stop_cancels_a_pending_execution_request() -> None:
+    import test_jev_macro
+    import test_jev_plans as plans_suite
+
+    cancelled: list[str] = []
+
+    class Service:
+        async def decide(
+            self, state: Any, choices: tuple[str, ...], question: Question = ARMY_QUESTION
+        ) -> Answer:
+            if question.question_id == "production_mix":
+                try:
+                    await asyncio.Future()  # never answers
+                except asyncio.CancelledError:
+                    cancelled.append(question.question_id)
+                    raise
+            probabilities: dict[str, Any] = dict.fromkeys(choices, 0.05)
+            probabilities[choices[0]] = 0.2
+            return Answer(choices[0], 0.2, probabilities, "jev-test-model", 9, 1)
+
+    world = plans_suite._world()
+    wall = _Wall()
+    bundle = load_v2_policy()
+    questions = HostedQuestions(Service(), DecisionConfig(timeout=200), bundle.policy, clock=wall)
+    controller = JevController(
+        bundle,
+        run_id=uuid.uuid4().hex,
+        limits=MatchLimits(900, 1800),
+        clock=wall,
+        decisions=questions,
+    )
+    run = test_jev_macro._Run(world)
+    stopped: list[int] = []
+
+    def stop(world: Any, controller: JevController, index: int) -> None:
+        if questions.pending_question == "production_mix" and not stopped:
+            stopped.append(index)
+            controller.request_stop()
+
+    _HostedLauncher(world, 60, run.hook(stop), wall).play(controller, world, MatchOptions())
+    assert stopped and controller.terminal == "stopped"
+    assert cancelled == ["production_mix"]
+    assert questions.task is None and questions.disabled
+
+
+def test_v2_scripted_runs_report_execution_questions_as_the_local_graph() -> None:
+    """The attribution panel's scripted provider: no execution question is asked; each
+    one's facts are reported on its decision point's lane as the local graph, and no
+    task or command carries a hosted decision."""
+    import test_jev_plans as plans_suite
+
+    run = plans_suite._expand(plans_suite._world(), 30)
+    for question, lane in (("expansion_response", "expansion"), ("production_mix", "production")):
+        reported = [e for e in run.events if e.reason == EXECUTION_DECISION_REASONS[question]]
+        assert reported and {e.node_id for e in reported} == {lane}
+        assert {(e.facts["source"], e.facts["calls"]) for e in reported} == {("local_graph", 0)}
+    assert not [e for e in run.events if e.kind in ("task", "command") and _decision_facts(e)]
+
+
+def test_all_four_questions_share_the_runner_request_cap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Through run_match with --decision-max-requests 12: a threatened expansion with a
+    Core and gas makes all four questions eligible; together they spend exactly the one
+    cap, with one global request sequence, and the archive counts every request."""
+    import test_jev_plans as plans_suite
+
+    world = plans_suite._world()
+    world.enemy("Marine", (plans_suite.NATURAL[0] + 3.0, plans_suite.NATURAL[1] + 4.0))
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        if question_id == "strategy":
+            return ("expand", 0.9) if "expand" in options else (options[0], 0.2)
+        return ("delay", 0.9) if question_id == "expansion_response" else (options[0], 0.2)
+
+    hosted = _hosted_match(world, 120, answer, monkeypatch, tmp_path, max_requests=12)
+    asked = [next(iter(sent["questions"])) for sent in hosted.requests]
+    assert len(asked) == 12 and set(asked) == set(QUESTION_PRIORITY)  # one cap for all four
+    diagnostics = json.loads((hosted.run_dir / DIAGNOSTICS_FILE).read_text("utf-8"))
+    decisions = diagnostics["metrics"]["decisions"]
+    assert (decisions["calls"], decisions["max_requests"]) == (12, 12)
+    # Every request resolved (the low-confidence mock replies fail answer validation).
+    assert decisions["answers"] + sum(decisions["failures"].values()) == 12
+    last = {
+        reason: [e.facts for e in hosted.run.events if e.reason == reason][-1]
+        for reason in (STRATEGY_DECISION_REASON, *EXECUTION_DECISION_REASONS.values())
+    }
+    assert {facts["calls"] for facts in last.values()} == {12}
+    assert {facts["max_requests"] for facts in last.values()} == {12}
+
+
+def test_hosted_abandons_stay_bounded_and_never_disable_the_expansion(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Every plan is blocked (the natural refused, the only other site beyond the path
+    bound) and the service answers abandon whenever it may. Abandons are deliberate:
+    they never count toward abort_limit, so the expansion is never disabled by them --
+    yet after MAX_PLAN_ABANDONS the store refuses another, abandon is no longer offered
+    (so the question has no alternative and is not asked), and the next plan is left to
+    its own deadlines: the abandon-and-restart loop ends."""
+    import test_jev_plans as plans_suite
+
+    world = plans_suite._world(paths={plans_suite.NATURAL: 30.0, plans_suite.THIRD: 60.0})
+    world.illegal = lambda site: site == plans_suite.NATURAL
+    funded: list[int] = []
+
+    def fund(world: Any, controller: JevController, index: int) -> None:
+        if controller.runtime.plan(plans_suite.PLAN_NODE) is not None and not funded:
+            funded.append(index)
+            world.minerals += 400
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        if question_id == "strategy":
+            return ("expand", 0.9) if "expand" in options else (options[0], 0.2)
+        if question_id == "expansion_response":
+            return ("abandon" if "abandon" in options else options[0]), 0.9
+        return options[0], 0.2
+
+    hosted = _hosted_match(world, 360, answer, monkeypatch, tmp_path, fund)
+    run = hosted.run
+    assert run.controller is not None
+    runtime = run.controller.runtime
+    plans = [p for p in runtime.plans() if p.kind == "expand"]
+    abandoned = [p for p in plans if p.reason_code == "abandoned"]
+    assert len(abandoned) == MAX_PLAN_ABANDONS  # bounded by its own cap
+    cap_reached = abandoned[-1].finished_game_seconds
+    assert cap_reached is not None
+    later = [p for p in plans if p.started_game_seconds > cap_reached]
+    assert later and all(p.reason_code != "abandoned" for p in later)  # the deadlines decide
+    (macro,) = [s for s in runtime.plan_slots() if s.slot == "macro"]
+    assert ("expand", "abort_limit") not in macro.disabled  # never disabled by abandons
+    aborts = [
+        e for e in run.events if e.kind == "diagnostic" and e.facts.get("transition") == "abandoned"
+    ]
+    assert [e.facts["kind_abandons"] for e in aborts] == list(range(1, MAX_PLAN_ABANDONS + 1))
+    assert {(e.facts["deliberate"], e.facts["kind_aborts"]) for e in aborts} == {(True, 0)}
+    asked = hosted.asked("expansion_response")
+    last_abandon_ask = max(n for n, options in asked if "abandon" in options)
+    assert all("abandon" not in options for n, options in asked if n > last_abandon_ask)
+
+
+@pytest.mark.parametrize("branch", ["fails_after_the_guard", "succeeds"])
+def test_a_response_is_recorded_on_its_plan_only_when_its_branch_commits(
+    branch: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The service answers delay at the threatened site. The delay guard passes, but
+    in a candidate policy the branch's next child (where the worker would retreat to)
+    finds nothing, so the branch fails: like a binding, the response never commits --
+    the plan shows no response and no 'responded' transition. With the packaged policy
+    the branch runs and the plan records delay with its request id."""
+    import test_jev_plans as plans_suite
+
+    bundle = load_v2_policy()
+    if branch == "fails_after_the_guard":
+        document = json.loads(bundle.policy_bytes)
+        for node in document["nodes"]:
+            if node["id"] == "expansion.site_safe.home":  # the delay's retreat point
+                node["operation"] = "select_entities"
+                node["args"] = {
+                    "collection": "visible_enemies",
+                    "filter": {"types": ["Zergling"]},  # never there: the select fails
+                    "limit": 1,
+                    "bind": "expansion_home",
+                }
+        candidate = tmp_path / "candidate.json"
+        candidate.write_text(json.dumps(document), encoding="utf-8")
+        bundle = load_v2_policy(candidate)
+    world = plans_suite._world()
+    world.enemy("Marine", (plans_suite.NATURAL[0] + 3.0, plans_suite.NATURAL[1] + 4.0))
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        if question_id == "strategy":
+            return ("expand", 0.9) if "expand" in options else (options[0], 0.2)
+        if question_id == "expansion_response":
+            return "delay", 0.9
+        return options[0], 0.2
+
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    hosted = _hosted_match(world, 100, answer, monkeypatch, runs, bundle=bundle)
+    run = hosted.run
+    accepted = [
+        e for e in run.events if e.reason == _EXPANSION_SOURCE and e.facts["source"] == "typesafe"
+    ]
+    assert accepted and accepted[0].facts["choice"] == "delay"  # in force either way
+    request_ids = {e.facts["in_force_request_id"] for e in accepted}
+    chosen = run.node_events("expansion.site_safe.delay.chosen")
+    assert [e for e in chosen if e.status == "success"]  # the guard itself passed
+    assert run.controller is not None
+    plan = next(r for r in run.controller.runtime.plans() if r.plan_id.endswith(":plan:1"))
+    responded = [
+        e for e in plans_suite._transitions(run, 1) if e.facts["transition"] == "responded"
+    ]
+    delays = run.node_events("expansion.site_safe.delay")
+    if branch == "fails_after_the_guard":
+        assert delays and {e.status for e in delays} == {"failure"}  # never committed
+        assert (plan.response, plan.response_request_id) == (None, None)
+        assert responded == []
+        plan_facts = [e.facts for e in plans_suite._plan_events(run, 1)]
+        assert all(f["response"] is None for f in plan_facts)
+        return
+    assert "running" in {e.status for e in delays}  # the branch ran: the worker retreats
+    assert plan.response == "delay" and plan.response_request_id in request_ids
+    assert responded and responded[0].facts["response_request_id"] in request_ids

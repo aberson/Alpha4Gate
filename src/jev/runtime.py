@@ -85,6 +85,24 @@ One :class:`JevRuntime` executes one validated policy for one run:
   started it (``decided_by``, and ``decision_request_id`` when a hosted choice
   held its slot). The decision's facts are reported like the army's, as a
   :data:`STRATEGY_DECISION_REASON` diagnostic on the first lane holding a guard.
+* **Hosted execution choices (Jev v2, plan J2 Step 220, D2/D4).** Only for a policy
+  with execution decision points (:func:`jev.operations.execution_points`). The
+  controller hands the runtime what each execution question's guards read
+  (:meth:`JevRuntime.set_execution`), and the coordinator reads which decision
+  points the latest tick evaluated (:meth:`JevRuntime.reached`). Request -> plan ->
+  task evidence (D5): a hosted guard that passes puts its question, request id and
+  choice in the lane's decision context (root-local, committed only on success like
+  a binding), so every task created under it -- and its task and command events --
+  carries ``decision_question_id`` / ``decision_request_id`` /
+  ``decision_choice``; a hosted expansion response that applies is recorded on the
+  plan (``response``, ``response_request_id``) after the lane, only when its branch
+  committed (staged on the frame and rolled back like the context), and
+  ``plan_abandon`` aborts it with code ``abandoned`` and that request. When the
+  response in force switches branches (say delay to continue), the tasks of the
+  branch no longer chosen are cancelled before the lanes run (the army-mode rule), so
+  a retreat cannot hold the worker against a continue. Each question's facts are
+  reported like the strategy's, as a diagnostic on the first lane holding its guard
+  (:data:`EXECUTION_DECISION_REASONS`).
 * **Bounded recovery from unreachable targets (D4).** A task that gives up
   makes its intent a fresh task on retry (the order SC2 still carries never
   counts as already done). For every action node a ``demotions`` argument
@@ -164,6 +182,7 @@ from jev.contracts import (
     safe_repr,
 )
 from jev.operations import (
+    EXECUTION_GUARDS,
     EXPANSION_STRUCTURE,
     MAX_TRACKED_FINISHES,
     OP_BUILD,
@@ -172,6 +191,7 @@ from jev.operations import (
     OP_GATHER,
     OP_GATHER_GAS,
     OP_RELEASE_GAS,
+    OP_SIGHTING_COUNT_COMPARE,
     OP_START_PLAN,
     OP_STRATEGY_IS,
     OP_TRAIN,
@@ -195,14 +215,21 @@ from jev.operations import (
     compile_filter,
     decode_site,
     distance,
+    execution_points,
+    matching_sightings,
     resolve_args,
     tracked_nodes,
 )
 from jev.plans import (
+    EXECUTION_QUESTIONS,
+    EXPANSION_RESPONSES,
     PLAN_KINDS,
     PLAN_SLOT,
     PLAN_SLOTS,
     BuildFailure,
+    ExecutionDecision,
+    ExecutionQuestion,
+    ExpansionResponse,
     PlanCode,
     PlanKind,
     PlanRecord,
@@ -217,6 +244,7 @@ __all__ = [
     "ABANDON_CAUSES",
     "COMMAND_BUDGET_REASON",
     "COOLDOWN_CAUSES",
+    "EXECUTION_DECISION_REASONS",
     "FAILURE_CAUSES",
     "FailureCause",
     "JevRuntime",
@@ -240,6 +268,12 @@ COMMAND_BUDGET_REASON: Final = "command budget exhausted; yielding until next ti
 #: The reason of the diagnostic that reports the strategy decision's facts (Step 219),
 #: beside the army's ``Army decision source``.
 STRATEGY_DECISION_REASON: Final = "Strategy decision source"
+#: The reasons of the diagnostics that report each execution question's facts (Step
+#: 220), on the first lane holding that question's guard.
+EXECUTION_DECISION_REASONS: Final[Mapping[ExecutionQuestion, str]] = {
+    "expansion_response": "Expansion response decision source",
+    "production_mix": "Production mix decision source",
+}
 #: Typed cause recorded on every failed task (the reason text stays human-readable).
 FailureCause = Literal["lost", "unacknowledged", "rejected", "deadline", "no_progress"]
 FAILURE_CAUSES: Final[tuple[FailureCause, ...]] = get_args(FailureCause)
@@ -283,6 +317,9 @@ MAX_TARGET_GIVE_UPS: Final = 2
 MAX_TRACKED_GIVE_UPS: Final = MAX_OBSERVED_ENTITIES
 #: Why a demotion lapsed: the ``allowed_again`` fact of its diagnostic.
 _AllowedAgain = Literal["moved", "sighted_again", "search_cycle"]
+#: The choice an expansion-response branch runs under when the local graph decides
+#: (never a response name).
+_LOCAL_CHOICE: Final = "@local"
 
 
 #: Largest integer a config field may hold (keeps deque/allocation sizes sane).
@@ -583,6 +620,9 @@ class _TaskRecord:
     failure_cause: FailureCause | None = None
     #: The plan open in this task's lane when it was created (plan J2 Step 217).
     plan_id: str | None = None
+    #: The hosted execution decision it was created under (Step 220): ``(question,
+    #: request id, choice)`` of the lane's decision context; None for the local graph.
+    decision: tuple[str, int, str] | None = None
 
     def committed(self) -> bool:
         """True while the task's cost is promised but not yet observed as spent."""
@@ -627,6 +667,19 @@ class _TaskRecord:
             "minerals": self.minerals,
             "vespene": self.vespene,
             "cost_committed": self.committed(),
+        }
+
+    def decision_facts(self) -> dict[str, JsonValue]:
+        """The hosted decision the task was created under (D5 request -> task
+        evidence); none for a local task, so older traces are unchanged."""
+        if self.decision is None:
+            return {}
+        question, request_id, choice = self.decision
+        return {
+            "decision_question_id": question,
+            "decision_request_id": request_id,
+            "decision_choice": choice,
+            "decision_plan_id": self.plan_id,
         }
 
     def subject(self) -> TaskSubject:
@@ -684,6 +737,15 @@ class _RootFrame:
     evals_used: int = 0
     commands_used: int = 0
     bindings: dict[str, Binding] = field(default_factory=dict)
+    #: The hosted execution decisions whose guards passed on the way here (Step 220):
+    #: question -> (request id, choice); root-local and restored on failure, exactly
+    #: like the bindings, so only tasks created under a passing guard carry one.
+    decisions: dict[str, tuple[int, str]] = field(default_factory=dict)
+    #: The hosted expansion responses those guards would record on their plans: start
+    #: node -> (response, request id). Staged and restored exactly like ``decisions``;
+    #: committed to the plan store only after the lane, so a branch that failed after
+    #: its guard passed records nothing.
+    responses: dict[str, tuple[ExpansionResponse, int]] = field(default_factory=dict)
     node_budget_reported: bool = False
     command_budget_reported: bool = False
 
@@ -743,6 +805,9 @@ class _View:
 
     def strategy(self, slot: PlanSlot) -> StrategySlot:
         return self._runtime._strategy[slot]
+
+    def execution(self, question: ExecutionQuestion) -> ExecutionDecision:
+        return self._runtime._execution[question]
 
     def own_unit_tags(self) -> frozenset[int]:
         return self._runtime._own_unit_tags
@@ -983,6 +1048,27 @@ class JevRuntime:
                 pending.extend(node.children)
             if self._strategy_lane is not None:
                 break
+        # Hosted execution choices (Step 220): what each question's guards read, the
+        # lane each question's facts are reported on (its first decision point's), and
+        # for every node of an expansion-response branch the plan and the choices it
+        # runs under (a switch of the response in force cancels the other branches'
+        # tasks). A policy without decision points (v1) keeps all of this empty.
+        self._execution: dict[ExecutionQuestion, ExecutionDecision] = {
+            question: ExecutionDecision(question) for question in EXECUTION_QUESTIONS
+        }
+        self._execution_facts: dict[ExecutionQuestion, dict[str, JsonValue]] = {}
+        self._execution_reported: dict[ExecutionQuestion, dict[str, JsonValue]] = {}
+        self._execution_report_time: dict[ExecutionQuestion, float] = {}
+        self._execution_lanes: dict[ExecutionQuestion, str] = {}
+        self._response_branches: dict[str, tuple[str, frozenset[str]]] = {}
+        for point in execution_points(policy):
+            self._execution_lanes.setdefault(point.question, point.lane)
+            if point.question != "expansion_response" or point.plan is None:
+                continue
+            for part in point.branches:
+                allowed = {part.choice, _LOCAL_CHOICE} if part.local else {part.choice}
+                for member in part.nodes:
+                    self._response_branches[member] = (point.plan, frozenset(allowed))
 
     def _tracked_nodes(self, memory: TrackedMemory) -> frozenset[str]:
         return frozenset(
@@ -1095,6 +1181,65 @@ class JevRuntime:
         the branch's own preconditions held then, whatever the guard decided."""
         return self._last_strategy_reach
 
+    def set_execution(
+        self,
+        decisions: Mapping[ExecutionQuestion, ExecutionDecision] | None,
+        facts: Mapping[ExecutionQuestion, Mapping[str, JsonValue]],
+    ) -> None:
+        """Supply what each execution question's guards read at the next graph
+        evaluation (None, or a question left out: the local fallback) and each
+        question's facts (reported for the questions the policy decides). Raises
+        :class:`ValueError` for an unknown question or a decision of another one."""
+        chosen = dict(decisions or {})
+        for question in (*chosen, *facts):
+            if question not in EXECUTION_QUESTIONS:
+                raise ValueError(f"invalid execution question {safe_repr(question)}")
+        for question, held in chosen.items():
+            if not isinstance(held, ExecutionDecision) or held.question != question:
+                raise ValueError(f"the {question} decision must be an ExecutionDecision of it")
+        self._execution = {
+            question: chosen.get(question, ExecutionDecision(question))
+            for question in EXECUTION_QUESTIONS
+        }
+        self._execution_facts = {
+            question: dict(facts[question])
+            for question in EXECUTION_QUESTIONS
+            if question in facts and question in self._execution_lanes
+        }
+
+    def execution(self, question: ExecutionQuestion) -> ExecutionDecision:
+        """What ``question``'s guards read (the latest :meth:`set_execution`)."""
+        return self._execution[question]
+
+    def reached(self, node_id: str) -> bool:
+        """Whether the latest tick evaluated policy node ``node_id`` -- for the
+        coordinator, whether the graph reached an execution decision point."""
+        return node_id in self._node_status
+
+    def sightings_matching(
+        self, node_id: str, observation: Observation, bindings: Mapping[str, Binding]
+    ) -> tuple[EnemySighting, ...]:
+        """The enemy sightings the policy's ``sighting_count_compare`` node ``node_id``
+        counts in ``observation`` with these root-local ``bindings`` -- its own
+        compiled filter and arguments (:func:`jev.operations.matching_sightings`), so
+        the coordinator's site threats are exactly the graph's. Reads nothing else and
+        changes nothing. Raises :class:`ValueError` for another operation."""
+        node = self._policy.node(node_id)
+        if node.operation != OP_SIGHTING_COUNT_COMPARE:
+            raise ValueError(f"{safe_repr(node_id)} is not a sighting_count_compare node")
+        frame = _RootFrame(
+            root_id=RUNTIME_NODE_ID, eval_allowance=0, command_allowance=0, bindings=dict(bindings)
+        )
+        return matching_sightings(_View(self, frame, observation, node_id), self._args[node_id])
+
+    def plan_abandon_refusal(self, node_id: str) -> str | None:
+        """Why the open plan of start node ``node_id`` could not be abandoned now (the
+        store's own check, :meth:`jev.plans.PlanStore.abandon_refusal`); None if it
+        could."""
+        if self._plans is None:
+            return "this policy starts no plans"
+        return self._plans.abandon_refusal(node_id)
+
     def plan_start_refusal(self, kind: PlanKind) -> str | None:
         """Why a plan of ``kind`` could not start now (the store's own check, at the
         latest tick's game time); None if it could."""
@@ -1149,6 +1294,23 @@ class JevRuntime:
                 )
                 self._strategy_reported = reported
                 self._strategy_report_time = observation.game_seconds
+        for question, facts in self._execution_facts.items():  # Step 220, like the strategy's
+            stable = {k: v for k, v in facts.items() if k != "response_age_game_seconds"}
+            last = self._execution_report_time.get(question, -1.0)
+            if (
+                stable != self._execution_reported.get(question)
+                or observation.game_seconds - last >= 1
+            ):
+                self._emit(
+                    self._execution_lanes[question],
+                    None,
+                    "diagnostic",
+                    "success",
+                    EXECUTION_DECISION_REASONS[question],
+                    facts,
+                )
+                self._execution_reported[question] = stable
+                self._execution_report_time[question] = observation.game_seconds
         self._strategy_reached = set()
         self._commands = []
         self._reserved_actors = set()
@@ -1182,6 +1344,8 @@ class JevRuntime:
                     self._finish(task, "cancelled", f"army intent changed to {self._army_mode}")
         if self._plans is not None:
             self._plan_begin_tick(observation)
+            if self._response_branches:
+                self._cancel_unchosen_responses()
 
         remaining_evals = self._tick_config.max_node_evaluations
         remaining_commands = self._tick_config.max_commands
@@ -1199,6 +1363,8 @@ class JevRuntime:
             root_status[root_id] = result.status
             remaining_evals -= frame.evals_used
             remaining_commands -= frame.commands_used
+            if frame.responses:  # what survived the lane: its branches committed
+                self._commit_responses(frame)
             if root_id in self._plan_lanes:
                 self._plan_after_lane(root_id, result, now)
 
@@ -1344,6 +1510,7 @@ class JevRuntime:
                 "actor_tag": str(task.actor_tag),
                 "attempts": task.attempts,
                 "placement": None if site is None else [site[0], site[1]],
+                **task.decision_facts(),
             },
         )
         return True
@@ -1482,6 +1649,7 @@ class JevRuntime:
                 "attempts": task.attempts,
                 "failure_cause": task.failure_cause,
                 **task.cost_facts(),
+                **task.decision_facts(),
             },
         )
 
@@ -1893,7 +2061,12 @@ class JevRuntime:
             "command",
             "issued",
             f"{task.ability} for task {task.id}",
-            {"intent_key": task.intent_key, "attempt": task.attempts, **task.cost_facts()},
+            {
+                "intent_key": task.intent_key,
+                "attempt": task.attempts,
+                **task.cost_facts(),
+                **task.decision_facts(),
+            },
             command.to_dict(),
         )
 
@@ -1938,7 +2111,10 @@ class JevRuntime:
         facts: dict[str, JsonValue] = {}
         # Binding rule (jev.contracts): effects commit only on success. Snapshot
         # here, restore on failure -- the single place the interpreter applies it.
+        # The lane's decision context (Step 220) follows the same rule.
         entry_bindings = dict(frame.bindings)
+        entry_decisions = dict(frame.decisions)
+        entry_responses = dict(frame.responses)
         if node.kind == "sequence" or node.kind == "selector":
             result = self._evaluate_composite(node, frame, observation, facts)
         else:
@@ -1947,6 +2123,8 @@ class JevRuntime:
                 result = replace(result, leaf=node.id, detail=result.reason)
         if result.status == "failure":
             frame.bindings = entry_bindings
+            frame.decisions = entry_decisions
+            frame.responses = entry_responses
         self._node_status[node.id] = result.status
         if result.status == "running" and result.waiting:
             self._waiting_nodes.add(node.id)
@@ -1996,6 +2174,9 @@ class JevRuntime:
             outcome = spec.evaluate(view, args)
             facts.update(outcome.facts)
             if outcome.ok:
+                guard = EXECUTION_GUARDS.get(node.operation or "")
+                if guard is not None:  # a hosted execution choice enters its branch
+                    self._enter_decision(guard[0], args, frame)
                 return _NodeResult("success", outcome.reason)
             if node.kind == "wait":
                 return _NodeResult(
@@ -2032,6 +2213,8 @@ class JevRuntime:
             refused, reason = self._apply_effect(
                 node, frame, plan.effect, view.observation.game_seconds
             )
+            if not refused and plan.wait_reason is not None:  # applied; the lane holds
+                return _NodeResult("running", plan.wait_reason, code=plan.code)
             return _NodeResult("failure" if refused else "success", reason, code=plan.code)
         if plan.wait_reason is not None:
             return _NodeResult("running", plan.wait_reason, waiting=True, code=plan.code)
@@ -2209,6 +2392,9 @@ class JevRuntime:
             attempts=1,
             reason="command issued",
         )
+        if frame.decisions:  # created under a hosted execution choice (Step 220)
+            question, (request_id, choice) = next(reversed(frame.decisions.items()))
+            task.decision = (question, request_id, choice)
         self._active[task.id] = task
         self._by_intent[key] = task.id
         self._gave_up_keys.pop(key, None)
@@ -2355,8 +2541,67 @@ class JevRuntime:
             refusal = plans.complete(effect.plan, now)
             refused = refusal is not None
             reason = refusal if refusal is not None else "plan completed"
+        elif effect.action == "abandon":
+            decided = frame.decisions.get("expansion_response")  # the guard that chose it
+            request_id = None if decided is None else decided[0]
+            refusal = plans.abandon(effect.plan, effect.cause or "waiting", request_id, now)
+            refused = refusal is not None
+            reason = refusal if refusal is not None else "plan abandoned; its holds are released"
         self._apply_plan_outcomes()
         return refused, reason
+
+    def _enter_decision(
+        self, question: ExecutionQuestion, args: Mapping[str, JsonValue], frame: _RootFrame
+    ) -> None:
+        """A hosted execution guard passed: its question, request and choice join the
+        lane's decision context (tasks created under it carry them), and an applying
+        expansion continue/delay is staged for its plan (D5 request -> plan). Both are
+        root-local and restored when an enclosing node fails (the binding rule): the
+        plan record is written only by :meth:`_commit_responses`, after the lane."""
+        held = self._execution[question]
+        if held.choice is None or held.request_id is None:
+            return  # the local fallback: nothing to attribute
+        frame.decisions.pop(question, None)  # the latest guard last
+        frame.decisions[question] = (held.request_id, held.choice)
+        if question != "expansion_response" or self._plans is None:
+            return
+        for response in EXPANSION_RESPONSES:
+            if response == held.choice and response != "abandon":  # abandon: its abort says
+                frame.responses[str(args["plan"])] = (response, held.request_id)
+
+    def _commit_responses(self, frame: _RootFrame) -> None:
+        """Record on their plans the responses whose branches committed this lane: those
+        no failing enclosing node rolled back (a ``responded`` transition per change).
+        The other plan write a response causes -- ``plan_abandon``'s abort -- is its
+        action's own effect, and its running outcome ends every enclosing composite's
+        evaluation, so no enclosing sequence can fail after it."""
+        if self._plans is None:
+            return
+        for key, (response, request_id) in frame.responses.items():
+            self._plans.respond(key, response, request_id)
+        self._apply_plan_outcomes()
+
+    def _cancel_unchosen_responses(self) -> None:
+        """Before the lanes run: a task of an expansion-response branch the response in
+        force no longer enters (say the retreat of a delay, once continue applies) is
+        cancelled, as the army-mode switch does, so it cannot hold the worker."""
+        plans = self._plans
+        if plans is None:
+            return
+        held = self._execution["expansion_response"]
+        for task in list(self._active.values()):
+            branch = self._response_branches.get(task.node_id)
+            if branch is None:
+                continue
+            plan, allowed = branch
+            applies = held.applies_to(plans.record(plan))
+            choice = held.choice if applies and held.choice is not None else _LOCAL_CHOICE
+            if choice in allowed:
+                continue
+            shown = "the local graph"
+            if choice != _LOCAL_CHOICE:
+                shown = f"{choice} (request {held.request_id})"
+            self._finish(task, "cancelled", f"expansion response changed to {shown}")
 
     def _plan_task_created(self, task: _TaskRecord) -> None:
         plans = self._plans

@@ -114,6 +114,21 @@ the local fallback -- the graph's own conditions. A slot the hosted question hol
 without a choice passes neither, so its plan starts wait for the answer. Guards
 never issue commands; the strategy decides only where a branch may *begin*.
 
+Hosted execution choices (Jev v2, plan J2 Step 220, D2/D4; :mod:`jev.plans`): two
+more question families decide *within* an execution branch, each at a *decision
+point* -- a selector each of whose branches begins with that family's guard
+(:func:`execution_points` finds them; the coordinator offers exactly their
+choices). ``expansion_response_is`` / ``expansion_response_local`` branch an
+expansion plan whose site is threatened (``site_safe``) or blocked
+(``plan_site_blocked``: no free site within the path bound) on continue / delay /
+abandon; a hosted response applies only to the plan state it answered (plan,
+site, worker: :meth:`jev.plans.ExecutionDecision.applies_to`). ``plan_abandon``
+stops an *unissued* plan (never a started or ordered Nexus: D4 has no building
+cancel) and holds the lane for the tick. ``production_mix_is`` /
+``production_mix_local`` branch the Stalker train on the Zealot:Stalker mix, each
+branch's own ``max_ratio`` being that mix's ratio. Like the strategy guards, these
+never issue commands.
+
 There are deliberately no strategy helpers (``manage_economy``, ``rush``,
 ``expand_now``, ``distribute_workers`` ...): the node arguments carry every
 criterion, tie-break and limit, so the graph is the policy.
@@ -138,6 +153,7 @@ from jev.contracts import (
     POINT_KEYWORDS,
     SIGHTING_VISIBILITIES,
     TASK_STATUSES,
+    EnemySighting,
     Entity,
     EntityCollection,
     FrozenJsonDict,
@@ -149,6 +165,7 @@ from jev.contracts import (
     Observation,
     Point,
     PointKeyword,
+    Policy,
     Target,
     TaskStatus,
     freeze_json,
@@ -157,12 +174,16 @@ from jev.contracts import (
     safe_repr,
 )
 from jev.plans import (
+    EXPANSION_RESPONSES,
     PLAN_KINDS,
     PLAN_SLOT,
     PLAN_SLOTS,
     PLAN_STATUSES,
+    PRODUCTION_MIXES,
     STRATEGY_CHOICES,
     WAIT_CODES,
+    ExecutionDecision,
+    ExecutionQuestion,
     PlanCode,
     PlanKind,
     PlanRecord,
@@ -191,7 +212,11 @@ __all__ = [
     "Comparator",
     "CompiledFilter",
     "DEFAULT_FOOTPRINT",
+    "DecisionPoint",
     "ENTITY_SORT_METRICS",
+    "EXECUTION_GUARDS",
+    "EXECUTION_LOCAL_GUARDS",
+    "ExecutionBranch",
     "EXPANSION_BUILD_ABILITY",
     "EXPANSION_STRUCTURE",
     "FILTER_KEYS",
@@ -229,9 +254,16 @@ __all__ = [
     "OP_BUILD",
     "OP_BUILD_EXPANSION",
     "OP_BUILD_GAS",
+    "OP_EXPANSION_RESPONSE_IS",
+    "OP_EXPANSION_RESPONSE_LOCAL",
     "OP_GATHER",
     "OP_GATHER_GAS",
+    "OP_PLAN_ABANDON",
+    "OP_PLAN_SITE_BLOCKED",
+    "OP_PRODUCTION_MIX_IS",
+    "OP_PRODUCTION_MIX_LOCAL",
     "OP_RELEASE_GAS",
+    "OP_SIGHTING_COUNT_COMPARE",
     "OP_START_PLAN",
     "OP_STRATEGY_IS",
     "OP_STRATEGY_LOCAL",
@@ -288,10 +320,12 @@ __all__ = [
     "decode_site",
     "distance",
     "entity_matches",
+    "execution_points",
     "expansion_candidates",
     "format_point",
     "gas_slots",
     "is_gas_worker",
+    "matching_sightings",
     "node_outcomes",
     "operation_node_kinds",
     "parameter_references",
@@ -466,6 +500,26 @@ OP_START_PLAN: Final = "start_plan"
 #: a tick reached, the strategy coordinator offers only those (``jev.strategy``).
 OP_STRATEGY_IS: Final = "strategy_is"
 OP_STRATEGY_LOCAL: Final = "strategy_local"
+#: The execution-choice guards and plan actions (Step 220; module docstring).
+OP_EXPANSION_RESPONSE_IS: Final = "expansion_response_is"
+OP_EXPANSION_RESPONSE_LOCAL: Final = "expansion_response_local"
+OP_PRODUCTION_MIX_IS: Final = "production_mix_is"
+OP_PRODUCTION_MIX_LOCAL: Final = "production_mix_local"
+OP_PLAN_ABANDON: Final = "plan_abandon"
+OP_PLAN_SITE_BLOCKED: Final = "plan_site_blocked"
+#: The sighting predicate a site-threat check uses (the coordinator mirrors none: it
+#: asks the runtime to apply the graph's own node, :func:`matching_sightings`).
+OP_SIGHTING_COUNT_COMPARE: Final = "sighting_count_compare"
+#: Each execution guard -> ``(its question, the argument naming its choice)``.
+EXECUTION_GUARDS: Final[Mapping[str, tuple[ExecutionQuestion, str]]] = {
+    OP_EXPANSION_RESPONSE_IS: ("expansion_response", "response"),
+    OP_PRODUCTION_MIX_IS: ("production_mix", "mix"),
+}
+#: Each execution question's local-fallback guard.
+EXECUTION_LOCAL_GUARDS: Final[Mapping[ExecutionQuestion, str]] = {
+    "expansion_response": OP_EXPANSION_RESPONSE_LOCAL,
+    "production_mix": OP_PRODUCTION_MIX_LOCAL,
+}
 #: Why a gather task's target can no longer be gathered from (D4: visible outcome).
 GATHER_TARGET_LOST_REASON: Final = (
     "gather target lost: no longer an own gas building or a visible mineral field"
@@ -633,6 +687,11 @@ class RuntimeView(Protocol):
         the local fallback unless a hosted strategic decision holds the slot."""
         ...
 
+    def execution(self, question: ExecutionQuestion) -> ExecutionDecision:
+        """What the guards of execution question ``question`` read this tick
+        (:mod:`jev.plans`): the local fallback unless a hosted choice is in force."""
+        ...
+
     def own_unit_tags(self) -> frozenset[int]:
         """Tags of this tick's own units (actors for unit commands)."""
         ...
@@ -733,10 +792,10 @@ class PlanEffect:
     """A plan write an operation asks the runtime for (applied only when its node
     succeeds): ``start`` a plan for the node itself (of ``kind``), commit a ``site``
     (``replaced``: why a previous one was given up), claim an ``actor``, hold a
-    ``reserve`` of ``minerals``/``vespene`` this tick, or ``complete`` the plan named
-    by ``plan`` (a start node id)."""
+    ``reserve`` of ``minerals``/``vespene`` this tick, ``complete`` the plan named
+    by ``plan`` (a start node id), or ``abandon`` it over ``cause`` (Step 220)."""
 
-    action: Literal["start", "site", "actor", "reserve", "complete"]
+    action: Literal["start", "site", "actor", "reserve", "complete", "abandon"]
     plan: str = ""
     kind: PlanKind | None = None
     point: Point | None = None
@@ -747,6 +806,8 @@ class PlanEffect:
     #: A site's SC2 path distance and its rank among the reachable candidates.
     path: float | None = None
     rank: int | None = None
+    #: The trouble an ``abandon`` answers (its site is avoided when it is site trouble).
+    cause: PlanCode | None = None
 
 
 @dataclass(frozen=True)
@@ -801,8 +862,10 @@ class Intent:
 @dataclass(frozen=True)
 class ActionPlan:
     """What an action wants. Besides intents: a ``latch`` write, a plan ``effect``
-    (no command; success unless refused), or ``wait_reason`` (the node waits:
-    running, no command). ``code`` is the plan reason code of the outcome."""
+    (no command; success unless refused -- or running, the lane held for the tick,
+    when it also names a ``wait_reason``: ``plan_abandon``), or ``wait_reason`` (the
+    node waits: running, no command). ``code`` is the plan reason code of the
+    outcome."""
 
     intents: tuple[Intent, ...] = ()
     blocked: tuple[tuple[int, str], ...] = ()
@@ -1524,6 +1587,88 @@ def _strategy_local(view: RuntimeView, args: Args) -> OpOutcome:
     return OpOutcome(held.local, reason, _strategy_facts(held, slot))
 
 
+def _execution_facts(held: ExecutionDecision) -> dict[str, JsonValue]:
+    return {
+        "question_id": held.question,
+        "choice": held.choice,
+        "source": held.source,
+        "request_id": held.request_id,
+    }
+
+
+def _expansion_response(
+    view: RuntimeView, args: Args
+) -> tuple[str, ExecutionDecision, bool, dict[str, JsonValue]]:
+    """The hosted expansion response in force and whether it applies to the plan the
+    node names as that plan stands now (its id, site and worker), with the facts."""
+    key, record = _open_plan(view, args)
+    held = view.execution("expansion_response")
+    applies = held.applies_to(record)
+    facts = _execution_facts(held)
+    facts.update(
+        {
+            "plan": key,
+            "plan_id": None if record is None else record.plan_id,
+            "answered_plan_id": held.plan_id,
+            "applies": applies,
+        }
+    )
+    return key, held, applies, facts
+
+
+def _response_reason(held: ExecutionDecision, applies: bool, key: str) -> str:
+    if held.local:
+        return "no hosted expansion response is in force: the local graph decides"
+    if not applies:
+        return (
+            f"hosted response {held.choice} (request {held.request_id}) answered plan "
+            f"{held.plan_id} at another site, worker or stage than {key}'s plan now: "
+            "the local graph decides"
+        )
+    return f"hosted response {held.choice} (request {held.request_id}) applies"
+
+
+def _expansion_response_is(view: RuntimeView, args: Args) -> OpOutcome:
+    """Enter an expansion-response branch: a hosted response applies to the open plan
+    as it stands (plan, site, worker) and is exactly this branch's response."""
+    key, held, applies, facts = _expansion_response(view, args)
+    wanted = _arg_str(args, "response")
+    ok = applies and held.choice == wanted
+    facts["branch"] = wanted
+    verdict = "selects" if ok else "does not select"
+    return OpOutcome(ok, f"{_response_reason(held, applies, key)}; {verdict} {wanted}", facts)
+
+
+def _expansion_response_local(view: RuntimeView, args: Args) -> OpOutcome:
+    """Whether the local graph decides the open plan's response: no hosted response
+    applies to the plan as it stands (none in force, or one for another plan state)."""
+    key, held, applies, facts = _expansion_response(view, args)
+    return OpOutcome(not applies, _response_reason(held, applies, key), facts)
+
+
+def _production_mix_is(view: RuntimeView, args: Args) -> OpOutcome:
+    wanted = _arg_str(args, "mix")
+    held = view.execution("production_mix")
+    ok = held.choice == wanted
+    if held.local:
+        reason = f"no hosted production mix is in force; branch {wanted} is not chosen"
+    else:
+        verdict = "selects" if ok else "does not select"
+        reason = f"hosted mix {held.choice} (request {held.request_id}) {verdict} {wanted}"
+    facts = _execution_facts(held)
+    facts["branch"] = wanted
+    return OpOutcome(ok, reason, facts)
+
+
+def _production_mix_local(view: RuntimeView, args: Args) -> OpOutcome:
+    held = view.execution("production_mix")
+    if held.local:
+        reason = f"no hosted production mix is in force: the local graph decides ({held.source})"
+    else:
+        reason = f"hosted mix {held.choice} (request {held.request_id}) is in force"
+    return OpOutcome(held.local, reason, _execution_facts(held))
+
+
 def _latch_is_set(view: RuntimeView, args: Args) -> OpOutcome:
     latch = _arg_str(args, "latch")
     ok = view.latch_is_set(latch)
@@ -1549,6 +1694,28 @@ def _game_time_compare(view: RuntimeView, args: Args) -> OpOutcome:
     )
 
 
+def matching_sightings(view: RuntimeView, args: Args) -> tuple[EnemySighting, ...]:
+    """THE sightings a ``sighting_count_compare`` node counts: its filter (the node's
+    compiled one, read through ``view``), at most ``max_age`` old, of its visibility.
+    The predicate and anything mirroring it (the coordinator's site threats, through
+    :meth:`jev.runtime.JevRuntime.sightings_matching`) read this one definition."""
+    filt = view.node_filter()
+    max_age = _arg_num(args, "max_age")
+    visibility = _arg_str(args, "visibility")
+    now = view.observation.game_seconds
+    matched: list[EnemySighting] = []
+    for sighting in view.observation.enemy_sightings:
+        if sighting.age(now) > max_age:
+            continue
+        if (visibility == "visible" and not sighting.visible) or (
+            visibility == "remembered" and sighting.visible
+        ):
+            continue
+        if entity_matches(sighting.entity, filt, view):
+            matched.append(sighting)
+    return tuple(matched)
+
+
 def _sighting_count_compare(view: RuntimeView, args: Args) -> OpOutcome:
     """Count the enemy sightings matching the node's filter, seen at most ``max_age``
     game seconds ago (and visible now / only remembered, per ``visibility``).
@@ -1558,27 +1725,14 @@ def _sighting_count_compare(view: RuntimeView, args: Args) -> OpOutcome:
     carry the count split by visibility and the newest/oldest sighting age (the
     safety facts plan choices read). One pass over the bounded memory.
     """
-    filt = view.node_filter()
     max_age = _arg_num(args, "max_age")
     visibility = _arg_str(args, "visibility")
     op = _arg_str(args, "op")
     expected = _arg_int(args, "value")
     now = view.observation.game_seconds
-    ages: list[float] = []
-    visible = 0
-    for sighting in view.observation.enemy_sightings:
-        age = sighting.age(now)
-        if age > max_age:
-            continue
-        if (visibility == "visible" and not sighting.visible) or (
-            visibility == "remembered" and sighting.visible
-        ):
-            continue
-        if not entity_matches(sighting.entity, filt, view):
-            continue
-        ages.append(age)
-        if sighting.visible:
-            visible += 1
+    matched = matching_sightings(view, args)
+    ages = [sighting.age(now) for sighting in matched]
+    visible = sum(1 for sighting in matched if sighting.visible)
     count = len(ages)
     ok = compare(count, op, expected)
     verdict = "holds" if ok else "does not hold"
@@ -2616,6 +2770,28 @@ def _select_expansion(view: RuntimeView, args: Args) -> Selection:
     )
 
 
+#: What a blocked site selection fails with: every reachable site near enough is
+#: refused, avoided or occupied (never a pending path query or a static map fact).
+_BLOCKED_SELECTION: Final[frozenset[PlanCode]] = frozenset({"site_blocked", "site_occupied"})
+
+
+def _plan_site_blocked(view: RuntimeView, args: Args) -> OpOutcome:
+    """D4's blocked site (Step 220's decision point): the plan's site selection, with
+    the same arguments as its ``select_expansion`` (the selection itself, read without
+    committing anything), finds no free site within the path bound because every
+    reachable one near enough is blocked or occupied. Its facts are the selection's,
+    so the evidence of why the plan is blocked stays on this node."""
+    selection = _select_expansion(view, args)
+    facts = dict(selection.facts)
+    blocked = selection.binding is None and selection.code in _BLOCKED_SELECTION
+    facts["blocked"] = blocked
+    if blocked:
+        return OpOutcome(True, f"blocked: {selection.reason}", facts, code=selection.code)
+    if selection.binding is not None:
+        return OpOutcome(False, "a free site is within the path bound", facts)
+    return OpOutcome(False, f"not a blocked site: {selection.reason}", facts)
+
+
 def _plan_site_seen(view: RuntimeView, args: Args) -> OpOutcome:
     """D4 "unknown is not safe": the open plan's site was in the bot's own sight at
     most ``max_age`` game seconds ago (:class:`~jev.contracts.LocationVision`, SC2's
@@ -2707,6 +2883,39 @@ def _plan_wait(view: RuntimeView, args: Args) -> ActionPlan:
         wait_reason=f"plan {record.plan_id} waits: {reason}",
         code=code,
         facts={"plan_id": record.plan_id, "reason_code": reason},
+    )
+
+
+def _wait_code(name: str) -> PlanCode:
+    for wait_code in WAIT_CODES:
+        if wait_code == name:
+            return wait_code
+    raise ValueError(f"unknown wait code {safe_repr(name)}")
+
+
+def _plan_abandon(view: RuntimeView, args: Args) -> ActionPlan:
+    """Stop the open plan at once (D4, Step 220's ``abandon``): its holds are released
+    and the lane holds for the tick (running). Refused -- failure -- once its build
+    command is in flight or its structure stands: abandonment stops an *unissued*
+    plan only; there is no building cancel, and a started Nexus continues."""
+    key, record = _open_plan(view, args)
+    if record is None:
+        return ActionPlan(failure_reason=f"{key} has no open plan")
+    cause = _wait_code(_arg_str(args, "reason"))
+    facts: dict[str, JsonValue] = {"plan_id": record.plan_id, "cause": cause}
+    if record.build_in_flight or record.acknowledged_game_seconds is not None:
+        return ActionPlan(
+            failure_reason=(
+                f"plan {record.plan_id} is not abandoned: its structure is ordered or "
+                "started and continues (no building cancel)"
+            ),
+            facts=facts,
+        )
+    return ActionPlan(
+        effect=PlanEffect("abandon", plan=key, cause=cause),
+        wait_reason=f"plan {record.plan_id} abandoned at {cause}: its holds are released",
+        code="abandoned",
+        facts=facts,
     )
 
 
@@ -3142,7 +3351,26 @@ _DECISIVE_OUTCOMES: Final[frozenset[NodeStatus]] = _ACTION_OUTCOMES - {"running"
 _NEVER_FAILS_OUTCOMES: Final[frozenset[NodeStatus]] = _ACTION_OUTCOMES - {"failure"}
 _ALWAYS_SUCCEEDS_OUTCOMES: Final[frozenset[NodeStatus]] = _ACTION_OUTCOMES - {"failure", "running"}
 #: A plan_wait holds still (running) or finds no open plan (failure); it never succeeds.
+#: So does a plan_abandon: it stops the plan and holds the lane (running) or is refused.
 _WAIT_OUTCOMES: Final[frozenset[NodeStatus]] = _ACTION_OUTCOMES - {"success"}
+#: The plan site selection's arguments: ``select_expansion`` and the blocked-site check
+#: (``plan_site_blocked``) read the one specification.
+_SITE_SELECTION_ARGS: Final[Mapping[str, ArgSpec]] = {
+    "plan": ArgSpec("plan"),
+    "candidates": ArgSpec(
+        "int",
+        required=False,
+        minimum=1,
+        maximum=MAX_EXPANSION_CANDIDATES,
+        default=MAX_EXPANSION_CANDIDATES,
+    ),
+    "clearance": ArgSpec(
+        "number", required=False, minimum=1.0, maximum=20.0, default=6.0, param=True
+    ),
+    "max_path_ratio": ArgSpec(
+        "number", required=False, minimum=1.0, maximum=4.0, default=1.5, param=True
+    ),
+}
 
 _SPECS: Final[tuple[OperationSpec, ...]] = (
     PredicateOp(
@@ -3260,6 +3488,34 @@ _SPECS: Final[tuple[OperationSpec, ...]] = (
         _strategy_local,
     ),
     PredicateOp(
+        OP_EXPANSION_RESPONSE_IS,
+        "Enter an expansion-response branch: whether a hosted expansion_response answer "
+        "applies to the plan as it stands now (the plan, site and worker it was asked "
+        "about) with exactly this response",
+        {"plan": ArgSpec("plan"), "response": ArgSpec("enum", choices=EXPANSION_RESPONSES)},
+        _expansion_response_is,
+    ),
+    PredicateOp(
+        OP_EXPANSION_RESPONSE_LOCAL,
+        "Whether the local graph decides the plan's expansion response: no hosted answer "
+        "applies to the plan as it stands now",
+        {"plan": ArgSpec("plan")},
+        _expansion_response_local,
+    ),
+    PredicateOp(
+        OP_PRODUCTION_MIX_IS,
+        "Enter a production-mix branch: whether a hosted production_mix answer is in force "
+        "with exactly this Zealot:Stalker mix",
+        {"mix": ArgSpec("enum", choices=PRODUCTION_MIXES)},
+        _production_mix_is,
+    ),
+    PredicateOp(
+        OP_PRODUCTION_MIX_LOCAL,
+        "Whether the local graph decides the production mix: no hosted mix is in force",
+        {},
+        _production_mix_local,
+    ),
+    PredicateOp(
         "latch_is_set",
         "Whether a cross-tick latch has been set",
         {"latch": ArgSpec("enum", choices=LATCHES)},
@@ -3281,7 +3537,7 @@ _SPECS: Final[tuple[OperationSpec, ...]] = (
         _game_time_compare,
     ),
     PredicateOp(
-        "sighting_count_compare",
+        OP_SIGHTING_COUNT_COMPARE,
         "Compare how many enemies the bot has seen that match a filter (applied to each "
         "entity as last seen: a 'within' radius measures its last-seen position), seen at "
         "most max_age game seconds ago; visibility 'visible' counts only those in sight "
@@ -3520,25 +3776,17 @@ _SPECS: Final[tuple[OperationSpec, ...]] = (
         "else the nearest reachable unoccupied expansion location by SC2 path distance "
         "(Euclidean order only bounds the candidates; one without a path answer is not "
         "yet eligible and is queried) -- committed to the plan on success",
-        {
-            "plan": ArgSpec("plan"),
-            "candidates": ArgSpec(
-                "int",
-                required=False,
-                minimum=1,
-                maximum=MAX_EXPANSION_CANDIDATES,
-                default=MAX_EXPANSION_CANDIDATES,
-            ),
-            "clearance": ArgSpec(
-                "number", required=False, minimum=1.0, maximum=20.0, default=6.0, param=True
-            ),
-            "max_path_ratio": ArgSpec(
-                "number", required=False, minimum=1.0, maximum=4.0, default=1.5, param=True
-            ),
-            "bind": _BIND,
-        },
+        {**_SITE_SELECTION_ARGS, "bind": _BIND},
         "points",
         _select_expansion,
+    ),
+    PredicateOp(
+        OP_PLAN_SITE_BLOCKED,
+        "Whether the plan's site selection (select_expansion's arguments, read without "
+        "committing anything) finds no free site within the path bound because every "
+        "reachable one near enough is blocked or occupied",
+        _SITE_SELECTION_ARGS,
+        _plan_site_blocked,
     ),
     PredicateOp(
         "plan_site_seen",
@@ -3580,6 +3828,16 @@ _SPECS: Final[tuple[OperationSpec, ...]] = (
         "waiting with this reason code",
         {"plan": ArgSpec("plan"), "reason": ArgSpec("enum", choices=WAIT_CODES)},
         _plan_wait,
+        _WAIT_OUTCOMES,
+        None,
+    ),
+    ActionOp(
+        OP_PLAN_ABANDON,
+        "Abandon the open plan at the named trouble (no game command): every hold is "
+        "released and the lane holds for the tick (running); refused once its build is "
+        "ordered or its structure stands (no building cancel)",
+        {"plan": ArgSpec("plan"), "reason": ArgSpec("enum", choices=WAIT_CODES)},
+        _plan_abandon,
         _WAIT_OUTCOMES,
         None,
     ),
@@ -3662,6 +3920,105 @@ def node_outcomes(kind: NodeKind, operation: str | None) -> frozenset[NodeStatus
     if isinstance(spec, ActionOp):
         return spec.outcomes
     return _ACTION_OUTCOMES
+
+
+# ---------------------------------------------------------------------------
+# Execution decision points (Step 220): derived from the graph, never declared
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ExecutionBranch:
+    """One branch of a decision point: the choice its guard enters (``guard``, its
+    first leaf), whether the local fallback also enters it (it holds the question's
+    ``*_local`` guard), and every node of the branch."""
+
+    choice: str
+    guard: str
+    local: bool
+    nodes: frozenset[str]
+
+
+@dataclass(frozen=True)
+class DecisionPoint:
+    """Where an execution question is decided: a selector each of whose branches
+    begins (first leaf, pre-order) with that question's guard, so evaluating the
+    selector evaluates a guard and every branch's choice is executable there.
+
+    ``choices`` are the branches' choices in branch order; ``plan`` is the
+    ``start_plan`` node an expansion response's guards name; ``cause`` is the plan
+    trouble the point answers (its ``plan_wait`` / ``plan_abandon`` reason)."""
+
+    question: ExecutionQuestion
+    node_id: str
+    lane: str
+    choices: tuple[str, ...]
+    branches: tuple[ExecutionBranch, ...]
+    plan: str | None
+    cause: str | None
+
+
+def _pre_order(policy: Policy, root: str) -> list[str]:
+    order: list[str] = []
+    stack = [root]
+    while stack:
+        node_id = stack.pop()
+        order.append(node_id)
+        stack.extend(reversed(policy.node(node_id).children))
+    return order
+
+
+def _first_leaf(policy: Policy, node_id: str) -> str:
+    node = policy.node(node_id)
+    while node.children:
+        node = policy.node(node.children[0])
+    return node.id
+
+
+def execution_points(policy: Policy) -> tuple[DecisionPoint, ...]:
+    """Every execution decision point of ``policy``, in root then pre-order.
+
+    A selector qualifies when each child's first leaf is a guard of one execution
+    question (:data:`EXECUTION_GUARDS`) with a distinct choice -- and, for an
+    expansion response, all naming one plan. Nothing else is ever offered: the
+    coordinator asks a question only at a point the latest tick evaluated, offering
+    that point's choices (``jev.strategy``)."""
+    found: list[DecisionPoint] = []
+    for root in policy.roots:
+        for node_id in _pre_order(policy, root):
+            node = policy.node(node_id)
+            if node.kind != "selector":
+                continue
+            heads = [policy.node(_first_leaf(policy, child)) for child in node.children]
+            guards = [EXECUTION_GUARDS.get(head.operation or "") for head in heads]
+            questions = {guard[0] for guard in guards if guard is not None}
+            if None in guards or len(questions) != 1:
+                continue
+            question = questions.pop()
+            choices = tuple(str(h.args[g[1]]) for h, g in zip(heads, guards, strict=True) if g)
+            plans = {str(head.args.get("plan")) for head in heads}
+            if len(set(choices)) != len(choices) or (
+                question == "expansion_response" and len(plans) != 1
+            ):
+                continue
+            local_op = EXECUTION_LOCAL_GUARDS[question]
+            branches: list[ExecutionBranch] = []
+            cause: str | None = None
+            for child, head, choice in zip(node.children, heads, choices, strict=True):
+                nodes = frozenset(_pre_order(policy, child))
+                operations = {policy.node(n).operation for n in nodes}
+                branches.append(ExecutionBranch(choice, head.id, local_op in operations, nodes))
+                for member in _pre_order(policy, child):
+                    if cause is None and policy.node(member).operation in (
+                        "plan_wait",
+                        OP_PLAN_ABANDON,
+                    ):
+                        cause = str(policy.node(member).args.get("reason"))
+            plan = plans.pop() if question == "expansion_response" else None
+            found.append(
+                DecisionPoint(question, node_id, root, choices, tuple(branches), plan, cause)
+            )
+    return tuple(found)
 
 
 # ---------------------------------------------------------------------------
