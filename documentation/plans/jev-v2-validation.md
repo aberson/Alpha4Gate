@@ -51,3 +51,40 @@ and deferred; do not launch further paid games without a new request.
 Verdict: implementation may proceed by operator direction. Stronger-play
 acceptance remains pending. No ranked harder-opponent gameplay findings can be
 claimed from this interrupted first case.
+
+## Step 222 staging follow-up - 2026-10-11
+
+Browser fixture repair is complete at `03c552a`: all nine opt-in live-browser
+tests passed (64 deselected). Evidence is under
+`.build-step/jev-live-validation/browser/`; the test log is
+`.build-step/jev-branch-view/browser-repair-tests.log`.
+
+The first of the newly authorized, bounded three hosted matches used v2 against
+Terran difficulty 3, seed 11, from `03c552a`. Run:
+`e06637818c1b4341a213e99082b91ffd`; launch session:
+`6d8eb336be3c41658be13774882af7c6`. Dashboard readiness was recorded before
+SC2 launch. The launcher and archive validator exited 0; all 7,844 retained
+events were available through the API. The archive reports 95 hosted calls,
+95 answers, no service failures, and model `jev-1.13.0`.
+
+**Operator-interrupted: exclude this run from win-rate and performance acceptance.**
+The raw archive reports Victory at 349.777 game seconds, but the operator ended
+the test with the surrender button because the army was staying at home. Raw
+archive files remain unchanged; this annotation takes precedence for validation.
+Operator clarification: "Gathered at our base, with winning numbers, all it had
+to do was attack move to the enemy to win. However it was just amassing forces."
+The claim of winning strength is the operator's observation, not an independently
+measured army-value comparison.
+
+The trace records accepted strategy `recover` at game seconds 206.205, 219.509,
+238.170, 255.625, 276.920, 298.348, 320.000 and 339.286 (request IDs
+28, 34, 43, 51, 61, 71, 81 and 90). Each renewed the 30-second posture hold.
+There were 92 `army.recover.move` and 126 `army.defend.attack` command events;
+defense also ran, so the interval must not be described as continuous idleness.
+The final attack commands coincide with termination and do not prove normal
+recovery completion. There was no second Nexus. Pending-request cancellation
+was not exercised because no request was pending at termination.
+
+Step 222 remains pending. Matches two and three are held while the recovery and
+attack transition is investigated. No v2 freeze or held-out panel has started.
+The earlier six-case v1 baseline remains deferred independently of this test.
