@@ -326,6 +326,20 @@ class TestLiveGraphInBrowser:
                 expect(page.get_by_test_id("jev-node-id")).to_have_text("expansion.site_safe.wait")
                 evidence.shot(page, "02-follow-and-stage-source", step=game.step)
 
+                # Spatial views preserve the actual run's evidence and selected node.
+                for mode, layout in (("Radial", "radial"), ("Dots 3D", "dots3d")):
+                    page.get_by_role("button", name=mode, exact=True).click()
+                    expect(page.get_by_test_id("jev-graph")).to_have_attribute(
+                        "data-layout", layout
+                    )
+                    expect(page.get_by_test_id("jev-node-id")).to_have_text(
+                        "expansion.site_safe.wait"
+                    )
+                    assert page.locator('[role="treeitem"][data-live="true"]').count() > 0
+                    evidence.shot(page, f"02-{layout}", step=game.step)
+                page.get_by_role("button", name="Nodes", exact=True).click()
+                page.get_by_role("button", name="Tree", exact=True).click()
+
                 # Offline: the page cannot reach the run's state; nothing animates.
                 page.route(f"**/api/jev/runs/{run_id}", lambda route: route.abort())
                 expect(page.get_by_test_id("jev-offline-badge")).to_be_visible(timeout=WAIT_MS)

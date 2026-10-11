@@ -115,6 +115,23 @@ metadata and graph help are collapsed disclosures. Selecting a plan stage adds
 its branch without removing others. These controls change only the presentation,
 not the archived policy or gameplay.
 
+**Nodes** offers **Tree** and **Radial** layouts. Tree packs branches according to
+their actual dimensions and the viewport aspect ratio, so a growing Army branch
+does not force every other branch into equally tall rows. Radial allocates sectors
+by subtree leaf count and separates overlapping labels. Compact tiles are 52 x 20
+graph units, with short IDs; full details remain in the inspector. **Expand all**
+followed by **Fit** includes every displayed node, even below the manual zoom floor.
+The canvas uses more of the available window height; Fullscreen remains available.
+
+**Dots 3D** projects a three-dimensional layout with branch colors and the same
+recorded activity highlights. Drag empty space to rotate, Shift-drag to pan, and
+scroll to zoom; keyboard-accessible rotation/tilt buttons are also available.
+Hover supplies the full node tooltip; selecting a dot labels it and opens its
+original node in the inspector. Expansion and selection persist across views.
+There is no automatic camera motion. Last-known states remain labeled and muted;
+reduced motion disables activity animation in this view too. The 3D view uses SVG
+projection and adds no rendering dependency or service calls.
+
 **JevGraph:** `d3-hierarchy` SVG tree of the archived policy forest with active
 and waiting node status. Supports pan, zoom, and collapse, and is a
 keyboard-navigable ARIA tree. Each root lane has a colour (a band, a node stripe,

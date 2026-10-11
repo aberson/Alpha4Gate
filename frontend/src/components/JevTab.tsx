@@ -683,7 +683,9 @@ interface RunViewProps {
 function RunView({ runId, run, policy, launchStarting = false, onRendered }: RunViewProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [visibleRoots, setVisibleRoots] = useState<string[] | null>(null);
-  const [compact, setCompact] = useState(true);
+  const [view, setView] = useState<"boxes" | "nodes" | "dots3d">("nodes");
+  const [nodeLayout, setNodeLayout] = useState<"tree" | "radial">("tree");
+  const compact = view !== "boxes";
   const [fullscreen, setFullscreen] = useState(false);
   const [reveal, setReveal] = useState<{ nodeId: string; token: number } | null>(null);
   const graphWorkspaceRef = useRef<HTMLDivElement>(null);
@@ -798,8 +800,13 @@ function RunView({ runId, run, policy, launchStarting = false, onRendered }: Run
         <div className="jev-view-controls" role="group" aria-label="Graph scope controls">
           <button type="button" data-testid="jev-full-graph" onClick={() => setVisibleRoots([...archived.roots])}>Add all</button>
           <button type="button" onClick={() => setVisibleRoots([])}>Collapse all</button>
-          <button type="button" aria-pressed={!compact} onClick={() => setCompact(false)}>Boxes</button>
-          <button type="button" aria-pressed={compact} onClick={() => setCompact(true)}>Nodes</button>
+          <button type="button" aria-pressed={view === "boxes"} onClick={() => setView("boxes")}>Boxes</button>
+          <button type="button" aria-pressed={view === "nodes"} onClick={() => setView("nodes")}>Nodes</button>
+          <button type="button" aria-pressed={view === "dots3d"} onClick={() => setView("dots3d")}>Dots 3D</button>
+          {view === "nodes" && <span role="group" aria-label="Node layout" className="jev-layout-controls">
+            <button type="button" aria-pressed={nodeLayout === "tree"} onClick={() => setNodeLayout("tree")}>Tree</button>
+            <button type="button" aria-pressed={nodeLayout === "radial"} onClick={() => setNodeLayout("radial")}>Radial</button>
+          </span>}
           {typeof document.documentElement.requestFullscreen === "function" && (
             <button type="button" onClick={() => void toggleFullscreen()}>
               {fullscreen ? "Exit fullscreen" : "Fullscreen"}
@@ -815,6 +822,7 @@ function RunView({ runId, run, policy, launchStarting = false, onRendered }: Run
             policy={archived}
             displayRootIds={roots}
             compact={compact}
+            layoutMode={view === "dots3d" ? "dots3d" : view === "nodes" ? nodeLayout : "tree"}
             showLaneLegend={false}
             fitOnMount
             runtime={runtime}

@@ -50,6 +50,8 @@ const POLICY: JevPolicy = {
 };
 
 interface RenderOptions {
+  compact?: boolean;
+  layoutMode?: "tree" | "radial" | "dots3d";
   runtime?: Record<string, JevNodeRuntime>;
   live?: boolean;
   onSelectNode?: (id: string) => void;
@@ -58,6 +60,8 @@ interface RenderOptions {
 }
 
 function graph({
+  compact = false,
+  layoutMode = "tree",
   runtime = {},
   live = true,
   onSelectNode = () => {},
@@ -66,6 +70,8 @@ function graph({
 }: RenderOptions = {}) {
   return (
     <JevGraph
+      compact={compact}
+      layoutMode={layoutMode}
       policy={POLICY}
       runtime={new Map(Object.entries(runtime))}
       live={live}
@@ -80,6 +86,72 @@ function graph({
 function renderGraph(options: RenderOptions = {}) {
   return render(graph(options));
 }
+
+describe("spatial views", () => {
+  it("preserves expansion and node identity across tree, radial and dots views", () => {
+    const view = renderGraph({ compact: true });
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
+    const ids = itemNames().sort();
+    view.rerender(graph({ compact: true, layoutMode: "radial" }));
+    expect(itemNames().sort()).toEqual(ids);
+    view.rerender(graph({ compact: true, layoutMode: "dots3d" }));
+    expect(itemNames().sort()).toEqual(ids);
+    expect(screen.getByTestId("jev-graph")).toHaveAttribute("data-layout", "dots3d");
+  });
+
+  it("rotates projected dots and selects their original node IDs", () => {
+    const onSelectNode = vi.fn();
+    renderGraph({ compact: true, layoutMode: "dots3d", onSelectNode });
+    const before = item("army").parentElement?.getAttribute("transform");
+    expect(item("army").querySelector(".jev-dot")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Rotate right" }));
+    expect(item("army").parentElement?.getAttribute("transform")).not.toBe(before);
+    fireEvent.click(item("army"));
+    expect(onSelectNode).toHaveBeenCalledWith("army");
+  });
+
+  it.each(["tree", "radial", "dots3d"] as const)("fits every expanded node in %s", (layoutMode) => {
+    renderGraph({ compact: true, layoutMode });
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
+    fireEvent.click(screen.getByRole("button", { name: "Fit" }));
+    for (const element of screen.getAllByRole("treeitem")) {
+      const [x, y] = numbers(element.parentElement?.getAttribute("transform"));
+      const [tx, ty, scale] = numbers(canvasTransform());
+      expect(x * scale + tx).toBeGreaterThanOrEqual(0);
+      expect(y * scale + ty).toBeGreaterThanOrEqual(0);
+      expect((x + (layoutMode === "dots3d" ? 16 : 52)) * scale + tx).toBeLessThanOrEqual(760);
+      expect((y + (layoutMode === "dots3d" ? 16 : 20)) * scale + ty).toBeLessThanOrEqual(520);
+    }
+  });
+
+  it("fits a growing deep branch even below the manual zoom floor", () => {
+    const nodes = Array.from({ length: 60 }, (_, i) => node(`army.${i}`, i < 59 ? "sequence" : "action", i < 59 ? [`army.${i + 1}`] : []));
+    render(<JevGraph policy={{ ...POLICY, roots: ["army.0"], nodes }} runtime={new Map()}
+      live={false} selectedNodeId={null} onSelectNode={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
+    fireEvent.click(screen.getByRole("button", { name: "Fit" }));
+    expect(numbers(canvasTransform())[2]).toBeLessThan(0.25);
+    for (const box of nodeBoxes()) {
+      expect(box.left).toBeGreaterThanOrEqual(0);
+      expect(box.right).toBeLessThanOrEqual(760);
+    }
+  });
+
+  it("keeps labels separate when a radial army branch grows", () => {
+    const children = Array.from({ length: 150 }, (_, i) => `army.${i}`);
+    const nodes = [node("army", "sequence", children), ...children.map((id) => node(id, "action"))];
+    render(<JevGraph policy={{ ...POLICY, roots: ["army"], nodes }} runtime={new Map()}
+      compact layoutMode="radial" live={false} selectedNodeId={null} onSelectNode={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Fit" }));
+    const boxes = nodeBoxes();
+    for (let i = 0; i < boxes.length; i++) {
+      for (const other of boxes.slice(i + 1)) {
+        const box = boxes[i];
+        expect(box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top).toBe(false);
+      }
+    }
+  });
+});
 
 function item(id: string): HTMLElement {
   return screen.getByRole("treeitem", { name: new RegExp(`^${id.replace(/\./g, "\\.")},`) });

@@ -433,7 +433,7 @@
 }
 
 .jev-graph-node text.jev-graph-node-code {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -484,7 +484,7 @@
 .jev-graph-viewport {
   display: block;
   width: 100%;
-  height: 520px;
+  height: clamp(600px, 70vh, 900px);
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--code-bg);
@@ -512,6 +512,44 @@
   cursor: pointer;
   outline: none;
 }
+
+.jev-layout-controls {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 8px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}
+
+.jev-graph-density {
+  display: block;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.jev-dot {
+  fill: var(--jev-lane, var(--text));
+  stroke: var(--text);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.jev-dot-hit { fill: transparent; pointer-events: none; }
+.jev-dot-label {
+  font-family: var(--mono);
+  font-size: 13px;
+  fill: var(--text-h);
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 3px;
+  pointer-events: none;
+}
+.jev-graph-node-active .jev-dot { stroke: var(--jev-active); stroke-width: 3; }
+.jev-graph-node-waiting .jev-dot { stroke: var(--jev-waiting); stroke-width: 3; stroke-dasharray: 3 2; }
+.jev-graph-node-failure .jev-dot { stroke: var(--jev-failure); stroke-dasharray: 2 2; }
+.jev-graph-node-last-known .jev-dot { opacity: 0.65; stroke: var(--text); }
+.jev-graph-node-selected .jev-dot,
+.jev-graph-node:focus-visible .jev-dot { stroke: var(--accent); stroke-width: 4; }
 
 .jev-graph-node rect {
   fill: var(--bg);
@@ -577,6 +615,10 @@
 }
 
 .jev-graph-node-live rect {
+  animation: jev-pulse 1.6s ease-in-out infinite;
+}
+
+.jev-graph-node-live .jev-dot {
   animation: jev-pulse 1.6s ease-in-out infinite;
 }
 
@@ -932,6 +974,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .jev-graph-node-live rect,
+  .jev-graph-node-live .jev-dot,
   .jev-badge-live::before,
   .jev-graph-edge-flow {
     animation: none;

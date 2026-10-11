@@ -8,6 +8,7 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from "react";
+import { radialPositions, projectSpatial } from "./jevSpatial";
 import { hierarchy, tree } from "d3-hierarchy";
 import {
   JEV_NODE_RUNTIME_LABELS,
@@ -142,6 +143,7 @@ interface PlacedNode {
   setSize: number;
   posInSet: number;
   firstChild: string | null;
+  cameraDepth?: number;
 }
 
 interface Layout {
@@ -151,6 +153,7 @@ interface Layout {
   edges: Array<{ id: string; path: string }>;
   width: number;
   height: number;
+  fitBounds?: { x: number; y: number; width: number; height: number };
 }
 
 interface DisplayNode {
@@ -163,6 +166,9 @@ interface DragStart {
   clientX: number;
   clientY: number;
   origin: Transform;
+  yaw: number;
+  pitch: number;
+  rotate: boolean;
 }
 
 function describeStructure(policy: JevPolicy): Structure {
@@ -264,46 +270,142 @@ function allCollapsed(structure: Structure): Set<string> {
   return new Set([...structure.byId.values()].filter(isComposite).map((node) => node.id));
 }
 
+function spatialLayout(
+  policy: JevPolicy, structure: Structure, collapsed: ReadonlySet<string>,
+  dots: boolean, yaw: number, pitch: number,
+): Layout {
+  const points = radialPositions(policy, collapsed);
+  if (points.length === 0) return { order: [], byId: new Map(), edges: [], width: 48, height: 48 };
+  const halfZ = Math.max(...points.map((point) => point.z)) / 2;
+  const radius = Math.max(...points.map((point) => Math.hypot(point.x, point.y, point.z - halfZ)));
+  const projected = points.map((point) => dots
+    ? projectSpatial({ ...point, z: point.z - halfZ }, yaw, pitch)
+    : { x: point.x, y: point.y, depth: 0 });
+  if (!dots) {
+    // Axis-aligned labels need more room than dots on a ring. Resolve collisions
+    // deterministically without changing ancestry, sector weights or telemetry.
+    for (let pass = 0; pass < 160; pass++) {
+      let collisions = 0;
+      for (let i = 0; i < projected.length; i++) {
+        for (let j = i + 1; j < projected.length; j++) {
+          const a = projected[i], b = projected[j];
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const overlapX = 70 - Math.abs(dx), overlapY = 26 - Math.abs(dy);
+          if (overlapX <= 0 || overlapY <= 0) continue;
+          collisions++;
+          if (overlapX < overlapY) {
+            const shift = (overlapX / 2 + 0.2) * (dx >= 0 ? 1 : -1);
+            a.x -= shift; b.x += shift;
+          } else {
+            const shift = (overlapY / 2 + 0.2) * (dy >= 0 ? 1 : -1);
+            a.y -= shift; b.y += shift;
+          }
+        }
+      }
+      if (collisions === 0) break;
+    }
+    // Finish crowded sectors with a bounded, monotonic placement pass. Earlier
+    // nodes never move again, so every later label can be made collision-free.
+    for (let i = 1; i < projected.length; i++) {
+      const point = projected[i];
+      const outward = point.y >= 0 ? 1 : -1;
+      for (let attempt = 0; attempt < i; attempt++) {
+        const blockers = projected.slice(0, i).filter((other) =>
+          Math.abs(point.x - other.x) < 70 && Math.abs(point.y - other.y) < 26,
+        );
+        if (blockers.length === 0) break;
+        point.y = outward > 0
+          ? Math.max(...blockers.map((other) => other.y + 26.5))
+          : Math.min(...blockers.map((other) => other.y - 26.5));
+      }
+    }
+  }
+  const minX = dots ? -radius : Math.min(...projected.map((point) => point.x));
+  const minY = dots ? -radius : Math.min(...projected.map((point) => point.y));
+  const maxX = dots ? radius : Math.max(...projected.map((point) => point.x));
+  const maxY = dots ? radius : Math.max(...projected.map((point) => point.y));
+  const width = dots ? 16 : 52;
+  const height = dots ? 16 : 20;
+  const order = points.map((point, index): PlacedNode => ({
+    node: structure.byId.get(point.id)!,
+    x: MARGIN + projected[index].x - minX,
+    y: MARGIN + projected[index].y - minY,
+    cameraDepth: projected[index].depth,
+    level: point.depth, setSize: point.siblings, posInSet: point.position,
+    firstChild: collapsed.has(point.id) ? null : structure.byId.get(point.id)?.children[0] ?? null,
+  }));
+  const byId = new Map(order.map((placed) => [placed.node.id, placed]));
+  const edges: Layout["edges"] = [];
+  for (const placed of order) {
+    for (const id of placed.node.children) {
+      const child = byId.get(id);
+      if (child) edges.push({ id: edgeId(placed.node.id, id),
+        path: `M${placed.x + width / 2},${placed.y + height / 2} L${child.x + width / 2},${child.y + height / 2}`,
+      });
+    }
+  }
+  const left = Math.min(...order.map((placed) => placed.x)) - MARGIN;
+  const top = Math.min(...order.map((placed) => placed.y)) - MARGIN;
+  const fitBounds = {
+    x: left, y: top,
+    width: Math.max(...order.map((placed) => placed.x)) + width + MARGIN - left,
+    height: Math.max(...order.map((placed) => placed.y)) + height + MARGIN - top,
+  };
+  return { order, byId, edges, fitBounds, width: maxX - minX + width + MARGIN * 2 + TOGGLE_RADIUS,
+    height: maxY - minY + height + MARGIN * 2 };
+}
+
 function computeLayout(
   policy: JevPolicy,
   structure: Structure,
   collapsed: ReadonlySet<string>,
   compact = false,
+  aspect = FALLBACK_VIEWPORT.width / FALLBACK_VIEWPORT.height,
 ): Layout {
-  const nodeWidth = compact ? 88 : NODE_WIDTH;
-  const nodeHeight = compact ? 32 : NODE_HEIGHT;
-  const rowGap = compact ? 42 : ROW_GAP;
-  const columnGap = compact ? 132 : COLUMN_GAP;
+  const nodeWidth = compact ? 52 : NODE_WIDTH;
+  const nodeHeight = compact ? 20 : NODE_HEIGHT;
+  const rowGap = compact ? 24 : ROW_GAP;
+  const columnGap = compact ? 76 : COLUMN_GAP;
   if (policy.roots.length === 0) {
     return { order: [], byId: new Map(), edges: [], width: MARGIN * 2, height: MARGIN * 2 };
   }
   // Pack independent branches across the available canvas instead of one tall strip.
   if (policy.roots.length > 1) {
-    const columns = compact ? 3 : 2;
-    const parts = policy.roots.map((root) =>
-      computeLayout({ ...policy, roots: [root] }, structure, collapsed, compact),
-    );
-    const widths = Array.from({ length: columns }, (_, column) =>
-      Math.max(0, ...parts.filter((_, i) => i % columns === column).map((part) => part.width)),
-    );
-    const order: PlacedNode[] = [];
-    const byId = new Map<string, PlacedNode>();
-    let top = 0;
-    for (let row = 0; row < parts.length; row += columns) {
-      let left = 0;
-      for (let column = 0; column < columns && row + column < parts.length; column++) {
-        for (const placed of parts[row + column].order) {
-          const shifted = {
-            ...placed, x: placed.x + left, y: placed.y + top,
-            ...(placed.level === 1 ? { setSize: policy.roots.length, posInSet: row + column + 1 } : {}),
-          };
-          order.push(shifted);
-          byId.set(shifted.node.id, shifted);
-        }
-        left += widths[column];
+    const parts = policy.roots.map((root, index) => ({
+      index, layout: computeLayout({ ...policy, roots: [root] }, structure, collapsed, compact),
+    }));
+    // Masonry packing: large branches keep their natural area instead of making
+    // every row as tall as Army. Try column counts against the actual viewport.
+    const candidates = Array.from({ length: parts.length }, (_, i) => {
+      const columns = Array.from({ length: i + 1 }, () => ({ width: 0, height: 0, parts: [] as typeof parts }));
+      for (const part of [...parts].sort((a, b) => b.layout.height - a.layout.height)) {
+        const column = columns.reduce((best, candidate) => candidate.height < best.height ? candidate : best);
+        column.parts.push(part);
+        column.width = Math.max(column.width, part.layout.width);
+        column.height += part.layout.height;
       }
-      top += Math.max(...parts.slice(row, row + columns).map((part) => part.height));
+      const width = columns.reduce((sum, column) => sum + column.width, 0);
+      const height = Math.max(...columns.map((column) => column.height));
+      return { columns, width, height, score: Math.max(width / aspect, height) };
+    });
+    const best = candidates.reduce((a, b) => a.score <= b.score ? a : b);
+    const ordered = new Map<number, PlacedNode[]>();
+    const byId = new Map<string, PlacedNode>();
+    let left = 0;
+    for (const column of best.columns) {
+      let top = 0;
+      for (const { index, layout } of column.parts) {
+        const shifted = layout.order.map((placed) => ({
+          ...placed, x: placed.x + left, y: placed.y + top,
+          ...(placed.level === 1 ? { setSize: policy.roots.length, posInSet: index + 1 } : {}),
+        }));
+        ordered.set(index, shifted);
+        shifted.forEach((placed) => byId.set(placed.node.id, placed));
+        top += layout.height;
+      }
+      left += column.width;
     }
+    const order = parts.flatMap(({ index }) => ordered.get(index) ?? []);
     const edges: Layout["edges"] = [];
     for (const placed of order) {
       for (const childId of placed.node.children) {
@@ -319,7 +421,7 @@ function computeLayout(
         });
       }
     }
-    return { order, byId, edges, width: widths.reduce((sum, width) => sum + width, 0), height: top };
+    return { order, byId, edges, width: best.width, height: best.height };
   }
   const build = (id: string): DisplayNode => {
     const node = structure.byId.get(id) as JevPolicyNode;
@@ -331,7 +433,7 @@ function computeLayout(
   );
   const positioned = tree<DisplayNode>()
     .nodeSize([rowGap, columnGap])
-    .separation((a, b) => (a.parent === b.parent ? 1 : 1.3))(root);
+    .separation((a, b) => (a.parent === b.parent ? 1 : compact ? 1.1 : 1.3))(root);
   const real = positioned.descendants().filter((d) => d.data.node !== null);
   const minRow = Math.min(...real.map((d) => d.x));
   const maxRow = Math.max(...real.map((d) => d.x));
@@ -384,15 +486,18 @@ function computeLayout(
   };
 }
 
-function clampScale(scale: number): number {
-  return Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
-}
-
 /** Scale by ``factor`` (bounded) keeping the viewport point (``px``, ``py``) fixed. */
 function zoomAt(transform: Transform, factor: number, px: number, py: number): Transform {
-  const k = clampScale(transform.k * factor);
+  const k = Math.min(MAX_SCALE, Math.max(Math.min(MIN_SCALE, transform.k), transform.k * factor));
   const ratio = k / transform.k;
   return { k, x: px - (px - transform.x) * ratio, y: py - (py - transform.y) * ratio };
+}
+
+function fittedTransform(layout: Layout, viewport: { width: number; height: number }): Transform {
+  const bounds = layout.fitBounds ?? { x: 0, y: 0, width: layout.width, height: layout.height };
+  const k = Math.min(MAX_SCALE, viewport.width / bounds.width, viewport.height / bounds.height);
+  return { k, x: (viewport.width - bounds.width * k) / 2 - bounds.x * k,
+    y: (viewport.height - bounds.height * k) / 2 - bounds.y * k };
 }
 
 function viewportSize(svg: SVGSVGElement | null): { width: number; height: number } {
@@ -412,8 +517,8 @@ function revealBox(
   const pad = MARGIN;
   const left = transform.x + placed.x * transform.k;
   const top = transform.y + placed.y * transform.k;
-  const right = left + (compact ? 88 : NODE_WIDTH) * transform.k;
-  const bottom = top + (compact ? 32 : NODE_HEIGHT) * transform.k;
+  const right = left + (compact ? 52 : NODE_WIDTH) * transform.k;
+  const bottom = top + (compact ? 20 : NODE_HEIGHT) * transform.k;
   let { x, y } = transform;
   if (left < pad) x += pad - left;
   else if (right > viewport.width - pad) x -= right - (viewport.width - pad);
@@ -458,6 +563,7 @@ function hiddenSummary(
 export interface JevGraphProps {
   policy: JevPolicy;
   compact?: boolean;
+  layoutMode?: "tree" | "radial" | "dots3d";
   /** Roots to draw. The archived policy remains intact; this only limits presentation. */
   displayRootIds?: readonly string[];
   /** The parent branch overview already carries this information in the focused view. */
@@ -481,6 +587,7 @@ export interface JevGraphProps {
 export function JevGraph({
   policy,
   compact = false,
+  layoutMode = "tree",
   displayRootIds,
   showLaneLegend = true,
   fitOnMount = false,
@@ -492,8 +599,10 @@ export function JevGraph({
   reveal = null,
   ended = false,
 }: JevGraphProps) {
-  const nodeWidth = compact ? 88 : NODE_WIDTH;
-  const nodeHeight = compact ? 32 : NODE_HEIGHT;
+  const dots = layoutMode === "dots3d";
+  const nodeWidth = dots ? 16 : compact ? 52 : NODE_WIDTH;
+  const nodeHeight = dots ? 16 : compact ? 20 : NODE_HEIGHT;
+  const [camera, setCamera] = useState({ yaw: 0.35, pitch: -0.4 });
   const codes = useMemo(() => nodeCodes(policy), [policy]);
   const structure = useMemo(() => describeStructure(policy), [policy]);
   const displayPolicy = useMemo(
@@ -519,13 +628,15 @@ export function JevGraph({
   const nodeElements = useRef(new Map<string, SVGGElement>());
   const drag = useRef<DragStart | null>(null);
   const initiallyFitted = useRef<string | null>(null);
-  const scopeKey = `${compact ? "nodes" : "boxes"}:${displayPolicy.roots.join("|")}`;
+  const scopeKey = `${compact ? "nodes" : "boxes"}:${layoutMode}:${displayPolicy.roots.join("|")}`;
   const hintId = useId();
   const followId = useId();
 
   const layout = useMemo(
-    () => computeLayout(displayPolicy, structure, collapsed, compact),
-    [displayPolicy, structure, collapsed, compact],
+    () => layoutMode === "tree"
+      ? computeLayout(displayPolicy, structure, collapsed, compact, viewport.width / viewport.height)
+      : spatialLayout(displayPolicy, structure, collapsed, dots, camera.yaw, camera.pitch),
+    [displayPolicy, structure, collapsed, compact, viewport, layoutMode, dots, camera],
   );
   const tabStop =
     focusedId !== null && layout.byId.has(focusedId) ? focusedId : layout.order[0]?.node.id ?? null;
@@ -535,7 +646,9 @@ export function JevGraph({
     if (!structure.byId.has(id)) return;
     const nextCollapsed = expandedTo(id, structure, collapsed);
     const nextLayout =
-      nextCollapsed === collapsed ? layout : computeLayout(displayPolicy, structure, nextCollapsed, compact);
+      nextCollapsed === collapsed ? layout : layoutMode === "tree"
+        ? computeLayout(displayPolicy, structure, nextCollapsed, compact, viewport.width / viewport.height)
+        : spatialLayout(displayPolicy, structure, nextCollapsed, dots, camera.yaw, camera.pitch);
     if (nextCollapsed !== collapsed) setCollapsed(nextCollapsed);
     const placed = nextLayout.byId.get(id);
     if (placed !== undefined) setTransform(revealBox(transform, placed, viewport, compact));
@@ -573,10 +686,8 @@ export function JevGraph({
   useEffect(() => {
     if (!fitOnMount || initiallyFitted.current === scopeKey) return;
     initiallyFitted.current = scopeKey;
-    const { width, height } = viewportSize(svgRef.current);
-    const k = clampScale(Math.min(width / layout.width, height / layout.height));
-    setTransform({ k, x: (width - layout.width * k) / 2, y: (height - layout.height * k) / 2 });
-  }, [fitOnMount, layout.height, layout.width, scopeKey]);
+    setTransform(fittedTransform(layout, viewportSize(svgRef.current)));
+  }, [fitOnMount, layout, scopeKey]);
 
   // React registers wheel listeners as passive, which cannot stop the page
   // from scrolling; zooming needs a non-passive native listener.
@@ -602,9 +713,7 @@ export function JevGraph({
   const pan = (dx: number, dy: number) =>
     setTransform((current) => ({ ...current, x: current.x + dx, y: current.y + dy }));
   const fitToView = () => {
-    const { width, height } = viewportSize(svgRef.current);
-    const k = clampScale(Math.min(width / layout.width, height / layout.height));
-    setTransform({ k, x: (width - layout.width * k) / 2, y: (height - layout.height * k) / 2 });
+    setTransform(fittedTransform(layout, viewportSize(svgRef.current)));
   };
   const toggle = (id: string) =>
     setCollapsed((current) => {
@@ -676,11 +785,17 @@ export function JevGraph({
       clientX: event.clientX,
       clientY: event.clientY,
       origin: transform,
+      yaw: camera.yaw, pitch: camera.pitch, rotate: dots && !event.shiftKey,
     };
   };
   const onPointerMove = (event: PointerEvent<SVGRectElement>) => {
     const start = drag.current;
     if (start === null || start.pointerId !== event.pointerId) return;
+    if (start.rotate) {
+      setCamera({ yaw: start.yaw + (event.clientX - start.clientX) * 0.008,
+        pitch: Math.max(-Math.PI / 2, Math.min(Math.PI / 2, start.pitch + (event.clientY - start.clientY) * 0.008)) });
+      return;
+    }
     setTransform({
       ...start.origin,
       x: start.origin.x + event.clientX - start.clientX,
@@ -723,7 +838,8 @@ export function JevGraph({
 
   return (
     <div
-      className="jev-graph"
+      className={`jev-graph${dots ? " jev-graph-dots" : ""}`}
+      data-layout={layoutMode}
       data-testid="jev-graph"
       data-reduced-motion={reducedMotion}
       data-following={following}
@@ -763,9 +879,16 @@ export function JevGraph({
         <button type="button" onClick={fitToView}>
           Fit
         </button>
-        <button type="button" onClick={() => setTransform(IDENTITY)}>
+        <button type="button" onClick={() => { setTransform(IDENTITY); setCamera({ yaw: 0.35, pitch: -0.4 }); }}>
           Reset view
         </button>
+        {dots && <>
+          <button type="button" aria-label="Rotate left" onClick={() => setCamera((c) => ({ ...c, yaw: c.yaw - 0.2 }))}>↶</button>
+          <button type="button" aria-label="Rotate right" onClick={() => setCamera((c) => ({ ...c, yaw: c.yaw + 0.2 }))}>↷</button>
+          <button type="button" aria-label="Tilt up" onClick={() => setCamera((c) => ({ ...c, pitch: Math.max(-Math.PI / 2, c.pitch - 0.2) }))}>Tilt ↑</button>
+          <button type="button" aria-label="Tilt down" onClick={() => setCamera((c) => ({ ...c, pitch: Math.min(Math.PI / 2, c.pitch + 0.2) }))}>Tilt ↓</button>
+          <span className="jev-note">Drag to rotate · Shift-drag to pan · scroll to zoom</span>
+        </>}
         <button type="button" onClick={() => setCollapsed(new Set())}>
           Expand all
         </button>
@@ -790,6 +913,7 @@ export function JevGraph({
           {followStatus}
         </span>
       </div>
+      <span className="jev-graph-density">{layout.order.length} nodes shown · {policy.nodes.length} in policy</span>
       <details className="jev-disclosure"><summary>Graph help and legend</summary>
       <p className="jev-graph-legend">
         {RUNTIME_ORDER.map((status) => (
@@ -864,7 +988,7 @@ export function JevGraph({
           transform={`translate(${transform.x},${transform.y}) scale(${transform.k})`}
         >
           <g className="jev-graph-bands" aria-hidden="true">
-            {laneBands(layout, structure, nodeHeight, nodeWidth).map((band) => (
+            {(layoutMode === "tree" ? laneBands(layout, structure, nodeHeight, nodeWidth) : []).map((band) => (
               <rect
                 key={band.lane}
                 className={`jev-graph-lane-band ${structure.toneOf.get(band.lane) ?? ""}`}
@@ -925,7 +1049,7 @@ export function JevGraph({
             })}
           </g>
           <g role="tree" aria-label="Policy nodes">
-            {layout.order.map((placed) => {
+            {(dots ? [...layout.order].sort((a, b) => (a.cameraDepth ?? 0) - (b.cameraDepth ?? 0)) : layout.order).map((placed) => {
               const { node } = placed;
               const status = runtime.get(node.id) ?? "idle";
               const composite = isComposite(node);
@@ -956,7 +1080,7 @@ export function JevGraph({
                       if (element === null) nodeElements.current.delete(node.id);
                       else nodeElements.current.set(node.id, element);
                     }}
-                    className={classes.join(" ")}
+                    className={`${classes.join(" ")} ${tone}`}
                     role="treeitem"
                     data-status={status}
                     data-live={drawnLive}
@@ -975,15 +1099,19 @@ export function JevGraph({
                     onKeyDown={(event) => onNodeKeyDown(event, placed)}
                   >
                     <title>{title}</title>
+                    {dots ? <>
+                      <circle className="jev-dot-hit" cx={8} cy={8} r={12} />
+                      <circle className="jev-dot" cx={8} cy={8} r={node.id === selectedNodeId ? 7 : 5} />
+                    </> : <>
                     <rect width={nodeWidth} height={nodeHeight} rx={6} />
                     <rect
                       className={`jev-graph-node-lane ${tone}`}
-                      width={LANE_STRIPE}
+                      width={compact ? 3 : LANE_STRIPE}
                       height={nodeHeight}
                       rx={2}
                     />
-                    <text x={10} y={compact ? 21 : 15} className={compact ? "jev-graph-node-code" : "jev-graph-node-name"}>
-                      {compact ? `${codes.get(node.id)} ${RUNTIME_GLYPHS[status]}` : shortId(node.id)}
+                    <text x={compact ? 5 : 10} y={compact ? 14 : 15} className={compact ? "jev-graph-node-code" : "jev-graph-node-name"}>
+                      {compact ? codes.get(node.id) : shortId(node.id)}
                     </text>
                     {!compact && <text x={10} y={30} className="jev-graph-node-status">
                       {`${RUNTIME_GLYPHS[status]} ${statusText}`}
@@ -1001,7 +1129,13 @@ export function JevGraph({
                         {clip(thirdLine, SUMMARY_CHARS)}
                       </text>
                     )}
+                    </>}
                   </g>
+                  {dots && node.id === selectedNodeId && (
+                    <text className="jev-dot-label" x={18} y={12}>
+                      {codes.get(node.id)} · {shortId(node.id)}
+                    </text>
+                  )}
                 </g>
               );
             })}
@@ -1009,7 +1143,7 @@ export function JevGraph({
           {/* Branch toggles sit outside the tree: an ARIA tree owns only tree items. */}
           <g>
             {layout.order
-              .filter((placed) => isComposite(placed.node))
+              .filter((placed) => isComposite(placed.node) && (!dots || placed.node.id === selectedNodeId))
               .map(({ node, x, y }) => {
                 const isCollapsed = collapsed.has(node.id);
                 return (
