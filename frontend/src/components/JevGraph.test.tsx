@@ -88,6 +88,20 @@ function renderGraph(options: RenderOptions = {}) {
 }
 
 describe("spatial views", () => {
+  it("enlarges live active dots and their click targets without advertising stale nodes as live", () => {
+    const select = vi.fn();
+    const options: RenderOptions = { layoutMode: "dots3d", runtime: { "army.attack": "active" }, onSelectNode: select };
+    const view = renderGraph(options);
+    const active = item("army.attack");
+    expect(active.querySelector(".jev-dot")).toHaveAttribute("r", "10");
+    const hit = active.querySelector(".jev-dot-hit")!;
+    expect(Number(hit.getAttribute("r"))).toBeGreaterThan(10);
+    fireEvent.click(hit);
+    expect(select).toHaveBeenCalledWith("army.attack");
+    view.rerender(graph({ ...options, live: false }));
+    expect(item("army.attack").querySelector(".jev-dot")).toHaveAttribute("r", "5");
+  });
+
   it("preserves expansion and node identity across tree, radial and dots views", () => {
     const view = renderGraph({ compact: true });
     fireEvent.click(screen.getByRole("button", { name: "Expand all" }));

@@ -1,7 +1,7 @@
 # Try the Jev Battle View
 
 The current Windows preview combines a hosted Typesafe Jev v2 match, the live
-Branch faces graph, decision summaries and three recent game events. It uses your saved Typesafe API key and paid credits
+Branch faces graph, decision summaries and six recent game events. It uses your saved Typesafe API key and paid credits
 (model `jev-1.13.0`, up to 450 requests per match). The isolated OBS recorder is already installed on the
 development workstation; other machines need the setup described in the
 [feasibility report](../investigations/jev-battle-view-feasibility-2026-10-11.md).
@@ -28,14 +28,21 @@ readable. Closing that console during a match is not the supported stop control.
 ## Things to try
 
 1. Drag the graph to rotate it, scroll to zoom, Shift-drag to pan. **Fit** restores
-   a useful overview. Click a dot for its name/description; branch roots are labeled.
+   a useful overview. Live active dots are twice as large and have larger click
+   targets. Click a dot for the full branch-to-node path and descriptions;
+   branch roots are labeled. Long paths scroll in the inspector below the graph.
 2. Watch highlighted nodes and recent events as Jev produces workers, builds and
    prepares its army. The decision panel identifies Typesafe responses, their model and request count.
    The fixed opening runs locally until there are eligible choices; pending/error
    fallbacks remain explicitly labeled.
-3. Press **Unlock camera**, then use the minimap to look elsewhere. Moving the
+3. **Auto camera** starts enabled. It follows visible enemy contact, advancing
+   units, construction and scouting. The top bar names what it is following.
+   Routine shots hold for at least five game seconds; new enemy contact can
+   interrupt sooner. This changes only the view, never Jev's orders or vision.
+   Press **Unlock camera** to disable the observer and use the minimap yourself. Moving the
    pointer out of the game automatically locks the camera at its new position.
    The lock prevents camera drift; game clicks can still issue normal SC2 commands.
+   Press **Auto camera** again to resume automatic viewing.
 4. Press **Record Battle**, interact with the graph and game, then **Stop recording**.
    Repeat for another clip or leave recording on until **Stop battle**.
 
@@ -74,11 +81,16 @@ graph activity over time. If the dashboard is stopped, run
 
 ## Current limits
 
-This is a fixed 1920×1080 Windows preview, tested on the development display.
+This is a fixed 1920×1200 Windows preview and recording, tested on the development display.
 Keep its size and monitor placement unchanged; adaptive resize and mixed-DPI
 monitor support are still pending. OBS must use the dedicated `BattleProbe`
 profile and authenticated local websocket on port 4457. The launcher will not
 replace another active recording or attach to an existing SC2 match.
+
+SC2 remains a native top-level window owned by the viewer and follows its pane
+when the viewer moves. The recorder combines separate game and dashboard
+captures into one video. This avoids the input/activation failures of embedding
+SC2 as a child window. To load host changes, stop the old battle and launch again.
 
 Hosted Jev is wired through the same production runner as `launch-jev.ps1`.
 A missing key fails the launch; service failures retain the existing labeled

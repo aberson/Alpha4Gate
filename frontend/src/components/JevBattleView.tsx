@@ -8,7 +8,7 @@ import "./JevBattleView.css";
 
 declare global {
   interface Window {
-    battleAction?: (action: string) => Promise<{ recording: boolean; locked: boolean; message: string }>;
+    battleAction?: (action: string) => Promise<{ recording: boolean; locked: boolean; automatic?: boolean; message: string }>;
   }
 }
 
@@ -16,7 +16,7 @@ declare global {
 export function JevBattleView() {
   const { run, policy, reportRendered } = useJevRun();
   const [selected, setSelected] = useState<string | null>(null);
-  const [native, setNative] = useState({ recording: false, locked: true, message: "Connecting viewer…" });
+  const [native, setNative] = useState({ recording: false, locked: true, automatic: false, message: "Connecting viewer…" });
   const state = run.data;
   const archive = policy.data;
   const matching = state && archive?.policy_hash === state.policy_hash ? archive : null;
@@ -39,7 +39,7 @@ export function JevBattleView() {
     let disposed = false;
     const poll = async () => {
       if (window.battleAction) {
-        try { const value = await window.battleAction("status"); if (!disposed) setNative(value); }
+        try { const value = await window.battleAction("status"); if (!disposed) setNative({ ...value, automatic: value.automatic ?? false }); }
         catch { if (!disposed) setNative((value) => ({ ...value, message: "Viewer disconnected" })); }
       }
     };
@@ -48,7 +48,7 @@ export function JevBattleView() {
     return () => { disposed = true; window.clearInterval(timer); };
   }, []);
   const action = async (name: string) => {
-    try { if (window.battleAction) setNative(await window.battleAction(name)); }
+    try { if (window.battleAction) { const value = await window.battleAction(name); setNative({ ...value, automatic: value.automatic ?? false }); } }
     catch { setNative((value) => ({ ...value, message: "Viewer action failed" })); }
   };
   const decisions = new Map<string, NonNullable<typeof state>["recent_events"][number]>();
@@ -59,12 +59,25 @@ export function JevBattleView() {
   const events = (state?.recent_events ?? []).filter((event) =>
     event.kind === "command" || event.kind === "task",
   ).slice(-6).reverse();
-  const node = matching?.nodes.find((item) => item.id === selected);
+  const nodePath = useMemo(() => {
+    if (!matching || !selected) return [];
+    const byId = new Map(matching.nodes.map((node) => [node.id, node]));
+    const parents = new Map<string, string>();
+    for (const node of matching.nodes) for (const child of node.children) parents.set(child, node.id);
+    const path = [];
+    for (let id: string | undefined = selected; id; id = parents.get(id)) {
+      const node = byId.get(id);
+      if (!node) break;
+      path.unshift(node);
+    }
+    return path;
+  }, [matching, selected]);
   return <main className="jev-tab battle-view">
     <header className="battle-header">
       <strong>Alpha4Gate · Jev Battle</strong>
       <span>{state ? `${state.game_seconds.toFixed(1)}s · ${live ? "Live" : run.error ? "Offline" : state.stale ? "Stale" : state.status}` : "Preparing game"}</span>
       <span className="battle-native-status">{native.message}</span>
+      <button aria-pressed={native.automatic} onClick={() => void action("auto")}>Auto camera</button>
       <button onClick={() => void action("lock")}>{native.locked ? "Unlock camera" : "Lock camera"}</button>
       <button className={native.recording ? "battle-recording" : ""} onClick={() => void action("record")}>
         {native.recording ? "Stop recording" : "Record Battle"}
@@ -80,13 +93,17 @@ export function JevBattleView() {
         runtime={runtime} live={live} selectedNodeId={selected} onSelectNode={setSelected}
         activity={graphActivity(state, matching)} ended={isTerminalRunStatus(state.status)} />
         : <p>{run.error || policy.error ? "Run evidence unavailable" : "Loading this run’s graph…"}</p>}
-      <p className="battle-inspection">{node ? `${node.id}: ${node.label}` : "Click a dot to inspect · Drag to rotate · Shift-drag to pan"}</p>
+      <div className="battle-inspection" aria-label="Selected node path">
+        {nodePath.length ? <ol>{nodePath.map((node, index) => <li key={node.id}>
+          {index > 0 && <span aria-hidden="true">→ </span>}<strong>{node.id}:</strong> {node.label}
+        </li>)}</ol> : <p>Click a dot to inspect its path · Drag to rotate · Shift-drag to pan</p>}
+      </div>
     </section>
     <section className="battle-log"><h3>Recent game events</h3>
       {events.length ? events.map((event) => <p key={event.sequence}>
         <time>{event.game_seconds.toFixed(1)}s</time> {event.node_id} · {event.reason}
       </p>) : <p>No command or task events recorded yet.</p>}
-      <small>Run {state?.run_id ?? "preparing"} · {native.locked ? "Camera locked" : "Camera unlocked; auto-locks when the pointer leaves"}</small>
+      <small>Run {state?.run_id ?? "preparing"} · {native.automatic ? "Automatic observer camera" : native.locked ? "Camera locked" : "Camera unlocked; auto-locks when the pointer leaves"}</small>
     </section>
     <section className="battle-decisions"><h3>{live ? "Current decisions" : "Last recorded decisions"}</h3>
       {[...decisions].map(([question, event]) => <p key={question}><strong>{question.replaceAll("_", " ")}</strong>

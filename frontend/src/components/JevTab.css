@@ -534,7 +534,7 @@
   vector-effect: non-scaling-stroke;
 }
 
-.jev-dot-hit { fill: transparent; pointer-events: none; }
+.jev-dot-hit { fill: transparent; pointer-events: all; cursor: pointer; }
 .jev-dot-label {
   font-family: var(--mono);
   font-size: 13px;

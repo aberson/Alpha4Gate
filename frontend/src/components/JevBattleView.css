@@ -1,5 +1,5 @@
 .battle-view { position: fixed; inset: 0; padding: 12px; box-sizing: border-box; display: grid;
-  grid-template-columns: 60% 1fr; grid-template-rows: 48px minmax(0, 1fr) 155px; gap: 12px;
+  grid-template-columns: 60% 1fr; grid-template-rows: 48px minmax(0, 1fr) 240px; gap: 12px;
   background: #14171f; color: #cdd5e4; font-size: 14px; }
 .battle-header { grid-column: 1 / -1; display: flex; align-items: center; gap: 18px; }
 .battle-header strong { font-size: 22px; color: #eff3ff; }
@@ -11,15 +11,19 @@
 .battle-graph .jev-graph-viewport { height: auto; flex: 1; min-height: 0; }
 .battle-graph details, .battle-graph .jev-graph-follow, .battle-graph .jev-graph-follow-status { display: none; }
 .battle-graph button { font-size: 12px; }
-.battle-inspection { height: 35px; margin: 6px 0 0; overflow: hidden; }
+.battle-inspection { flex: 0 0 125px; margin: 8px 0 0; overflow: auto; border-top: 1px solid #303747; padding-top: 8px; line-height: 1.4; }
+.battle-inspection ol { list-style: none; padding: 0; margin: 0; }
+.battle-inspection li { margin-bottom: 6px; overflow-wrap: anywhere; }
+.battle-inspection strong { color: #8bb7d6; }
 .battle-log, .battle-decisions { padding: 14px; }
+.battle-view .battle-log, .battle-view .battle-decisions { overflow: auto; }
 .battle-log p { margin: 4px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.battle-log p:nth-of-type(n+4) { display: none; }
 .battle-log time { color: #83bddd; display: inline-block; width: 60px; }
 .battle-log small { display: block; color: #98a2b8; margin-top: 10px; }
-.battle-decisions { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; }
+.battle-decisions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-content: start; overflow-wrap: anywhere; }
 .battle-decisions h3 { grid-column: 1 / -1; margin: 0; }
 .battle-decisions p { margin: 0; line-height: 1.2; }
 .battle-decisions span, .battle-decisions small { display: block; }
 .battle-decisions small { color: #98a2b8; font-size: 11px; }
 .battle-recording { color: #ff788a; border-color: #ff788a; }
+.battle-header button[aria-pressed="true"] { color: #8ce6b7; border-color: #58b68a; background: #183b30; }

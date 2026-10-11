@@ -152,14 +152,17 @@ the App shell, outside the tab switch.
 
 **JevBattleView:** `?battle=1&run=<run_id>` selects a standalone Windows preview
 instead of the normal tab shell. Reuses `useJevRun` and `JevGraph` with Branch faces,
-all nodes initially expanded, decision summaries and a three-entry event log.
+all nodes initially expanded, decision summaries and a six-entry event log.
 `scripts/launch-jev-battle.ps1` starts/reuses dashboard and isolated OBS, then
-`scripts/probes/jev_battle_view.py --interactive` hosts Edge and SC2 as sibling
-native child windows. The injected `battleAction` binding supplies recording,
-camera lock and Stop battle; this is not a new HTTP API. `-AutoRecord` starts
+`scripts/probes/jev_battle_view.py --interactive` hosts Edge as a child and SC2 as
+an owned native popup aligned over its pane. OBS combines their captures.
+The injected `battleAction` binding supplies recording, automatic observer camera,
+manual camera lock and Stop battle; this is not a new HTTP API. `-AutoRecord` starts
 recording when gameplay is ready. Both desktop launchers use Typesafe `jev-1.13.0` with the saved key;
 only recording differs. The preview is fixed
-1920×1080, with game-process audio and no microphone. See the
+1920×1200, with game-process audio and no microphone. Active dots have enlarged
+hit targets; the inspector shows the full ancestry path and the event panel shows
+six recent entries. See the
 [operator guide](../operator/jev-battle-view.md) and
 [native capture findings](../investigations/jev-battle-view-feasibility-2026-10-11.md).
 

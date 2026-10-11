@@ -178,3 +178,45 @@ and the recorded composite visibly contains SC2 and all 292 graph nodes.
 Evidence: that run's `battle/probe.json`, `composite.png`, and MKV. The short test
 used the scripted developer probe with zero paid requests; both desktop shortcuts
 continue to select hosted Typesafe. Four launcher tests and Ruff passed.
+
+## Native input and automatic observer - 2026-10-11
+
+The operator still could not interact with the embedded game. A live inspection
+found SC2 enabled and holding keyboard focus, ruling out the focus-only repair
+as sufficient. SC2 now remains a borderless, owned top-level popup, aligned to
+the game pane; Edge remains a child of the pygame host. This follows Win32's
+[owned-window and activation model](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features):
+owned popups stay above their owner, while retaining top-level activation.
+The host tracks position changes and clears ownership before cleanup. OBS
+explicitly layers the SC2 capture over the dashboard capture in one scene.
+
+The preview and recording are now 1920x1200, with six recent events, more room
+for decisions, a scrolling full ancestry inspector, and larger live active dots
+and hit targets. A real-browser fixture verified a click outside the visible
+active dot selects it and shows `scouting -> scouting.scout -> scouting.move`.
+
+Automatic camera starts enabled. `src/jev/camera.py` chooses among own-unit
+positions and existing visible enemy contacts, prioritizing contact, advancing
+units, construction and active scouts. It holds routine shots for five game
+seconds and can rotate quiet subjects after twelve. The wrapper samples and
+moves the camera once per game second. No unit commands, hidden-state queries,
+fog changes or new model calls are involved. Unlock disables automatic viewing;
+pointer exit locks the resulting view; Auto camera resumes the observer.
+
+Live local run `703c74fdbecf4829b3fd3cb7f107f884` verified the owned popup,
+three browser-raising checks, exact 1127x825 pane fit and combined recording.
+Its camera log records home, construction and visible contact shots across
+11 camera positions. The composite shows the scout at the visible enemy base.
+Artifacts are in that run's `battle/` folder. Nine Python camera/launcher tests,
+34 targeted frontend tests, camera-module strict mypy, Ruff, frontend build and
+lint passed (existing frontend warnings remain). Before the observer addition,
+the full frontend suite passed 412 tests with six skipped.
+
+Manual-input acceptance is still pending. The guarded physical-input probe
+`1e71ab6b5a7c42928b0761271cc05663` stopped because another application had
+foreground focus; it is not evidence of a successful or failed minimap click.
+Physical input is now opt-in via `--exercise-input`, verifies the intended
+foreground/hit window before clicking, and asserts actual camera movement and
+pointer-exit locking. Normal developer probes no longer move the system cursor.
+Both desktop shortcuts retain hosted Typesafe defaults. All developer camera
+runs above were local scripted tests, not gameplay benchmarks.

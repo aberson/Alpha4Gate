@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { JevBattleView } from "./JevBattleView";
 import type { JevRunState } from "../types/jev";
 import policyText from "../../../bots/jev/v2/policy.json?raw";
 
 const mocked = vi.hoisted(() => ({ view: {} as object, rendered: vi.fn() }));
 vi.mock("../hooks/useJevRun", () => ({ useJevRun: () => mocked.view }));
-afterEach(() => { cleanup(); mocked.rendered.mockClear(); });
+afterEach(() => { cleanup(); mocked.rendered.mockClear(); delete window.battleAction; });
 
 function setup(status: string, stale = false, mismatch = false, recentEvents: JevRunState["recent_events"] = []) {
   const policy = { ...JSON.parse(policyText), policy_hash: "a".repeat(64) };
@@ -19,6 +19,28 @@ function setup(status: string, stale = false, mismatch = false, recentEvents: Je
 }
 
 describe("Battle feasibility view", () => {
+  it("shows observer status and switches to manual control through the native bridge", async () => {
+    window.battleAction = vi.fn(async (name) => ({
+      recording: false, locked: name !== "lock", automatic: name !== "lock",
+      message: name === "lock" ? "Camera unlocked" : "Auto camera · Scouting",
+    }));
+    setup("running");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Auto camera" })).toHaveAttribute("aria-pressed", "true"));
+    expect(screen.getByText("Auto camera · Scouting")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Unlock camera" }));
+    await screen.findByRole("button", { name: "Lock camera" });
+    expect(screen.getByRole("button", { name: "Auto camera" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("shows the real parent path even when node IDs do not encode that ancestry", () => {
+    setup("running");
+    fireEvent.click(screen.getByRole("treeitem", { name: /^scouting.move,/ }));
+    const path = screen.getByLabelText("Selected node path");
+    expect(within(path).getAllByRole("listitem").map((item) => item.querySelector("strong")?.textContent))
+      .toEqual(["scouting:", "scouting.scout:", "scouting.move:"]);
+    expect(path).not.toHaveTextContent("scouting.retreat:");
+  });
+
   it("shows the recorded hosted model and calls, and keeps fallback attribution distinct", () => {
     const event: JevRunState["recent_events"][number] = {
       sequence: 1, game_loop: 1, game_seconds: 1, node_id: "army", task_id: null,

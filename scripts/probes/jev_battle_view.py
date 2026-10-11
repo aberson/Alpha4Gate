@@ -24,6 +24,7 @@ from contextlib import suppress
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+VIEW_WIDTH, VIEW_HEIGHT = 1920, 1200
 sys.path.insert(0, str(ROOT))
 
 
@@ -55,6 +56,7 @@ def game_child(
     from sc2.position import Point2
 
     import jev.bot
+    from jev.camera import CameraDirector, CameraEntity, camera_subjects
     from jev.runner import MatchOptions, run_match
 
     class CameraProbeBot(jev.bot.JevBot):
@@ -62,12 +64,49 @@ def game_child(
 
         held: tuple[float, float] | None = None
         previous_sample = -1.0
+        director: CameraDirector | None = None
+        previous_camera_command = -1.0
 
         async def on_step(self, iteration: int) -> None:
             control = json.loads((evidence / "control.json").read_text())
             camera = self.state.observation_raw.player.camera
             actual = (camera.x, camera.y)
-            if control["locked"]:
+            automatic = control.get("automatic", False)
+            reason = "Manual camera"
+            if automatic:
+                if self.director is None:
+                    self.director = CameraDirector()
+                self.held = None
+                if self.time - self.previous_camera_command >= 1:
+                    own = tuple(
+                        CameraEntity(
+                            unit.tag,
+                            (unit.position.x, unit.position.y),
+                            unit.is_structure,
+                            unit.is_ready,
+                            unit.is_attacking,
+                        )
+                        for unit in self.units | self.structures
+                    )
+                    enemies = tuple(
+                        (unit.position.x, unit.position.y)
+                        for unit in self.enemy_units | self.enemy_structures
+                        if unit.is_visible
+                    )
+                    subject = self.director.choose(
+                        self.time,
+                        camera_subjects(
+                            own,
+                            enemies,
+                            self.controller.runtime.active_tasks(),
+                            (self.start_location.x, self.start_location.y),
+                        ),
+                    )
+                    await self.client.move_camera(Point2(subject.position))
+                    self.previous_camera_command = self.time
+                reason = self.director.subject.reason if self.director.subject else "Home base"
+            elif control["locked"]:
+                reason = "Camera locked"
                 if self.held is None:
                     self.held = actual
                 await self.client.move_camera(Point2(self.held))
@@ -85,10 +124,13 @@ def game_child(
                                 "game": self.time,
                                 "camera": actual,
                                 "locked": control["locked"],
+                                "automatic": automatic,
+                                "reason": reason,
                             }
                         )
                         + "\n"
                     )
+                write_json(evidence / "camera-status.json", {"reason": reason})
             await super().on_step(iteration)
 
     jev.bot.JevBot = CameraProbeBot
@@ -129,6 +171,7 @@ async def probe(
     auto_record: bool = False,
     provider: str = "scripted",
     max_requests: int = 450,
+    exercise_input: bool = False,
 ) -> None:
     child_env = game_environment(provider)
     import obsws_python as obs
@@ -157,10 +200,10 @@ async def probe(
     client.set_video_settings(
         numerator=30,
         denominator=1,
-        base_width=1920,
-        base_height=1080,
-        out_width=1920,
-        out_height=1080,
+        base_width=VIEW_WIDTH,
+        base_height=VIEW_HEIGHT,
+        out_width=VIEW_WIDTH,
+        out_height=VIEW_HEIGHT,
     )
     for entry in client.get_input_list().inputs:
         client.remove_input(entry["inputName"])
@@ -184,19 +227,20 @@ async def probe(
             raise RuntimeError(f"Game failed to initialize; see {log_path}")
         await asyncio.sleep(0.1)
     evidence.mkdir()
-    write_json(evidence / "control.json", {"locked": True})
+    write_json(evidence / "control.json", {"locked": True, "automatic": True})
     client.set_record_directory(str(evidence))
     sc2_hwnd = None
     browser = None
     recording = False
     locked = True
+    automatic = True
     message = "Preparing game · camera locked"
     record_path = None
     started = None
     metrics = []
     stop_requested = False
     pygame.init()
-    surface = pygame.display.set_mode((1920, 1080))
+    surface = pygame.display.set_mode((VIEW_WIDTH, VIEW_HEIGHT))
     pygame.display.set_caption("Alpha4Gate Battle Probe Host")
     surface.fill((20, 23, 31))
     pygame.display.flip()
@@ -209,35 +253,51 @@ async def probe(
     win32gui.SetWindowPos(native_host, 0, 0, 0, 0, 0, win32con.SWP_NOSIZE | win32con.SWP_NOZORDER)
     browser_hwnd = None
     maintain_stacking = True
-    stacking_repairs = 0
+    game_offset = None
     stacking_checks = []
+    camera_check = None
 
     async def pump_native_events() -> None:
-        nonlocal stacking_repairs
-        # Embedded browser operations can wait for messages from their native parent.
-        # Keep that parent responsive even while awaiting Playwright or browser close.
+        # Edge remains a child; SC2 is an owned top-level popup so it receives
+        # normal native activation and input. Ownership keeps it above the host.
         while True:
             pygame.event.pump()
-            # Native browser activation raises its full-size surface above SC2.
-            # Restore sibling order without taking focus from browser controls.
             if (
                 maintain_stacking
+                and game_offset is not None
                 and sc2_hwnd
                 and win32gui.IsWindow(sc2_hwnd)
-                and win32gui.GetParent(sc2_hwnd) == native_host
-                and win32gui.GetTopWindow(native_host) != sc2_hwnd
+                and not win32gui.IsIconic(native_host)
             ):
-                win32gui.SetWindowPos(
-                    sc2_hwnd,
-                    win32con.HWND_TOP,
-                    0,
-                    0,
-                    0,
-                    0,
-                    win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE,
-                )
-                stacking_repairs += 1
+                target = win32gui.ClientToScreen(native_host, game_offset)
+                actual = win32gui.ClientToScreen(sc2_hwnd, (0, 0))
+                if target != actual:
+                    outer = win32gui.GetWindowRect(sc2_hwnd)
+                    win32gui.SetWindowPos(
+                        sc2_hwnd,
+                        0,
+                        outer[0] + target[0] - actual[0],
+                        outer[1] + target[1] - actual[1],
+                        0,
+                        0,
+                        win32con.SWP_NOSIZE | win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE,
+                    )
             await asyncio.sleep(0.02)
+
+    async def native_click(position: tuple[int, int], target: int) -> None:
+        if win32gui.GetForegroundWindow() not in (native_host, sc2_hwnd):
+            raise RuntimeError("Native input test interrupted: Battle View is not foreground")
+        win32api.SetCursorPos(position)
+        await asyncio.sleep(0.15)
+        hit = win32gui.WindowFromPoint(position)
+        if (
+            win32gui.GetForegroundWindow() not in (native_host, sc2_hwnd)
+            or win32api.GetCursorPos() != position
+            or not (hit == target or win32gui.IsChild(target, hit))
+        ):
+            raise RuntimeError("Native input test interrupted: pointer is not on the intended pane")
+        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0)
+        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0)
 
     event_pump = asyncio.create_task(pump_native_events())
     playwright = await async_playwright().start()
@@ -251,7 +311,7 @@ async def probe(
             color_scheme="dark",
             args=[
                 "--app=http://localhost:3000/?battle=1&run=" + run_id,
-                "--window-size=1920,1080",
+                f"--window-size={VIEW_WIDTH},{VIEW_HEIGHT}",
                 "--window-position=0,0",
                 "--force-device-scale-factor=1",
                 "--disable-background-timer-throttling",
@@ -265,14 +325,22 @@ async def probe(
             await page.goto("http://localhost:3000/?battle=1&run=" + run_id)
 
         async def action(name: str) -> dict:
-            nonlocal recording, locked, message, record_path, stop_requested
+            nonlocal recording, locked, automatic, message, record_path, stop_requested
             if name == "stop":
                 stop_requested = True
                 message = "Stopping battle"
             elif name == "lock":
                 locked = not locked
-                write_json(evidence / "control.json", {"locked": locked})
-                message = "Camera locked" if locked else "Game controls enabled"
+                automatic = False
+                write_json(evidence / "control.json", {"locked": locked, "automatic": False})
+                message = (
+                    "Camera locked" if locked else "Camera unlocked · click the minimap to move"
+                )
+            elif name == "auto":
+                automatic = not automatic
+                locked = True
+                write_json(evidence / "control.json", {"locked": True, "automatic": automatic})
+                message = "Auto camera" if automatic else "Camera locked"
             elif name == "record":
                 if recording:
                     record_path = client.stop_record().output_path
@@ -282,7 +350,18 @@ async def probe(
                     client.start_record()
                     recording = True
                     message = "Recording · game audio only"
-            return {"recording": recording, "locked": locked, "message": message}
+            camera_status = evidence / "camera-status.json"
+            camera_message = (
+                "Auto camera · " + json.loads(camera_status.read_text())["reason"]
+                if automatic and camera_status.exists()
+                else message
+            )
+            return {
+                "recording": recording,
+                "locked": locked,
+                "automatic": automatic,
+                "message": camera_message,
+            }
 
         await page.expose_function("battleAction", action)
         await page.get_by_test_id("jev-graph").wait_for(timeout=45000)
@@ -302,7 +381,7 @@ async def probe(
         if host is None:
             raise RuntimeError("Could not identify the dedicated Battle window")
         browser_hwnd = host
-        attach_window(browser_hwnd, native_host, (0, 0, 1920, 1080))
+        attach_window(browser_hwnd, native_host, (0, 0, VIEW_WIDTH, VIEW_HEIGHT))
         host = native_host
         pygame.event.pump()
         await page.wait_for_timeout(500)
@@ -357,7 +436,25 @@ async def probe(
             True,
         )
         await asyncio.sleep(1)  # Bind process audio while SC2 is still a top-level window.
-        attach_window(sc2_hwnd, host, rectangle)
+        # Keep SC2 top-level: child embedding breaks its native activation/input.
+        # An owner keeps it above the host and hides it when the host minimizes.
+        style = win32gui.GetWindowLong(sc2_hwnd, win32con.GWL_STYLE)
+        win32gui.SetWindowLong(
+            sc2_hwnd,
+            win32con.GWL_STYLE,
+            (style & ~win32con.WS_CHILD & ~win32con.WS_OVERLAPPEDWINDOW)
+            | win32con.WS_POPUP
+            | win32con.WS_VISIBLE,
+        )
+        win32gui.SetWindowLong(sc2_hwnd, win32con.GWL_HWNDPARENT, host)
+        pane_origin = win32gui.ClientToScreen(host, rectangle[:2])
+        win32gui.SetWindowPos(
+            sc2_hwnd,
+            win32con.HWND_TOP,
+            *pane_origin,
+            *rectangle[2:],
+            win32con.SWP_FRAMECHANGED | win32con.SWP_NOACTIVATE,
+        )
         win32gui.EnableWindow(sc2_hwnd, True)
         render_hwnds = []
 
@@ -381,7 +478,7 @@ async def probe(
             if actual == target and actual_client[2:] == rectangle[2:]:
                 break
             outer = win32gui.GetWindowRect(sc2_hwnd)
-            pos = win32gui.ScreenToClient(host, (outer[0], outer[1]))
+            pos = outer[:2]
             win32gui.SetWindowPos(
                 sc2_hwnd,
                 win32con.HWND_TOP,
@@ -396,7 +493,12 @@ async def probe(
             win32gui.ClientToScreen(sc2_hwnd, (0, 0)) != target
             or win32gui.GetClientRect(sc2_hwnd)[2:] != rectangle[2:]
         ):
-            raise RuntimeError("SC2 did not settle inside its allocated pane")
+            raise RuntimeError(
+                f"SC2 pane mismatch: client={win32gui.GetClientRect(sc2_hwnd)}, "
+                f"origin={win32gui.ClientToScreen(sc2_hwnd, (0, 0))}; "
+                f"expected size={rectangle[2:]}, origin={target}"
+            )
+        game_offset = win32gui.ScreenToClient(host, target)
         print("Game pane fit verified", target, rectangle[2:], flush=True)
         title = win32gui.GetWindowText(host)
         window = f"{title}:{win32gui.GetClassName(host)}:python.exe"
@@ -413,10 +515,36 @@ async def probe(
             item,
             {
                 "boundsType": "OBS_BOUNDS_SCALE_INNER",
-                "boundsWidth": 1920,
-                "boundsHeight": 1080,
+                "boundsWidth": VIEW_WIDTH,
+                "boundsHeight": VIEW_HEIGHT,
                 "positionX": 0,
                 "positionY": 0,
+            },
+        )
+        # Capture both native surfaces explicitly; WGC of the host alone does
+        # not guarantee inclusion of its owned window from another process.
+        client.create_input(
+            scene,
+            "SC2 picture",
+            "window_capture",
+            {
+                "window": f"{sc2_title}:{win32gui.GetClassName(sc2_hwnd)}:SC2_x64.exe",
+                "method": 2,
+                "client_area": True,
+                "cursor": True,
+            },
+            True,
+        )
+        game_item = client.get_scene_item_id(scene, "SC2 picture").scene_item_id
+        client.set_scene_item_transform(
+            scene,
+            game_item,
+            {
+                "boundsType": "OBS_BOUNDS_STRETCH",
+                "boundsWidth": rectangle[2],
+                "boundsHeight": rectangle[3],
+                "positionX": game_offset[0],
+                "positionY": game_offset[1],
             },
         )
         # Wait for actual game observations, not merely a loading window.
@@ -432,7 +560,7 @@ async def probe(
         print(
             "Battle ready. Use Stop battle to leave cleanly."
             if interactive
-            else "Recording started; testing graph input and camera auto-lock",
+            else "Recording started; testing graph and observer camera",
             flush=True,
         )
         previous_inside = False
@@ -470,7 +598,11 @@ async def probe(
                     foreground = win32gui.GetForegroundWindow()
                     await asyncio.sleep(0.1)
                     check = {
-                        "sc2_on_top": win32gui.GetTopWindow(native_host) == sc2_hwnd,
+                        "sc2_owned_popup": win32gui.GetWindow(sc2_hwnd, win32con.GW_OWNER)
+                        == native_host
+                        and not bool(
+                            win32gui.GetWindowLong(sc2_hwnd, win32con.GWL_STYLE) & win32con.WS_CHILD
+                        ),
                         "foreground_preserved": win32gui.GetForegroundWindow() == foreground,
                     }
                     stacking_checks.append(check)
@@ -480,19 +612,56 @@ async def probe(
                 army = page.locator('[role="treeitem"][aria-level="1"][data-lane="army"]')
                 await army.focus()
                 await page.keyboard.press("Enter")
-            if not interactive and elapsed >= 10 and 10 not in milestones:
+            if exercise_input and not interactive and elapsed >= 10 and 10 not in milestones:
                 milestones.add(10)
-                await action("lock")  # Explicitly enable camera input.
+                # A native click transfers focus to Edge; Playwright's synthetic
+                # clicks alone leave native focus in SC2 and miss input bugs.
+                button = await page.get_by_role(
+                    "button", name="Unlock camera", exact=True
+                ).bounding_box()
+                assert button is not None
+                await native_click(
+                    (
+                        browser_origin[0] + round(button["x"] + button["width"] / 2),
+                        browser_origin[1] + round(button["y"] + button["height"] / 2),
+                    ),
+                    browser_hwnd,
+                )
+                await page.get_by_role("button", name="Lock camera", exact=True).wait_for()
+                await asyncio.sleep(0.5)  # Let the game observe the unlocked control.
                 center = win32gui.ClientToScreen(sc2_hwnd, (80, rectangle[3] - 85))
-                win32api.SetCursorPos(center)
-                win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0)
-                win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0)
-            if not interactive and elapsed >= 12 and 12 not in milestones:
-                milestones.add(12)
+                await native_click(center, sc2_hwnd)
+            if exercise_input and not interactive and elapsed >= 14 and 14 not in milestones:
+                milestones.add(14)
                 # Leave across the right edge, reproducing the operator's drift trigger.
+                if win32gui.GetForegroundWindow() not in (native_host, sc2_hwnd):
+                    raise RuntimeError("Native input test interrupted: Battle View lost foreground")
                 win32api.SetCursorPos(
                     win32gui.ClientToScreen(sc2_hwnd, (rectangle[2] + 30, rectangle[3] // 2))
                 )
+            if exercise_input and not interactive and elapsed >= 18 and 18 not in milestones:
+                milestones.add(18)
+                samples = [
+                    json.loads(line)
+                    for line in (evidence / "camera.jsonl").read_text().splitlines()
+                ]
+                unlocked_samples = [sample for sample in samples if not sample["locked"]]
+                camera_check = {
+                    "minimap_moved_camera": bool(unlocked_samples)
+                    and any(
+                        abs(sample["camera"][0] - unlocked_samples[0]["camera"][0])
+                        + abs(sample["camera"][1] - unlocked_samples[0]["camera"][1])
+                        > 1
+                        for sample in unlocked_samples
+                    ),
+                    "pointer_exit_locked": locked and samples[-1]["locked"],
+                }
+                if not all(camera_check.values()):
+                    raise RuntimeError(f"Native camera input regression: {camera_check}")
+                # Match the stable ID even when its runtime label changes live.
+                scout = page.locator('[role="treeitem"][aria-label^="scouting.move,"]')
+                await scout.focus()
+                await page.keyboard.press("Enter")
             if elapsed < next_metric:
                 await asyncio.sleep(0.05)
                 continue
@@ -509,7 +678,9 @@ async def probe(
                     "game_parent": win32gui.GetParent(sc2_hwnd),
                     "game_client": win32gui.GetClientRect(sc2_hwnd),
                     "game_origin": win32gui.ClientToScreen(sc2_hwnd, (0, 0)),
-                    "game_on_top": win32gui.GetTopWindow(native_host) == sc2_hwnd,
+                    "game_owner": win32gui.GetWindow(sc2_hwnd, win32con.GW_OWNER),
+                    "input_focus": win32gui.GetFocus(),
+                    "game_has_focus": win32gui.GetFocus() == sc2_hwnd,
                 }
             )
             await asyncio.sleep(0.05)
@@ -517,7 +688,7 @@ async def probe(
             await action("record")
         if win32gui.IsWindow(sc2_hwnd):
             client.save_source_screenshot(
-                "Battle window", "png", str(evidence / "composite.png"), 1920, 1080, -1
+                scene, "png", str(evidence / "composite.png"), VIEW_WIDTH, VIEW_HEIGHT, -1
             )
 
         write_json(
@@ -527,7 +698,8 @@ async def probe(
                 "video": record_path,
                 "duration": None if started is None else time.monotonic() - started,
                 "metrics": metrics,
-                "stacking_repairs": stacking_repairs,
+                "native_mode": "owned_popup",
+                "camera_check": camera_check,
                 "stacking_checks": stacking_checks,
                 "viewport": viewport,
                 "game_rect": rectangle,
@@ -544,6 +716,7 @@ async def probe(
             client.stop_record()
         if sc2_hwnd and win32gui.IsWindow(sc2_hwnd):
             win32gui.EnableWindow(sc2_hwnd, True)
+            win32gui.SetWindowLong(sc2_hwnd, win32con.GWL_HWNDPARENT, 0)
             detach_window(sc2_hwnd)
         if browser_hwnd and win32gui.IsWindow(browser_hwnd):
             detach_window(browser_hwnd)
@@ -574,10 +747,15 @@ if __name__ == "__main__":
     parser.add_argument(
         "--interactive",
         action="store_true",
-        help="Operator-controlled local match; no automatic camera/graph movements",
+        help="Operator-controlled match with optional automatic observer camera",
     )
     parser.add_argument(
         "--auto-record", action="store_true", help="Begin recording when the game is ready"
+    )
+    parser.add_argument(
+        "--exercise-input",
+        action="store_true",
+        help="Attended native mouse test; leave keyboard/mouse idle",
     )
     args = parser.parse_args()
     if args.game_child:
@@ -596,5 +774,6 @@ if __name__ == "__main__":
                 args.auto_record,
                 args.decision_provider,
                 args.decision_max_requests,
+                args.exercise_input,
             )
         )

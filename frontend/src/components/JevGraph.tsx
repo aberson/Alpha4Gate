@@ -1098,7 +1098,10 @@ export function JevGraph({
             })}
           </g>
           <g role="tree" aria-label="Policy nodes">
-            {(dots ? [...layout.order].sort((a, b) => (a.cameraDepth ?? 0) - (b.cameraDepth ?? 0)) : layout.order).map((placed) => {
+            {(dots ? [...layout.order].sort((a, b) => {
+              const priority = (id: string) => live && runtime.get(id) === "active" ? 1 : 0;
+              return priority(a.node.id) - priority(b.node.id) || (a.cameraDepth ?? 0) - (b.cameraDepth ?? 0);
+            }) : layout.order).map((placed) => {
               const { node } = placed;
               const status = runtime.get(node.id) ?? "idle";
               const composite = isComposite(node);
@@ -1149,8 +1152,10 @@ export function JevGraph({
                   >
                     <title>{title}</title>
                     {dots ? <>
-                      <circle className="jev-dot-hit" cx={8} cy={8} r={12} />
-                      <circle className="jev-dot" cx={8} cy={8} r={node.id === selectedNodeId ? 7 : 5} />
+                      <circle className="jev-dot-hit" cx={8} cy={8}
+                        r={Math.max(12, (drawnLive && status === "active" ? 16 : 9) / transform.k)} />
+                      <circle className="jev-dot" cx={8} cy={8}
+                        r={drawnLive && status === "active" ? 10 : node.id === selectedNodeId ? 7 : 5} />
                     </> : <>
                     <rect width={nodeWidth} height={nodeHeight} rx={6} />
                     <rect
