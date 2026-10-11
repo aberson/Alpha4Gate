@@ -769,12 +769,12 @@ class JevController:
         now = self._clock()
         if self._started is None:
             self._started = now
-        if now - self._started >= self._limits.max_wall_seconds:
+        if self._limits.max_wall_seconds and now - self._started >= self._limits.max_wall_seconds:
             await self._end(port, "wall_timeout")
             return None
         game_seconds = self.adapter.game_seconds(self._game)
         self._game_seconds = game_seconds
-        if game_seconds >= self._limits.max_game_seconds:
+        if self._limits.max_game_seconds and game_seconds >= self._limits.max_game_seconds:
             await self._end(port, "game_timeout")
             return None
         self.adapter.collect_rejections(port, self.runtime)

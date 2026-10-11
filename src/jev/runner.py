@@ -231,7 +231,7 @@ def _is_int_in(value: object, low: int, high: int) -> bool:
 
 @dataclass(frozen=True)
 class MatchLimits:
-    """Hard limits for one match (plan D6): game seconds and wall-clock seconds."""
+    """Limits for one match: seconds; zero disables the corresponding timer."""
 
     max_game_seconds: int
     max_wall_seconds: int
@@ -239,9 +239,9 @@ class MatchLimits:
     def __post_init__(self) -> None:
         for name in ("max_game_seconds", "max_wall_seconds"):
             value = getattr(self, name)
-            if not _is_int_in(value, 1, MAX_LIMIT_SECONDS):
+            if not _is_int_in(value, 0, MAX_LIMIT_SECONDS):
                 raise ValueError(
-                    f"{name} must be an integer in 1..{MAX_LIMIT_SECONDS}, got {safe_repr(value)}"
+                    f"{name} must be an integer in 0..{MAX_LIMIT_SECONDS}, got {safe_repr(value)}"
                 )
 
 
@@ -972,17 +972,17 @@ def build_parser(prog: str) -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--max-game-seconds",
-        type=_bounded_int(1, MAX_LIMIT_SECONDS),
+        type=_bounded_int(0, MAX_LIMIT_SECONDS),
         default=DEFAULT_MAX_GAME_SECONDS,
-        help="end the match at this game time (default: %(default)s)",
+        help="end the match at this game time; 0 disables the timer (default: %(default)s)",
     )
     parser.add_argument(
         "--max-wall-seconds",
-        type=_bounded_int(1, MAX_LIMIT_SECONDS),
+        type=_bounded_int(0, MAX_LIMIT_SECONDS),
         default=DEFAULT_MAX_WALL_SECONDS,
         help=(
             "end the match after this much wall-clock time, counted from the first game "
-            "step; SC2's launch is bounded by burnysc2's own connect timeout "
+            "step; 0 disables this timer. SC2 launch uses burnysc2's connect timeout "
             "(default: %(default)s)"
         ),
     )

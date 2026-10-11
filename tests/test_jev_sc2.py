@@ -1397,7 +1397,7 @@ def test_cli_defaults_are_the_plan_launch_command(
         {"opponent_race": "Protoss\n"},
         {"difficulty": 11},
         {"seed": -1},
-        {"max_game_seconds": 0},
+        {"max_game_seconds": -1},
         {"max_wall_seconds": True},
         {"realtime": "yes"},
     ],
@@ -1607,3 +1607,26 @@ def test_live_short_match_issues_only_graph_attributed_commands(tmp_path: Path) 
     assert all(policy.has_node(r.node_id) and r.task_id for r in records)
     succeeded = [t for t in controller.runtime.task_history() if t.status == "succeeded"]
     assert succeeded  # at least one command was confirmed by observation
+
+
+@pytest.mark.parametrize("stop", [False, True])
+def test_unlimited_match_passes_old_timers_and_still_stops(tmp_path: Path, stop: bool) -> None:
+    clock = _Clock()
+
+    def advance(game: SimpleNamespace, controller: JevController, index: int) -> None:
+        clock.now = index * 10000.0
+        game.state.game_loop = round(index * 10000 * GAME_LOOPS_PER_SECOND)
+        if index == 2 and stop:
+            controller.request_stop()
+
+    launcher = _Launcher(steps=3, before_step=advance)
+    outcome = run_match(
+        MatchOptions(max_game_seconds=0, max_wall_seconds=0),
+        load_policy(),
+        launcher=launcher,
+        clock=clock,
+        run_root=tmp_path,
+    )
+    assert outcome.exit_code == (EXIT_STOPPED if stop else EXIT_OK)
+    assert outcome.error is None
+    assert launcher.port.left == stop

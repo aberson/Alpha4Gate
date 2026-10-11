@@ -17,7 +17,8 @@ Two shortcuts are installed on the Windows desktop:
 
 Both use the same hosted player; only automatic recording differs. Each opens a fresh match against Medium Terran on Simple64, seed 11. The
 dashboard and isolated OBS are started or reused automatically. Allow roughly a
-minute for startup. The match is bounded to 15 game minutes / 20 wall minutes.
+minute for startup. Desktop matches have no game-time or wall-clock cap; they run to the match result or **Stop battle**.
+The existing 450-request Typesafe budget still applies; after it is exhausted, the graph continues using its fallback decisions.
 Do not launch another until the current game has finished.
 
 Use **Stop battle** in the top bar to finish early. It saves any active recording
@@ -117,3 +118,8 @@ The game-time label identifies that snapshot, not the time generation finishes.
 Small-model commentary can be inaccurate; it never directs Jev or the camera.
 Cold model startup may show a fallback before subsequent commentary succeeds.
 Entries are saved beside the recording in `battle/caster.jsonl`.
+
+Desktop timer removal: zero in run metadata means unlimited. Developer display
+probes retain their short time bounds. Camera-status publication retries brief
+Windows file-sharing conflicts and skips that optional update if contention
+persists, rather than terminating the match.

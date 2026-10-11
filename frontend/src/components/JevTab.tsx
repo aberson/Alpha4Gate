@@ -1141,7 +1141,7 @@ function RunSummary({ state, live, run, launchStarting }: RunSummaryProps) {
         <dt>Match</dt>
         <dd>
           {metadata.map} vs {metadata.opponent_race}, difficulty {metadata.difficulty}, seed{" "}
-          {metadata.seed}; limits {metadata.max_game_seconds} game s / {metadata.max_wall_seconds}{" "}
+          {metadata.seed}; limits {metadata.max_game_seconds || "unlimited"} game s / {metadata.max_wall_seconds || "unlimited"}{" "}
           wall s
         </dd>
         <dt>Replay</dt>

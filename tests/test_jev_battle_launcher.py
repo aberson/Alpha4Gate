@@ -50,4 +50,25 @@ def test_hosted_selection_reaches_production_runner(battle, monkeypatch, tmp_pat
     assert calls[0].decision_provider == "typesafe"
     assert calls[0].decision_model == "jev-1.13.0"
     assert calls[0].decision_max_requests == 20
-    assert calls[0].max_game_seconds == 900
+    assert calls[0].max_game_seconds == 0
+    assert calls[0].max_wall_seconds == 0
+
+
+def test_json_write_retries_windows_reader_lock(battle, monkeypatch, tmp_path):
+    destination = tmp_path / "camera-status.json"
+    destination.write_text('{"reason":"previous"}')
+    original = Path.replace
+    attempts = []
+
+    def locked_once(path, target):
+        attempts.append(target)
+        if len(attempts) == 1:
+            raise PermissionError("Windows reader holds destination")
+        return original(path, target)
+
+    monkeypatch.setattr(Path, "replace", locked_once)
+    battle["write_json"](destination, {"reason": "Scouting"})
+    import json
+
+    assert json.loads(destination.read_text()) == {"reason": "Scouting"}
+    assert len(attempts) == 2

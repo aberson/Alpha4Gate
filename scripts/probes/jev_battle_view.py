@@ -31,7 +31,14 @@ sys.path.insert(0, str(ROOT))
 def write_json(path: Path, value: object) -> None:
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(value), encoding="utf-8")
-    temporary.replace(path)
+    for attempt in range(5):
+        try:
+            temporary.replace(path)
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.01)
 
 
 def game_environment(provider: str) -> dict[str, str]:
@@ -130,7 +137,9 @@ def game_child(
                         )
                         + "\n"
                     )
-                write_json(evidence / "camera-status.json", {"reason": reason})
+                # Camera telemetry is optional; Windows readers may hold the file open.
+                with suppress(PermissionError):
+                    write_json(evidence / "camera-status.json", {"reason": reason})
             await super().on_step(iteration)
 
     jev.bot.JevBot = CameraProbeBot
@@ -151,8 +160,8 @@ def game_child(
             difficulty=3,
             seed=11,
             realtime=True,
-            max_game_seconds=900 if interactive else 150,
-            max_wall_seconds=1200 if interactive else 210,
+            max_game_seconds=0 if interactive else 150,
+            max_wall_seconds=0 if interactive else 210,
             decision_provider=provider,
             decision_model="jev-1.13.0",
             decision_max_requests=max_requests,
@@ -572,7 +581,7 @@ async def probe(
         milestones = set()
         next_metric = 0.0
         while (
-            time.monotonic() - started < (1200 if interactive else seconds)
+            (interactive or time.monotonic() - started < seconds)
             and game.poll() is None
             and not stop_requested
         ):
