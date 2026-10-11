@@ -2,7 +2,7 @@
 
 What's tested, how to run it, and what's not covered.
 
-> **At a glance:** 2974 unit tests passing (9 skipped, 2 deselected) across 125 files with the optional `[viewer]` extra (the no-viewer figure was last measured at 2708 passing before Phase J2 and has not been re-measured); 6 of the skips are opt-in real-browser launch tests (`$env:JEV_BROWSER_TESTS = "1"`); collected in ~13s. Heavy mocking of SC2 BotAI via MagicMock/AsyncMock — no SC2 client needed for unit tests. Integration tests require a running SC2 client and are marked `@pytest.mark.sc2`. No `conftest.py` — fixtures are inline. The suite covers the full autonomous loop (daemon, promotion, rollback, evaluator, advised-run bridge) plus the evolve substrate (orchestrator, pool, fitness/regression gates, evolve worker, sandbox hook, lineage registry + CLI, baseline gauntlet, diversity fingerprint, extinction, posterior gate stats), the Phase 8 Linux substrate (SC2PATH resolver), and the Jev player (policy validation, runtime, economy, army, SC2 adapter, telemetry, API, live-validation verifier, Typesafe decision coordinator, benchmark harness, dashboard-first launch sessions). Frontend has its own 365-test vitest suite (359 passing, 6 skipped) — see [frontend.md](frontend.md).
+> **At a glance:** 3345 unit tests passing (12 skipped, 2 deselected) across 131 files (130 `tests/test_*.py` + `tests/commands/test_dispatch_guard.py`) with the optional `[viewer]` extra (3310 passing + 32 skipped without it); 9 of the skips are opt-in real-browser tests (6 dashboard-first launch tests in `test_jev_launch.py` and 3 live-graph fixtures in `test_jev_live_graph.py`: a hosted v2 match through the production runner with Typesafe on an in-process `httpx.MockTransport`, plus an old v1 archive), enabled with `$env:JEV_BROWSER_TESTS = "1"` and `uv run --with playwright`; collected in ~13s. Heavy mocking of SC2 BotAI via MagicMock/AsyncMock — no SC2 client needed for unit tests. Integration tests require a running SC2 client and are marked `@pytest.mark.sc2`. No `conftest.py` — fixtures are inline. The suite covers the full autonomous loop (daemon, promotion, rollback, evaluator, advised-run bridge) plus the evolve substrate (orchestrator, pool, fitness/regression gates, evolve worker, sandbox hook, lineage registry + CLI, baseline gauntlet, diversity fingerprint, extinction, posterior gate stats), the Phase 8 Linux substrate (SC2PATH resolver), and the Jev player (policy validation, runtime, economy, army, SC2 adapter, telemetry, API, live-validation verifier, Typesafe decision coordinator, benchmark harness, dashboard-first launch sessions, the v2 package and opening, scouting with bounded enemy memory, gas economy and limited tech, persistent expansion plans, hosted strategy/execution question scheduling, live-graph browser fixtures). Frontend has its own 399-test vitest suite (393 passing, 6 skipped) — see [frontend.md](frontend.md).
 
 ## Purpose & Design
 
@@ -16,7 +16,7 @@ Tests are organized one file per module. Unit tests mock the SC2 API boundary so
 uv run pytest                    # All unit tests (no SC2 needed)
 uv run pytest -m sc2             # SC2 integration tests (SC2 must be running)
 uv run ruff check .              # Lint
-uv run mypy src                  # Type check (strict mode)
+uv run mypy src bots --strict   # Type check (strict mode, 828 source files)
 cd frontend && npx tsc --noEmit  # TypeScript check
 cd frontend && npm test          # Frontend tests (vitest)
 ```
@@ -129,10 +129,10 @@ Plus `pyproject.toml` config for pytest, mypy, ruff.
 
 **Linting:** ruff with rules E, F, I, UP, B. Line length 100.
 
-**Frontend tests:** vitest (365 tests: 359 passing, 6 skipped). Run via `cd frontend && npm test`.
+**Frontend tests:** vitest (399 tests: 393 passing, 6 skipped). Run via `cd frontend && npm test`.
 
 | File | Purpose |
 |------|---------|
-| `tests/test_*.py` | 125 Python test modules |
+| `tests/test_*.py` | 130 Python test modules (plus `tests/commands/test_dispatch_guard.py`) |
 | `frontend/src/**/*.test.{ts,tsx}` | Frontend tests (vitest) |
 | `pyproject.toml` | pytest, mypy, ruff configuration |

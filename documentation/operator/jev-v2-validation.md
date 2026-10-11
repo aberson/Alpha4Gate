@@ -486,8 +486,8 @@ replay it.
 The page keeps following while its window is hidden behind the fullscreen game: the
 session is polled from a worker timer, which Chrome and Edge do not throttle the way
 they throttle a hidden page's own timers, and the page polls again the moment it is
-shown. To be safe during Step 213, keep the dashboard window visible (for example on a
-second monitor) and do not let the browser put the tab to sleep.
+shown. To be safe during Steps 213 and 222, keep the dashboard window visible (for
+example on a second monitor) and do not let the browser put the tab to sleep.
 
 ### Browsing history while following
 
@@ -541,8 +541,10 @@ uv run --with playwright pytest tests/test_jev_launch.py -k RealBrowser -p no:ca
 Remove-Item Env:JEV_BROWSER_TESTS
 ```
 
-Step 213 then proves the same order with real SC2 and your visible browser (section 12).
-The live graph's own real-browser fixtures are in section 13.
+Step 213's staging and hosted smoke (2026-10-09) proved the same order with real SC2 and
+a visible browser (section 12). Step 222 repeats it for v2 (section 13); same-tab
+multi-game following stays unverified until the deferred baseline runs. The live
+graph's own real-browser fixtures are in section 13.
 
 ## 12. Step 213: run the harder-opponent baseline
 
@@ -559,7 +561,12 @@ snapshot `v1-b53039a693cadf75`, before any Step 214 edit. The operator then stop
 baseline (batch `94ac2c35b17f4cbaa80020b1c859ba00`: one interrupted case, five pending)
 and authorized the v2 build. Steps 214-221 changed the shared runtime since; the frozen
 snapshot is unaffected, so a resumed baseline still plays exactly that v1. The stages
-below are kept as the procedure for finishing it.
+below are kept as the procedure for finishing it, which needs a new operator request
+(stage 4 makes up to six paid matches). Finishing means resuming that batch, not
+starting a new one: stage 4 runs `--resume 94ac2c35b17f4cbaa80020b1c859ba00
+--retry-interrupted`, which replays the interrupted case 1 and plays the five pending
+cases from the frozen snapshot. A new `--panel baseline` batch would also play the
+frozen v1, but it would leave batch `94ac2c35...` behind as a second, unfinished record.
 
 Run the stages in this order. Each must pass before the next starts. The paid stages
 come last. Stage 3 is an operator choice (see stage 3).
@@ -569,12 +576,11 @@ come last. Stage 3 is an operator choice (see stage 3).
 | 1. Prerequisites and dry run | no | the exact six cases, the model pin and the limits |
 | 2. Staging match | no (scripted) | the dashboard-first order and the benchmark path with real SC2 |
 | 3. Hosted smoke, at least 60 seconds | one match | the production runner gets answers from `jev-1.13.0` |
-| 4. Baseline: probe, freeze, six games | six matches | the service probe, the frozen v1 baseline and six outcomes |
+| 4. Baseline: probe, six games (v1 already frozen) | six matches | the service probe and six outcomes from the frozen v1 baseline |
 
 The service probe has no command of its own. It is the first service request of every
-hosted benchmark invocation (section 9), so it runs at the start of stage 4: before the
-batch exists, before v1 is finalized and before any game. When you run stage 3, it is
-Step 213's first real service contact.
+hosted benchmark invocation (section 9), so it runs at the start of stage 4, before any
+game. When you run stage 3, it is Step 213's first real service contact.
 
 ### Stage 1: prerequisites and dry run
 
@@ -612,12 +618,16 @@ uv run python scripts/benchmark_jev.py --panel baseline --dry-run
 ```
 
 Check for `model: requested jev-1.13.0, every answer must be jev-1.13.0`, the `v1:`
-line with the policy hash above and `state=capture_pending`, `launch: dashboard`, and
-six cases in this order: `v1-typesafe-simple64-terran-3-11`, `...-protoss-3-11`,
-`...-zerg-3-11`, `...-terran-4-11`, `...-protoss-4-11`, `...-zerg-4-11`. Copy the
-`v1:` line's `fingerprint=` value into the report. If it reads `state=finalized`, an
-earlier baseline invocation already froze v1 and the panel will play that copy: say so
-in the report.
+line with the policy hash above, `state=finalized` and
+`fingerprint=b53039a693cadf756e6cec4fc44c10534bcd9194079410a98b59a9e441bb1bfd` (frozen
+2026-10-09 by batch `94ac2c35...`), `launch: dashboard`, and six cases in this order:
+`v1-typesafe-simple64-terran-3-11`, `...-protoss-3-11`, `...-zerg-3-11`,
+`...-terran-4-11`, `...-protoss-4-11`, `...-zerg-4-11`. Copy the `v1:` line's
+`fingerprint=` value into the report. If it reads `state=capture_pending`, this checkout
+lacks the gitignored frozen baseline: stop. A real run would capture today's shared
+runtime, which Steps 214-221 changed, as v1. Copy `data\jev\benchmarks\baselines\` from
+the primary checkout instead (the panel verifies the snapshot against its fingerprint
+before playing).
 
 ### Stage 2: staging match (no service call)
 
@@ -627,9 +637,10 @@ uv run python scripts/benchmark_jev.py --panel staging --max-game-seconds 120 --
 
 Watch the dashboard (see "What you are looking for" below; staging is `Game 1 of 1` and
 not realtime) and check section 3's four points. This is the first time the post-case
-snapshot check (watch item 1) meets real SC2. Staging runs from the same
-content-addressed `v1-<fingerprint prefix>` folder that stage 4 will finalize. A
-staging failure stops Step 213 here. The plan's Step 213 note 3 lists staging as
+snapshot check (watch item 1) meets real SC2. Staging always captures the current
+source, so since Steps 214-221 it runs from a new `v1-<fingerprint prefix>` snapshot,
+not the frozen baseline's folder. It still proves the benchmark and dashboard path with
+real SC2. A staging failure stops Step 213 here. The plan's Step 213 note 3 lists staging as
 optional; this runbook runs it because it is the only unpaid real-SC2 check of the
 snapshot and dashboard path.
 
@@ -679,10 +690,24 @@ $env:TYPESAFE_API_KEY = [System.Net.NetworkCredential]::new('', $jevSecret).Pass
 $jevSecret.Dispose()
 ```
 
-Play the panel. Pass no limit flags: the baseline uses the plan's limits.
+Resume the deferred batch (see the status above). Pass no limit flags: the batch's own
+limits, the plan's, apply (section 7).
 
 ```powershell
-uv run python scripts/benchmark_jev.py --panel baseline
+$batch = '94ac2c35b17f4cbaa80020b1c859ba00'
+```
+
+Check it first. This makes no service call and writes nothing:
+
+```powershell
+uv run python scripts/benchmark_jev.py --resume $batch --dry-run
+```
+
+Expect stage 1's six cases, model pin and `v1:` line (`state=finalized`, the same
+fingerprint). Then play it; `--retry-interrupted` replays the interrupted case 1:
+
+```powershell
+uv run python scripts/benchmark_jev.py --resume $batch --retry-interrupted
 ```
 
 The console must show these lines in this order:
@@ -691,9 +716,9 @@ The console must show these lines in this order:
    opens on **Preparing**, `Game 1 of 6`.
 2. `jev benchmark: probe ok: model=jev-1.13.0 latency_ms=<n>`. The service probe passed.
    A failed probe prints `authentication_failed`, `model_unavailable` or `model_drift`
-   instead, exits 1, and plays and freezes nothing.
-3. `jev benchmark: batch <batch_id> panel=baseline cases=6 dir=...`. v1 is now captured
-   and finalized.
+   instead, exits 1, and plays nothing.
+3. No `jev benchmark: batch ...` line: a resume reuses the batch. v1 is already
+   finalized, and the batch plays snapshot `v1-b53039a693cadf75`.
 4. When the batch ends, one line per case, then
    `jev benchmark complete: batch=<batch_id> valid_wins=<n> results={...} invalid={}`,
    with exit code 0 when all six cases complete. A batch that played every case but
@@ -704,17 +729,14 @@ The console must show these lines in this order:
    quiet while the games play (each game's output
    goes to its attempt logs, section 4); follow them on the dashboard.
 
-Set `$batch` to the batch ID, then print the record:
-
-```powershell
-$batch = '<batch_id>'
-```
+Print the record:
 
 ```powershell
 uv run python scripts/benchmark_jev.py --report $batch
 ```
 
-Confirm the frozen baseline. The dry run now reads `state=finalized`:
+Confirm the frozen baseline is unchanged. The dry run still reads `state=finalized` with
+stage 1's fingerprint:
 
 ```powershell
 uv run python scripts/benchmark_jev.py --panel baseline --dry-run
@@ -779,10 +801,10 @@ findings.
    with its working directory inside the snapshot folder, and the snapshot is verified
    again after every case. Anything a game creates there fails that case: a new empty
    folder reads `snapshot v1-<prefix> has unexpected folders: [...]`, and a new file
-   reads `snapshot v1-<prefix> files changed (extra: [...], missing: [])`. Staging and
-   the baseline share that folder, so after a staging failure of this kind the baseline
-   preflight refuses the snapshot too, after its one-request probe and before anything
-   is frozen or played. Record the named folders or files and stop. Do not edit or
+   reads `snapshot v1-<prefix> files changed (extra: [...], missing: [])`. Before Step
+   214, staging and the baseline shared that folder; they no longer do (stage 2), so a
+   staging failure of this kind is a code finding about the current source, not about
+   the frozen baseline. Record the named folders or files and stop. Do not edit or
    delete anything in `data\jev\benchmarks\baselines\`; this needs a code fix.
 2. **Dashboard start can take about 130 seconds.** The launcher waits up to 60 seconds
    for healthy servers, then up to another 60 seconds for both servers to serve the new
@@ -821,7 +843,7 @@ local paths.
 - Issue: #330 (umbrella #327). Operator: <name>
 - Checkout commit: <git rev-parse HEAD>. Runtime source clean: yes / no
 - v1 policy hash: <64 hex>. v1 fingerprint (dry run): <64 hex>
-- Frozen baseline: written by batch <batch_id>; dry run reads `state=finalized`: yes / no
+- Frozen baseline: written 2026-10-09 by batch `94ac2c35b17f4cbaa80020b1c859ba00` (snapshot `v1-b53039a693cadf75`); dry run still reads `state=finalized` with that fingerprint: yes / no
 
 ## Stages
 
@@ -883,7 +905,7 @@ Label each value as results.json does: observed or measured, not_reached, unavai
 
 ## Verdict
 
-Step 213: complete / pending (<missing prerequisite or open infrastructure finding>). Step 214 may start: yes / no.
+Step 213: complete / pending (<missing prerequisite or open infrastructure finding>).
 ```
 
 ## 13. The v2 player and the live graph (Steps 214-221)
@@ -962,6 +984,7 @@ any that Step 222's matches put in doubt; do not tune against the held-out seeds
 | Production-mix interval | 10 wall s | `jev.strategy.PRODUCTION_MIX_INTERVAL` |
 | Accepted execution choice hold | 30 game s | `jev.strategy.EXECUTION_HOLD_SECONDS` |
 | Flying types never counted as an air threat | Overlord, Overseer, Observer (and their modes) | `jev.strategy.HARMLESS_AIR_TYPES` |
+| Armed-air memory behind the stalker_heavy fallback | 30 game s | v2 `policy.json` `air_threat_age` |
 | Supply buffer; reinforcement group; regroup below | 4; 4; 4 units | v2 `policy.json` parameters |
 | Expansion trigger (local); farthest site taken | 8 combat units; 1.5 x the nearest path | v2 `policy.json` parameters |
 
@@ -973,20 +996,27 @@ built; SC2 path queries and the central Core/Stalker prices are unverified live.
 
 Open `http://localhost:3000/?tab=jev&run=<run_id>`, or follow a launch. For every run:
 
-- **Coloured lanes.** Each root lane has its colour (economy green, expansion teal, army
-  red, tech purple, and one each for the others): a band behind the lane, a stripe on
-  each node and a chip in the lane legend, which counts each lane's active and waiting
-  nodes and lists the lanes active now. Status is still the outline, glyph and words.
+- **Branch overview** (since `57f7274`). One card per root lane, in its colour
+  (economy green, expansion teal, army red, tech purple, and one each for the others):
+  its status (active, waiting or idle), current action, latest recorded blocker and
+  active/waiting counts, under a line listing the lanes active now. Click a card to
+  focus the graph on that branch. The graph opens on the first lane with an active or
+  waiting node and stays on the branch you chose while it polls. **Full graph
+  (debugging)** shows every archived root (fitted once on entry); **Fullscreen**
+  enlarges the graph where the browser allows it. In the graph, the lane's colour is a
+  band behind it and a stripe on each node. Status is still the outline, glyph and
+  words.
 - **Observed edge activity.** Only recorded edges are drawn. A solid edge joins a node
   and its child that both run in the latest state: that tick's path. A dashed edge
   fades over 2 game seconds: an event named that child as the node's deciding branch,
   and it is labeled recent, not current. Nothing between two one-second refreshes is
   invented. A live run animates its current path.
-- **Follow activity** (toolbar, off by default) keeps the newest running node in view,
-  expanding its branch. It never changes the selection, and a manual pan stays until
-  the followed node changes. It pauses while the run is not live.
+- **Follow activity** (toolbar, off by default) keeps the newest running node of the
+  focused branch in view (of any root in the full graph), expanding its branch. It
+  never changes the selection, and a manual pan stays until the followed node changes.
+  It pauses while the run is not live.
 - **Plans and decisions** (v2 runs): each plan's lane, status, stage (**Show in graph**
-  expands to it), blocker or outcome, who decided it and which request, and the
+  switches to its branch and expands to it), blocker or outcome, who decided it and which request, and the
   response in force; each slot's open plan, cooldown and owed turn, and per kind
   whether it may start now or why not (the plan store's own check); the strategy
   choices the graph can execute now; and per question the source (Typesafe, local
@@ -997,8 +1027,12 @@ Open `http://localhost:3000/?tab=jev&run=<run_id>`, or follow a launch. For ever
   evidence (a task or command created under a hosted choice, a plan started or answered
   by a request, a guard's source) and the guards on the node's path with their latest
   evaluations.
-- **Stale, offline and final.** Nothing animates; the graph, lane legend, plans and
-  sources are labeled last known. Reduced motion (the operating system setting) stops
+- **Recent decisions** (since `57f7274`): the last six recorded events that name a
+  question with a choice or a source, newest first: question, choice, source, game time
+  and event number.
+- **Stale, offline and final.** Nothing animates; the graph, branch overview, plans,
+  recent decisions and sources are labeled last known (the branch overview of an ended
+  run says when the run ended). Reduced motion (the operating system setting) stops
   every animation even for a live run.
 
 v1 runs and older archives record no plan or v2 decision facts: they keep their
@@ -1013,8 +1047,11 @@ uv run pytest tests/test_jev_api.py tests/test_jev_telemetry.py -p no:cacheprovi
 ```
 
 The real-browser fixtures (simultaneous lanes; live, offline, stale and final; reduced
-motion; an old v1 archive) are opt-in, like section 11's. Set the switch, and optionally
-an evidence folder for screenshots and a `timeline.jsonl`:
+motion; an old v1 archive) are opt-in, like section 11's. They passed at `f52d4f6` but
+predate `57f7274`'s branch-focused tab and need updating before they are run again: at
+least two of the three read lane-legend counts (`data-active`) that the focused page no
+longer renders, so they fail on the fixtures, not on a regression. Once updated, set
+the switch, and optionally an evidence folder for screenshots and a `timeline.jsonl`:
 
 ```powershell
 $env:JEV_BROWSER_TESTS = '1'
@@ -1037,8 +1074,15 @@ Step 222 (issue #339) proves the full v2 decision cycle with real SC2 and the se
 1. Windows with SC2 and the Simple64 map, `uv sync --extra dev --inexact` and
    `npm --prefix frontend ci` done, and both policies valid
    (`uv run python -m bots.jev.v1 --validate-policy`, then `... bots.jev.v2 ...`).
-2. The automated checks above pass, and the real-browser fixtures pass once on this
-   machine (they prove the page this step watches).
+2. The automated checks above pass. Recommended once per machine (plan M1 marks it
+   optional): section 11's launch fixtures (`-k RealBrowser`, 6 tests; 6/6 at
+   `f52d4f6`, not re-run since `57f7274`). Skip the live-graph fixtures until they are
+   updated for `57f7274`'s branch-focused tab (see "The live graph" above); the plan's
+   M1 command still names them.
+
+   ```powershell
+   $env:JEV_BROWSER_TESTS = '1'; uv run --with playwright pytest tests/test_jev_launch.py -k RealBrowser -p no:cacheprovider; Remove-Item Env:JEV_BROWSER_TESTS
+   ```
 3. The Typesafe key is saved encrypted (`%LOCALAPPDATA%\Alpha4Gate\typesafe-key.dpapi`,
    [the Jev operator guide](jev-validation.md)); the launcher loads it for the game
    process only.
@@ -1065,11 +1109,22 @@ powershell -File scripts/launch-jev.ps1 -Difficulty 4
 powershell -File scripts/launch-jev.ps1 -Difficulty 5
 ```
 
+Play match 2 and match 3 only if evidence is still missing. After each match, verify its
+archive against the API (dashboard backend on :8765):
+
+```powershell
+$runId = (Get-ChildItem data\jev\runs -Directory | Sort-Object CreationTime | Select-Object -Last 1).Name
+uv run python scripts\validate_jev.py --run-id $runId --api-base http://localhost:8765
+```
+
 Watch, and record with run IDs and game times: at least 60 seconds after a v2 question
-first becomes eligible; an accepted `strategy` answer and at least one accepted
+first becomes eligible, and at least one full match; an accepted `strategy` answer and at least one accepted
 execution answer (`expansion_response` or `production_mix`) whose request ID appears on
 a plan and on the commands that followed (node sources and **Plans and decisions**);
 the second Nexus and the first Stalker; at least one worker or site recovery; and a
 pending request cancelled cleanly at the match's end or a Ctrl+C. Every answer must
 name `jev-1.13.0`. If natural play omits a required piece of evidence, record that gate
-as unverified and pending; never stage a scenario to force it.
+as unverified and pending; never stage a scenario to force it. Also confirm live what
+offline tests could not: SC2 `query_pathing` from the start location finds the natural
+(Step 217), and the Core 150 / Stalker 125/50/2 prices (Step 218; check with burnysc2's
+`calculate_cost`). Note any hypothesis value (table above) that play puts in doubt.

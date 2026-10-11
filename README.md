@@ -1,6 +1,6 @@
 # Alpha4Gate
 
-![Python](https://img.shields.io/badge/python-3.12-blue) [![linux-tests](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml/badge.svg?branch=master)](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml) ![pytest](https://img.shields.io/badge/pytest-2939%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-359%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
+![Python](https://img.shields.io/badge/python-3.12-blue) [![linux-tests](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml/badge.svg?branch=master)](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml) ![pytest](https://img.shields.io/badge/pytest-3310%20passing-brightgreen) ![vitest](https://img.shields.io/badge/vitest-393%20passing-brightgreen) ![Self-improvement](https://img.shields.io/badge/self--improvement-closed--loop-purple)
 
 An AI agent that teaches itself to get better at a task with — zero human input.
 
@@ -155,7 +155,7 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 - **Three promotions in one night, on Linux -** First end-to-end successful headless evolve. v4 → v5 → v6 → v7 in one 8-hour unattended soak 
 - **Parallelizing the arena -** Evolve now runs four candidates in parallel per generation (concurrency window + worker-slot recycling). Steps 1-7 plus iter-3 hardening shipped 2026-04-30; subsequent generations took the lineage to **v10**.
 - **Now -** Self-play evolution is producing auto-promotions unattended on a parallel substrate that scales beyond a single Windows desktop. Claude proposes orthogonal improvements, the arena filters, master advances. The platform from the earlier phases now has a working growth engine on top of it — and it runs anywhere Linux + SC2 will run.
-- **Next -** Phase EH is **in progress**: ten scoped hardening steps close the evolve population-persistence, dashboard-control, launcher-cap, and single-run safety seams. **EH.1 and EH.2 shipped 2026-10-04** (#306/#307 closed under umbrella #305) — lineage state now survives process exit — with EH.3-EH.10 remaining. The build toolkit freeze is lifted; Phase EV's M1 operator observation is still evolve's next live acceptance gate. Separately, the Jev decision-graph player family has shipped Phase JV's automated Steps 201-206 (its live operator gates 207/208, #324/#325, are still pending) and Phase JI's opt-in hosted Typesafe decision provider (live acceptance passed 2026-10-08). Jev's Phase J2 (adaptive v2, umbrella #327) finished its first build span on 2026-10-09: a reproducible, resumable benchmark of the production runner (Step 212, #328) and a dashboard-first launcher that opens the exact game in the Jev tab before SC2 starts (Step 224, #329). Its next gate is operator Step 213 (#330): the six-match frozen-v1 Typesafe baseline against Medium and MediumHard opponents.
+- **Next -** Phase EH is **in progress**: ten scoped hardening steps close the evolve population-persistence, dashboard-control, launcher-cap, and single-run safety seams. **EH.1 and EH.2 shipped 2026-10-04** (#306/#307 closed under umbrella #305) — lineage state now survives process exit — with EH.3-EH.10 remaining. The build toolkit freeze is lifted; Phase EV's M1 operator observation is still evolve's next live acceptance gate. Separately, the Jev decision-graph player family has shipped Phase JV's automated Steps 201-206 (its live operator gates 207/208, #324/#325, are still pending) and Phase JI's opt-in hosted Typesafe decision provider (live acceptance passed 2026-10-08). Jev's Phase J2 (adaptive v2, umbrella #327) has 10 of 13 steps done: a reproducible, resumable benchmark of the production runner (Step 212, #328), a dashboard-first launcher that opens the exact game in the Jev tab before SC2 starts (Step 224, #329) and, on 2026-10-09/10, the adaptive v2 player itself (Steps 214-221, #331-#338). v2 adds scouting, gas, a recoverable natural expansion, a Cybernetics Core and Zealot/Stalker army, four hosted Typesafe question families and the live plan graph. Its next gate is operator Step 222 (#339): at most three paid real-SC2 matches proving the full v2 decision cycle. The frozen-v1 baseline (Step 213, #330) stays operator-deferred.
 
 ---
 
@@ -174,8 +174,8 @@ Fast-and-dumb does the playing. Slow-and-smart does the learning.
 | Frontend | React + TypeScript + Vite | Live dashboard with game state streaming |
 | Deep learning | PyTorch + Stable Baselines 3 | PPO policy network for strategic decisions |
 | Training data | SQLite | Structured (s,a,r,s') transition storage |
-| Testing (Python) | pytest | 2939 unit tests passing (2974 with the optional `[viewer]` extra), SC2 integration markers |
-| Testing (Frontend) | vitest + jsdom + @testing-library/react | 365 component / hook / lib tests (359 passing, 6 skipped) |
+| Testing (Python) | pytest | 3310 unit tests passing (3345 with the optional `[viewer]` extra), SC2 integration markers |
+| Testing (Frontend) | vitest + jsdom + @testing-library/react | 399 component / hook / lib tests (393 passing, 6 skipped) |
 | Linting | ruff + mypy | Strict type checking, consistent style |
 
 </details>
@@ -241,7 +241,7 @@ cd frontend && npm run dev
 | Observable | Exhibition shell for Phase L: left/right version pickers and a placeholder card (replay-stream-as-live not shipped) |
 | Processes | Live system process monitor, resource gauge, WSL processes, port status, state files, backend restart, plus the severity-filtered alert list (ack/dismiss) the old Alerts tab held |
 | Help | Renders `documentation/wiki/operator-commands.md` from disk |
-| Jev | Jev decision graph: run selector, graph with one coloured band per root lane, active/waiting nodes and only the recorded edge activity (the current path, and a 2-second fading trail labeled recent), an opt-in **Follow activity**, node details with each node's decision source (Typesafe request, fallback or local graph), Army decision panel, a **Plans and decisions** panel for v2 runs (plan stage, blocker or outcome, deciding request, slot turn, what may start next, each question's source), recent trace. Stale, offline and finished runs are labeled last known and never animate; reduced motion stops all animation. `?tab=jev&run=<run_id>` opens one exact run; `?tab=jev&launch=<session_id>` follows a dashboard-first launch (Preparing, Starting, Live, Finished; picking another run pauses following until **Resume live**) |
+| Jev | Jev decision graph: run selector, a **Branch overview** with one card per root lane (status, current action, latest blocker; click to focus), a graph of the focused branch with its lane colour, active/waiting nodes and only the recorded edge activity (the current path, and a 2-second fading trail labeled recent), **Full graph (debugging)** for every root and **Fullscreen**, an opt-in **Follow activity**, node details with each node's decision source (Typesafe request, fallback or local graph), Army decision panel, a **Plans and decisions** panel for v2 runs (plan stage, blocker or outcome, deciding request, slot turn, what may start next, each question's source), **Recent decisions** (the last six recorded question choices and sources), recent trace. Stale, offline and finished runs are labeled last known and never animate; reduced motion stops all animation. `?tab=jev&run=<run_id>` opens one exact run; `?tab=jev&launch=<session_id>` follows a dashboard-first launch (Preparing, Starting, Live, Finished; picking another run pauses following until **Resume live**) |
 
 In-app `AlertToast` lives at the App root and shows new alerts as they fire, regardless of which tab is active.
 
@@ -347,7 +347,7 @@ bash scripts/start-dev.sh
 ### Testing
 
 ```bash
-uv run pytest              # 2939 unit tests passing (no SC2 needed; 2974 with --extra viewer)
+uv run pytest              # 3310 unit tests passing (no SC2 needed; 3345 with --extra viewer)
 uv run pytest -m sc2       # SC2 integration tests (SC2 must be running)
 uv run ruff check .        # Lint
 uv run mypy src bots --strict  # Type check
@@ -372,9 +372,9 @@ Alpha4Gate/
 ├── bots/current/            # Thin pointer package (MetaPathFinder → active version, v13 today)
 ├── bots/jev/v1/             # Jev player family: packaged decision-graph policy + manifest (frozen v1)
 ├── bots/jev/v2/             # Jev v2: the adaptive player's packaged policy + manifest
-├── src/jev/                 # Jev runtime, SC2 adapter, runner, run evidence, benchmark, dashboard-first launch, /api/jev
+├── src/jev/                 # Jev runtime, SC2 adapter, runner, run evidence, v2 plans + hosted question coordinator, benchmark, dashboard-first launch, /api/jev
 ├── src/orchestrator/        # Version registry, snapshots, self-play, Elo ladder, evolve
-├── tests/                   # 2939 unit tests passing across 126 files (+ SC2 integration markers)
+├── tests/                   # 3310 unit tests passing across 131 files (+ SC2 integration markers)
 ├── frontend/                # React + TypeScript dashboard (Vite, 7 tabs)
 ├── scripts/                 # Live test, training analysis, evolve runner, sandbox hook, Jev launcher + benchmark
 ├── documentation/wiki/      # Project wiki (start with index.md)
@@ -445,4 +445,4 @@ Also thanks to all the creators and companies who made the mountain of tools thi
 
 </details>
 
-Jev continuation (2026-10-09): staging and hosted smoke passed; operator stopped the remaining Step 213 baseline after v1 was frozen and authorized improvements. Step 213 stays pending/deferred. Next build: Steps 214-221, `--resume 214`, stop before 222; no further paid games. See [validation](documentation/plans/jev-v2-validation.md).
+Jev continuation (2026-10-10): build span 214-221 DONE; Step 213 stays operator-deferred. Next: operator Step 222 (#339) = Manual UAT M1, at most three paid matches. See [handoff](documentation/plans/jev-v2-handoff.md).

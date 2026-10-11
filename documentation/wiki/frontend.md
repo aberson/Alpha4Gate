@@ -6,9 +6,10 @@ unified improvements timeline, system health, and alert triage.
 > **At a glance:** 7-tab SPA (Advisor, Evolution, Models, Observable,
 > Processes, Help, Jev) built with React + TypeScript + Vite. Live state via REST
 > polling (3–10s, with exceptions below); the in-app alert engine runs
-> client-side over the polled snapshots. All frontend code is domain-agnostic
-> — it renders whatever JSON the backend sends. Unit tests run under
-> vitest + jsdom (365 tests — 359 passing, 6 skipped — across 26 files).
+> client-side over the polled snapshots. Frontend code is domain-agnostic
+> (the Jev tab is the exception, below) — it renders whatever
+> JSON the backend sends. Unit tests run under
+> vitest + jsdom (399 tests — 393 passing, 6 skipped — across 27 files).
 
 ## Purpose & Design
 
@@ -31,7 +32,7 @@ consolidated into the Models tab's Lineage timeline (`LineageView` /
 | **Observable** | ObservableTab | Exhibition / replay-stream surface (Phase L placeholder) | On-demand | — |
 | **Processes** | ProcessMonitor + ResourceGauge + WslProcessesPanel + AlertsPanel | `/api/processes` + `/api/system/*` (separate router); alerts via the `useAlerts` hook | 5s poll | Cross-cutting (liveness + alerts) |
 | **Help** | HelpTab | `/api/operator-commands` (reads `documentation/wiki/operator-commands.md` from disk) | One-time fetch | — |
-| **Jev** | JevTab (JevGraph) | `/api/jev/runs` + `/api/jev/runs/{run_id}` + `/api/jev/runs/{run_id}/policy` (read-only, served from `data/jev/runs`); with `?launch=<session_id>` also `GET /api/jev/launches/{session_id}` and the readiness receipt `POST /api/jev/launches/{session_id}/ready`, sent after the launched run is rendered and retried on each session poll until accepted (writes only `data/jev/launches/<session_id>/ready.json`; loopback client and Host, dashboard Origin `http://localhost:3000` or `http://127.0.0.1:3000` only) | 5s run-list poll + 1s selected-run poll; archived policy retried on the 1s poll until it first loads, then never refetched (immutable); 4s request timeout; with `?launch=`, the launch session polled every 1s from a Web Worker timer and again on visibilitychange | — (independent Jev player, outside both loops) |
+| **Jev** | JevTab (JevGraph, JevPlanPanel) | `/api/jev/runs` + `/api/jev/runs/{run_id}` + `/api/jev/runs/{run_id}/policy` (read-only, served from `data/jev/runs`); with `?launch=<session_id>` also `GET /api/jev/launches/{session_id}` and the readiness receipt `POST /api/jev/launches/{session_id}/ready`, sent after the launched run is rendered and retried on each session poll until accepted (writes only `data/jev/launches/<session_id>/ready.json`; loopback client and Host, dashboard Origin `http://localhost:3000` or `http://127.0.0.1:3000` only) | 5s run-list poll + 1s selected-run poll; archived policy retried on the 1s poll until it first loads, then never refetched (immutable); 4s request timeout; with `?launch=`, the launch session polled every 1s from a Web Worker timer and again on visibilitychange | — (independent Jev player, outside both loops) |
 
 The Advisor tab is the single source of truth for advised-loop state — it
 reads `data/advised_run_state.json` via `/api/advised/state` and writes
@@ -95,11 +96,25 @@ archived policy and acknowledged it) Starting, Live and Finished; a benchmark ba
 moves to the next game in the same tab. Picking another run pauses following until
 **Resume live**. A launcher that stops writing its session shows **Launcher not
 responding**. An **Army decision** panel shows the configured provider and whether
-each decision came from the Typesafe model or the scripted fallback.
+each decision came from the Typesafe model or the scripted fallback. For a v2 run (a
+policy with `start_plan` nodes or hosted v2 questions) a **Plans and decisions** panel
+(`JevPlanPanel`) lists each plan's status, stage, blocker or outcome, holds and who
+decided it (with the request id), each plan slot's open plan, next permitted kinds,
+cooldown and turn, and each question family's decision source; v1 and older runs keep
+the earlier layout. The node inspector names the node's lane and the request, fallback
+or local decision behind it. All of this is derived by the pure `jevEvidence.ts`
+(`graphActivity`, `plansEvidence`) from the latest state and recent events; nothing is
+interpolated between polls.
 
 **JevGraph:** `d3-hierarchy` SVG tree of the archived policy forest with active
 and waiting node status. Supports pan, zoom, and collapse, and is a
-keyboard-navigable ARIA tree.
+keyboard-navigable ARIA tree. Each root lane has a colour (a band, a node stripe,
+and a legend with active/waiting counts). Only recorded activity is drawn: the latest
+state's running path solid, and edges named by node events in the last
+`JEV_TRAIL_SECONDS` (2) game seconds as a dashed, fading recent trail. A non-live
+state is labeled last known, and reduced motion stops the animation. **Follow
+activity** (off by default, live runs only) brings the newest active node into view
+without changing the selection.
 
 **ConnectionStatus:** Header connection dot + advised-run badge mounted at
 the App shell, outside the tab switch.
@@ -160,7 +175,10 @@ run and `/?tab=jev&launch=<session_id>` follows a dashboard-first launch session
 
 **Frontend is domain-agnostic:** Components render whatever JSON the API returns. Unit
 type names, strategic states, and command vocabulary come from the backend. No SC2
-concepts are hardcoded in the frontend.
+concepts are hardcoded in the frontend. The exception is the Jev tab (an SC2 player's
+viewer): its lane colours are keyed to v2's lane names (`KNOWN_LANE_TONES` in
+`frontend/src/types/jev.ts`), it knows the hosted question families by name
+(`JEV_DECISION_REASONS`), and its plan panel labels reserved resources as minerals and gas.
 
 ### In-app alert system
 
@@ -196,6 +214,7 @@ as `*.test.tsx` / `*.test.ts`. Run with `npm test -- --run` or `npm run test:run
 | `frontend/src/components/ModelsTab.tsx` | Models tab shell: lineage, live runs, version inspector, compare, forensics |
 | `frontend/src/components/ObservableTab.tsx` | Observable tab: exhibition / replay-stream surface |
 | `frontend/src/components/LineageView.tsx` | Lineage timeline (absorbs the former Improvements timeline) |
+| `frontend/src/components/TimelineList.tsx` | Improvements timeline row list (used by LineageView and VersionInspector) |
 | `frontend/src/components/LiveRunsGrid.tsx` | Grid of in-flight runs |
 | `frontend/src/components/VersionInspector.tsx` | Per-version detail inspector |
 | `frontend/src/components/CompareView.tsx` | Side-by-side version comparison |
@@ -207,7 +226,9 @@ as `*.test.tsx` / `*.test.ts`. Run with `npm test -- --run` or `npm run test:run
 | `frontend/src/components/AlertToast.tsx` | Transient new-alert overlay |
 | `frontend/src/components/HelpTab.tsx` | Renders `operator-commands.md` via react-markdown |
 | `frontend/src/components/JevTab.tsx` | Jev tab: read-only run browser |
-| `frontend/src/components/JevGraph.tsx` | Jev policy graph view (d3-hierarchy SVG tree) |
+| `frontend/src/components/JevGraph.tsx` | Jev policy graph view (d3-hierarchy SVG tree; colored root lanes, recorded edge activity, Follow activity) |
+| `frontend/src/components/JevPlanPanel.tsx` | Jev tab: Plans and decisions panel (plans, plan slots, decision sources) for v2 runs |
+| `frontend/src/components/jevEvidence.ts` | Pure derivations from a run's evidence: graph edge activity, node decision sources, plans/slots/decisions |
 | `frontend/src/components/ConnectionStatus.tsx` | Header connection dot + advised-run badge |
 | `frontend/src/components/StaleDataBanner.tsx` | Reusable stale-data warning banner |
 | `frontend/src/components/ConfirmDialog.tsx` | Reusable confirm modal |
@@ -227,6 +248,7 @@ as `*.test.tsx` / `*.test.ts`. Run with `npm test -- --run` or `npm run test:run
 | `frontend/src/hooks/useGameForensics.ts` | Per-game forensics (`/api/versions/{v}/forensics/{game_id}`) |
 | `frontend/src/hooks/useBuildOrders.ts` | (orphan — used only by the unmounted BuildOrderEditor) |
 | `frontend/src/hooks/useGameState.ts` | (orphan — no consumer) |
+| `frontend/src/hooks/useWebSocket.ts` | (orphan — used only by the unmounted CommandPanel and useGameState; 3s reconnect) |
 | `frontend/src/lib/alertRules.ts` | Alert rule definitions and evaluator |
 | `frontend/src/lib/alertStorage.ts` | `localStorage` persistence for alerts |
 | `frontend/src/lib/idbCache.ts` | IndexedDB cache used by `useApi` |

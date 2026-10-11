@@ -278,12 +278,16 @@ is free if backend won't start: `Get-NetTCPConnection -LocalPort 8765`.
 
 ### Jev player
 
-Jev is a separate player family: a four-Gateway Zealot rush whose gameplay
-choices come from the decision graph in `bots/jev/v1/policy.json`. Each match
-writes its evidence to `data/jev/runs/<run_id>/`.
+Jev is a separate player family whose gameplay choices come from a packaged
+decision graph: `bots/jev/v1/policy.json` (the frozen four-Gateway Zealot
+rush) and `bots/jev/v2/policy.json` (adaptive v2: scouting, gas, persistent
+expansion and tech plans, a Zealot/Stalker army; nine root lanes). Use
+`bots.jev.v2` in place of `bots.jev.v1` below to play v2. Each match writes
+its evidence to `data/jev/runs/<run_id>/`.
 
 ```powershell
 PS> uv run python -m bots.jev.v1 --validate-policy      # validate the packaged policy, print its hash (no SC2)
+PS> uv run python -m bots.jev.v2 --validate-policy      # v2: validate, print its hash and nine root lanes (no SC2)
 PS> uv run python -m bots.jev.v1 --map Simple64 --opponent-race Terran --difficulty 1 --seed 1 --max-game-seconds 900 --max-wall-seconds 1800
 PS> $runId = (Get-ChildItem data\jev\runs -Directory | Sort-Object CreationTime | Select-Object -Last 1).Name   # newest run's ID
 PS> uv run python scripts\validate_jev.py --run-id $runId --api-base http://localhost:8765   # disk vs API
@@ -301,7 +305,7 @@ PS> uv run python scripts\validate_jev.py --run-id $runId --api-base http://loca
 Dashboard-first launches and benchmarks (Phase J2):
 
 ```powershell
-PS> .\scripts\launch-jev.ps1 -Version v1                                  # dashboard-first single match (Typesafe by default; -DecisionProvider scripted for local); pass -Version v1 until v2 is packaged
+PS> .\scripts\launch-jev.ps1                                              # dashboard-first single match; defaults -Version v2 -DecisionProvider typesafe (a paid match) -OpponentRace Terran -Difficulty 3 -Seed 11; -Version v1 plays the frozen v1, -DecisionProvider scripted stays local
 PS> uv run python scripts\benchmark_jev.py --panel baseline --dry-run     # resolve exact entrypoint/policy hash/model; no service call, no UI, writes nothing
 PS> uv run python scripts\benchmark_jev.py --resume <batch_id>            # resume a batch; complete cases are never overwritten
 ```
@@ -310,11 +314,16 @@ PS> uv run python scripts\benchmark_jev.py --resume <batch_id>            # resu
   only after the page has rendered that exact run; an unhealthy dashboard
   stops the launch (no headless fallback; `--no-dashboard` is the explicit
   headless benchmark mode).
-- Typesafe: `--decision-provider typesafe --realtime` on `bots.jev.v1`; needs
+- Typesafe: `--decision-provider typesafe --realtime` on `bots.jev.v1` (army
+  intent) or `bots.jev.v2` (`army_mode`, `strategy`, `expansion_response` and
+  `production_mix` on one `--decision-max-requests` budget, default 450); needs
   `TYPESAFE_API_KEY` (or, for `launch-jev.ps1`, the saved encrypted key), and
   `launch-jev.ps1` hands the key to the game process only.
 - Benchmark panels, limits, scoring and resume:
   [documentation/operator/jev-v2-validation.md](../operator/jev-v2-validation.md).
+- v2 lanes, plans, hosted questions, the live graph and the Step 222
+  prerequisites: [jev-v2-validation.md](../operator/jev-v2-validation.md)
+  section 13.
 
 ### Headless (no SC2 client) — Phase 8 Docker worker
 
@@ -679,13 +688,13 @@ SC2 alone leaves the daemon hanging.
 
 ```powershell
 PS> uv sync                                              # install/refresh deps
-PS> uv run pytest -q                                     # 2974 pass, 9 skipped with [viewer] (6 skips = opt-in JEV_BROWSER_TESTS real-browser tests)
+PS> uv run pytest -q                                     # 3345 pass, 12 skipped with [viewer] (9 skips = opt-in JEV_BROWSER_TESTS real-browser tests)
 PS> uv run pytest -m sc2                                 # SC2 integration tests (needs SC2 running)
 PS> uv run pytest tests/test_evolve.py -q                # one file
 PS> uv run pytest tests/test_evolve.py::TestX -q         # one class
 PS> uv run ruff check .
-PS> uv run mypy src bots --strict                        # 824 source files
-PS> cd frontend; npm run test                            # 365 vitest (359 pass, 6 skipped)
+PS> uv run mypy src bots --strict                        # 828 source files
+PS> cd frontend; npm run test                            # 399 vitest (393 pass, 6 skipped)
 PS> cd frontend; npm run lint
 ```
 

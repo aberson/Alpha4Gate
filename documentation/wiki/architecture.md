@@ -230,7 +230,7 @@ bots/v0/
 ```
 
 Jev (a separate player family; runtime in `src/jev/` imported as `jev`, policy
-packages in `bots/jev/vN/`):
+packages in `bots/jev/vN/`: v1 frozen, v2 adaptive since J2 Step 214):
 
 ```
 src/jev/
@@ -238,9 +238,11 @@ src/jev/
 ├── policy.py       # Strict policy loading, validation, canonical policy hash
 ├── operations.py   # The one allowlisted operation registry
 ├── runtime.py      # Deterministic, bounded Jev interpreter
+├── plans.py        # v2 persistent plans: PlanStore/PlanRecord, macro and army slots, turn rule after an abort
 ├── sc2_adapter.py  # Visible-state adapter between burnysc2 and the runtime
 ├── bot.py          # burnysc2 lifecycle: one match driven by the policy graph
-├── decision.py     # Typesafe structured army decision (non-blocking)
+├── decision.py     # Typesafe HTTP boundary: typed Choice questions, answer validation, reason codes (v1's army question)
+├── strategy.py     # v2 hosted questions (strategy, army_mode, expansion_response, production_mix) on one request budget
 ├── runner.py       # Single-match runner + CLI (writes diagnostics.json)
 ├── telemetry.py    # Run-evidence writer/reader (data/jev/runs)
 ├── api.py          # /api/jev router: run evidence + launch readiness receipt

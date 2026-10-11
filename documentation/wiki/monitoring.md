@@ -245,7 +245,7 @@ Backed by `ErrorLogBuffer` (50-entry ring in `bots/v0/error_log.py`), surfaced v
 | Action probabilities | `NeuralDecisionEngine._last_probabilities` | Ephemeral (memory) | THE TASK |
 | Lineage registry | `data/lineages.json` | Permanent (whole-file rewrite at every generation boundary since EH.2; extinct records retained with `status="extinct"`, never dropped) | EVOLVE |
 | Baseline opponent registry | `data/baselines.json` | Permanent | EVOLVE |
-| Jev run evidence | `data/jev/runs/<run_id>/` (`metadata.json`, `state.json`, archived `policy.json`, bounded `events.N.jsonl` trace, `replay.SC2Replay`, and `diagnostics.json`, which the runner writes best-effort after the terminal state; the dashboard API never reads it and the benchmark requires it) | Permanent per run; a terminal run is never rewritten | Jev (outside the loops) |
+| Jev run evidence | `data/jev/runs/<run_id>/` (`metadata.json`, `state.json`, archived `policy.json`, bounded `events.N.jsonl` trace (v2 runs also trace plan transition/summary diagnostics carrying PlanRecord facts incl. `decided_by`/`decision_request_id`, one `Plan slot summary` diagnostic per plan slot per game second, and `Strategy decision source` / `Expansion response decision source` / `Production mix decision source` diagnostics beside `Army decision source`; a node event is re-traced when its `source`/`request_id` changes), `replay.SC2Replay`, and `diagnostics.json`, which the runner writes best-effort after the terminal state; the dashboard API never reads it and the benchmark requires it) | Permanent per run; a terminal run is never rewritten | Jev (outside the loops) |
 | Jev launch sessions | `data/jev/launches/<session_id>/` (`session.json` written by the launcher or the game process it hands one case to; `ready.json` written only by `POST /api/jev/launches/{session_id}/ready`) | One folder per attended launch; separate from run evidence and never rewrites a run | Jev (outside the loops) |
 | Jev benchmarks | `data/jev/benchmarks/<batch_id>/` (`manifest.json`, `results.json`, append-only `attempts.jsonl`, `attempts/`, `lock.json`); frozen sources in `data/jev/benchmarks/baselines/<vN>-<fingerprint prefix>/` plus `baselines/v1.baseline.json` (written once, never replaced) | Permanent; resume never overwrites a complete case | Jev (outside the loops) |
 
@@ -263,7 +263,7 @@ Tabs defined in `frontend/src/App.tsx`. Each tab consumes the endpoints or WebSo
 | Observable | `ObservableTab.tsx` | Exhibition / replay-stream surface (Phase L placeholder) | On-demand | — |
 | Processes | `ProcessMonitor.tsx` + `ResourceGauge.tsx` + `WslProcessesPanel.tsx` + `AlertsPanel.tsx` | `/api/processes`, `/api/system/*`, cleanup endpoints; alerts via `useAlerts` | 5s | Cross-cutting (liveness + alerts) |
 | Help | `HelpTab.tsx` | `/api/operator-commands` | One-time fetch | — |
-| Jev | `JevTab.tsx` (+ `JevGraph.tsx`) | `/api/jev/runs`, `/api/jev/runs/{run_id}`, `/api/jev/runs/{run_id}/policy`, `/api/jev/launches/{session_id}` + `POST …/ready` (with `?launch=`) | 5s list / 1s selected run / 1s launch session | — (independent Jev player) |
+| Jev | `JevTab.tsx` (+ `JevGraph.tsx`, `JevPlanPanel.tsx`) | `/api/jev/runs`, `/api/jev/runs/{run_id}`, `/api/jev/runs/{run_id}/policy`, `/api/jev/launches/{session_id}` + `POST …/ready` (with `?launch=`) | 5s list / 1s selected run / 1s launch session | — (independent Jev player) |
 
 Elo is no longer its own tab — `/api/ladder` (`data/bot_ladder.json`) now feeds
 `CompareView` inside the Models tab.

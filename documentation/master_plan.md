@@ -2,7 +2,7 @@
 
 ## Plan index
 
-Single spine for the project. Status as of 2026-10-09. Each phase's narrative lives in the sections below; deep build detail lives in the linked sub-plan docs. Sub-plans that are fully shipped or cut are archived; sub-plans with work remaining stay under `documentation/plans/` and are linked here.
+Single spine for the project. Status as of 2026-10-10. Each phase's narrative lives in the sections below; deep build detail lives in the linked sub-plan docs. Sub-plans that are fully shipped or cut are archived; sub-plans with work remaining stay under `documentation/plans/` and are linked here.
 
 ### Active sub-plans — work remaining (`documentation/plans/`)
 
@@ -10,7 +10,7 @@ Single spine for the project. Status as of 2026-10-09. Each phase's narrative li
 |---|---|---|
 | [jev-player-plan.md](plans/jev-player-plan.md) | JV | Steps 201-206 implemented; recorded live gates 207/208 pending. Local scripted baseline; actual Typesafe integration follows in Phase JI. Independent graph-controlled four-Gateway Zealot player plus dashboard viewer; evolution and themed-window embedding deferred. [Proposal](plans/jev-player-proposal.html) |
 | [jev-typesafe-plan.md](plans/jev-typesafe-plan.md) | JI | Steps 209-211 complete: offline checks and actual hosted-service/SC2 acceptance passed. [Validation](plans/jev-typesafe-validation.md) |
-| [jev-v2-plan.md](plans/jev-v2-plan.md) | J2 | IN PROGRESS, 2 of 13 steps complete: Steps 212 (`9b2136e`, #328) and 224 (`28dc15d`, #329) DONE 2026-10-08/09 (reproducible benchmark CLI and dashboard-first exact-game launch); **next: operator Step 213 (#330)**, the real-SC2 + Typesafe frozen-v1 baseline; Steps 214-223 pending. Adaptive player, strategic/execution decisions and MediumHard comparison. [Proposal](plans/jev-v2-proposal.html) · [Operator guide](operator/jev-v2-validation.md) |
+| [jev-v2-plan.md](plans/jev-v2-plan.md) | J2 | IN PROGRESS, 10 of 13 steps complete: code Steps 212 (`9b2136e`, #328), 224 (`28dc15d`, #329) and 214-221 (`0b46350`..`f52d4f6`, #331-#338) DONE 2026-10-08..10: reproducible benchmark CLI, dashboard-first exact-game launch, and the adaptive v2 player (scouting, gas, recoverable expansion, Core/Stalkers, four hosted question families, live plan graph). Step 213 (#330) is operator-deferred, not passed. **Next: operator Step 222 (#339, Manual UAT M1)**, at most three paid v2 matches; then Step 223 (#340, wait). MediumHard comparison follows in Step 223. [Proposal](plans/jev-v2-proposal.html) · [Operator guide](operator/jev-v2-validation.md) |
 | [phase-d-build-plan.md](plans/phase-d-build-plan.md) | D | Automated build COMPLETE (incl. snapshot-counts follow-up); **M1/M2 operator validation pending** |
 | [evolution-lines-plan.md](plans/evolution-lines-plan.md) | EL | EL.1-EL.6 shipped 2026-06-20 (#273-#278 closed; EL.6 real-SC2 smoke PASS); **EL.7 soak (#279) operator-pending** |
 | [phase-6-build-plan.md](plans/phase-6-build-plan.md) | 6 | Self-play-driven improvement loop - planned |
@@ -62,7 +62,7 @@ Build plan: [jev-typesafe-plan.md](plans/jev-typesafe-plan.md). [Phase JI progre
 
 ## Phase J2 - Adaptive Jev player
 
-**Status:** IN PROGRESS (2026-10-09); 2/13 build and live-acceptance steps complete. Code Steps 212 (`9b2136e`, #328) and 224 (`28dc15d`, #329) are DONE. Next is operator Step 213 (#330), the first real-SC2/Typesafe baseline, whose preflight also captures and finalizes the frozen v1 baseline. Steps 214-223 pending; umbrella #327 open; committed on `master-plan/phase-ev`, not merged to master.
+**Status:** IN PROGRESS (2026-10-10); 10/13 build and live-acceptance steps complete. Code Steps 212, 224 and 214-221 are DONE (#328, #329, #331-#338 closed; `9b2136e`, `28dc15d`, `0b46350`..`f52d4f6`). Step 213 (#330) is operator-deferred after v1 was frozen (`v1-b53039a693cadf75`); it is not a passed baseline. Next is operator Step 222 (#339, plan Manual UAT M1), then Step 223 (#340, wait). Umbrella #327 open; committed on `master-plan/phase-ev`, not merged to master.
 **Objective:** build an inspectable two-base four-Gateway player and measure
 improvement over frozen v1 against MediumHard opponents. Typesafe participates
 in strategy and execution choices; local graph actions own the full lifecycle.
@@ -74,8 +74,9 @@ unchanged. Evolution, broader tech and embedded SC2 remain deferred. Numeric **S
 
 Build plan: [jev-v2-plan.md](plans/jev-v2-plan.md).
 Current Jev progress: [J2 inventory](jev-v2-progress.html); the JI progress page
-is the historical integration checkpoint. Operator procedure for the benchmark and
-dashboard-first launcher: [Jev v2 validation guide](operator/jev-v2-validation.md).
+is the historical integration checkpoint. Operator procedure for the benchmark,
+dashboard-first launcher, v2 player, live graph and Step 222 prerequisites (section 13):
+[Jev v2 validation guide](operator/jev-v2-validation.md).
 Offline checks are not stronger-play acceptance.
 
 ## Source
@@ -2408,3 +2409,5 @@ Append-only — do not edit prior entries.
   (498f405) awaiting Phase A validation.
 
 Jev continuation (2026-10-09): staging and hosted smoke passed; operator stopped the remaining Step 213 baseline after v1 was frozen and authorized improvements. Step 213 stays pending/deferred. Next build: Steps 214-221, `--resume 214`, stop before 222; no further paid games. See [validation](plans/jev-v2-validation.md).
+
+Jev continuation (2026-10-10), superseding the 2026-10-09 line above: build span 214-221 DONE (#331-#338 closed); Step 213 stays operator-deferred. Next: operator Step 222 (#339) = Manual UAT M1, at most three paid matches; then Step 223 (#340, wait). See [handoff](plans/jev-v2-handoff.md).
