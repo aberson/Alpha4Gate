@@ -1288,6 +1288,16 @@ describe("JevTab observed activity (plan J2 Step 221)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Boxes" }));
     expect(treeitem("army").querySelector("text")?.textContent).toBe("army");
     expect(treeitem("army")).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Dots 3D" }));
+    for (const shape of ["sphere", "hollow", "faces", "cone"]) {
+      fireEvent.change(screen.getByLabelText("3D shape"), { target: { value: shape } });
+      expect(screen.getByTestId("jev-graph")).toHaveAttribute("data-shape", shape);
+      expect(treeitem("army")).toHaveAttribute("aria-selected", "true");
+    }
+    fireEvent.change(screen.getByLabelText("Node details placement"), { target: { value: "overlay" } });
+    expect(screen.getByTestId("jev-node-panel").parentElement).toHaveClass("jev-details-overlay");
+    fireEvent.change(screen.getByLabelText("Node details placement"), { target: { value: "below" } });
+    expect(screen.getByTestId("jev-node-panel").parentElement).not.toHaveClass("jev-details-overlay");
   });
 
   it("adds and removes branches independently, including an empty canvas", async () => {

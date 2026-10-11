@@ -1,3 +1,4 @@
+import type { DotShape } from "./jevSpatial";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   useJevRun,
@@ -685,6 +686,8 @@ function RunView({ runId, run, policy, launchStarting = false, onRendered }: Run
   const [visibleRoots, setVisibleRoots] = useState<string[] | null>(null);
   const [view, setView] = useState<"boxes" | "nodes" | "dots3d">("nodes");
   const [nodeLayout, setNodeLayout] = useState<"tree" | "radial">("tree");
+  const [dotShape, setDotShape] = useState<DotShape>("sphere");
+  const [detailsOverlay, setDetailsOverlay] = useState(false);
   const compact = view !== "boxes";
   const [fullscreen, setFullscreen] = useState(false);
   const [reveal, setReveal] = useState<{ nodeId: string; token: number } | null>(null);
@@ -807,6 +810,15 @@ function RunView({ runId, run, policy, launchStarting = false, onRendered }: Run
             <button type="button" aria-pressed={nodeLayout === "tree"} onClick={() => setNodeLayout("tree")}>Tree</button>
             <button type="button" aria-pressed={nodeLayout === "radial"} onClick={() => setNodeLayout("radial")}>Radial</button>
           </span>}
+          {view === "dots3d" && <label>Shape <select aria-label="3D shape" value={dotShape}
+            onChange={(event) => setDotShape(event.target.value as DotShape)}>
+            <option value="sphere">Sphere</option><option value="hollow">Hollow sphere</option>
+            <option value="faces">Branch faces</option><option value="cone">Cone</option>
+          </select></label>}
+          <label>Node details <select aria-label="Node details placement" value={detailsOverlay ? "overlay" : "below"}
+            onChange={(event) => setDetailsOverlay(event.target.value === "overlay")}>
+            <option value="below">Below graph</option><option value="overlay">In graph</option>
+          </select></label>
           {typeof document.documentElement.requestFullscreen === "function" && (
             <button type="button" onClick={() => void toggleFullscreen()}>
               {fullscreen ? "Exit fullscreen" : "Fullscreen"}
@@ -816,12 +828,13 @@ function RunView({ runId, run, policy, launchStarting = false, onRendered }: Run
             {roots.length} / {archived.roots.length} branches
           </span>
         </div>
-        <div className="jev-run-body">
+        <div className={`jev-run-body${detailsOverlay && roots.length > 0 ? " jev-details-overlay" : ""}`}>
           {roots.length === 0 ? <p className="jev-empty-graph">Choose branch cards above to add them to the graph.</p> : <JevGraph
             key={archived.policy_hash}
             policy={archived}
             displayRootIds={roots}
             compact={compact}
+            dotShape={dotShape}
             layoutMode={view === "dots3d" ? "dots3d" : view === "nodes" ? nodeLayout : "tree"}
             showLaneLegend={false}
             fitOnMount

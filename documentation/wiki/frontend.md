@@ -281,3 +281,9 @@ as `*.test.tsx` / `*.test.ts`. Run with `npm test -- --run` or `npm run test:run
 | `frontend/vitest.config.ts` | Vitest config (jsdom + global setup) |
 | `frontend/src/test/setup.ts` | Global test setup (matchers, mocks) |
 | `frontend/src/test/sanity.test.ts` | Smoke test that the vitest stack loads |
+
+#### Dots 3D shapes and node details
+
+Dots 3D offers Sphere (default, nodes throughout the volume), Hollow sphere (nodes on the surface), Branch faces (one planar prism face per branch), and the original Cone. Sphere sectors scale with visible branch size. All shapes preserve the same node IDs, selection, recorded edges, and live/stale status; shape outlines are decorative. Rotate to expose dots hidden behind others.
+
+Use **Node details ? In graph** for a scrollable inspector in the lower-right corner of the graphic, or **Below graph** for the full-width inspector. The overlay may cover dots; rotate/pan or switch it below when needed. Shape and placement choices last for the current run view.

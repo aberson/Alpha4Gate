@@ -8,7 +8,7 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from "react";
-import { radialPositions, projectSpatial } from "./jevSpatial";
+import { radialPositions, dotPositions, projectSpatial, type DotShape } from "./jevSpatial";
 import { hierarchy, tree } from "d3-hierarchy";
 import {
   JEV_NODE_RUNTIME_LABELS,
@@ -151,6 +151,7 @@ interface Layout {
   order: PlacedNode[];
   byId: Map<string, PlacedNode>;
   edges: Array<{ id: string; path: string }>;
+  guides?: string[];
   width: number;
   height: number;
   fitBounds?: { x: number; y: number; width: number; height: number };
@@ -272,12 +273,15 @@ function allCollapsed(structure: Structure): Set<string> {
 
 function spatialLayout(
   policy: JevPolicy, structure: Structure, collapsed: ReadonlySet<string>,
-  dots: boolean, yaw: number, pitch: number,
+  dots: boolean, yaw: number, pitch: number, dotShape: DotShape,
 ): Layout {
-  const points = radialPositions(policy, collapsed);
+  const points = dots ? dotPositions(policy, collapsed, dotShape) : radialPositions(policy, collapsed);
   if (points.length === 0) return { order: [], byId: new Map(), edges: [], width: 48, height: 48 };
-  const halfZ = Math.max(...points.map((point) => point.z)) / 2;
-  const radius = Math.max(...points.map((point) => Math.hypot(point.x, point.y, point.z - halfZ)));
+  const halfZ = (Math.max(...points.map((point) => point.z)) + Math.min(...points.map((point) => point.z))) / 2;
+  const faceCount = Math.max(3, policy.roots.length);
+  const cornerRadius = 300 / Math.cos(Math.PI / faceCount);
+  const radius = Math.max(...points.map((point) => Math.hypot(point.x, point.y, point.z - halfZ)),
+    dots && dotShape === "faces" ? Math.hypot(cornerRadius, 300 + Math.abs(halfZ)) : 0);
   const projected = points.map((point) => dots
     ? projectSpatial({ ...point, z: point.z - halfZ }, yaw, pitch)
     : { x: point.x, y: point.y, depth: 0 });
@@ -351,7 +355,22 @@ function spatialLayout(
     width: Math.max(...order.map((placed) => placed.x)) + width + MARGIN - left,
     height: Math.max(...order.map((placed) => placed.y)) + height + MARGIN - top,
   };
-  return { order, byId, edges, fitBounds, width: maxX - minX + width + MARGIN * 2 + TOGGLE_RADIUS,
+  const guides: string[] = [];
+  if (dots && dotShape === "faces") {
+    for (let face = 0; face < policy.roots.length; face++) {
+      const corners = [[face - 0.5, -300], [face + 0.5, -300], [face + 0.5, 300], [face - 0.5, 300]];
+      guides.push(corners.map(([step, y], index) => {
+        const angle = step * Math.PI * 2 / faceCount;
+        const p = projectSpatial({ ...points[0], x: cornerRadius * Math.cos(angle), y,
+          z: cornerRadius * Math.sin(angle) - halfZ }, yaw, pitch);
+        return `${index === 0 ? "M" : "L"}${p.x + MARGIN - minX + 8},${p.y + MARGIN - minY + 8}`;
+      }).join(" ") + " Z");
+    }
+    fitBounds.x = 0; fitBounds.y = 0;
+    fitBounds.width = radius * 2 + MARGIN * 2 + width;
+    fitBounds.height = radius * 2 + MARGIN * 2 + height;
+  }
+  return { order, byId, edges, guides, fitBounds, width: maxX - minX + width + MARGIN * 2 + TOGGLE_RADIUS,
     height: maxY - minY + height + MARGIN * 2 };
 }
 
@@ -564,6 +583,7 @@ export interface JevGraphProps {
   policy: JevPolicy;
   compact?: boolean;
   layoutMode?: "tree" | "radial" | "dots3d";
+  dotShape?: DotShape;
   /** Roots to draw. The archived policy remains intact; this only limits presentation. */
   displayRootIds?: readonly string[];
   /** The parent branch overview already carries this information in the focused view. */
@@ -588,6 +608,7 @@ export function JevGraph({
   policy,
   compact = false,
   layoutMode = "tree",
+  dotShape = "sphere",
   displayRootIds,
   showLaneLegend = true,
   fitOnMount = false,
@@ -628,15 +649,15 @@ export function JevGraph({
   const nodeElements = useRef(new Map<string, SVGGElement>());
   const drag = useRef<DragStart | null>(null);
   const initiallyFitted = useRef<string | null>(null);
-  const scopeKey = `${compact ? "nodes" : "boxes"}:${layoutMode}:${displayPolicy.roots.join("|")}`;
+  const scopeKey = `${compact ? "nodes" : "boxes"}:${layoutMode}:${dotShape}:${displayPolicy.roots.join("|")}`;
   const hintId = useId();
   const followId = useId();
 
   const layout = useMemo(
     () => layoutMode === "tree"
       ? computeLayout(displayPolicy, structure, collapsed, compact, viewport.width / viewport.height)
-      : spatialLayout(displayPolicy, structure, collapsed, dots, camera.yaw, camera.pitch),
-    [displayPolicy, structure, collapsed, compact, viewport, layoutMode, dots, camera],
+      : spatialLayout(displayPolicy, structure, collapsed, dots, camera.yaw, camera.pitch, dotShape),
+    [displayPolicy, structure, collapsed, compact, viewport, layoutMode, dots, camera, dotShape],
   );
   const tabStop =
     focusedId !== null && layout.byId.has(focusedId) ? focusedId : layout.order[0]?.node.id ?? null;
@@ -648,7 +669,7 @@ export function JevGraph({
     const nextLayout =
       nextCollapsed === collapsed ? layout : layoutMode === "tree"
         ? computeLayout(displayPolicy, structure, nextCollapsed, compact, viewport.width / viewport.height)
-        : spatialLayout(displayPolicy, structure, nextCollapsed, dots, camera.yaw, camera.pitch);
+        : spatialLayout(displayPolicy, structure, nextCollapsed, dots, camera.yaw, camera.pitch, dotShape);
     if (nextCollapsed !== collapsed) setCollapsed(nextCollapsed);
     const placed = nextLayout.byId.get(id);
     if (placed !== undefined) setTransform(revealBox(transform, placed, viewport, compact));
@@ -840,6 +861,7 @@ export function JevGraph({
     <div
       className={`jev-graph${dots ? " jev-graph-dots" : ""}`}
       data-layout={layoutMode}
+      data-shape={dots ? dotShape : undefined}
       data-testid="jev-graph"
       data-reduced-motion={reducedMotion}
       data-following={following}
@@ -987,6 +1009,9 @@ export function JevGraph({
           data-testid="jev-graph-canvas"
           transform={`translate(${transform.x},${transform.y}) scale(${transform.k})`}
         >
+          {layout.guides?.map((path, index) => <path key={index} d={path}
+            fill="none" stroke="currentColor" strokeOpacity={0.18} strokeWidth={1}
+            pointerEvents="none" aria-hidden="true" />)}
           <g className="jev-graph-bands" aria-hidden="true">
             {(layoutMode === "tree" ? laneBands(layout, structure, nodeHeight, nodeWidth) : []).map((band) => (
               <rect

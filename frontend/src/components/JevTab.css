@@ -984,3 +984,19 @@
     transition: none;
   }
 }
+.jev-details-overlay {
+  position: relative;
+}
+
+.jev-details-overlay > .jev-inspector {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2;
+  width: min(310px, calc(100% - 24px));
+  max-height: min(350px, 45%);
+  background: var(--bg-secondary, #202129);
+  border: 1px solid var(--border-color, #454653);
+  border-radius: 8px;
+  box-shadow: 0 4px 18px #0006;
+}

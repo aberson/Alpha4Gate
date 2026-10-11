@@ -10,6 +10,47 @@ export interface SpatialNode {
   position: number;
 }
 
+export type DotShape = "cone" | "sphere" | "hollow" | "faces";
+
+/** Presentation only: retain IDs and ancestry while distributing branches in 3D. */
+export function dotPositions(policy: JevPolicy, collapsed: ReadonlySet<string>, shape: DotShape): SpatialNode[] {
+  const points = radialPositions(policy, collapsed);
+  if (shape === "cone") return points;
+  const groups: SpatialNode[][] = [];
+  for (const point of points) {
+    if (point.depth === 1) groups.push([]);
+    groups[groups.length - 1].push(point);
+  }
+  let start = -Math.PI;
+  return groups.flatMap((group, branch) => {
+    // Sphere sectors grow with branch size, so Army is not squeezed into a fixed slot.
+    const span = Math.PI * 2 * group.length / points.length;
+    const levels = Math.max(...group.map((point) => point.depth));
+    const result = group.map((point, index) => {
+      const progress = (point.depth - 1) / Math.max(1, levels - 1);
+      if (shape === "faces") {
+        // One planar side of an N-sided prism per branch. Depth runs vertically;
+        // siblings spread horizontally on that face, retaining their tree order.
+        const sides = Math.max(3, groups.length);
+        const angle = branch * Math.PI * 2 / sides;
+        const atDepth = group.filter((other) => other.depth === point.depth);
+        const rank = atDepth.indexOf(point);
+        const u = ((rank + 0.5) / atDepth.length - 0.5) * 560 * Math.tan(Math.PI / sides);
+        return { ...point, x: 300 * Math.cos(angle) - u * Math.sin(angle),
+          y: (progress - 0.5) * 600, z: 300 * Math.sin(angle) + u * Math.cos(angle) };
+      }
+      const longitude = start + span * (((index + 0.5) * 0.61803398875) % 1);
+      const vertical = 1 - 2 * (index + 0.5) / group.length;
+      const radius = shape === "hollow" ? 330 : 330 * (0.3 + 0.7 * progress);
+      const ring = radius * Math.sqrt(1 - vertical * vertical);
+      return { ...point, x: ring * Math.cos(longitude), y: radius * vertical,
+        z: ring * Math.sin(longitude) };
+    });
+    start += span;
+    return result;
+  });
+}
+
 /** Leaf-weighted sectors: a growing branch gets more room automatically.
  * Coordinates depend only on the archived structure, never on polling/activity.
  * The forest has an implicit center, but no invented node or connecting edge.
