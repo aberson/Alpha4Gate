@@ -8,6 +8,12 @@ Phase 9 (evolve loop). No prerequisite on Phase L.
 
 ---
 
+**Landing correction (2026-10-11):** This branch already contains `onbrand-pilot`
+(verified with `git merge-base --is-ancestor onbrand-pilot HEAD`). Historical
+statements below requiring it to land separately are superseded by the
+[branch landing assessment](../branch-landing-phase-ev.md). Acceptance gates
+remain unchanged; landing the broader branch on `master` is a separate decision.
+
 ## 0. Prerequisites before `/build-phase` — P-1 and P-2 RESOLVED 2026-08-09
 
 <!-- autofix-applied: 2026-08-09 -->

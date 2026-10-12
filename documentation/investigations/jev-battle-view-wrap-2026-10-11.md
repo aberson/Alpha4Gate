@@ -83,7 +83,9 @@ budget; retained without an unrelated trim.
 - This wrap: local Markdown links, rendered image loading, MP4 full decode,
   dimensions/duration/audio, sampled frames, and secret/path inspection.
 - No gameplay acceptance or improvement claim is inferred from the showcase.
-- Publish on `master-plan/phase-ev`. The existing `onbrand-pilot` prerequisite
-  still prevents merging this branch into `master`.
+- Publish on `master-plan/phase-ev`. This branch already contains `onbrand-pilot`;
+  there is no separate prerequisite merge. Landing the broader branch on `master`
+  remains a separate decision while acceptance gates are open; see
+  [branch landing assessment](../branch-landing-phase-ev.md).
 - Guided tour: skipped; this wrap adds documentation/media, not a new multi-step
   implementation phase. The README and operator guide are the tour.
