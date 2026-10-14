@@ -1,6 +1,6 @@
 # Phase JDI: Repair Jev integration, then measure broader decisions
 
-Status: APPROVED / BUILDING, 2026-10-14. Operator approved the proposal and **$5 cumulative maximum**, with allocation delegated across stages. Step 232 is in implementation and review; no build step is accepted yet. Paid dispatch still requires the implementation, safety and budget prerequisites below. Umbrella #354 and step issues #355–363 are synchronized.
+Status: APPROVED / HELD, 2026-10-14. Operator approved the proposal and **$5 cumulative maximum**, with allocation delegated across stages. Step 232 is held after three review rounds; no build step is accepted yet. The unmerged candidate is preserved at `00bc515`; see the [safety audit](../investigations/jev-integration-safety-audit-2026-10-14.md). Paid dispatch still requires the implementation, safety and budget prerequisites below. Umbrella #354 and step issues #355–363 are synchronized.
 
 **Active build authorization:** On 2026-10-14 the operator requested an overnight build, ending **09:00 America/Los_Angeles (16:00 UTC)**. Start checkpoint: 07:43 UTC. Continue ready work within this window, preserve phase reports, and do not treat a completed batch or blocked dependency as permission to abandon independent work. No additional spending approval is needed within the cumulative $5.
 
@@ -176,7 +176,7 @@ Stop and report after each stage: safety (232), offline design/evidence (233–2
 ### Step 232: Make local emergency execution independent of model intent
 - **Problem:** Accepted attack/regroup can suppress defense; option eligibility omits executable-branch prerequisites.
 - **Type:** code
-- **Status:** PENDING
+- **Status:** BLOCKED (audit required; candidate 00bc515 unaccepted, 2026-10-14)
 - **Files:** bots/jev/v2/policy.json; src/jev/{operations,runtime,strategy}.py; tests/test_jev_{army,v2,decision}.py
 - **Issue:** #355
 - **Flags:** --reviewers deep --isolation worktree
