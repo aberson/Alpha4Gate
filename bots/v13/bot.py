@@ -46,11 +46,15 @@ from bots.v13.micro import MicroController
 from bots.v13.observer import observe
 from bots.v13.scouting import ScoutManager
 from bots.v13.web_socket import queue_broadcast, queue_command_event
+from orchestrator.sc2_compat import install as install_sc2_compat
 
 if TYPE_CHECKING:
     from bots.v13.learning.database import TrainingDB
 
 _log = logging.getLogger(__name__)
+
+# SC2 build 98310 renumbered an ability burnysc2 relies on; see orchestrator.sc2_compat.
+install_sc2_compat()
 
 # Approximate supply costs for common unit types (used for enemy supply estimation)
 _SUPPLY_COST: dict[UnitTypeId, int] = {
