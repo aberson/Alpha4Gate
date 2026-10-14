@@ -383,7 +383,7 @@ each night after confirming the desktop is available. No paid action occurs in p
 ### Step 225: Freeze campaign contracts and weighted evaluation
 - **Problem:** Implement schema-versioned manifests, champion references, exact case matrices and deterministic scoring described in D2/D3.
 - **Type:** code
-- **Status:** PENDING
+- **Status:** BLOCKED (2026-10-13)
 - **Files:** src/jev/campaign.py; src/jev/campaign_evaluation.py; scripts/run_jev_campaign.py; tests/test_jev_campaign.py; tests/test_jev_campaign_evaluation.py
 - **Existing context:** Sections 2 and 6 define the production boundaries; implement only this step, preserving official J2 panels and desktop defaults.
 - **Issue:** #347
