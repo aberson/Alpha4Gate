@@ -1,6 +1,6 @@
 # Phase JDI: Repair Jev integration, then measure broader decisions
 
-Status: APPROVED, 2026-10-14. Operator approved the proposal and **$5 cumulative maximum**, with allocation delegated across stages. Implementation remains pending; paid dispatch still requires the implementation, safety and budget prerequisites below. Steps 232–240 are reserved; issue synchronization remains pending.
+Status: APPROVED / BUILDING, 2026-10-14. Operator approved the proposal and **$5 cumulative maximum**, with allocation delegated across stages. Step 232 is in implementation and review; no build step is accepted yet. Paid dispatch still requires the implementation, safety and budget prerequisites below. Umbrella #354 and step issues #355–363 are synchronized.
 
 **Active build authorization:** On 2026-10-14 the operator requested an overnight build, ending **09:00 America/Los_Angeles (16:00 UTC)**. Start checkpoint: 07:43 UTC. Continue ready work within this window, preserve phase reports, and do not treat a completed batch or blocked dependency as permission to abandon independent work. No additional spending approval is needed within the cumulative $5.
 
