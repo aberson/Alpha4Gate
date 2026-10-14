@@ -1,0 +1,44 @@
+{
+  "before": {
+    "source": "C:\\Users\\abero\\dev\\Alpha4Gate\\data\\jev\\experiments\\speed-2026-10-11\\sources\\v2-ebdb5891f3f5e631",
+    "fixture_sha256": "8182e1bda02eab2fddabb8b63145bb46e512471376aaecd5ed5249e26a64ca0d",
+    "ready_combat_units": 16,
+    "position": "home",
+    "visible_enemies": 0,
+    "window_game_seconds": 140,
+    "recovery_contiguous": true,
+    "recovery_span_game_seconds": 137.5,
+    "final_army_intent": "attack",
+    "final_strategic_posture": "recover",
+    "progress": null,
+    "network_requests": 0
+  },
+  "after": {
+    "source": "C:\\Users\\abero\\dev\\Alpha4Gate\\data\\jev\\experiments\\recovery-2026-10-12\\sources\\v2-ebb70227a4eff45b",
+    "fixture_sha256": "8182e1bda02eab2fddabb8b63145bb46e512471376aaecd5ed5249e26a64ca0d",
+    "ready_combat_units": 16,
+    "position": "home",
+    "visible_enemies": 0,
+    "window_game_seconds": 140,
+    "recovery_contiguous": true,
+    "recovery_span_game_seconds": 5.0,
+    "final_army_intent": "attack",
+    "final_strategic_posture": null,
+    "progress": {
+      "status": "completed",
+      "started_game_seconds": 13.0,
+      "elapsed_game_seconds": 5.0,
+      "ready_combat_units": 16,
+      "units_at_home": 16,
+      "minimum_units": 4,
+      "home_fraction_required": 0.8,
+      "home_radius": 20.0,
+      "base_threatened": false,
+      "new_losses_or_damage": false,
+      "settled_game_seconds": 5.0,
+      "settle_required_game_seconds": 5.0,
+      "completed_game_seconds": 18.0
+    },
+    "network_requests": 0
+  }
+}

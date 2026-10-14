@@ -95,6 +95,7 @@ from jev.operations import (
     SUPPLY_COST,
     WORKER_TYPE,
 )
+from jev.pacing import GamePacer
 from jev.policy import PolicyBundle
 from jev.runner import MatchLimits, exception_error
 from jev.runtime import JevRuntime, TickResult
@@ -622,6 +623,7 @@ class JevController:
         clock: Callable[[], float] = time.monotonic,
         recorder: RunRecorder | None = None,
         decisions: ArmyDecisions | HostedQuestions | None = None,
+        game_speed: float | None = None,
     ) -> None:
         if not isinstance(limits, MatchLimits):
             raise ValueError(f"limits must be MatchLimits, got {safe_repr(limits)}")
@@ -629,6 +631,9 @@ class JevController:
         self.adapter = Sc2Adapter()
         self._limits = limits
         self._clock = clock
+        self._pacer = None if game_speed is None else GamePacer(game_speed, clock=clock)
+        self._timing_start: tuple[float, float] | None = None
+        self._timing_end: tuple[float, float] | None = None
         self._started: float | None = None  # wall clock at the first game step
         self._game: Any = None
         self._port: GamePort | None = None
@@ -763,6 +768,13 @@ class JevController:
             return None
 
     async def _step(self, port: GamePort) -> TickResult | None:
+        game_seconds = self.adapter.game_seconds(self._game)
+        if self._pacer is not None:
+            await self._pacer.wait(game_seconds, self._pacing_stopped)
+        wall = self._clock()
+        if self._timing_start is None:
+            self._timing_start = (game_seconds, wall)
+        self._timing_end = (game_seconds, wall)
         if self._stop_requested:
             await self._end(port, "stopped")
             return None
@@ -772,7 +784,6 @@ class JevController:
         if self._limits.max_wall_seconds and now - self._started >= self._limits.max_wall_seconds:
             await self._end(port, "wall_timeout")
             return None
-        game_seconds = self.adapter.game_seconds(self._game)
         self._game_seconds = game_seconds
         if self._limits.max_game_seconds and game_seconds >= self._limits.max_game_seconds:
             await self._end(port, "game_timeout")
@@ -866,6 +877,27 @@ class JevController:
             f"leaving the game failed {self._leave_attempts} times; "
             f"last failure: {self._leave_failure}"
         )
+
+    def _pacing_stopped(self) -> bool:
+        return self._stop_requested or (
+            self._started is not None
+            and bool(self._limits.max_wall_seconds)
+            and self._clock() - self._started >= self._limits.max_wall_seconds
+        )
+
+    def timing_summary(self) -> dict[str, JsonValue]:
+        """Gameplay throughput only: excludes startup, replay saving and dashboard wait."""
+        start, end = self._timing_start, self._timing_end
+        if start is None or end is None:
+            return {"status": "not_observed"}
+        game, wall = end[0] - start[0], end[1] - start[1]
+        return {
+            "status": "measured",
+            "game_seconds": round(game, 3),
+            "wall_seconds": round(wall, 3),
+            "game_seconds_per_wall_second": round(game / wall, 4) if wall > 0 else None,
+            "requested_game_speed": None if self._pacer is None else self._pacer.speed,
+        }
 
     async def close_decisions(self) -> None:
         if self._decisions is not None:

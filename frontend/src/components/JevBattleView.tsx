@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useJevRun } from "../hooks/useJevRun";
 import { JevGraph } from "./JevGraph";
 import { factNumber, factString, graphActivity } from "./jevEvidence";
@@ -20,12 +20,55 @@ export function JevBattleView() {
   const { run, policy, reportRendered } = useJevRun();
   const [casterRotate, setCasterRotate] = useState(true);
   const [casterHighlight, setCasterHighlight] = useState(true);
+  const [followDecisions, setFollowDecisions] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
   const [native, setNative] = useState<NativeState>({ recording: false, locked: true, automatic: false, message: "Connecting viewer…" });
   const state = run.data;
   const archive = policy.data;
   const matching = state && archive?.policy_hash === state.policy_hash ? archive : null;
   const live = !!state && state.status === "running" && !state.stale && run.error === null;
+  const activity = useMemo(() => state && matching ? graphActivity(state, matching) : undefined, [state, matching]);
+  const previousActivity = useRef({ run: "", lit: new Set<string>() });
+  useEffect(() => {
+    if (!state || !matching || !activity) return;
+    const identity = `${state.run_id}:${matching.policy_hash}`;
+    const previous = previousActivity.current.run === identity ? previousActivity.current.lit : new Set<string>();
+    const lit = new Set<string>();
+    const changed = new Set<string>();
+    const children = new Map<string, string[]>();
+    for (const edge of activity.edges) {
+      const key = `${edge.parent}>${edge.child}:${edge.kind}`;
+      lit.add(key);
+      if (!previous.has(key) && !(edge.kind === "recent" && previous.has(`${edge.parent}>${edge.child}:current`))) changed.add(edge.child);
+      children.set(edge.parent, [...(children.get(edge.parent) ?? []), edge.child]);
+    }
+    for (const id of activity.followTargets) {
+      lit.add(id);
+      if (!previous.has(id)) changed.add(id);
+    }
+    if (!live || !followDecisions) {
+      previousActivity.current = { run: identity, lit };
+      return;
+    }
+    const ends = new Set<string>();
+    const visited = new Set<string>();
+    const visit = (id: string) => {
+      if (visited.has(id)) return;
+      visited.add(id);
+      const next = children.get(id) ?? [];
+      if (!next.length) ends.add(id);
+      else next.forEach(visit);
+    };
+    changed.forEach(visit);
+    const candidates = [...ends];
+    // Coalesce incoming evidence into the next painted frame. Cancel on a newer
+    // snapshot, without consuming its activity before it reaches the screen.
+    const frame = requestAnimationFrame(() => {
+      previousActivity.current = { run: identity, lit };
+      if (candidates.length) setSelected(candidates[Math.floor(Math.random() * candidates.length)]);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [state, matching, activity, live, followDecisions]);
   const runtime = useMemo(() => {
     const result = new Map<string, JevNodeRuntime>();
     for (const event of state?.recent_events ?? []) {
@@ -64,6 +107,8 @@ export function JevBattleView() {
   const events = (state?.recent_events ?? []).filter((event) =>
     event.kind === "command" || event.kind === "task",
   ).slice(-6).reverse();
+  const recovery = decisions.get("strategy")?.facts.recovery_progress;
+  const recoveryFacts = recovery && typeof recovery === "object" && !Array.isArray(recovery) ? recovery : null;
   const nodePath = useMemo(() => {
     if (!matching || !selected) return [];
     const byId = new Map(matching.nodes.map((node) => [node.id, node]));
@@ -79,7 +124,7 @@ export function JevBattleView() {
   }, [matching, selected]);
   return <main className="jev-tab battle-view">
     <header className="battle-header">
-      <strong>Alpha4Gate · Jev Battle</strong>
+      <strong>Alpha4Gate · Observer Rush</strong>
       <span>{state ? `${state.game_seconds.toFixed(1)}s · ${live ? "Live" : run.error ? "Offline" : state.stale ? "Stale" : state.status}` : "Preparing game"}</span>
       <span className="battle-native-status">{native.message}</span>
       <button aria-pressed={native.automatic} onClick={() => void action("auto")}>Auto camera</button>
@@ -96,8 +141,8 @@ export function JevBattleView() {
       {matching && state ? <JevGraph key={matching.policy_hash} policy={matching} compact
         layoutMode="dots3d" dotShape="faces" initiallyExpanded fitOnMount showLaneLegend={false}
         autoRotate={casterRotate} highlightedNodeIds={casterHighlight && live && native.caster?.kind === "commentary" ? native.caster.node_ids : undefined}
-        runtime={runtime} live={live} selectedNodeId={selected} onSelectNode={setSelected}
-        activity={graphActivity(state, matching)} ended={isTerminalRunStatus(state.status)} />
+        runtime={runtime} live={live} selectedNodeId={selected} onSelectNode={(id) => { setSelected(id); setFollowDecisions(false); }}
+        activity={activity} ended={isTerminalRunStatus(state.status)} />
         : <p>{run.error || policy.error ? "Run evidence unavailable" : "Loading this run’s graph…"}</p>}
       <div className="battle-inspection" aria-label="Selected node path">
         {nodePath.length ? <ol>{nodePath.map((node, index) => <li key={node.id}>
@@ -119,10 +164,16 @@ export function JevBattleView() {
           {factString(event.facts, "model") ? ` · ${factString(event.facts, "model")}` : ""}
           {factNumber(event.facts, "calls") !== null ? ` · ${factNumber(event.facts, "calls")} requests` : ""}
         </small></p>)}
+      {recoveryFacts && <p><strong>Recovery</strong>
+        <span>{factString(recoveryFacts, "status")?.replaceAll("_", " ")}</span>
+        <small>{factNumber(recoveryFacts, "units_at_home")} / {factNumber(recoveryFacts, "ready_combat_units")} units home
+          {` · ${factNumber(recoveryFacts, "settled_game_seconds")?.toFixed(1) ?? "0"}s settled`}</small>
+      </p>}
     </section>
     </div>
-    <section className="battle-caster" aria-label="Archon Caster">
-      <div className="battle-caster-heading"><h3>Archon Caster <small>Two minds. Zero appearance fees.</small></h3>
+    <section className="battle-caster" aria-label="Archon Auto Caster">
+      <div className="battle-caster-heading"><h3>Archon Auto Caster <small>Two minds. Zero appearance fees.</small></h3>
+        <button aria-pressed={followDecisions} title="Inspect the end of a newly lit path. Clicking a node pauses following." onClick={() => { previousActivity.current.lit.clear(); setFollowDecisions((v) => !v); }}>Follow decisions: {followDecisions ? "On" : "Off"}</button>
         <button aria-pressed={casterRotate} title="Slow rotation; pauses while inspecting the graph. Respects reduced motion." onClick={() => setCasterRotate((v) => !v)}>Rotate graph: {casterRotate ? "On" : "Off"}</button>
         <button aria-pressed={casterHighlight} title="Purple rings mark the commentary subject, not current execution." onClick={() => setCasterHighlight((v) => !v)}>Highlight nodes: {casterHighlight ? "On" : "Off"}</button></div>
       <p>{native.caster?.text ?? "Tuning into the Khala. Waiting for the local commentary feed."}</p>

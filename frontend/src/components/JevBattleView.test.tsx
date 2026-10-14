@@ -6,7 +6,7 @@ import policyText from "../../../bots/jev/v2/policy.json?raw";
 
 const mocked = vi.hoisted(() => ({ view: {} as object, rendered: vi.fn() }));
 vi.mock("../hooks/useJevRun", () => ({ useJevRun: () => mocked.view }));
-afterEach(() => { cleanup(); mocked.rendered.mockClear(); delete window.battleAction; });
+afterEach(() => { cleanup(); mocked.rendered.mockClear(); vi.restoreAllMocks(); delete window.battleAction; });
 
 function setup(status: string, stale = false, mismatch = false, recentEvents: JevRunState["recent_events"] = []) {
   const policy = { ...JSON.parse(policyText), policy_hash: "a".repeat(64) };
@@ -19,6 +19,39 @@ function setup(status: string, stale = false, mismatch = false, recentEvents: Je
 }
 
 describe("Battle feasibility view", () => {
+  it("follows new path endpoints, keeps unchanged polls stable, and lets manual inspection pause it", async () => {
+    const random = vi.spyOn(Math, "random").mockReturnValue(0);
+    const view = setup("running");
+    const update = (active_nodes: string[], stale = false) => {
+      const current = mocked.view as { run: { data: JevRunState; error: null } };
+      current.run = { ...current.run, data: { ...current.run.data, active_nodes, stale } };
+      view.rerender(<JevBattleView />);
+    };
+    update(["scouting", "scouting.scout", "scouting.move"]);
+    const path = screen.getByLabelText("Selected node path");
+    await waitFor(() => expect(path).toHaveTextContent("scouting.move:"));
+    random.mockClear();
+    update(["scouting", "scouting.scout", "scouting.move"]);
+    expect(random).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("treeitem", { name: /^army,/ }));
+    expect(screen.getByRole("button", { name: "Follow decisions: Off" })).toBeInTheDocument();
+    update(["production"]);
+    expect(path).toHaveTextContent("army:");
+    fireEvent.click(screen.getByRole("button", { name: "Follow decisions: Off" }));
+    await waitFor(() => expect(path).toHaveTextContent("production:"));
+    update(["scouting", "scouting.scout", "scouting.move"], true);
+    expect(path).toHaveTextContent("production:");
+  });
+
+  it("randomly chooses among simultaneous path ends, never their common parent", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.99);
+    const view = setup("running");
+    const current = mocked.view as { run: { data: JevRunState; error: null } };
+    current.run.data = { ...current.run.data, active_nodes: ["scouting", "scouting.scout", "scouting.move", "production"] };
+    view.rerender(<JevBattleView />);
+    await waitFor(() => expect(screen.getByLabelText("Selected node path")).toHaveTextContent("production:"));
+  });
+
   it("independently toggles caster rotation and evidence highlights without selecting a node", async () => {
     window.battleAction = vi.fn(async () => ({
       recording: false, locked: true, message: "Ready",
@@ -44,7 +77,7 @@ describe("Battle feasibility view", () => {
         kind: "commentary", game_seconds: 42 },
     }));
     setup("completed");
-    const caster = screen.getByLabelText("Archon Caster");
+    const caster = screen.getByLabelText("Archon Auto Caster");
     await within(caster).findByText("A Gateway is on the agenda.");
     expect(caster).toHaveTextContent("Local Qwen · 42.0s");
     expect(caster).toHaveTextContent("Last broadcast");

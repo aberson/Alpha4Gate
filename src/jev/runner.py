@@ -108,6 +108,7 @@ from jev.launch import (
     launch_root_for,
     ready_hook,
 )
+from jev.pacing import validate_speed
 from jev.policy import PolicyBundle, PolicyError, describe_bundle
 from jev.strategy import HostedQuestions, uses_strategy
 from jev.telemetry import (
@@ -259,6 +260,7 @@ class MatchOptions:
     decision_provider: str = "scripted"
     decision_model: str = "jev-latest"
     decision_max_requests: int = 450
+    game_speed: float | None = None
 
     def __post_init__(self) -> None:
         if not full_match(MAP_NAME_RE, self.map_name):
@@ -276,6 +278,9 @@ class MatchOptions:
             raise ValueError(f"seed must be in 0..{MAX_SEED}, got {safe_repr(self.seed)}")
         if not isinstance(self.realtime, bool):
             raise ValueError(f"realtime must be a bool, got {safe_repr(self.realtime)}")
+        validate_speed(self.game_speed)
+        if self.realtime and self.game_speed is not None:
+            raise ValueError("game_speed requires non-realtime SC2; omit --realtime")
         self.limits()  # validates both limits
         if self.decision_provider not in ("scripted", "typesafe"):
             raise ValueError("decision_provider must be scripted or typesafe")
@@ -598,6 +603,7 @@ def match_options_record(options: MatchOptions) -> dict[str, JsonValue]:
         "decision_provider": options.decision_provider,
         "decision_model": options.decision_model,
         "decision_max_requests": options.decision_max_requests,
+        **({"game_speed": options.game_speed} if options.game_speed is not None else {}),
     }
 
 
@@ -623,6 +629,7 @@ def _write_diagnostics(
             end_seconds = controller.game_seconds
             try:
                 metrics = controller.metrics.summary(end_game_seconds=end_seconds)
+                metrics["timing"] = controller.timing_summary()
             except Exception as exc:  # a summary defect keeps the rest of the record
                 failure = exception_error("match_crashed", exc).message
                 metrics = {"status": "failed", "failure": failure}
@@ -729,7 +736,7 @@ def _play(
             decisions = ArmyDecisions(provider, config, clock=clock)
     controller = JevController(
         bundle, run_id=run_id, limits=options.limits(), clock=clock, recorder=recorder,
-        decisions=decisions,
+        decisions=decisions, game_speed=options.game_speed,
     )
     try:
         result = launcher.play(controller, setup, options)
@@ -986,7 +993,13 @@ def build_parser(prog: str) -> argparse.ArgumentParser:
             "(default: %(default)s)"
         ),
     )
-    parser.add_argument("--realtime", action="store_true", help="play at real-time speed")
+    pace = parser.add_mutually_exclusive_group()
+    pace.add_argument("--realtime", action="store_true", help="play at real-time speed")
+    pace.add_argument(
+        "--game-speed", type=float, choices=(1, 2, 4, 8, 16),
+        help="cap non-realtime simulation at game seconds per wall second; "
+        "does not change model cadence or freshness (default: uncapped)",
+    )
     parser.add_argument(
         "--decision-provider", choices=("scripted", "typesafe"),
         default="scripted",
@@ -1086,6 +1099,7 @@ def main(
         max_game_seconds=args.max_game_seconds,
         max_wall_seconds=args.max_wall_seconds,
         realtime=args.realtime,
+        game_speed=args.game_speed,
         decision_provider=args.decision_provider,
         decision_model=args.decision_model,
         decision_max_requests=args.decision_max_requests,

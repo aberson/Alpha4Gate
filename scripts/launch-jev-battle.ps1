@@ -1,11 +1,18 @@
 #Requires -Version 5.1
-<# Hosted Typesafe Jev Battle View. Uses the installed isolated OBS BattleProbe profile.
+<# Observer Rush: hosted Typesafe Jev, native SC2, graph and caster in one window.
    Stop through the Battle View's Stop battle button, not by closing this console.
    -CheckOnly checks prerequisites without starting a game or changing OBS.
 #>
 [CmdletBinding()]
 param([switch]$AutoRecord, [switch]$CheckOnly,
-    [ValidateRange(1, 450)][int]$DecisionMaxRequests = 450)
+    [ValidateRange(1, 450)][int]$DecisionMaxRequests = 450,
+    [ValidateSet(0, 1, 2, 4, 8, 16)][int]$GameSpeed = 0,
+    [string]$SourceSnapshot,
+    [ValidateRange(0, 86400)][int]$MaxGameSeconds = 0,
+    [ValidateRange(0, 86400)][int]$MaxWallSeconds = 0,
+    [ValidateRange(1, 10)][int]$Difficulty = 3,
+    [ValidateRange(0, 2147483647)][int]$Seed = 11,
+    [string]$RunId)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
@@ -58,10 +65,15 @@ try {
         finally { $socket.Dispose() }
     }
     if (-not $obsReady) { throw 'The isolated OBS recorder is unavailable on port 4457. Close other OBS instances and retry.' }
-    Write-Host "Typesafe Jev v2 (jev-1.13.0), up to $DecisionMaxRequests paid requests. Use Stop battle to exit." -ForegroundColor Cyan
+    Write-Host "Observer Rush: Typesafe Jev v2 (jev-1.13.0), up to $DecisionMaxRequests paid requests. Use Stop battle to exit." -ForegroundColor Cyan
     $probeArgs = @('run', '--extra', 'viewer', '--with', 'playwright', '--with', 'obsws-python', 'python',
         'scripts/probes/jev_battle_view.py', '--interactive', '--decision-provider', 'typesafe',
         '--decision-max-requests', "$DecisionMaxRequests")
+    $probeArgs += @('--max-game-seconds', "$MaxGameSeconds", '--max-wall-seconds', "$MaxWallSeconds",
+        '--difficulty', "$Difficulty", '--seed', "$Seed")
+    if ($GameSpeed -gt 0) { $probeArgs += @('--game-speed', "$GameSpeed") }
+    if ($SourceSnapshot) { $probeArgs += @('--source-snapshot', (Resolve-Path -LiteralPath $SourceSnapshot).Path) }
+    if ($RunId) { $probeArgs += @('--run-id', $RunId) }
     if ($AutoRecord) { $probeArgs += '--auto-record' }
     [Environment]::SetEnvironmentVariable('TYPESAFE_API_KEY', $gameKey, 'Process')
     & uv @probeArgs

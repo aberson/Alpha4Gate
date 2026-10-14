@@ -1350,6 +1350,39 @@ class _Clock:
         return self.now
 
 
+@pytest.mark.parametrize("stop", [True, False])
+def test_paced_controller_honors_stop_and_wall_limit_during_wait(stop: bool) -> None:
+    clock = _Clock()
+    controller = JevController(
+        load_policy(), run_id=uuid.uuid4().hex,
+        limits=MatchOptions(max_wall_seconds=1).limits(), clock=clock, game_speed=1,
+    )
+    game = _game(state=SimpleNamespace(game_loop=0))
+    port = _Port()
+    controller.attach(game, port)
+
+    async def sleep(seconds: float) -> None:
+        clock.now += seconds
+        if stop:
+            controller.request_stop()
+
+    assert controller._pacer is not None
+    controller._pacer.sleep = sleep
+
+    async def scenario() -> None:
+        await controller.step()
+        game.state.game_loop = 224  # would otherwise wait ten wall seconds
+        await controller.step()
+
+    asyncio.run(scenario())
+    assert port.left
+    assert controller.terminal == ("stopped" if stop else "wall_timeout")
+    assert clock.now <= 1.05
+    timing = controller.timing_summary()
+    assert timing["requested_game_speed"] == 1
+    assert timing["game_seconds"] == 10
+
+
 def test_wall_clock_limit_counts_from_the_first_game_step(tmp_path: Path) -> None:
     """SC2's launch (1000 s here) is not charged to the 900 s match budget."""
     clock = _Clock()

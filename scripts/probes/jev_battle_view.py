@@ -22,10 +22,88 @@ import time
 import uuid
 from contextlib import suppress
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 VIEW_WIDTH, VIEW_HEIGHT = 2160, 1200
 sys.path.insert(0, str(ROOT))
+
+
+def find_browser_window(gui: Any, title: str, native_host: int) -> int:
+    candidates = []
+
+    def collect(hwnd: int, _: object) -> None:
+        if (
+            hwnd != native_host
+            and gui.IsWindowVisible(hwnd)
+            and gui.GetClassName(hwnd).startswith("Chrome_WidgetWin_")
+            and gui.GetWindowText(hwnd) in (title, title + " - Microsoft Edge")
+        ):
+            candidates.append(hwnd)
+
+    gui.EnumWindows(collect, None)
+    if len(candidates) != 1:
+        raise RuntimeError(
+            f"Dedicated Battle browser {title!r}: {len(candidates)} candidates {candidates}"
+        )
+    return candidates[0]
+
+
+async def wait_browser_window(
+    gui: Any, title: str, native_host: int, attempts: int = 30
+) -> int:
+    for attempt in range(attempts):
+        try:
+            return find_browser_window(gui, title, native_host)
+        except RuntimeError:
+            if attempt == attempts - 1:
+                raise
+            await asyncio.sleep(0.1)
+    raise ValueError("Browser lookup requires at least one attempt")
+
+
+def browser_content_offset(
+    client: tuple[int, int, int, int], viewport: dict[str, int]
+) -> tuple[int, int]:
+    """Infer app chrome from measured client/viewport sizes at forced scale 1.
+
+    Chromium leaves the same frame inset on the left, right and bottom;
+    the remaining vertical space belongs to its top app chrome.
+    """
+    width, height = client[2] - client[0], client[3] - client[1]
+    w, h = viewport.get("w"), viewport.get("h")
+    if (
+        client[:2] != (0, 0)
+        or width <= 0 or height <= 0
+        or type(w) is not int or type(h) is not int
+        or w <= 0 or h <= 0
+        or w > width or h > height
+        or (width - w) % 2
+        or height - h < width - w
+    ):
+        raise RuntimeError(
+            f"Browser content geometry invalid: client={client}, viewport={viewport}"
+        )
+    inset = (width - w) // 2
+    return inset, height - h - inset
+
+
+async def wait_browser_origin(
+    gui: Any, page: Any, browser_hwnd: int, attempts: int = 30
+) -> tuple[tuple[int, int], dict[str, int]]:
+    for attempt in range(attempts):
+        viewport = await page.evaluate("({w: innerWidth, h: innerHeight})")
+        client = gui.GetClientRect(browser_hwnd)
+        try:
+            offset = browser_content_offset(client, viewport)
+        except RuntimeError:
+            if attempt == attempts - 1:
+                raise
+            await asyncio.sleep(0.1)
+            continue
+        origin = gui.ClientToScreen(browser_hwnd, offset)
+        return (int(origin[0]), int(origin[1])), viewport
+    raise ValueError("Browser measurement requires at least one attempt")
 
 
 def write_json(path: Path, value: object) -> None:
@@ -58,6 +136,11 @@ def game_child(
     interactive: bool = False,
     provider: str = "scripted",
     max_requests: int = 450,
+    game_speed: float | None = None,
+    max_game_seconds: int | None = None,
+    max_wall_seconds: int | None = None,
+    seed: int = 11,
+    difficulty: int = 3,
 ) -> None:
     from bots.jev.v2 import load_policy
     from sc2.position import Point2
@@ -157,14 +240,17 @@ def game_child(
 
     outcome = run_match(
         MatchOptions(
-            difficulty=3,
-            seed=11,
-            realtime=True,
-            max_game_seconds=0 if interactive else 150,
-            max_wall_seconds=0 if interactive else 210,
+            difficulty=difficulty,
+            seed=seed,
+            realtime=game_speed is None,
+            max_game_seconds=(0 if interactive else 150)
+            if max_game_seconds is None else max_game_seconds,
+            max_wall_seconds=(0 if interactive else 210)
+            if max_wall_seconds is None else max_wall_seconds,
             decision_provider=provider,
             decision_model="jev-1.13.0",
             decision_max_requests=max_requests,
+            **({"game_speed": game_speed} if game_speed is not None else {}),
         ),
         load_policy(),
         run_root=ROOT / "data/jev/runs",
@@ -181,6 +267,13 @@ async def probe(
     provider: str = "scripted",
     max_requests: int = 450,
     exercise_input: bool = False,
+    game_speed: float | None = None,
+    source_snapshot: Path | None = None,
+    max_game_seconds: int | None = None,
+    max_wall_seconds: int | None = None,
+    seed: int = 11,
+    difficulty: int = 3,
+    requested_run_id: str | None = None,
 ) -> None:
     child_env = game_environment(provider)
     import obsws_python as obs
@@ -196,7 +289,7 @@ async def probe(
     ctypes.windll.user32.SetProcessDPIAware()
     if any(process.name().lower() == "sc2_x64.exe" for process in psutil.process_iter()):
         raise RuntimeError("An SC2 client is already running; do not attach an unrelated match")
-    run_id = uuid.uuid4().hex
+    run_id = requested_run_id or uuid.uuid4().hex
     evidence = ROOT / "data/jev/runs" / run_id / "battle"
     base = Path(os.environ["LOCALAPPDATA"]) / "Alpha4Gate/obs-portable"
     client = obs.ReqClient(
@@ -219,10 +312,19 @@ async def probe(
     scene = client.get_current_program_scene().scene_name
     log_path = ROOT / ".build-step/jev-live-validation" / f"battle-{run_id}.log"
     game_log = log_path.open("w", encoding="utf-8")
+    child_options = ["--seed", str(seed), "--difficulty", str(difficulty)]
+    for flag, value in (
+        ("--game-speed", game_speed), ("--source-snapshot", source_snapshot),
+        ("--max-game-seconds", max_game_seconds), ("--max-wall-seconds", max_wall_seconds),
+    ):
+        if value is not None:
+            child_options.extend([flag, str(value)])
+    child_env["PYTHONDONTWRITEBYTECODE"] = "1"
     game = subprocess.Popen(
-        [sys.executable, str(Path(__file__)), "--game-child", run_id]
+        [sys.executable, "-B", str(Path(__file__)), "--game-child", run_id]
         + (["--interactive"] if interactive else [])
-        + ["--decision-provider", provider, "--decision-max-requests", str(max_requests)],
+        + ["--decision-provider", provider, "--decision-max-requests", str(max_requests)]
+        + child_options,
         cwd=ROOT,
         stdout=game_log,
         stderr=subprocess.STDOUT,
@@ -250,7 +352,7 @@ async def probe(
     stop_requested = False
     pygame.init()
     surface = pygame.display.set_mode((VIEW_WIDTH, VIEW_HEIGHT))
-    pygame.display.set_caption("Alpha4Gate Battle Probe Host")
+    pygame.display.set_caption("Alpha4Gate · Observer Rush")
     surface.fill((20, 23, 31))
     pygame.display.flip()
     native_host = pygame.display.get_wm_info()["window"]
@@ -379,22 +481,10 @@ async def probe(
 
         await page.expose_function("battleAction", action)
         await page.get_by_test_id("jev-graph").wait_for(timeout=45000)
-        await page.evaluate("document.title = 'Alpha4Gate Battle Feasibility'")
-        await page.wait_for_timeout(500)
+        browser_title = f"Alpha4Gate Observer Rush [{run_id}]"
+        await page.evaluate("title => { document.title = title; }", browser_title)
         await page.screenshot(path=str(evidence / "before-game.png"))
-        host = None
-
-        def find_host(hwnd: int, _: object) -> None:
-            nonlocal host
-            if win32gui.IsWindowVisible(
-                hwnd
-            ) and "Alpha4Gate Battle Feasibility" in win32gui.GetWindowText(hwnd):
-                host = hwnd
-
-        win32gui.EnumWindows(find_host, None)
-        if host is None:
-            raise RuntimeError("Could not identify the dedicated Battle window")
-        browser_hwnd = host
+        browser_hwnd = await wait_browser_window(win32gui, browser_title, native_host)
         attach_window(browser_hwnd, native_host, (0, 0, VIEW_WIDTH, VIEW_HEIGHT))
         host = native_host
         pygame.event.pump()
@@ -414,13 +504,11 @@ async def probe(
         bounds = await page.locator("#battle-game-slot").bounding_box()
         if bounds is None:
             raise RuntimeError("Game slot has no bounds")
-        # Edge's native client includes its app title bar; web content begins below it.
-        viewport = await page.evaluate("({w: innerWidth, h: innerHeight})")
-        client_area = win32gui.GetClientRect(host)
-        offset_y = client_area[3] - viewport["h"]
+        browser_origin, viewport = await wait_browser_origin(win32gui, page, browser_hwnd)
+        content_offset = win32gui.ScreenToClient(host, browser_origin)
         rectangle = (
-            round(bounds["x"]) + 1,
-            round(bounds["y"]) + offset_y + 1,
+            round(bounds["x"]) + content_offset[0] + 1,
+            round(bounds["y"]) + content_offset[1] + 1,
             round(bounds["width"]) - 2,
             round(bounds["height"]) - 2,
         )
@@ -470,18 +558,9 @@ async def probe(
             win32con.SWP_FRAMECHANGED | win32con.SWP_NOACTIVATE,
         )
         win32gui.EnableWindow(sc2_hwnd, True)
-        render_hwnds = []
-
-        def find_render(hwnd, _):
-            if win32gui.GetClassName(hwnd) == "Chrome_RenderWidgetHostHWND":
-                render_hwnds.append(hwnd)
-
-        win32gui.EnumChildWindows(browser_hwnd, find_render, None)
-        if not render_hwnds:
-            raise RuntimeError("Could not locate the browser content surface")
         # Let SC2 process the asynchronous style/parent changes before measuring.
         await asyncio.sleep(0.3)
-        browser_origin = win32gui.ClientToScreen(render_hwnds[0], (0, 0))
+        browser_origin, viewport = await wait_browser_origin(win32gui, page, browser_hwnd)
         target = (
             browser_origin[0] + round(bounds["x"]) + 1,
             browser_origin[1] + round(bounds["y"]) + 1,
@@ -634,6 +713,7 @@ async def probe(
                     "button", name="Unlock camera", exact=True
                 ).bounding_box()
                 assert button is not None
+                browser_origin, viewport = await wait_browser_origin(win32gui, page, browser_hwnd)
                 await native_click(
                     (
                         browser_origin[0] + round(button["x"] + button["width"] / 2),
@@ -761,6 +841,13 @@ if __name__ == "__main__":
     parser.add_argument("--game-child")
     parser.add_argument("--decision-provider", choices=("scripted", "typesafe"), default="scripted")
     parser.add_argument("--decision-max-requests", type=int, default=450)
+    parser.add_argument("--game-speed", type=float, choices=(1, 2, 4, 8, 16))
+    parser.add_argument("--source-snapshot", type=Path)
+    parser.add_argument("--max-game-seconds", type=int)
+    parser.add_argument("--max-wall-seconds", type=int)
+    parser.add_argument("--seed", type=int, default=11)
+    parser.add_argument("--difficulty", type=int, choices=range(1, 11), default=3)
+    parser.add_argument("--run-id")
     parser.add_argument(
         "--interactive",
         action="store_true",
@@ -775,6 +862,19 @@ if __name__ == "__main__":
         help="Attended native mouse test; leave keyboard/mouse idle",
     )
     args = parser.parse_args()
+    if args.run_id and (len(args.run_id) != 32 or uuid.UUID(args.run_id).hex != args.run_id):
+        parser.error("run-id must be a lowercase UUID hex string")
+    if args.source_snapshot:
+        args.source_snapshot = args.source_snapshot.resolve()
+        if args.game_child:
+            # Select frozen gameplay before importing any bots/jev module. The host
+            # stays on the current UI/camera integration, with its own provenance.
+            sys.path[:0] = [str(args.source_snapshot), str(args.source_snapshot / "src")]
+        from jev.benchmark import verify_snapshot
+
+        snapshot = verify_snapshot(args.source_snapshot)
+        if snapshot.version != "v2":
+            parser.error("Observer Rush requires a v2 source snapshot")
     if args.game_child:
         game_child(
             args.game_child,
@@ -782,6 +882,11 @@ if __name__ == "__main__":
             args.interactive,
             args.decision_provider,
             args.decision_max_requests,
+            args.game_speed,
+            args.max_game_seconds,
+            args.max_wall_seconds,
+            args.seed,
+            args.difficulty,
         )
     else:
         asyncio.run(
@@ -792,5 +897,12 @@ if __name__ == "__main__":
                 args.decision_provider,
                 args.decision_max_requests,
                 args.exercise_input,
+                args.game_speed,
+                args.source_snapshot,
+                args.max_game_seconds,
+                args.max_wall_seconds,
+                args.seed,
+                args.difficulty,
+                args.run_id,
             )
         )

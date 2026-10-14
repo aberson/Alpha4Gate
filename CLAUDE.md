@@ -48,6 +48,20 @@ powershell -File scripts/launch-jev.ps1 -Version v2 -DecisionProvider scripted -
 
 Typesafe integration: opt in with `uv run python -m bots.jev.v1 --decision-provider typesafe --realtime`; requires `TYPESAFE_API_KEY` in the process environment. Default remains local scripted. `--decision-model` defaults to `jev-latest`; `--decision-max-requests` defaults to 450. Model chooses army intent for v1; for v2 (`uv run python -m bots.jev.v2 --decision-provider typesafe --realtime`) four question families (`strategy`, `army_mode`, `expansion_response`, `production_mix`) share that one budget, and the **Plans and decisions** panel and node sources attribute each plan and command to its request or fallback. Graph owns command legality/execution. Dashboard Army decision panel distinguishes model and fallback.
 
+**Attended Jev investigations use Observer Rush** (the combined SC2/graph/caster
+viewer, formerly Battle View), not separate React and SC2 windows. Launch with
+`scripts/launch-jev-battle.ps1`; use its Stop battle control. The default remains
+real-time; `-GameSpeed 2`/`4` enables measured pacing. For frozen-source speed
+experiments use `scripts/measure_jev_speed.py` and
+`documentation/operator/jev-speed-measurement.md`. Keep viewer/recording workload
+consistent across comparisons. Desktop shortcuts are Alpha4Gate Observer Rush
+and Alpha4Gate Observer Rush - Record.
+The panel is named **Archon Auto Caster**. **Follow decisions** inspects newly lit
+path endpoints (random ties); clicking a node pauses following. Hosted v2 recovery
+now completes on settled home readiness, with progress in strategy evidence and
+Observer Rush. See `documentation/investigations/jev-recovery-completion-2026-10-12.md`
+for thresholds, before/after evidence, and the limited live validation.
+
 Jev live smoke/acceptance procedure (start, stop, Step 207/208 checklists, report template, section 13 "Typesafe Jev integration (Phase JI)" gate): `documentation/operator/jev-validation.md`.
 
 Jev v2 benchmark and dashboard-first launcher (Steps 212/224; the Step 213 baseline runbook, limits, resume, exit codes), and the v2 player, its live graph, hypothesis values and the Step 222 prerequisites (section 13): `documentation/operator/jev-v2-validation.md`.

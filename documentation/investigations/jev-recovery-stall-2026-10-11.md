@@ -115,3 +115,10 @@ dashboard ready before SC2. Keep Step 222 pending, the frozen v1 baseline intact
 and the held-out panel unstarted.
 
 This is a planning seed, not an approved detailed design or an implemented fix.
+
+
+## Follow-up, 2026-10-12
+
+The bounded recovery lifecycle is now implemented and tested; see
+[recovery completion evidence](jev-recovery-completion-2026-10-12.md).
+The original diagnosis and raw-run limitations above remain historical evidence.

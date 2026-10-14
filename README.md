@@ -45,7 +45,7 @@ between-game evolution is future work.
 </tr>
 <tr>
 <td colspan="4" align="center">
-<a href="documentation/media/jev-battle-view.mp4"><img src="documentation/images/jev-battle-preview.gif" alt="Jev Battle View: live SC2 alongside the rotating decision graph, current decisions and Archon Caster" width="720"></a>
+<a href="documentation/media/jev-battle-view.mp4"><img src="documentation/images/jev-battle-preview.gif" alt="Jev Battle View: live SC2 alongside the rotating decision graph, current decisions and Archon Auto Caster" width="720"></a>
 <br/><sub><b>Jev Battle View</b><br/>The match and its decisions, together — click for the 40-second video</sub>
 </td>
 </tr>
@@ -149,20 +149,21 @@ API connection do not, by themselves, establish a stronger player.
 
 **Explore:** [Jev code](https://github.com/aberson/Alpha4Gate/tree/master-plan/phase-ev/src/jev) · [v2 policy](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/bots/jev/v2/policy.json) · [Recovery investigation](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/documentation/investigations/jev-recovery-stall-2026-10-11.md)
 
-## Watching Jev play: Battle View and Archon Caster
+## Watching Jev play: Observer Rush and Archon Auto Caster
 
 **[Watch the 40-second Battle View video](documentation/media/jev-battle-view.mp4)** ·
 [Open the video directly](https://raw.githubusercontent.com/aberson/Alpha4Gate/master/documentation/media/jev-battle-view.mp4) ·
 [Recording details](documentation/media/README.md)
 
-Battle View brings native SC2 and the decision graph into one Windows window.
+**Observer Rush** (formerly Battle View) brings native SC2 and the decision graph
+into one Windows window. It is the standard viewer for attended investigations.
 The graph occupies the right half; decisions, recent events and commentary sit
 beside the game. An automatic observer follows visible action, or you can unlock
 the camera and move it yourself. The dashboard's Jev tab also supports selectable
 branches, compact nodes, radial layouts and several 3D arrangements. Larger active
 dots, labeled branch roots and a full-path inspector make busy graphs easier to read.
 
-**Archon Caster** supplies short game commentary, random AI facts and dad jokes in
+**Archon Auto Caster** supplies short game commentary, random AI facts and dad jokes in
 a 70/15/15 mix. It uses local Qwen through Ollama, with labeled fallback text when
 generation is unavailable or slow. Commentary can highlight its subject with a
 purple halo, and the graph can slowly rotate; both have independent switches.
@@ -256,7 +257,7 @@ assistant to issue every unit command.
 - **Parallelizing the arena -** Evolve now runs four candidates in parallel per generation (concurrency window + worker-slot recycling). Steps 1-7 plus iter-3 hardening shipped 2026-04-30; subsequent generations took the lineage to **v10**.
 - **A second player -** A four-Gateway Zealot rush became Jev v1, then a hosted Typesafe integration and an adaptive v2 graph with scouting, expansion and mixed armies.
 - **Making decisions visible -** Branch cards grew into compact and radial layouts, then 3D views with a starting hub, branch labels and inspectable paths.
-- **A seat at the match -** Battle View combines SC2, the graph, a camera observer, recording and a local Archon Caster. The real hosted demo is linked above.
+- **A seat at the match -** Battle View combines SC2, the graph, a camera observer, recording and a local Archon Auto Caster. The real hosted demo is linked above.
 - **Now (2026-10-11) -** The versioned lineage is at v13. Jev v2 and Battle View are implemented on the preview branch; formal gameplay acceptance remains open. They are separate player families, and Jev is not yet part of the evolution loop.
 - **Next -** Address Jev's recovery/attack conflict, complete bounded live acceptance, and measure future decision-choice flattening against a preserved before/after baseline. The frozen-v1 benchmark remains deferred. On the evolution side, EH.1–EH.2 hardening is shipped; EH.3–EH.10 and the EV operator acceptance gates remain pending. [Current plan](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/documentation/master_plan.md).
 
@@ -278,7 +279,7 @@ assistant to issue every unit command.
 | Deep learning | PyTorch + Stable Baselines 3 | PPO policy network for strategic decisions |
 | Jev gameplay | Hosted Typesafe + local graph | Constrained in-game choices and persistent task execution; no PPO |
 | Battle View | Native SC2 + React + OBS (Windows) | Combined viewing and recording preview |
-| Archon Caster | Ollama + Qwen 2.5 1.5B | Local text commentary; no gameplay control |
+| Archon Auto Caster | Ollama + Qwen 2.5 1.5B | Local text commentary; no gameplay control |
 | Training data | SQLite | Structured (s,a,r,s') transition storage |
 | Testing (Python) | pytest | Unit tests plus separately marked SC2, Windows and browser checks |
 | Testing (Frontend) | vitest + jsdom + @testing-library/react | Component, hook and graph behavior tests |
@@ -379,7 +380,7 @@ uv run python -m bots.v0.runner --map Simple64
 
 Use the `master-plan/phase-ev` checkout for these commands.
 
-**Combined Battle View preview (Windows):** watch hosted Typesafe Jev with the live 3D graph,
+**Combined Observer Rush preview (Windows):** watch hosted Typesafe Jev with the live 3D graph,
 decision text and event log in one window. Run
 `powershell -File scripts/launch-jev-battle.ps1`; add `-AutoRecord` for automatic
 2160×1200 recording with game audio only. Desktop shortcuts are installed on the

@@ -1149,7 +1149,13 @@ def test_an_applied_posture_outlives_its_freshness_until_its_hold_expires() -> N
     clock = _Clock()
     config = DecisionConfig(timeout=10, max_requests=2)  # no renewal after the answer
     questions = HostedQuestions(provider, config, V2_POLICY, clock=clock)
-    polled = _drive(questions, _FakeRuntime(), clock, seconds=50)
+    # An army still away from home cannot complete regrouping; hold expiry
+    # remains the backstop when no renewal arrives.
+    def away(i: int) -> Observation:
+        obs = _v2_observation(10 + i * 0.5)
+        return replace(obs, own_units=tuple(replace(u, position=(90, 90)) for u in obs.own_units))
+
+    polled = _drive(questions, _FakeRuntime(), clock, seconds=50, observe=away)
     holding = [n for n, d in enumerate(polled) if d.strategy["army"].choice == "recover"]
     assert holding and holding == list(range(holding[0], holding[-1] + 1))
     ages = [float(polled[n].strategy_facts["response_age_game_seconds"]) for n in holding]
@@ -1162,6 +1168,27 @@ def test_an_applied_posture_outlives_its_freshness_until_its_hold_expires() -> N
     assert POSTURE_HOLD_SECONDS - 0.5 <= held_for <= POSTURE_HOLD_SECONDS
     assert expiry.strategy["army"].local and expiry.strategy["macro"].local
     assert expiry.strategy_facts["reason"] == "request_limit"  # nothing left to renew it
+
+
+def test_repeated_recover_answers_release_a_rebuilt_army_and_expose_completion() -> None:
+    provider = _QuestionProvider({"army_mode": [_army()], "strategy": [_strategic("recover")]})
+    clock = _Clock()
+    questions = HostedQuestions(provider, DecisionConfig(timeout=10), V2_POLICY, clock=clock)
+    polled = _drive(questions, _FakeRuntime(), clock, seconds=140)
+    held = [d for d in polled if d.strategy["army"].choice == "recover"]
+    assert held
+    completed = [
+        d for d in polled if d.strategy_facts["recovery_progress"]["status"] == "completed"
+    ]
+    assert completed
+    assert all(d.strategy["army"].choice != "recover" for d in completed)
+    # Repeated/in-flight recover answers cannot reopen an already completed episode.
+    subsequent = [
+        choices for question, choices, state in provider.calls
+        if question == "strategy" and state["recovery_progress"]["status"] == "completed"
+    ]
+    assert subsequent and all("recover" not in choices for choices in subsequent)
+    assert completed[-1].strategy_facts["recovery_progress"]["elapsed_game_seconds"] == 5
 
 
 def test_no_strategy_question_before_the_first_launch() -> None:

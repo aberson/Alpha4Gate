@@ -79,6 +79,12 @@ signature when it arrives; after that it is *applied* and outlives its freshness
   plan -- until a newer strategy answer replaces it, it is no longer executable, or
   :data:`POSTURE_HOLD_SECONDS` of game time pass without a renewal.
 
+Hosted recovery also completes when a rebuilt army settles at home without a
+visible base threat or new damage/losses (:mod:`jev.recovery`). Equivalent answers
+share that progress. Completed recovery is not offered again until the army leaves
+home or a new recovery need is observed. This releases the strategic override;
+it does not force an attack or bypass tactical intent and local safety guards.
+
 **Local fallback.** When no hosted answer holds a slot, the graph's own conditions
 decide it (``strategy_local`` guards): D2's fallback order is the graph's lane order
 and conditions (urgent defense first, the opening, then tech's prerequisite, then
@@ -205,6 +211,7 @@ from jev.plans import (
     StrategyChoice,
     StrategySlot,
 )
+from jev.recovery import RecoveryProgress
 
 if TYPE_CHECKING:
     from jev.runtime import JevRuntime
@@ -318,7 +325,8 @@ STRATEGY_CRITERIA: Final[Mapping[str, str]] = {
     "pressure": "Keep the army pressing the enemy; open no macro plan now, so "
     "production spends on units.",
     "recover": "Pull the army home to regroup and rebuild before pressing again; open "
-    "no macro plan now.",
+    "no macro plan now. Recovery completes after a rebuilt army settles at home; "
+    "the recovery_progress state reports readiness and why it is still gathering.",
     "expand": "Take the natural expansion now: hold minerals for a second Nexus and "
     "send a worker to build it.",
     "tech": "Build the Cybernetics Core now so the Gateways can train Stalkers.",
@@ -886,6 +894,7 @@ class HostedQuestions:
         # macro slot waits for the hosted answer (else the local fallback holds it).
         self._macro: _Held | None = None
         self._posture: _Held | None = None
+        self._recovery = RecoveryProgress()
         self._macro_waits = True
         # Wall time (this clock) the current wait for the hosted answer began, or the
         # latest strategy dispatch within it (None while the slot is not waiting).
@@ -958,7 +967,8 @@ class HostedQuestions:
         options: list[str] = []
         for choice, branch in self._branches.items():
             if branch.slot == "army":
-                options.append(choice)
+                if choice != "recover" or not self._recovery.completed:
+                    options.append(choice)
             elif choice in reached and runtime.plan_start_refusal(choice) is None:
                 options.append(choice)
         return tuple(options)
@@ -970,7 +980,6 @@ class HostedQuestions:
         launched: bool,
         demoted: frozenset[int],
     ) -> _Context:
-        options = self._strategy_options(runtime, launched)
         home = observation.start_location
         natural = _natural(observation, self._base_target)
         ground = tuple(
@@ -983,6 +992,21 @@ class HostedQuestions:
             math.dist(e.position, natural) <= self._natural_radius for e in ground
         )
         army = tuple(u for u in observation.own_units if u.type_name in COMBAT_TYPES and u.is_ready)
+        air_threat = any(
+            e.is_flying and e.can_attack_ground and (
+                math.dist(e.position, home) <= self._defense_radius
+                or (natural is not None
+                    and math.dist(e.position, natural) <= self._natural_radius)
+            ) for e in observation.visible_enemies
+        )
+        self._recovery.update(
+            game=observation.game_seconds,
+            active=self._posture is not None and self._posture.choice == "recover",
+            army=army, home=home, radius=self._defense_radius,
+            minimum=max(self._first_wave, int(self._regroup_below)),
+            threatened=home_threat or natural_threat or air_threat,
+        )
+        options = self._strategy_options(runtime, launched)
         size = len(army)
         bucket = (
             "few"
@@ -1026,6 +1050,7 @@ class HostedQuestions:
             "plans": plans,
             "plan_slots": slots,
             "strategic_posture": None if self._posture is None else self._posture.choice,
+            "recovery_progress": dict(self._recovery.facts),
         }
         signature = (options, open_plans, home_threat, natural_threat, bucket)
         return _Context(state, options, signature)
@@ -1565,6 +1590,7 @@ class HostedQuestions:
             None if self._posture is None else self._posture.accepted_game + POSTURE_HOLD_SECONDS
         )
         strategy_facts["started_plan"] = None if self._started is None else dict(self._started)
+        strategy_facts["recovery_progress"] = dict(self._recovery.facts)
         strategy_facts["response_age_game_seconds"] = (
             None if held is None else game - held.request.game
         )

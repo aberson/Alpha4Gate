@@ -53,7 +53,7 @@ class ArchonCaster:
         self.evidence = evidence
         self.latest: dict[str, Any] = {
             "text": "Two minds. One microphone. Waiting for the battle feed.",
-            "source": "Archon Caster",
+            "source": "Archon Auto Caster",
             "kind": "standby",
             "game_seconds": 0,
         }
@@ -101,7 +101,7 @@ class ArchonCaster:
                         "messages": [
                             {
                                 "role": "system",
-                                "content": "You are Archon Caster. Write ONE short sentence "
+                                "content": "You are Archon Auto Caster. Write ONE short sentence "
                                 "describing only subject_node's activity, at most 30 words. "
                                 "Use present tense. Plans and issued commands are NOT completed "
                                 "actions. Never claim victory, completion, or destruction. "

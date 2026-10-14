@@ -1,4 +1,9 @@
-# Try the Jev Battle View
+# Observer Rush — the combined Jev viewer
+
+**Observer Rush** is the name of the combined native SC2, decision graph and
+Archon Auto Caster viewer (previously called Battle View). Use it for attended gameplay
+investigations and speed comparisons. The React Jev tab remains useful for archived
+evidence, but a separate browser plus SC2 window is not the default test experience.
 
 The current Windows preview combines a hosted Typesafe Jev v2 match, the live
 Branch faces graph, decision summaries and six recent game events. It uses your saved Typesafe API key and paid credits
@@ -10,9 +15,9 @@ development workstation; other machines need the setup described in the
 
 Two shortcuts are installed on the Windows desktop:
 
-- **Alpha4Gate Battle View**: watch a match and press **Record Battle** whenever
+- **Alpha4Gate Observer Rush**: watch a match and press **Record Battle** whenever
   you want a clip.
-- **Alpha4Gate Battle - Record**: start recording automatically when the fitted
+- **Alpha4Gate Observer Rush - Record**: start recording automatically when the fitted
   game window is ready.
 
 Both use the same hosted player; only automatic recording differs. Each opens a fresh match against Medium Terran on Simple64, seed 11. The
@@ -98,11 +103,11 @@ A missing key fails the launch; service failures retain the existing labeled
 fallback behavior. Installation on a fresh machine, robust production lifecycle
 and long-session validation remain follow-up work. Interrupted preview matches are not benchmark evidence.
 
-## Archon Caster
+## Archon Auto Caster
 
 The graph now occupies the full right half, with the same-height path inspector
 beneath it. Recent events and current decisions share the shorter left summary
-row; Archon Caster occupies the row below. Recordings include all these panels.
+row; Archon Auto Caster occupies the row below. Recordings include all these panels.
 
 The caster is text-only entertainment, separate from paid Typesafe gameplay.
 It uses local Ollama at `127.0.0.1:11434`, model `qwen2.5:1.5b`, on two CPU threads.
@@ -126,7 +131,7 @@ persists, rather than terminating the match.
 
 ### Caster graph controls
 
-Archon Caster has independent **Rotate graph: On/Off** and **Highlight nodes:
+Archon Auto Caster has independent **Rotate graph: On/Off** and **Highlight nodes:
 On/Off** buttons, initially on for each new viewer. Rotation is a slow continuous
 turn while the run is live, pauses while the pointer is over the graph or a graph
 node has keyboard focus, and respects the system reduced-motion preference.
@@ -138,3 +143,17 @@ writing commentary and receives only evidence for that subject; its `node_ids`
 are saved with the text. The ring describes the timestamped commentary snapshot,
 not proof the node is executing now. Facts and jokes have no subject highlight.
 Highlights and rotation stop when the feed is no longer live.
+
+
+### Follow decisions
+
+**Follow decisions: On** automatically inspects the end of a newly lit decision
+path. Simultaneous paths are sampled randomly, and unchanged polling does not
+reshuffle the selection. This follows recorded graph activity independently of
+caster prose or the purple commentary rings. Clicking a node turns following off
+so its full path stays readable; turn it on again to resume. Stale and ended runs
+do not advance the inspector. Rotation and commentary highlights keep their
+independent controls.
+
+The current-decisions panel also shows recorded recovery progress when available:
+why regrouping continues or completed, the count home, and settled game seconds.
