@@ -18,5 +18,5 @@ Working-branch links accompany canonical master links because this plan has not
 been merged to master. Plan Issue fields backfilled by the parent orchestrator.
 
 Next: /build-phase --plan documentation/plans/jev-overnight-improvement-plan.md
-Run directory: C:/Users/abero/dev/Alpha4Gate. Stop before operator Step 228 (#350).
+Run directory: $env:USERPROFILE/dev/Alpha4Gate. Stop before operator Step 228 (#350).
 Plan pipeline: /plan-review + /plan-wrap ? /repo-sync (step 4 of 5) ? /build-phase
