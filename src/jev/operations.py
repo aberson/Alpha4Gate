@@ -658,6 +658,211 @@ class Visit:
     last_game_seconds: float
 
 
+@dataclass(frozen=True)
+class ArmyEligibility:
+    """Side-effect-free feasibility of the v2 army branches.
+
+    ``emergency_mode`` is the local action that must win this tick: ``defend`` for
+    an attackable base threat, or ``regroup`` when combat units exist but none can
+    attack the threat. ``None`` leaves the selected/local posture in control.
+    """
+
+    options: tuple[str, ...]
+    emergency_mode: str | None
+    effective_branch: str | None
+    safety_reason: str | None
+    living_combat_units: int
+    ready_combat_units: int
+    attackable_threats: int
+    unattackable_threats: int
+    attack_group_size: int
+    attack_target_available: bool
+    emergency_actor_tags: frozenset[int]
+
+
+def effective_army_mode(selected: str | None, eligibility: ArmyEligibility) -> str | None:
+    """Apply the graph's ordered safety branches, selection, then local fallback."""
+    if eligibility.emergency_mode is not None:
+        return eligibility.emergency_mode
+    if eligibility.effective_branch == "recover":
+        return "recover"
+    if selected in eligibility.options:
+        return selected
+    if "attack" in eligibility.options:
+        return "attack"
+    if "regroup" in eligibility.options:
+        return "regroup"
+    return None
+
+
+def _ordered_points(
+    points: Sequence[Point], origin: Point | None, *, reverse: bool = False
+) -> list[Point]:
+    """Use the location selector's distance order and coordinate tie-breaks."""
+    sign = -1.0 if reverse else 1.0
+    return sorted(
+        points,
+        key=lambda point: (
+            sign * (distance(point, origin) if origin is not None else 0.0),
+            point[0],
+            point[1],
+        ),
+    )
+
+
+def army_eligibility(
+    observation: Observation,
+    *,
+    launched: bool,
+    first_wave: int,
+    reinforcement_group_size: int,
+    defense_radius: float,
+    natural_radius: float,
+    base_target: int,
+    regroup_below: int = 1,
+    posture: str | None = None,
+    ground_demoted: frozenset[int] = frozenset(),
+    air_demoted: frozenset[int] = frozenset(),
+    attack_demoted: frozenset[int] = frozenset(),
+    attack_assigned: frozenset[int] = frozenset(),
+    attack_visits: Mapping[Point, Visit] | None = None,
+    busy: frozenset[int] = frozenset(),
+) -> ArmyEligibility:
+    """Calculate the exact presently executable v2 army choices without writes.
+
+    This mirrors the graph's authored selectors: defense zones and weapon
+    capability, the launch gate, either a full free home group or the living main
+    group, and the target selector's four alternatives. It never binds a node,
+    changes a task, or records a visit.
+    """
+    combat_types = frozenset(
+        unit for unit, producer in PRODUCER_TYPE.items() if producer == "Gateway"
+    )
+    living = tuple(u for u in observation.own_units if u.type_name in combat_types)
+    ready = tuple(u for u in living if u.is_ready)
+    nexuses = tuple(s for s in observation.own_structures if s.type_name == "Nexus")
+    zones: list[tuple[Point, float]] = [(observation.start_location, defense_radius)]
+    if len(nexuses) >= base_target:
+        natural = max(
+            nexuses,
+            key=lambda s: (distance(s.position, observation.start_location), -s.tag),
+        )
+        zones.append((natural.position, natural_radius))
+
+    nearby = tuple(
+        enemy
+        for enemy in observation.visible_enemies
+        if not enemy.is_structure
+        and any(distance(enemy.position, point) <= radius for point, radius in zones)
+        and enemy.tag not in (air_demoted if enemy.is_flying else ground_demoted)
+    )
+    attackable = tuple(
+        enemy
+        for enemy in nearby
+        if any(
+            unit.can_attack_air
+            if enemy.is_flying
+            else unit.can_attack_ground or unit.type_name in combat_types
+            for unit in ready
+        )
+    )
+    unattackable = tuple(enemy for enemy in nearby if enemy not in attackable)
+
+    assigned = tuple(u for u in ready if u.tag in attack_assigned)
+    home_group = tuple(
+        u
+        for u in ready
+        if u.tag not in attack_assigned
+        and u.tag not in busy
+        and distance(u.position, observation.start_location) <= defense_radius
+    )
+    attackers = assigned if assigned else (
+        home_group if len(home_group) >= reinforcement_group_size else ()
+    )
+    wave = sum(1 for unit in ready if unit.type_name == "Zealot")
+    launch_ready = launched or wave >= first_wave
+
+    enemy_starts = tuple(observation.enemy_start_locations)
+    visits = {} if attack_visits is None else attack_visits
+    ordered_starts = _ordered_points(enemy_starts, observation.start_location)
+    nearest_start = ordered_starts[0] if ordered_starts else None
+    unvisited_start = nearest_start is not None and nearest_start not in visits
+    visible_target = any(
+        enemy.is_structure and not enemy.is_flying and enemy.tag not in attack_demoted
+        for enemy in observation.visible_enemies
+    )
+    remembered_target = any(
+        not enemy.is_flying and enemy.tag not in attack_demoted
+        for enemy in observation.remembered_enemy_structures
+    )
+    search_target = bool(enemy_starts and observation.expansion_locations)
+    target = unvisited_start or visible_target or remembered_target or search_target
+    recovery_required = (
+        launched
+        and bool(ready)
+        and (posture == "recover" or len(ready) < regroup_below)
+    )
+    attack_posture = posture in (None, "pressure")
+    can_attack = (
+        not recovery_required
+        and attack_posture
+        and launch_ready
+        and bool(attackers)
+        and target
+    )
+    can_regroup = bool(ready) and not recovery_required
+    can_defend = bool(attackable)
+
+    options = tuple(
+        mode
+        for mode, possible in (
+            ("attack", can_attack),
+            ("defend", can_defend),
+            ("regroup", can_regroup),
+        )
+        if possible
+    )
+    emergency_mode: str | None
+    reason: str | None
+    if can_defend:
+        emergency_mode, reason = "defend", "home_threat"
+    elif unattackable:
+        emergency_mode = "regroup" if can_regroup else None
+        reason = "no_capable_defender"
+    else:
+        emergency_mode = reason = None
+    ground_threat = any(not enemy.is_flying for enemy in attackable)
+    if emergency_mode == "defend":
+        emergency_actors = frozenset(
+            unit.tag for unit in ready if ground_threat or unit.can_attack_air
+        )
+    elif emergency_mode == "regroup":
+        emergency_actors = frozenset(unit.tag for unit in ready)
+    else:
+        emergency_actors = frozenset()
+    return ArmyEligibility(
+        options=options,
+        emergency_mode=emergency_mode,
+        effective_branch=(
+            "defend"
+            if can_defend
+            else "recover"
+            if recovery_required
+            else "regroup"
+            if unattackable and can_regroup
+            else None
+        ),
+        safety_reason=reason,
+        living_combat_units=len(living),
+        ready_combat_units=len(ready),
+        attackable_threats=len(attackable),
+        unattackable_threats=len(unattackable),
+        attack_group_size=len(attackers),
+        attack_target_available=target,
+        emergency_actor_tags=emergency_actors,
+    )
+
+
 class RuntimeView(Protocol):
     """Read-only facts an operation may consult (implemented by the runtime)."""
 
@@ -681,6 +886,8 @@ class RuntimeView(Protocol):
     def latch_is_set(self, latch: str) -> bool: ...
 
     def army_mode(self) -> str | None: ...
+
+    def army_decision_facts(self) -> Mapping[str, JsonValue]: ...
 
     def strategy(self, slot: PlanSlot) -> StrategySlot:
         """What the strategy guards of ``slot`` read this tick (:mod:`jev.plans`):
@@ -1247,13 +1454,11 @@ def _sort_points(
             f"unknown location sort key {safe_repr(by)} (expected {LOCATION_SORT_KEYS})"
         )
     origin = resolve_point(view, str(sort["from"]))
-    sign = -1.0 if sort.get("order") == "desc" else 1.0
-
-    def key(point: Point) -> tuple[float, float, float]:
-        d = distance(point, origin) if origin is not None else 0.0
-        return (sign * d, point[0], point[1])
-
-    return sorted(points, key=key)
+    return _ordered_points(
+        points,
+        origin,
+        reverse=sort.get("order") == "desc",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1525,6 +1730,47 @@ def _visit_count_compare(view: RuntimeView, args: Args) -> OpOutcome:
 def _army_mode_is(view: RuntimeView, args: Args) -> OpOutcome:
     wanted = _arg_str(args, "mode")
     mode = view.army_mode()
+    if _arg_bool(args, "emergency"):
+        eligibility = army_eligibility(
+            view.observation,
+            launched=view.latch_is_set("attack_launched"),
+            first_wave=_arg_int(args, "first_wave"),
+            reinforcement_group_size=_arg_int(args, "reinforcement_group_size"),
+            defense_radius=_arg_num(args, "defense_radius"),
+            natural_radius=_arg_num(args, "natural_radius"),
+            base_target=_arg_int(args, "base_target"),
+            regroup_below=_arg_int(args, "regroup_below"),
+            posture=view.strategy("army").choice,
+            ground_demoted=view.demoted(_arg_str(args, "ground_defense_node")),
+            air_demoted=view.demoted(_arg_str(args, "air_defense_node")),
+            attack_demoted=view.demoted(_arg_str(args, "attack_demotions_node")),
+            attack_assigned=view.assigned(_arg_str(args, "attack_assignments_node")),
+            attack_visits=view.visits(_arg_str(args, "attack_visits_node")),
+            busy=frozenset(
+                unit.tag for unit in view.observation.own_units if view.actor_is_busy(unit.tag)
+            ),
+        )
+        effective = effective_army_mode(mode, eligibility)
+        facts: dict[str, JsonValue] = {
+            "mode": mode,
+            "branch": wanted,
+            "effective_mode": effective,
+            "effective_branch": eligibility.effective_branch,
+            "available_options": list(eligibility.options),
+            "safety_override_reason": eligibility.safety_reason,
+            "attackable_threats": eligibility.attackable_threats,
+            "unattackable_threats": eligibility.unattackable_threats,
+            "attack_group_size": eligibility.attack_group_size,
+            "attack_target_available": eligibility.attack_target_available,
+            "decision_request_id": view.army_decision_facts().get("answer_request_id"),
+        }
+        shown = mode or "scripted"
+        safety = "" if eligibility.safety_reason is None else f"; {eligibility.safety_reason}"
+        return OpOutcome(
+            effective == wanted,
+            f"army mode {shown}; effective {effective or 'none'}; branch {wanted}{safety}",
+            facts,
+        )
     # A missing usable answer restores the original selector and pre-launch rally.
     ok = (mode == wanted) if mode is not None else (
         wanted != "regroup" or not view.latch_is_set("attack_launched")
@@ -3470,7 +3716,47 @@ _SPECS: Final[tuple[OperationSpec, ...]] = (
     PredicateOp(
         "army_mode_is",
         "Branch on the current Typesafe army decision, or use the scripted baseline",
-        {"mode": ArgSpec("enum", choices=("attack", "defend", "regroup"))},
+        {
+            "mode": ArgSpec("enum", choices=("attack", "defend", "regroup")),
+            "emergency": ArgSpec("bool", required=False, default=False),
+            "first_wave": ArgSpec(
+                "int", required=False, minimum=1, maximum=MAX_SELECTION, default=1, param=True
+            ),
+            "reinforcement_group_size": ArgSpec(
+                "int", required=False, minimum=1, maximum=MAX_SELECTION, default=1, param=True
+            ),
+            "defense_radius": ArgSpec(
+                "number", required=False, minimum=0, maximum=MAX_QUERY_DISTANCE,
+                default=0, param=True
+            ),
+            "natural_radius": ArgSpec(
+                "number", required=False, minimum=0, maximum=MAX_QUERY_DISTANCE,
+                default=0, param=True
+            ),
+            "base_target": ArgSpec(
+                "int", required=False, minimum=1, maximum=MAX_SELECTION, default=1, param=True
+            ),
+            "regroup_below": ArgSpec(
+                "int", required=False, minimum=1, maximum=MAX_SELECTION, default=1, param=True
+            ),
+            "ground_defense_node": ArgSpec(
+                "node", required=False, default=None, tracks="demotions"
+            ),
+            "air_defense_node": ArgSpec(
+                "node", required=False, default=None, tracks="demotions"
+            ),
+            "attack_demotions_node": ArgSpec(
+                "node", required=False, default=None, tracks="demotions"
+            ),
+            "attack_assignments_node": ArgSpec(
+                "node", required=False, default=None, tracks="assignments"
+            ),
+            "attack_visits_node": ArgSpec(
+                "node", required=False, default=None, tracks="visits"
+            ),
+            "reserve_node": ArgSpec("node", required=False, default=None),
+            "recover_node": ArgSpec("node", required=False, default=None),
+        },
         _army_mode_is,
     ),
     PredicateOp(
@@ -4463,6 +4749,106 @@ def resolve_args(
         elif not arg_spec.required:
             resolved[key] = arg_spec.default
     return FrozenJsonDict({key: freeze_json(value) for key, value in resolved.items()})
+
+
+def army_safety_args(policy: Policy) -> Mapping[str, JsonValue] | None:
+    """Return one validated shared emergency guard contract, or reject drift.
+
+    Legacy policies may have no emergency guards. A policy that opts in must provide
+    exactly one guard for every army mode and identical feasibility arguments.
+    """
+    required_contract = (
+        "first_wave",
+        "reinforcement_group_size",
+        "defense_radius",
+        "natural_radius",
+        "base_target",
+        "regroup_below",
+        "ground_defense_node",
+        "air_defense_node",
+        "attack_demotions_node",
+        "attack_assignments_node",
+        "attack_visits_node",
+        "reserve_node",
+        "recover_node",
+    )
+    guards: list[dict[str, JsonValue]] = []
+    for node in policy.nodes:
+        if node.operation != "army_mode_is":
+            continue
+        resolved = resolve_args(node.operation, node.args, policy.parameters)
+        if resolved.get("emergency") is True:
+            missing = [key for key in required_contract if key not in node.args]
+            if missing:
+                raise ValueError(
+                    "emergency army contract has missing eligibility fields: "
+                    + ", ".join(missing)
+                )
+            guards.append(resolved)
+    if not guards:
+        return None
+    modes = [guard.get("mode") for guard in guards]
+    if sorted(str(mode) for mode in modes) != ["attack", "defend", "regroup"]:
+        raise ValueError("emergency army contract requires one attack, defend and regroup guard")
+    shared = {key: value for key, value in guards[0].items() if key != "mode"}
+    contracts = (
+        {key: value for key, value in guard.items() if key != "mode"}
+        for guard in guards[1:]
+    )
+    if any(contract != shared for contract in contracts):
+        raise ValueError("emergency army guards must use one consistent eligibility contract")
+    required_nodes = required_contract[6:]
+    node_ids = frozenset(node.id for node in policy.nodes)
+    missing = [
+        key
+        for key in required_nodes
+        if not isinstance(shared.get(key), str) or shared[key] not in node_ids
+    ]
+    if missing:
+        raise ValueError(
+            f"emergency army contract has missing node references: {', '.join(missing)}"
+        )
+    guard_ids = {
+        str(guard["mode"]): node.id
+        for node, guard in zip(
+            (node for node in policy.nodes if node.operation == "army_mode_is"
+             and node.args.get("emergency") is True),
+            guards,
+            strict=True,
+        )
+    }
+    branches = {
+        mode: next(
+            (node.id for node in policy.nodes
+             if node.kind == "sequence" and node.children
+             and node.children[0] == guard_id),
+            "",
+        )
+        for mode, guard_id in guard_ids.items()
+    }
+    recover_action = str(shared["recover_node"])
+
+    def contains(root_id: str, wanted: str) -> bool:
+        pending = [root_id]
+        while pending:
+            node = policy.node(pending.pop())
+            if node.id == wanted:
+                return True
+            pending.extend(node.children)
+        return False
+
+    ordered = any(
+        node.kind == "selector"
+        and len(node.children) == 4
+        and node.children[0] == branches.get("defend")
+        and contains(node.children[1], recover_action)
+        and node.children[2] == branches.get("attack")
+        and node.children[3] == branches.get("regroup")
+        for node in policy.nodes
+    )
+    if not ordered:
+        raise ValueError("emergency army contract must match ordered army selector branches")
+    return FrozenJsonDict(shared)
 
 
 def parameter_references(value: JsonValue) -> set[str]:

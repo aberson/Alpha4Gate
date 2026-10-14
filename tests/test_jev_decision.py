@@ -42,8 +42,9 @@ from jev.decision import (
     context,
     parse_answer,
 )
-from jev.operations import execution_points
+from jev.operations import Visit, army_eligibility, execution_points
 from jev.plans import EXECUTION_QUESTIONS, STRATEGY_CHOICES, ExecutionDecision, PlanRecord
+from jev.policy import PolicyError
 from jev.runner import EXIT_FAILURE, MatchLimits, MatchOptions, run_match
 from jev.runtime import JevRuntime
 from jev.strategy import (
@@ -1003,6 +1004,85 @@ def _dispatch_steps(polled: list[Any]) -> list[tuple[int, int]]:
     return found
 
 
+def test_inconsistent_emergency_guards_fail_at_construction() -> None:
+    nodes = tuple(
+        replace(node, args={**node.args, "defense_radius": 19})
+        if node.id == "army.attack.mode"
+        else node
+        for node in V2_POLICY.nodes
+    )
+    policy = replace(V2_POLICY, nodes=nodes)
+    message = "emergency army guards must use one consistent eligibility contract"
+    with pytest.raises(ValueError, match=message):
+        JevRuntime(policy, run_id=uuid.uuid4().hex)
+    provider = _QuestionProvider(
+        {"army_mode": [_army()], "strategy": [_strategic("pressure")]}
+    )
+    with pytest.raises(ValueError, match=message):
+        HostedQuestions(provider, DecisionConfig(), policy)
+
+
+def test_missing_emergency_guard_node_fails_at_construction() -> None:
+    nodes = tuple(
+        replace(
+            node,
+            args={**node.args, "reserve_node": "missing.reserve.node"},
+        )
+        if node.operation == "army_mode_is" and node.args.get("emergency") is True
+        else node
+        for node in V2_POLICY.nodes
+    )
+    policy = replace(V2_POLICY, nodes=nodes)
+    with pytest.raises(PolicyError, match="missing_reference"):
+        JevRuntime(policy, run_id=uuid.uuid4().hex)
+    provider = _QuestionProvider(
+        {"army_mode": [_army()], "strategy": [_strategic("pressure")]}
+    )
+    with pytest.raises(
+        ValueError, match="emergency army contract has missing node references: reserve_node"
+    ):
+        HostedQuestions(provider, DecisionConfig(), policy)
+
+
+def test_missing_emergency_feasibility_field_fails_at_construction() -> None:
+    nodes = tuple(
+        replace(
+            node,
+            args={key: value for key, value in node.args.items() if key != "first_wave"},
+        )
+        if node.operation == "army_mode_is" and node.args.get("emergency") is True
+        else node
+        for node in V2_POLICY.nodes
+    )
+    policy = replace(V2_POLICY, nodes=nodes)
+    message = "emergency army contract has missing eligibility fields: first_wave"
+    with pytest.raises(ValueError, match=message):
+        JevRuntime(policy, run_id=uuid.uuid4().hex)
+    provider = _QuestionProvider(
+        {"army_mode": [_army()], "strategy": [_strategic("pressure")]}
+    )
+    with pytest.raises(ValueError, match=message):
+        HostedQuestions(provider, DecisionConfig(), policy)
+
+
+def test_emergency_contract_rejects_army_branch_priority_drift() -> None:
+    nodes = tuple(
+        replace(node, children=("army.defend", "army.attack", "army.recover", "army.rally"))
+        if node.id == "army"
+        else node
+        for node in V2_POLICY.nodes
+    )
+    policy = replace(V2_POLICY, nodes=nodes)
+    message = "emergency army contract must match ordered army selector branches"
+    with pytest.raises(ValueError, match=message):
+        JevRuntime(policy, run_id=uuid.uuid4().hex)
+    provider = _QuestionProvider(
+        {"army_mode": [_army()], "strategy": [_strategic("pressure")]}
+    )
+    with pytest.raises(ValueError, match=message):
+        HostedQuestions(provider, DecisionConfig(), policy)
+
+
 def test_strategy_and_army_share_one_budget_with_global_request_ids() -> None:
     provider = _QuestionProvider({"army_mode": [_army()], "strategy": [_strategic("pressure")]})
     clock = _Clock()
@@ -1153,7 +1233,11 @@ def test_an_applied_posture_outlives_its_freshness_until_its_hold_expires() -> N
     # remains the backstop when no renewal arrives.
     def away(i: int) -> Observation:
         obs = _v2_observation(10 + i * 0.5)
-        return replace(obs, own_units=tuple(replace(u, position=(90, 90)) for u in obs.own_units))
+        units = tuple(
+            replace(unit, position=START if index < 4 else (90, 90))
+            for index, unit in enumerate(obs.own_units)
+        )
+        return replace(obs, own_units=units)
 
     polled = _drive(questions, _FakeRuntime(), clock, seconds=50, observe=away)
     holding = [n for n, d in enumerate(polled) if d.strategy["army"].choice == "recover"]
@@ -1182,6 +1266,7 @@ def test_repeated_recover_answers_release_a_rebuilt_army_and_expose_completion()
     ]
     assert completed
     assert all(d.strategy["army"].choice != "recover" for d in completed)
+    assert all("attack" in d.army_facts["available_options"] for d in completed)
     # Repeated/in-flight recover answers cannot reopen an already completed episode.
     subsequent = [
         choices for question, choices, state in provider.calls
@@ -1289,7 +1374,7 @@ def test_v2_army_question_counts_stalkers_and_defends_both_bases() -> None:
     quiet = army_context(
         base, launched=True, first_wave=4, defense_radius=20, natural_radius=15, base_target=2
     )
-    assert quiet.options == ("attack", "regroup")
+    assert quiet.options == ("regroup",)  # two units are not a complete reinforcement group
     assert quiet.state["ready_combat_units"] == 2
     assert quiet.state["ready_by_type"] == {"Stalker": 1, "Zealot": 1}
     assert "defend" in options(replace(base, visible_enemies=(raider,)))  # the natural
@@ -1297,6 +1382,39 @@ def test_v2_army_question_counts_stalkers_and_defends_both_bases() -> None:
     assert "defend" in options(replace(base, visible_enemies=(flyer,)))  # a Stalker hits air
     zealots_only = replace(base, own_units=(zealot,), visible_enemies=(flyer,))
     assert "defend" not in options(zealots_only)  # a Zealot is never sent at air
+    full_army = replace(
+        base,
+        own_units=tuple(
+            Entity(tag, "Zealot", START, 100, ready=True, can_attack_ground=True)
+            for tag in range(2000, 2004)
+        ),
+    )
+    assert "attack" in options(full_army)
+    no_targets = replace(
+        full_army,
+        enemy_start_locations=(),
+        expansion_locations=(),
+        visible_enemies=(),
+        remembered_enemy_structures=(),
+    )
+    assert "attack" not in options(no_targets)
+    two_starts = replace(
+        full_army,
+        enemy_start_locations=((100.0, 100.0), (120.0, 120.0)),
+        expansion_locations=(),
+    )
+    eligibility = army_eligibility(
+        two_starts,
+        launched=True,
+        first_wave=4,
+        reinforcement_group_size=4,
+        defense_radius=20,
+        natural_radius=15,
+        base_target=2,
+        attack_visits={(100.0, 100.0): Visit(1, 1.0)},
+    )
+    assert not eligibility.attack_target_available
+    assert "attack" not in eligibility.options  # a farther unvisited start is not selected
     # v1's frozen army context still counts Zealots only, with its own keys.
     state, _, _ = context(replace(base, visible_enemies=(raider,)), True, 4, 20)
     assert state["ready_zealots"] == 1 and "ready_combat_units" not in state

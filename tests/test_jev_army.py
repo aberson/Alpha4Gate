@@ -1530,6 +1530,75 @@ def test_v2_mixed_scenario_stalkers_shoot_down_an_air_raider_and_zealots_never_t
     assert world.unexpected == []  # SC2 never saw a Zealot ordered onto an air unit
 
 
+def test_v2_air_threat_without_anti_air_rallies_without_claiming_defense() -> None:
+    world = _base(extra=(_raider(),))
+    run = _play(world, 6, bundle=load_v2_policy())
+    rally = [
+        event
+        for event in run.events
+        if event.node_id == "army.rally" and event.kind == "node" and event.status == "success"
+    ]
+    assert rally
+    assert not _commands(run, "army.defend.air.attack")
+    assert not _commands(run, "army.attack.go")
+    rally_guards = [
+        event
+        for event in run.events
+        if event.node_id == "army.rally.before_launch"
+        and event.kind == "node"
+        and event.status == "success"
+    ]
+    assert rally_guards
+    assert all(
+        event.facts["safety_override_reason"] == "no_capable_defender"
+        for event in rally_guards
+    )
+
+
+@pytest.mark.parametrize(
+    ("reserve_kind", "threat", "defense_node"),
+    [
+        ("Zealot", _enemy(900_300, "Marine", (34.0, 36.0), health=10_000.0), "army.defend.attack"),
+        ("Stalker", _raider(900_301, at=(34.0, 36.0)), _AIR_DEFENSE),
+    ],
+)
+def test_v2_emergency_releases_reserve_tasks_for_same_tick_defense(
+    reserve_kind: str, threat: _Body, defense_node: str
+) -> None:
+    world = _mixed()
+    reserve_tag = 7000
+    threat_loop: list[int] = []
+
+    def emergency(world: _World, controller: JevController, index: int) -> None:
+        if index == 1:
+            world.bodies[reserve_tag] = _Body(reserve_tag, reserve_kind, (46.0, 46.0))
+            world.refresh()
+        if index == 2:
+            held = [
+                task
+                for task in controller.runtime.active_tasks()
+                if task.node_id == "reserve.gather" and task.actor_tag == reserve_tag
+            ]
+            assert held
+            threat_loop.append(world.state.game_loop)
+            world.bodies[threat.tag] = threat
+            world.refresh()
+
+    run = _play(world, 8, emergency, bundle=load_v2_policy())
+    (loop,) = threat_loop
+    released = [
+        event
+        for event in run.events
+        if event.game_loop == loop
+        and event.node_id == "reserve.gather"
+        and event.kind == "task"
+        and event.status == "cancelled"
+    ]
+    assert released and all("emergency defend released reserve" in e.reason for e in released)
+    commands = [event for event in _commands(run, defense_node) if event.game_loop == loop]
+    assert commands and reserve_tag in {_actor_of(event) for event in commands}
+
+
 def test_v2_mixed_scenario_ground_threats_take_every_unit_then_stalkers_take_the_air() -> None:
     marine = _enemy(900_200, "Marine", (34.0, 36.0), health=45.0)
     world = _mixed(marine, _raider(at=(36.0, 34.0)))

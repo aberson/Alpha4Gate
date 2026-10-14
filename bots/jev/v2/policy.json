@@ -3204,7 +3204,21 @@
       "children": [],
       "operation": "army_mode_is",
       "args": {
-        "mode": "defend"
+        "mode": "defend",
+        "emergency": true,
+        "first_wave": {"param": "first_attack_zealots"},
+        "reinforcement_group_size": {"param": "reinforcement_group_size"},
+        "defense_radius": {"param": "defense_radius"},
+        "natural_radius": {"param": "natural_defense_radius"},
+        "base_target": {"param": "base_target"},
+        "regroup_below": {"param": "regroup_below"},
+        "ground_defense_node": "army.defend.attack",
+        "air_defense_node": "army.defend.air.attack",
+        "attack_demotions_node": "army.attack.go",
+        "attack_assignments_node": "army.attack.go",
+        "attack_visits_node": "army.attack.go",
+        "reserve_node": "reserve.gather",
+        "recover_node": "army.recover.move"
       }
     },
     {
@@ -3358,6 +3372,7 @@
             "Zealot",
             "Stalker"
           ],
+          "ready": true,
           "can_attack_air": true
         },
         "sort": {
@@ -3434,7 +3449,8 @@
           "types": [
             "Zealot",
             "Stalker"
-          ]
+          ],
+          "ready": true
         },
         "sort": {
           "by": "tag"
@@ -3652,7 +3668,8 @@
           "types": [
             "Zealot",
             "Stalker"
-          ]
+          ],
+          "ready": true
         },
         "sort": {
           "by": "tag"
@@ -3698,7 +3715,21 @@
       "children": [],
       "operation": "army_mode_is",
       "args": {
-        "mode": "attack"
+        "mode": "attack",
+        "emergency": true,
+        "first_wave": {"param": "first_attack_zealots"},
+        "reinforcement_group_size": {"param": "reinforcement_group_size"},
+        "defense_radius": {"param": "defense_radius"},
+        "natural_radius": {"param": "natural_defense_radius"},
+        "base_target": {"param": "base_target"},
+        "regroup_below": {"param": "regroup_below"},
+        "ground_defense_node": "army.defend.attack",
+        "air_defense_node": "army.defend.air.attack",
+        "attack_demotions_node": "army.attack.go",
+        "attack_assignments_node": "army.attack.go",
+        "attack_visits_node": "army.attack.go",
+        "reserve_node": "reserve.gather",
+        "recover_node": "army.recover.move"
       }
     },
     {
@@ -4034,7 +4065,21 @@
       "children": [],
       "operation": "army_mode_is",
       "args": {
-        "mode": "regroup"
+        "mode": "regroup",
+        "emergency": true,
+        "first_wave": {"param": "first_attack_zealots"},
+        "reinforcement_group_size": {"param": "reinforcement_group_size"},
+        "defense_radius": {"param": "defense_radius"},
+        "natural_radius": {"param": "natural_defense_radius"},
+        "base_target": {"param": "base_target"},
+        "regroup_below": {"param": "regroup_below"},
+        "ground_defense_node": "army.defend.attack",
+        "air_defense_node": "army.defend.air.attack",
+        "attack_demotions_node": "army.attack.go",
+        "attack_assignments_node": "army.attack.go",
+        "attack_visits_node": "army.attack.go",
+        "reserve_node": "reserve.gather",
+        "recover_node": "army.recover.move"
       }
     },
     {
@@ -4064,7 +4109,8 @@
           "types": [
             "Zealot",
             "Stalker"
-          ]
+          ],
+          "ready": true
         },
         "sort": {
           "by": "tag"

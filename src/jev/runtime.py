@@ -143,7 +143,7 @@ from collections import Counter, deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Final, Literal, get_args
+from typing import Final, Literal, cast, get_args
 
 from jev.contracts import (
     ACTIVE_TASK_STATUSES,
@@ -208,6 +208,7 @@ from jev.operations import (
     PARAM_UNIT,
     POINT_MATCH_TOLERANCE,
     ActionOp,
+    ArmyEligibility,
     Binding,
     CompiledFilter,
     Intent,
@@ -218,14 +219,17 @@ from jev.operations import (
     TaskSubject,
     TrackedMemory,
     Visit,
+    army_safety_args,
     compile_filter,
     decode_site,
     distance,
+    effective_army_mode,
     execution_points,
     matching_sightings,
     resolve_args,
     tracked_nodes,
 )
+from jev.operations import army_eligibility as calculate_army_eligibility
 from jev.plans import (
     EXECUTION_QUESTIONS,
     EXPANSION_RESPONSES,
@@ -818,6 +822,9 @@ class _View:
     def army_mode(self) -> str | None:
         return self._runtime._army_mode
 
+    def army_decision_facts(self) -> Mapping[str, JsonValue]:
+        return self._runtime._decision_facts
+
     def strategy(self, slot: PlanSlot) -> StrategySlot:
         return self._runtime._strategy[slot]
 
@@ -947,6 +954,7 @@ class JevRuntime:
             for node in policy.nodes
             if node.operation is not None
         }
+        self._army_safety_args = army_safety_args(policy)
         # Each node's filter is compiled exactly once (frozenset name lookups per tick).
         self._filters: dict[str, CompiledFilter | None] = {
             node_id: compile_filter(args.get("filter")) for node_id, args in self._args.items()
@@ -1017,6 +1025,16 @@ class JevRuntime:
                 child = policy.node(pending.pop())
                 self._army_task_modes[child.id] = mode
                 pending.extend(child.children)
+        if self._army_safety_args is not None:
+            recover_pending = [
+                self._policy.node(str(self._army_safety_args["recover_node"]))
+            ]
+            while recover_pending:
+                child = recover_pending.pop()
+                self._army_task_modes[child.id] = "recover"
+                recover_pending.extend(
+                    self._policy.node(node_id) for node_id in child.children
+                )
         self._last_tick_seconds: float | None = None
         self._last_game_loop = 0
         self._last_game_seconds = 0.0
@@ -1153,6 +1171,40 @@ class JevRuntime:
         ``not_assigned_to``); see :mod:`jev.operations` for what takes charge.
         """
         return frozenset(tag for tag, node in self._assignments.items() if node == node_id)
+
+    def army_eligibility(
+        self,
+        observation: Observation,
+        *,
+        posture: str | None = None,
+        override_posture: bool = False,
+    ) -> ArmyEligibility | None:
+        """The safety-enabled policy's graph-owned army feasibility, without writes."""
+        args = self._army_safety_args
+        if args is None:
+            return None
+        ground = str(args["ground_defense_node"])
+        air = str(args["air_defense_node"])
+        attack_demotions = str(args["attack_demotions_node"])
+        attack_assignments = str(args["attack_assignments_node"])
+        attack_visits = str(args["attack_visits_node"])
+        return calculate_army_eligibility(
+            observation,
+            launched=self._latches.get("attack_launched", False),
+            first_wave=cast(int, args["first_wave"]),
+            reinforcement_group_size=cast(int, args["reinforcement_group_size"]),
+            defense_radius=float(cast(int | float, args["defense_radius"])),
+            natural_radius=float(cast(int | float, args["natural_radius"])),
+            base_target=cast(int, args["base_target"]),
+            regroup_below=cast(int, args["regroup_below"]),
+            posture=(posture if override_posture else self._strategy["army"].choice),
+            ground_demoted=self.demoted_targets(ground),
+            air_demoted=self.demoted_targets(air),
+            attack_demoted=self.demoted_targets(attack_demotions),
+            attack_assigned=self.assigned_to(attack_assignments),
+            attack_visits=self._visits.get(attack_visits, {}),
+            busy=frozenset(task.actor_tag for task in self._active.values()),
+        )
 
     def assignment_age(self, node_id: str) -> float | None:
         """Game seconds since ``node_id`` last took charge of an entity that was not
@@ -1371,11 +1423,34 @@ class JevRuntime:
         self._tick_spends = []
         self._update_tasks(observation)
         self._lapse_give_ups(observation)
-        if self._army_mode is not None:
+        eligibility = self.army_eligibility(observation)
+        effective_mode = (
+            self._army_mode
+            if eligibility is None
+            else effective_army_mode(self._army_mode, eligibility)
+        )
+        if effective_mode is not None and effective_mode != "recover":
             for task in list(self._active.values()):
                 mode = self._army_task_modes.get(task.node_id)
-                if mode is not None and mode != self._army_mode:
-                    self._finish(task, "cancelled", f"army intent changed to {self._army_mode}")
+                if mode is not None and mode != effective_mode:
+                    self._finish(task, "cancelled", f"army intent changed to {effective_mode}")
+        if (
+            eligibility is not None
+            and eligibility.emergency_mode is not None
+            and self._army_safety_args is not None
+        ):
+            reserve_node = self._army_safety_args.get("reserve_node")
+            if isinstance(reserve_node, str):
+                for task in list(self._active.values()):
+                    if (
+                        task.node_id == reserve_node
+                        and task.actor_tag in eligibility.emergency_actor_tags
+                    ):
+                        self._finish(
+                            task,
+                            "cancelled",
+                            f"emergency {eligibility.emergency_mode} released reserve",
+                        )
         if self._plans is not None:
             self._plan_begin_tick(observation)
             if self._response_branches:

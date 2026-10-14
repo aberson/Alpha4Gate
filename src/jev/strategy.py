@@ -195,11 +195,14 @@ from jev.operations import (
     OP_STRATEGY_IS,
     OP_TRAIN,
     PRODUCER_TYPE,
+    ArmyEligibility,
     Binding,
     DecisionPoint,
+    army_safety_args,
     execution_points,
     resolve_args,
 )
+from jev.operations import army_eligibility as calculate_army_eligibility
 from jev.plans import (
     EXECUTION_QUESTIONS,
     PLAN_SLOT,
@@ -646,22 +649,22 @@ def army_context(
     base_target: int,
     demoted: frozenset[int] = frozenset(),
     posture: str | None = None,
+    reinforcement_group_size: int | None = None,
+    eligibility: ArmyEligibility | None = None,
 ) -> _Context:
     """The v2 army question: offered options mirror the v2 army lane's branches.
 
     ``defend`` when a ground threat stands near the main (``defense_radius``) or the
     natural (``natural_radius`` of the farthest of ``base_target`` Nexuses) and a
     combat unit is ready, or an air threat there and a ready unit hits air;
-    ``attack`` once launched (or the first wave of ready Zealots stands) with a
-    ready combat unit; ``regroup`` always. Demoted defense targets never count."""
+    ``attack`` only with the launch gate, an eligible group and a target; ``regroup``
+    with a living combat unit. Demoted graph targets never count."""
     home = observation.start_location
     natural = _natural(observation, base_target)
     zones: tuple[tuple[tuple[float, float], float], ...] = ((home, defense_radius),)
     if natural is not None:
         zones = (*zones, (natural, natural_radius))
     army = tuple(u for u in observation.own_units if u.type_name in COMBAT_TYPES and u.is_ready)
-    anti_air = tuple(u for u in army if u.can_attack_air)
-    wave = sum(1 for u in army if u.type_name == FIRST_WAVE_TYPE)
     hostile = tuple(
         e
         for e in observation.visible_enemies
@@ -669,14 +672,21 @@ def army_context(
     )
     ground = tuple(e for e in hostile if not e.is_flying)
     air = tuple(e for e in hostile if e.is_flying)
-    can_defend = (bool(army) and bool(ground)) or (bool(anti_air) and bool(air))
-    options = tuple(
-        option
-        for option in ARMY_V2_QUESTION.criteria
-        if option == "regroup"
-        or (option == "attack" and bool(army) and (launched or wave >= first_wave))
-        or (option == "defend" and can_defend)
-    )
+    if eligibility is None:
+        eligibility = calculate_army_eligibility(
+            observation,
+            launched=launched,
+            first_wave=first_wave,
+            reinforcement_group_size=(
+                first_wave if reinforcement_group_size is None else reinforcement_group_size
+            ),
+            defense_radius=defense_radius,
+            natural_radius=natural_radius,
+            base_target=base_target,
+            ground_demoted=demoted,
+            air_demoted=demoted,
+            attack_demoted=demoted,
+        )
     bases = tuple(s for s in observation.own_structures if s.type_name == "Nexus")
     state: dict[str, JsonValue] = {
         "game_seconds": observation.game_seconds,
@@ -686,7 +696,7 @@ def army_context(
         "supply_cap": observation.supply_cap,
         "attack_launched": launched,
         "first_wave_size": first_wave,
-        "ready_combat_units": len(army),
+        "ready_combat_units": eligibility.ready_combat_units,
         "ready_by_type": _counts(army),
         "army": entity_list(army, home, anti_air=True),
         "own_structure_counts": _counts(observation.own_structures),
@@ -698,6 +708,9 @@ def army_context(
         "natural": None if natural is None else list(natural),
         "enemy_starts": [list(p) for p in observation.enemy_start_locations],
         "strategic_posture": posture,
+        "safety_override_reason": eligibility.safety_reason,
+        "attack_group_size": eligibility.attack_group_size,
+        "attack_target_available": eligibility.attack_target_available,
         "entity_list_limit": ENTITY_LIST_LIMIT,
     }
     signature = (
@@ -706,9 +719,9 @@ def army_context(
         tuple(sorted(e.tag for e in air)),
         tuple(sorted(s.tag for s in bases)),
         launched,
-        options,
+        eligibility.options,
     )
-    return _Context(state, options, signature)
+    return _Context(state, eligibility.options, signature)
 
 
 # ---------------------------------------------------------------------------
@@ -829,9 +842,12 @@ class HostedQuestions:
         branches = strategy_branches(policy)
         if not branches:
             raise ValueError("this policy implements no strategic choice")
+        if army_safety_args(policy) is None:
+            raise ValueError("a strategic army policy requires the shared emergency contract")
         self.provider, self.config, self._clock = provider, config, clock
         self._branches: dict[StrategyChoice, StrategyBranch] = {b.choice: b for b in branches}
         self._first_wave = int(_param(policy, "first_attack_zealots"))
+        self._reinforcement_group = int(_param(policy, "reinforcement_group_size"))
         self._defense_radius = _param(policy, "defense_radius")
         self._natural_radius = _param(policy, "natural_defense_radius")
         self._base_target = int(_param(policy, "base_target"))
@@ -935,31 +951,83 @@ class HostedQuestions:
         game = observation.game_seconds
         launched = runtime.latches.get(LAUNCH_LATCH, False)
         demoted = frozenset().union(*(runtime.demoted_targets(n) for n in self._defense))
-        posture = None if self._posture is None else self._posture.choice
-        army = army_context(
-            observation,
-            launched=launched,
-            first_wave=self._first_wave,
-            defense_radius=self._defense_radius,
-            natural_radius=self._natural_radius,
-            base_target=self._base_target,
-            demoted=demoted,
-            posture=posture,
-        )
-        strategy = self._strategy_context(observation, runtime, launched, demoted)
-        contexts: dict[QuestionId, _Context] = {"army_mode": army, "strategy": strategy}
-        if "expansion_response" in self._questions:
-            contexts["expansion_response"] = self._response_context(observation, runtime)
-        if "production_mix" in self._questions:
-            contexts["production_mix"] = self._mix_context(observation, runtime)
+        eligibility_reader = getattr(runtime, "army_eligibility", None)
+
+        def build_contexts(*, update_recovery: bool) -> dict[QuestionId, _Context]:
+            posture = None if self._posture is None else self._posture.choice
+            eligibility = (
+                eligibility_reader(
+                    observation, posture=posture, override_posture=True
+                )
+                if callable(eligibility_reader)
+                else calculate_army_eligibility(
+                    observation,
+                    launched=launched,
+                    first_wave=self._first_wave,
+                    reinforcement_group_size=self._reinforcement_group,
+                    defense_radius=self._defense_radius,
+                    natural_radius=self._natural_radius,
+                    base_target=self._base_target,
+                    regroup_below=int(self._regroup_below),
+                    posture=posture,
+                    ground_demoted=demoted,
+                    air_demoted=demoted,
+                    attack_demoted=demoted,
+                )
+            )
+            if eligibility is None:
+                eligibility = calculate_army_eligibility(
+                    observation,
+                    launched=launched,
+                    first_wave=self._first_wave,
+                    reinforcement_group_size=self._reinforcement_group,
+                    defense_radius=self._defense_radius,
+                    natural_radius=self._natural_radius,
+                    base_target=self._base_target,
+                    regroup_below=int(self._regroup_below),
+                    posture=posture,
+                    ground_demoted=demoted,
+                    air_demoted=demoted,
+                    attack_demoted=demoted,
+                )
+            army = army_context(
+                observation,
+                launched=launched,
+                first_wave=self._first_wave,
+                defense_radius=self._defense_radius,
+                natural_radius=self._natural_radius,
+                base_target=self._base_target,
+                demoted=demoted,
+                posture=posture,
+                reinforcement_group_size=self._reinforcement_group,
+                eligibility=eligibility,
+            )
+            strategy = self._strategy_context(
+                observation, runtime, launched, demoted, eligibility,
+                update_recovery=update_recovery,
+            )
+            contexts: dict[QuestionId, _Context] = {
+                "army_mode": army, "strategy": strategy
+            }
+            if "expansion_response" in self._questions:
+                contexts["expansion_response"] = self._response_context(observation, runtime)
+            if "production_mix" in self._questions:
+                contexts["production_mix"] = self._mix_context(observation, runtime)
+            return contexts
+
+        contexts = build_contexts(update_recovery=False)
         if self._task is not None and self._task.done():
             self._resolve(contexts, now, game)
+        contexts = build_contexts(update_recovery=True)
         self._revalidate(runtime, contexts, now, game, observation)
+        contexts = build_contexts(update_recovery=False)
         self._schedule(contexts, now, game)
         self._bound_wait(contexts["strategy"].options, now)  # after this poll's dispatch
         return self._decisions(contexts, game)
 
-    def _strategy_options(self, runtime: JevRuntime, launched: bool) -> tuple[str, ...]:
+    def _strategy_options(
+        self, runtime: JevRuntime, launched: bool, eligibility: ArmyEligibility
+    ) -> tuple[str, ...]:
         """The implemented choices the graph can execute now (module docstring)."""
         if not launched:
             return ()
@@ -967,7 +1035,9 @@ class HostedQuestions:
         options: list[str] = []
         for choice, branch in self._branches.items():
             if branch.slot == "army":
-                if choice != "recover" or not self._recovery.completed:
+                if choice != "recover" or (
+                    not self._recovery.completed and eligibility.ready_combat_units > 0
+                ):
                     options.append(choice)
             elif choice in reached and runtime.plan_start_refusal(choice) is None:
                 options.append(choice)
@@ -979,6 +1049,9 @@ class HostedQuestions:
         runtime: JevRuntime,
         launched: bool,
         demoted: frozenset[int],
+        eligibility: ArmyEligibility,
+        *,
+        update_recovery: bool = True,
     ) -> _Context:
         home = observation.start_location
         natural = _natural(observation, self._base_target)
@@ -999,14 +1072,15 @@ class HostedQuestions:
                     and math.dist(e.position, natural) <= self._natural_radius)
             ) for e in observation.visible_enemies
         )
-        self._recovery.update(
-            game=observation.game_seconds,
-            active=self._posture is not None and self._posture.choice == "recover",
-            army=army, home=home, radius=self._defense_radius,
-            minimum=max(self._first_wave, int(self._regroup_below)),
-            threatened=home_threat or natural_threat or air_threat,
-        )
-        options = self._strategy_options(runtime, launched)
+        if update_recovery:
+            self._recovery.update(
+                game=observation.game_seconds,
+                active=self._posture is not None and self._posture.choice == "recover",
+                army=army, home=home, radius=self._defense_radius,
+                minimum=max(self._first_wave, int(self._regroup_below)),
+                threatened=home_threat or natural_threat or air_threat,
+            )
+        options = self._strategy_options(runtime, launched, eligibility)
         size = len(army)
         bucket = (
             "few"

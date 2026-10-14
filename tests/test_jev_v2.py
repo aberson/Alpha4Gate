@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import inspect
 import json
 import math
 import os
@@ -58,7 +59,7 @@ import httpx
 import pytest
 from bots.jev.v1 import load_policy as load_v1_policy
 from bots.jev.v2 import load_policy as load_v2_policy
-from sc2.data import Result
+from sc2.data import Alliance, Result
 from sc2.ids.ability_id import AbilityId
 
 import jev.bot
@@ -77,6 +78,7 @@ from jev.operations import (
     ActionOp,
     Binding,
     PredicateOp,
+    Visit,
     distance,
     execution_points,
     planned_supply,
@@ -770,7 +772,7 @@ def test_v2_combat_lanes_take_zealots_and_stalkers_and_air_only_for_anti_air() -
         assert types == expected, node.id
     assert len(combat) == 10  # every army, reserve and expansion count of combat units
     anti_air = policy.node("army.defend.air.units").args["filter"]
-    assert anti_air == {"types": _COMBAT, "can_attack_air": True}
+    assert anti_air == {"types": _COMBAT, "ready": True, "can_attack_air": True}
     for node_id in ("army.defend.air.main", "army.defend.air.natural.target"):
         assert policy.node(node_id).args["filter"]["flying"] is True
     attack = policy.node("army.defend.air.attack").args
@@ -1211,17 +1213,26 @@ class _HostedLauncher(_Launcher):
     ``--realtime``)."""
 
     def __init__(
-        self, world: Any, steps: int, hook: Any, wall: _Wall, game_per_wall: float = 1.0
+        self,
+        world: Any,
+        steps: int,
+        hook: Any,
+        wall: _Wall,
+        game_per_wall: float = 1.0,
+        after_step: Any = None,
     ) -> None:
         super().__init__(world, steps, hook)
         self.wall = wall
         self.wall_step = _STEP_SECONDS / game_per_wall
+        self.after_step = after_step
 
     async def _run(self, bot: JevBot, controller: JevController) -> None:
         for index in range(self.steps):
             if self.before_step is not None:
                 self.before_step(self.world, controller, index)
             await bot.on_step(index)
+            if self.after_step is not None:
+                self.after_step(self.world, controller, index)
             if self.world.left:
                 break
             self.world.advance()
@@ -1275,6 +1286,7 @@ def _hosted_match(
     max_requests: int = 450,
     game_per_wall: float = 1.0,
     bundle: Any = None,
+    after_hooks: tuple[Any, ...] = (),
 ) -> _Hosted:
     """Play ``world`` through run_match with the Typesafe provider over a scripted
     HTTP transport: ``answer(question_id, options)`` returns ``(choice, confidence)``
@@ -1289,6 +1301,8 @@ def _hosted_match(
         ((question_id, question),) = sent["questions"].items()
         options = list(question["criteria"])
         reply = answer(question_id, options)
+        if inspect.isawaitable(reply):
+            reply = await reply
         if isinstance(reply, httpx.Response):
             return reply
         choice, confidence = reply
@@ -1309,8 +1323,15 @@ def _hosted_match(
         for hook in hooks:
             hook(world, controller, index)
 
+    def after(world: Any, controller: JevController, index: int) -> None:
+        for hook in after_hooks:
+            hook(world, controller, index)
+
     wall = _Wall()
-    launcher = _HostedLauncher(world, steps, run.hook(every), wall, game_per_wall)
+    launcher = _HostedLauncher(
+        world, steps, run.hook(every), wall, game_per_wall,
+        after if after_hooks else None,
+    )
     options = MatchOptions(decision_provider="typesafe", decision_max_requests=max_requests)
     chosen = load_v2_policy() if bundle is None else bundle  # a candidate policy, if given
     outcome = run_match(options, chosen, launcher=launcher, run_root=run_root, clock=wall)
@@ -1378,12 +1399,19 @@ def test_each_strategic_choice_selects_its_graph_branch(
         started = [e for e in _strategy_events(run) if e.facts.get("started_plan")]
         assert started and started[-1].facts["started_plan"]["plan_id"] == plan.plan_id
         return
-    assert plans == ()  # an army posture opens no macro plan, though both were offered
+    if branch.choice == "recover":
+        # Recovery completed within this fixture, then released its slot. A later local
+        # tech plan is valid only after the hosted recovery branch stopped applying.
+        assert plans and all(plan.decided_by == "local_fallback" for plan in plans)
+        assert min(plan.started_game_seconds for plan in plans) > passed[-1].game_seconds
+    else:
+        assert plans == ()  # pressure still holds the macro slot for this whole fixture
     # The posture holds the macro slot back on the answer's own request id.
     held_back = [
         e
         for e in run.events
         if e.kind == "node" and e.node_id == "tech.start.chosen" and e.game_loop >= applied_at
+        and (branch.choice != "recover" or e.game_loop <= passed[-1].game_loop)
     ]
     assert held_back and {e.facts["request_id"] for e in held_back} == {request_id}
     if branch.choice == "recover":  # the whole army regroups: not the few-units trigger
@@ -1460,6 +1488,537 @@ def test_emergency_defense_runs_while_a_request_is_pending() -> None:
     expired = [e for e in army_facts if e.game_loop >= loop]
     assert expired and expired[0].facts["reason"] == "expired_or_changed_state"
     assert expired[0].facts["choice"] is None
+
+
+@pytest.mark.parametrize("choice", ["attack", "defend", "regroup"])
+def test_every_offered_army_answer_runs_through_the_production_entry(
+    choice: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Every v2 army label is injected through run_match and the real HTTP parser;
+    the accepted label reaches the graph, whose local emergency rule still owns safety."""
+    import test_jev_plans as expansion_suite
+
+    world = expansion_suite._world()
+    if choice == "defend":
+        world.enemy("Marine", (33.0, 36.0))
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        if question_id == "army_mode" and choice in options:
+            return choice, 0.9
+        return options[0], 0.2
+
+    action_node = {
+        "attack": "army.attack.go",
+        "defend": "army.defend.attack",
+        "regroup": "army.rally.move",
+    }[choice]
+
+    before_tasks: dict[int, frozenset[str]] = {}
+    after_tasks: dict[int, frozenset[str]] = {}
+    after_orders: dict[int, bool] = {}
+
+    def before(world: Any, controller: JevController, index: int) -> None:
+        before_tasks[world.state.game_loop] = frozenset(
+            task.id for task in controller.runtime.active_tasks()
+            if task.node_id == action_node
+        )
+
+    def after(world: Any, controller: JevController, index: int) -> None:
+        loop = world.state.game_loop
+        after_tasks[loop] = frozenset(
+            task.id for task in controller.runtime.active_tasks()
+            if task.node_id == action_node
+        )
+        after_orders[loop] = any(
+            body.orders for body in world.bodies.values()
+            if body.alliance == Alliance.Self and body.kind in {"Zealot", "Stalker"}
+        )
+
+    hosted = _hosted_match(
+        world, 45, answer, monkeypatch, tmp_path, before,
+        after_hooks=(after,),
+    )
+    assert any(choice in options for _, options in hosted.asked("army_mode"))
+    accepted = [
+        event
+        for event in hosted.run.events
+        if event.reason == "Army decision source"
+        and event.facts.get("source") == "typesafe"
+        and event.facts.get("choice") == choice
+    ]
+    assert accepted
+    applied = accepted[0]
+    request_id = applied.facts["answer_request_id"]
+    guard = {
+        "attack": "army.attack.mode",
+        "defend": "army.defend.mode",
+        "regroup": "army.rally.before_launch",
+    }[choice]
+    selected = [
+        event
+        for event in hosted.run.events
+        if event.game_loop == applied.game_loop
+        and event.node_id == guard
+        and event.kind == "node"
+        and event.status == "success"
+    ]
+    assert selected and selected[-1].facts["decision_request_id"] == request_id
+    action = [
+        event
+        for event in hosted.run.events
+        if event.game_loop == applied.game_loop
+        and event.node_id == action_node
+        and event.kind == "node"
+        and event.status in {"running", "success"}
+    ]
+    assert action
+    commands = [
+        event for event in hosted.run.commands(action_node)
+        if event.game_loop == applied.game_loop
+    ]
+    continuing = before_tasks[applied.game_loop] & after_tasks[applied.game_loop]
+    assert commands or (continuing and after_orders[applied.game_loop])
+
+
+@pytest.mark.parametrize("choice", ["attack", "regroup"])
+@pytest.mark.parametrize("threat", ["ground", "air"])
+def test_accepted_intent_cannot_cancel_live_emergency_defense(
+    choice: str, threat: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An answer requested before the raid was evaluated arrives after defense owns
+    the army. Emergency precedence keeps the same defense tasks and SC2 orders alive."""
+    import test_jev_army as army_suite
+
+    target_tag = 900_700
+    target = (
+        army_suite._Body(
+            target_tag,
+            "Banshee",
+            army_suite._AIR_RAID,
+            Alliance.Enemy,
+            health=10_000.0,
+            flying=True,
+        )
+        if threat == "air"
+        else army_suite._enemy(target_tag, "Marine", (33.0, 35.0), health=10_000.0)
+    )
+    world: Any = army_suite._mixed(target)
+    # test_jev_macro._Run records these economy details; this combat world has none.
+    world.inside = set()
+    world.returning = {}
+    world.gatherers = lambda _tag: []
+    snapshots: dict[int, frozenset[str]] = {}
+    defense_node = (
+        "army.defend.air.attack" if threat == "air" else "army.defend.attack"
+    )
+
+    def hold_defense(world: Any, controller: JevController, index: int) -> None:
+        snapshots[world.state.game_loop] = frozenset(
+            task.id
+            for task in controller.runtime.active_tasks()
+            if task.node_id == defense_node
+        )
+        if index > 0:
+            # Preserve a graph-feasible attack group while the already-issued defense
+            # tasks own the actors. This recreates the pending-answer transition that
+            # used to cancel those tasks in Runtime._army_mode.
+            combat = {
+                body.tag
+                for body in world.bodies.values()
+                if body.alliance == Alliance.Self and body.kind in {"Zealot", "Stalker"}
+            }
+            controller.runtime._assignments.update(
+                dict.fromkeys(combat, "army.attack.go")
+            )
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        if question_id == "army_mode" and choice in options:
+            return choice, 0.9
+        return options[0], 0.2
+
+    hosted = _hosted_match(world, 35, answer, monkeypatch, tmp_path, hold_defense)
+    accepted = [
+        event
+        for event in hosted.run.events
+        if event.reason == "Army decision source"
+        and event.facts.get("source") == "typesafe"
+        and event.facts.get("choice") == choice
+    ]
+    assert accepted
+    applied = accepted[0]
+    request_id = applied.facts["answer_request_id"]
+    before = snapshots[applied.game_loop]
+    after = snapshots[applied.game_loop + STEP_LOOPS]
+    assert before and after == before
+    emergency_guard = [
+        event
+        for event in hosted.run.events
+        if event.game_loop == applied.game_loop
+        and event.node_id == "army.defend.mode"
+        and event.kind == "node"
+        and event.status == "success"
+    ]
+    assert emergency_guard
+    assert emergency_guard[-1].facts["decision_request_id"] == request_id
+    assert emergency_guard[-1].facts["mode"] == choice
+    assert emergency_guard[-1].facts["effective_mode"] == "defend"
+    assert target_tag in world.bodies
+    capable = (
+        set(army_suite.STALKERS)
+        if threat == "air"
+        else set(army_suite.ZEALOTS) | set(army_suite.STALKERS)
+    )
+    assert all(
+        world.bodies[tag].orders
+        and world.bodies[tag].orders[0][0] == AbilityId.ATTACK_ATTACK
+        and world.bodies[tag].orders[0][1] == target_tag
+        for tag in capable
+    )
+
+
+def test_zero_army_never_offers_recover_through_the_production_entry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import test_jev_plans as expansion_suite
+
+    world = expansion_suite._world(core=False)
+    world.bodies = {
+        tag: body for tag, body in world.bodies.items() if body.kind not in {"Zealot", "Stalker"}
+    }
+    world.refresh()
+
+    def remove_army(world: Any, controller: JevController, index: int) -> None:
+        if index == 0:  # a controlled post-launch graph state with no surviving army
+            controller.runtime._latches["attack_launched"] = True
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        return options[0], 0.2
+
+    hosted = _hosted_match(world, 60, answer, monkeypatch, tmp_path, remove_army)
+    strategy_facts = _strategy_events(hosted.run)
+    assert strategy_facts
+    assert all("recover" not in event.facts["available_options"] for event in strategy_facts)
+    assert all("recover" not in options for _, options in hosted.asked("strategy"))
+
+
+def test_recovery_priority_removes_unreachable_attack_from_hosted_options(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import test_jev_plans as expansion_suite
+
+    world = expansion_suite._world()
+
+    def deplete(world: Any, controller: JevController, index: int) -> None:
+        if index != 0:
+            return
+        controller.runtime._latches["attack_launched"] = True
+        keep = set(expansion_suite.ZEALOTS[:2])
+        world.bodies = {
+            tag: body
+            for tag, body in world.bodies.items()
+            if body.kind not in {"Zealot", "Stalker"} or tag in keep
+        }
+        for tag in keep:
+            world.bodies[tag].position = (60.0, 60.0)
+        world.refresh()
+
+    hosted = _hosted_match(
+        world, 20, lambda _question, options: (options[0], 0.2),
+        monkeypatch, tmp_path, deplete,
+    )
+    assert all("attack" not in options for _, options in hosted.asked("army_mode"))
+    first = hosted.run.commands("army.recover.move")[0]
+    assert first.game_loop == 0
+
+
+def test_held_recover_posture_rebuilds_army_options_on_the_acceptance_tick(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import test_jev_plans as expansion_suite
+
+    recover_answers = 0
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        nonlocal recover_answers
+        if question_id == "strategy" and "recover" in options and recover_answers == 0:
+            recover_answers += 1
+            return "recover", 0.9
+        if question_id == "army_mode" and "attack" in options:
+            return "attack", 0.9
+        return options[0], 0.2
+
+    def settle_recovery(world: Any, controller: JevController, index: int) -> None:
+        if any(
+            event.reason == STRATEGY_DECISION_REASON
+            and event.facts.get("choice") == "recover"
+            for event in controller.recent_events
+        ):
+            for body in world.bodies.values():
+                if body.kind in {"Zealot", "Stalker"}:
+                    body.position = expansion_suite.START
+                    body.orders = []
+            world.refresh()
+
+    hosted = _hosted_match(
+        expansion_suite._world(core=False), 45, answer, monkeypatch, tmp_path,
+        settle_recovery,
+    )
+    accepted = next(
+        event for event in _strategy_events(hosted.run)
+        if event.facts.get("choice") == "recover"
+    )
+    army = [
+        event for event in hosted.run.events
+        if event.reason == "Army decision source" and event.game_loop == accepted.game_loop
+    ]
+    assert army and "attack" not in army[-1].facts["available_options"]
+    assert any(
+        event.game_loop == accepted.game_loop
+        for event in hosted.run.commands("army.recover.move")
+    )
+
+
+def test_unfinished_only_air_capability_uses_ready_local_rally(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import test_jev_army as army_suite
+
+    unfinished = 6998
+    threat = army_suite._Body(
+        900_800, "Banshee", army_suite._AIR_RAID, Alliance.Enemy,
+        health=10_000.0, flying=True,
+    )
+    world: Any = army_suite._mixed(threat)
+    world.bodies = {
+        tag: body for tag, body in world.bodies.items()
+        if body.kind != "Stalker"
+    }
+    world.bodies[unfinished] = army_suite._Body(
+        unfinished, "Stalker", army_suite.START, progress=0.5
+    )
+    for body in world.bodies.values():
+        if body.kind == "Zealot":
+            body.position = (60.0, 60.0)
+    world.inside = set()
+    world.returning = {}
+    world.gatherers = lambda _tag: []
+    world.refresh()
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        if question_id == "army_mode" and "attack" in options:
+            return "attack", 0.9
+        return options[0], 0.2
+
+    hosted = _hosted_match(world, 12, answer, monkeypatch, tmp_path)
+    assert not hosted.run.commands("army.defend.air.attack")
+    rally = hosted.run.commands("army.rally.move")
+    assert rally and rally[0].game_loop == 0
+    assert not world.bodies[unfinished].orders
+    guard = _node_successes(hosted.run, "army.rally.before_launch")
+    assert guard and guard[0].facts["safety_override_reason"] == "no_capable_defender"
+
+
+def test_attack_without_a_group_falls_back_in_the_same_tick(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import test_jev_plans as expansion_suite
+
+    world = expansion_suite._world()
+    changed: list[int] = []
+    orders_after: dict[int, tuple[tuple[Any, ...], ...]] = {}
+
+    def remove_group(world: Any, controller: JevController, index: int) -> None:
+        accepted = any(
+            event.reason == "Army decision source"
+            and event.facts.get("source") == "typesafe"
+            and event.facts.get("choice") == "attack"
+            for event in controller.recent_events
+        )
+        if accepted and not changed:
+            changed.append(world.state.game_loop)
+            world.bodies = {
+                tag: body
+                for tag, body in world.bodies.items()
+                if body.kind not in {"Zealot", "Stalker"}
+            }
+            world.bodies[6999] = expansion_suite._Body(
+                6999, "Zealot", expansion_suite.START
+            )
+            world.refresh()
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        if question_id == "army_mode" and "attack" in options:
+            return "attack", 0.9
+        return options[0], 0.2
+
+    def after(world: Any, controller: JevController, index: int) -> None:
+        orders_after[world.state.game_loop] = tuple(
+            tuple(body.orders) for body in world.bodies.values() if body.tag == 6999
+        )
+
+    hosted = _hosted_match(
+        world, 50, answer, monkeypatch, tmp_path, remove_group,
+        after_hooks=(after,),
+    )
+    (changed_loop,) = changed
+    fallback = [
+        event
+        for event in hosted.run.events
+        if event.game_loop == changed_loop
+        and event.node_id == "army.recover"
+        and event.kind == "node"
+        and event.status in {"running", "success"}
+    ]
+    assert fallback
+    commands = [
+        event for event in hosted.run.commands("army.recover.move")
+        if event.game_loop == changed_loop
+    ]
+    assert commands and orders_after[changed_loop][0][0][0] == AbilityId.MOVE_MOVE
+    facts = [
+        event
+        for event in hosted.run.events
+        if event.reason == "Army decision source" and event.game_loop == changed_loop
+    ]
+    assert facts and facts[-1].facts["choice"] is None
+
+
+def test_attack_target_lost_before_application_falls_back_in_the_same_tick(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import test_jev_plans as expansion_suite
+
+    target_tag = 900_500
+    world = expansion_suite._world()
+    for tag in expansion_suite.ZEALOTS:
+        world.bodies[tag].position = (43.0, 43.0)
+    world.bodies[target_tag] = expansion_suite._Body(
+        target_tag,
+        "CyberneticsCore",
+        (48.0, 43.0),
+        Alliance.Enemy,
+    )
+    world.expansion_locations_list = []
+    world.refresh()
+    removed: list[int] = []
+
+    def lose_target(world: Any, controller: JevController, index: int) -> None:
+        if index == 0:
+            controller.runtime._visits["army.attack.go"] = {
+                expansion_suite.ENEMY_START: Visit(0, 0.0)
+            }
+        if index == 1 and not removed:
+            assert target_tag in world.bodies
+            removed.append(world.state.game_loop)
+            del world.bodies[target_tag]
+            world.refresh()
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        if question_id == "army_mode":
+            assert "attack" in options
+            return "attack", 0.9
+        return options[0], 0.2
+
+    hosted = _hosted_match(world, 20, answer, monkeypatch, tmp_path, lose_target)
+    (fallback_loop,) = removed
+    ((request_id, offered), *_) = hosted.asked("army_mode")
+    assert "attack" in offered
+    rejected = [
+        event
+        for event in hosted.run.events
+        if event.reason == "Army decision source"
+        and event.game_loop == fallback_loop
+        and event.facts.get("answer_request_id") == request_id
+    ]
+    assert rejected and rejected[-1].facts["reason"] == "stale_answer"
+    rally = [
+        event
+        for event in hosted.run.events
+        if event.game_loop == fallback_loop
+        and event.node_id == "army.rally.before_launch"
+        and event.kind == "node"
+        and event.status == "success"
+    ]
+    assert rally and rally[-1].facts["decision_request_id"] == request_id
+    assert any(
+        event.game_loop == fallback_loop for event in hosted.run.commands("army.rally.move")
+    )
+
+
+@pytest.mark.parametrize("response", ["malformed", "out_of_set", "expired"])
+def test_bad_or_expired_army_answers_use_local_fallback_through_run_match(
+    response: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import test_jev_plans as expansion_suite
+
+    world = expansion_suite._world()
+    release = asyncio.Event()
+    before_tasks: dict[int, frozenset[str]] = {}
+    after_tasks: dict[int, frozenset[str]] = {}
+    after_orders: dict[int, bool] = {}
+
+    async def delayed(question_id: str, options: list[str]) -> Any:
+        if question_id != "army_mode":
+            return options[0], 0.2
+        if response == "expired":
+            await release.wait()
+            return "attack", 0.9
+        if response == "out_of_set":
+            return httpx.Response(
+                200,
+                json=_service_body(question_id, "retreat", 0.9, [*options, "retreat"]),
+            )
+        return httpx.Response(200, json={"answers": {question_id: {"type": "choice"}}})
+
+    def release_late(world: Any, controller: JevController, index: int) -> None:
+        before_tasks[world.state.game_loop] = frozenset(
+            task.id for task in controller.runtime.active_tasks()
+            if task.node_id == "army.attack.go"
+        )
+        if response == "expired" and index == 30:
+            release.set()
+
+    def after(world: Any, controller: JevController, index: int) -> None:
+        loop = world.state.game_loop
+        after_tasks[loop] = frozenset(
+            task.id for task in controller.runtime.active_tasks()
+            if task.node_id == "army.attack.go"
+        )
+        after_orders[loop] = any(
+            body.orders and body.orders[0][0] == AbilityId.ATTACK_ATTACK
+            for body in world.bodies.values()
+            if body.alliance == Alliance.Self and body.kind in {"Zealot", "Stalker"}
+        )
+
+    hosted = _hosted_match(
+        world, 50, delayed, monkeypatch, tmp_path, release_late,
+        after_hooks=(after,),
+    )
+    facts = [event for event in hosted.run.events if event.reason == "Army decision source"]
+    expected = "stale_answer" if response == "expired" else "invalid_response"
+    rejected = [event for event in facts if event.facts.get("reason") == expected]
+    assert rejected
+    assert all(
+        event.facts.get("source") != "typesafe"
+        for event in facts
+        if event.facts.get("reason") == expected
+    )
+    rejected_at = rejected[0].game_loop
+    fallback = [
+        event
+        for event in hosted.run.events
+        if event.game_loop == rejected_at
+        and event.node_id == "army.attack.go"
+        and event.kind == "node"
+        and event.status in {"running", "success"}
+    ]
+    assert fallback  # the local graph acted on the rejection tick
+    commands = [
+        event for event in hosted.run.commands("army.attack.go")
+        if event.game_loop == rejected_at
+    ]
+    continuing = before_tasks[rejected_at] & after_tasks[rejected_at]
+    assert commands or (continuing and after_orders[rejected_at])
 
 
 @pytest.mark.parametrize("failure", ["http_503", "low_confidence"])
