@@ -1597,9 +1597,10 @@ def test_the_adapter_reads_weapon_targets_from_the_game_data() -> None:
 _REPO = Path(__file__).resolve().parents[1]
 _SOURCE_ROOTS = (_REPO / "src", _REPO)
 _JEV_DIRS = (_REPO / "src" / "jev", _REPO / "bots" / "jev")
-#: The one first-party module outside Jev that Jev may import: the SC2 install
-#: path resolver used by the runner's preflight.
-_ALLOWED_FIRST_PARTY = frozenset({"orchestrator.paths"})
+#: The first-party modules outside Jev that Jev may import: the SC2 install path
+#: resolver used by the runner's preflight, and the burnysc2 compatibility shim
+#: for SC2 builds newer than burnysc2's ability table (imports only ``sc2``).
+_ALLOWED_FIRST_PARTY = frozenset({"orchestrator.paths", "orchestrator.sc2_compat"})
 #: The dashboard's read-only router: the one Jev module off the gameplay call graph,
 #: and the only one that may import the web framework (the dashboard's own).
 _DASHBOARD_MODULES = frozenset({"jev.api"})
