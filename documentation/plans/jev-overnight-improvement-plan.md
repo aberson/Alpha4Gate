@@ -1,6 +1,6 @@
 # Phase JON: Jev overnight evaluation and advised improvement
 
-Status: READY FOR BUILD, 2026-10-13. Review/wrap passed; umbrella #346, steps #347-#353. Not implemented or running.
+Status: HELD AT STEP 225, 2026-10-14. Umbrella #346, steps #347-#353. No campaign implementation accepted or running. The original three-round attempt remains held; the bounded prospective simplification below does not pass or erase it.
 **Objective:** Run budget-bounded, resumable Jev improvement campaigns in Observer Rush.
 Owner decisions: $5 maximum per overnight campaign; Observer Rush for games;
 preserve history to reduce specialization; advised iteration before evolution.
@@ -8,6 +8,8 @@ Agent defaults below are explicit and can be revised before implementation.
 Preparation does not authorize an unattended paid launch or a desktop-default change. Read [gate history](../investigations/jev-improvement-gates-2026-10-12.md).
 
 ## 1. What This Feature Does
+
+Proposal: `documentation/plans/jev-overnight-improvement-proposal.html` (publication 1, 2026-10-14).
 
 Run sequential, bounded Jev evaluation campaigns in Observer Rush, preserve exact
 before/after artifacts, and produce a morning report. First prove a frozen-parent
@@ -41,8 +43,8 @@ The existing Python/React toolchain is reused rather than introducing a new serv
   regression checks, but assumes RL bot directories and its own self-play launcher.
   Its viewer is not Observer Rush. Do not invoke it unchanged for Jev.
 
-At review time pacing/recovery/viewer fixes are uncommitted (git status, 2026-10-13). Preserve them and capture
-their bytes explicitly; HEAD alone does not identify the candidate. Existing Jev Steps 201-224 and deferred acceptance remain unchanged. Reserve
+At the original October 13 review, pacing/recovery/viewer fixes were uncommitted; those fixes are now included in ancestor `5eb0367`. Preserve any newer work and capture
+candidate bytes explicitly; HEAD alone does not identify a dirty candidate. Existing Jev Steps 201-224 and deferred acceptance remain unchanged. Reserve
 numeric Steps 225-231 for Phase JON, continuing the master plan numbering.
 The former draft phase-local labels map in order to 225-231.
 
@@ -232,6 +234,31 @@ one-change iterations can run and resume reliably.
 
 ### D7. Persistence and launch contracts (review clarification)
 
+**Implementation ownership (prospective clarification, 2026-10-14):** Step 225
+owns immutable preparation contracts and pure D2/D3 scoring over typed offline
+facts. Its reports must say `unverified/offline`, cannot authorize promotion, and
+must refuse authoritative live verdicts. A caller-authored exit code, timestamp,
+content hash or copyable object seal is never proof that a process ran. Step 226
+owns durable paid-request reservations. Step 227 owns execution records, exact
+run attachment, window lifecycle and resume; only its verifier may supply live
+facts and authoritative reports. It must retain actual process/test output and
+check source, case, attempt, window and archive identity, reject replay and
+invalid critical-test execution, and invalidate epoch cache reuse on control
+disagreement. These are acceptance requirements, not a mandate for a new MAC
+service or a second evidence ledger. Registry changes still require the complete
+D2/D3 verdict. The D7 live records below are the completed controller contract,
+not a claim that Step 225 already authenticates execution.
+
+The original Step 225 checkout and three failed review rounds remain preserved.
+A fresh campaign-only simplification may receive one bounded implementation
+attempt (continuation round 4/10), at most two hours and one required review batch.
+If execution authority is still conflated with offline scoring, hold this attempt
+and resolve that implementation in Step 227; do not add another verifier layer.
+Serialize changes to shared benchmark, runner, launch and v2 tests against JDI.
+JDI paid work still requires reviewed Steps 225-227 and the real Step 228 smoke.
+All paid prerequisite work for the approved JDI investigation shares its single
+$5 cumulative allowance; a new campaign ID does not replenish that allowance.
+
 New records use `schema_version: 1`. Campaign/run/reservation/attempt IDs are random
 UUID4 lowercase 32-hex strings, generated once and retained. Fingerprints are SHA-256
 hex over source bytes; money is nonnegative integer nanodollars (ceiling 5,000,000,000).
@@ -385,11 +412,11 @@ each night after confirming the desktop is available. No paid action occurs in p
 - **Type:** code
 - **Status:** BLOCKED (2026-10-13)
 - **Files:** src/jev/campaign.py; src/jev/campaign_evaluation.py; scripts/run_jev_campaign.py; tests/test_jev_campaign.py; tests/test_jev_campaign_evaluation.py
-- **Existing context:** Sections 2 and 6 define the production boundaries; implement only this step, preserving official J2 panels and desktop defaults.
+- **Existing context:** Sections 2 and 6 define the production boundaries; D7 assigns offline contracts/scoring here and execution authority to 227. Preserve the held original attempt and official J2 panels/desktop defaults.
 - **Issue:** #347
-- **Flags:** --reviewers code --isolation worktree
+- **Flags:** --reviewers deep --isolation worktree
 - **Produces:** `campaign_evaluation.py`, manifest portions of `campaign.py`, focused tests, dry-run/report entrypoint skeleton.
-- **Done when:** Dry-run writes/validates an immutable no-network manifest; tests cover duplicate anchors, missing strata, unchanged candidate, weighted improvement masking race regression, invalid evidence and J2 panel isolation.
+- **Done when:** Dry-run writes/validates an immutable no-network manifest; tests cover duplicate anchors, missing strata, unchanged candidate, weighted improvement masking race regression, invalid evidence and J2 panel isolation. The production CLI labels offline scores unverified and refuses live verdicts/promotion until 227 supplies verified execution facts; caller claims cannot enable an authoritative report.
 - **Depends on:** none
 
 <!-- autofix-applied: 2026-10-13 -->
@@ -415,7 +442,7 @@ each night after confirming the desktop is available. No paid action occurs in p
 - **Issue:** #349
 - **Flags:** --reviewers deep --isolation worktree
 - **Produces:** `campaign.py`, `run_jev_campaign.py`, `launch-jev-overnight.ps1`, additive native-wrapper forwarding, operator guide.
-- **Done when:** Offline lifecycle tests cover pause/restart/no duplicate cases, stale leases, deadline/budget refusal, wrong snapshot and viewer failure. CLI default is dry-run; real runs require explicit start. Code validates exact run attachment and preserves existing desktop defaults.
+- **Done when:** Offline lifecycle tests cover pause/restart/no duplicate cases, stale leases, deadline/budget refusal, wrong snapshot and viewer failure. CLI default is dry-run; real runs require explicit start. Code validates exact run attachment and preserves existing desktop defaults. Controller-owned execution records bind actual process exits and retained output to source/case/attempt/window/run identity; caller wrappers or prior archives cannot be rebound into valid evidence. Missing, skipped, xfailed or zero-collected critical tests cannot pass. Control disagreement invalidates epoch cache reuse; only verified facts can produce authoritative D2/D3 reports.
 - **Depends on:** 226
 
 <!-- autofix-applied: 2026-10-13 -->
@@ -501,3 +528,19 @@ operator Step 228 (#350). Reports: [review](../investigations/jev-overnight-plan
 [wrap](../investigations/jev-overnight-plan-wrap-2026-10-13.md),
 [sync](../investigations/jev-overnight-repo-sync-2026-10-13.md). No paid games
 are required for plan review or offline steps 225-227.
+
+## Appendix
+
+### Decision Inventory
+
+| ID | P/D | Choice | Status |
+|---|---|---|---|
+| P1 | P | $5 maximum; the JDI investigation uses one cumulative allowance including prerequisites | Approved in session, 2026-10-14 |
+| P2 | P | Observer Rush; preserve history; advised improvement before evolution | Recorded operator choices |
+| P3 | P | Work on the approved JDI dependency through 9 a.m. Pacific October 14 | Approved in session |
+| D1 | D | Immutable manifests and weighted D2/D3 panels | Existing agent default |
+| D2 | D | Durable reservation before each paid dispatch; fail closed when billing is unknown | Existing agent default |
+| D3 | D | Sequential controller with exact source/run identity and resumable state | Existing agent default |
+| D4 | D | Step 225 offline contracts; 227 execution authority; no authoritative fixture reports | Clarified 2026-10-14; original hold preserved |
+| D5 | D | One simplified continuation attempt, two hours and one required review batch | Selected 2026-10-14 after independent necessity challenge |
+| D6 | D | Real native smoke, then fixed-candidate observation, then bounded advised work | Existing agent default; live gates remain |
