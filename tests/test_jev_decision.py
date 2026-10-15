@@ -52,7 +52,6 @@ from jev.strategy import (
     EXPANSION_RESPONSE_INTERVAL,
     EXPANSION_RESPONSE_QUESTION,
     HARMLESS_AIR_TYPES,
-    POSTURE_HOLD_SECONDS,
     PRODUCTION_MIX_INTERVAL,
     QUESTION_PRIORITY,
     STARVATION_SECONDS,
@@ -863,6 +862,9 @@ class _FakeRuntime:
     def plans(self) -> tuple[PlanRecord, ...]:
         return tuple(self.records.values())
 
+    def active_tasks(self) -> tuple[Any, ...]:
+        return ()
+
     def plan_slots(self) -> tuple[Any, ...]:
         return ()
 
@@ -1144,30 +1146,26 @@ def test_an_accepted_macro_choice_holds_its_slot_until_the_plan_it_starts() -> N
     assert after.strategy_facts["source"] == "awaiting_answer"  # the next answer decides
 
 
-def test_an_applied_posture_outlives_its_freshness_until_its_hold_expires() -> None:
+def test_an_applied_recovery_outlives_freshness_until_observed_completion() -> None:
     provider = _QuestionProvider({"army_mode": [_army(0.1)], "strategy": [_strategic("recover")]})
     clock = _Clock()
     config = DecisionConfig(timeout=10, max_requests=2)  # no renewal after the answer
     questions = HostedQuestions(provider, config, V2_POLICY, clock=clock)
-    # An army still away from home cannot complete regrouping; hold expiry
-    # remains the backstop when no renewal arrives.
+    # An army still away from home cannot complete regrouping. Recovery is an
+    # executing lifecycle, so the generic posture timer cannot release it.
     def away(i: int) -> Observation:
         obs = _v2_observation(10 + i * 0.5)
         return replace(obs, own_units=tuple(replace(u, position=(90, 90)) for u in obs.own_units))
 
     polled = _drive(questions, _FakeRuntime(), clock, seconds=50, observe=away)
     holding = [n for n, d in enumerate(polled) if d.strategy["army"].choice == "recover"]
-    assert holding and holding == list(range(holding[0], holding[-1] + 1))
+    assert holding and holding[-1] == len(polled) - 1
     ages = [float(polled[n].strategy_facts["response_age_game_seconds"]) for n in holding]
     assert max(ages) > 8  # it outlived the answer's eight-second freshness
     for n in holding:  # a posture also keeps the macro slot from opening a plan
         macro = polled[n].strategy["macro"]
         assert not macro.local and macro.choice is None
-    expiry = polled[holding[-1] + 1]
-    held_for = (len(holding) - 1) * 0.5  # game seconds between the first and last poll
-    assert POSTURE_HOLD_SECONDS - 0.5 <= held_for <= POSTURE_HOLD_SECONDS
-    assert expiry.strategy["army"].local and expiry.strategy["macro"].local
-    assert expiry.strategy_facts["reason"] == "request_limit"  # nothing left to renew it
+        assert polled[n].strategy_facts["posture_hold_until_game_seconds"] is None
 
 
 def test_repeated_recover_answers_release_a_rebuilt_army_and_expose_completion() -> None:

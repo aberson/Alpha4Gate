@@ -913,6 +913,27 @@ class Progress:
 
 
 @dataclass(frozen=True)
+class PointMovementState:
+    """Observed state of a point-targeted move or attack.
+
+    Every queued order must continue the intended action. This keeps arrival,
+    acknowledgement, and completion from accepting a unit whose first or later
+    order sends it somewhere else.
+    """
+
+    arrived: bool
+    orders: Literal["idle", "compatible", "incompatible"]
+
+    @property
+    def acknowledged(self) -> bool:
+        return self.orders == "compatible" or (self.arrived and self.orders == "idle")
+
+    @property
+    def complete(self) -> bool:
+        return self.arrived and self.orders != "incompatible"
+
+
+@dataclass(frozen=True)
 class Lifecycle:
     """Observation-based confirmation rules for one action operation (plan D4).
 
@@ -2274,6 +2295,10 @@ def _unit_command(view: RuntimeView, args: Args, ability: str) -> ActionPlan:
     for unit in actors:
         if isinstance(target, tuple):
             satisfied = not held and distance(unit.position, target) <= arrive_within
+            if ability == MOVE_ABILITY:
+                satisfied = satisfied and point_movement_state(
+                    unit, ability, target, arrive_within
+                ).complete
         else:
             order = unit.orders[0] if unit.orders else None
             satisfied = order is not None and order.ability == ability and order.target == target
@@ -3097,6 +3122,20 @@ def _target_matches(order_target: Target, wanted: Target) -> bool:
     return order_target == wanted
 
 
+def point_movement_state(
+    unit: Entity, ability: str, target: Point, arrive_within: float
+) -> PointMovementState:
+    """Classify one point-targeted action from the complete observed order queue."""
+    arrived = distance(unit.position, target) <= arrive_within
+    if not unit.orders:
+        return PointMovementState(arrived, "idle")
+    compatible = all(
+        order.ability == ability and _target_matches(order.target, target)
+        for order in unit.orders
+    )
+    return PointMovementState(arrived, "compatible" if compatible else "incompatible")
+
+
 def _gather_ack(task: TaskSubject, obs: Observation) -> Ack | None:
     worker = obs.own_entity(task.actor_tag)
     if worker is not None and worker.current_ability in HARVEST_ABILITIES:
@@ -3216,6 +3255,13 @@ def _unit_ack(task: TaskSubject, obs: Observation) -> Ack | None:
     unit = obs.own_entity(task.actor_tag)
     if unit is None:
         return None
+    if isinstance(task.target, tuple) and task.ability == MOVE_ABILITY:
+        state = point_movement_state(
+            unit, task.ability, task.target, decode_arrive_within(task.params)
+        )
+        if state.acknowledged:
+            return Ack()
+        return None
     if isinstance(task.target, tuple):
         if distance(unit.position, task.target) <= decode_arrive_within(task.params):
             return Ack()
@@ -3253,8 +3299,12 @@ def _unit_progress(task: TaskSubject, obs: Observation) -> Progress:
         gap = distance(unit.position, task.target)
         attacking = task.ability == ATTACK_ABILITY
         holding = _ground_enemies_near(task.target, engage_range, obs) if attacking else {}
-        if gap <= engage_range and not holding:
+        state = point_movement_state(unit, task.ability, task.target, engage_range)
+        complete = state.complete if task.ability == MOVE_ABILITY else gap <= engage_range
+        if complete and not holding:
             return Progress("complete", "arrived; the location is clear", gap)
+        if task.ability == MOVE_ABILITY and state.orders == "incompatible":
+            return Progress("ongoing", "incompatible observed order", gap)
         if gap <= engage_range:
             return Progress("ongoing", "clearing the location", gap, holding)
         fighting = _ground_enemies_near(unit.position, engage_range, obs) if attacking else {}

@@ -77,7 +77,9 @@ signature when it arrives; after that it is *applied* and outlives its freshness
   stops being executable before that, it is dropped (``expired_or_changed_state``);
 * an army choice holds the army posture -- and keeps the macro slot from opening a
   plan -- until a newer strategy answer replaces it, it is no longer executable, or
-  :data:`POSTURE_HOLD_SECONDS` of game time pass without a renewal.
+  :data:`POSTURE_HOLD_SECONDS` of game time pass without a renewal. Recovery already
+  in progress is a task lifecycle: it holds until observed completion or an explicit
+  valid replacement instead of expiring on that generic posture timer.
 
 Hosted recovery also completes when a rebuilt army settles at home without a
 visible base threat or new damage/losses (:mod:`jev.recovery`). Equivalent answers
@@ -190,6 +192,7 @@ from jev.decision import (
 )
 from jev.operations import (
     GAS_STRUCTURE_TYPES,
+    MOVE_ABILITY,
     OP_SIGHTING_COUNT_COMPARE,
     OP_START_PLAN,
     OP_STRATEGY_IS,
@@ -999,13 +1002,39 @@ class HostedQuestions:
                     and math.dist(e.position, natural) <= self._natural_radius)
             ) for e in observation.visible_enemies
         )
+        recovery_active = self._posture is not None and self._posture.choice == "recover"
+        recovery_tasks = runtime.active_tasks() if recovery_active else ()
+        army_tags = {unit.tag for unit in army}
+
+        def recovery_orders_compatible(unit: Entity) -> bool:
+            return all(
+                order.ability == MOVE_ABILITY
+                and isinstance(order.target, tuple)
+                and math.dist(order.target, home) <= self._defense_radius
+                for order in unit.orders
+            )
+
+        recovery_orders_blocked = recovery_active and any(
+            not recovery_orders_compatible(unit) for unit in army
+        )
+        recovery_tasks_blocked = recovery_active and any(
+            task.actor_tag in army_tags
+            for task in recovery_tasks
+        )
+        recovery_blocked = recovery_orders_blocked or recovery_tasks_blocked
         self._recovery.update(
             game=observation.game_seconds,
-            active=self._posture is not None and self._posture.choice == "recover",
+            active=recovery_active,
             army=army, home=home, radius=self._defense_radius,
             minimum=max(self._first_wave, int(self._regroup_below)),
-            threatened=home_threat or natural_threat or air_threat,
+            threatened=home_threat or natural_threat or air_threat or recovery_blocked,
         )
+        if recovery_blocked:
+            self._recovery.facts["status"] = "orders_pending"
+            self._recovery.facts["base_threatened"] = home_threat or natural_threat or air_threat
+            self._recovery.facts["orders_pending"] = True
+        else:
+            self._recovery.facts["orders_pending"] = False
         options = self._strategy_options(runtime, launched)
         size = len(army)
         bucket = (
@@ -1212,7 +1241,8 @@ class HostedQuestions:
             if request.question_id == "army_mode":
                 self._army = None
             elif request.question_id == "strategy":
-                self._fall_back()
+                if not self._executing_recovery():
+                    self._fall_back()
             else:  # a failed refresh never releases a choice still in force
                 self._refused(request, reason, None)
             return
@@ -1252,7 +1282,8 @@ class HostedQuestions:
         elif accepted:
             self._apply(answer, request, game)
         else:
-            self._fall_back()
+            if not self._executing_recovery():
+                self._fall_back()
 
     def _refused(self, request: _Request, reason: str, answer: str | None) -> None:
         """An execution reply that was not accepted (stale, low confidence, invalid,
@@ -1281,6 +1312,14 @@ class HostedQuestions:
             self._macro, self._posture = held, None
         else:
             self._macro, self._posture = None, held
+
+    def _executing_recovery(self) -> bool:
+        """Whether a recovery answer is still waiting for observed completion."""
+        return (
+            self._posture is not None
+            and self._posture.choice == "recover"
+            and not self._recovery.completed
+        )
 
     def _fall_back(self) -> None:
         """Both slots return to the local fallback (graph logic) until the next answer."""
@@ -1323,9 +1362,13 @@ class HostedQuestions:
             elif held.choice not in options:  # newly unexecutable before it applied
                 self._fall_back()
                 strategy.reason = EXPIRED_REASON
+        posture_expired = (
+            self._posture is not None
+            and self._posture.choice != "recover"
+            and game - self._posture.accepted_game > POSTURE_HOLD_SECONDS
+        )
         if self._posture is not None and (
-            game - self._posture.accepted_game > POSTURE_HOLD_SECONDS
-            or self._posture.choice not in options
+            posture_expired or self._posture.choice not in options
         ):
             self._fall_back()
             strategy.reason = EXPIRED_REASON
@@ -1587,7 +1630,9 @@ class HostedQuestions:
         strategy_facts["in_force_request_id"] = None if held is None else held.request.request_id
         strategy_facts["slots"] = {slot: holding.facts() for slot, holding in slots.items()}
         strategy_facts["posture_hold_until_game_seconds"] = (
-            None if self._posture is None else self._posture.accepted_game + POSTURE_HOLD_SECONDS
+            None
+            if self._posture is None or self._posture.choice == "recover"
+            else self._posture.accepted_game + POSTURE_HOLD_SECONDS
         )
         strategy_facts["started_plan"] = None if self._started is None else dict(self._started)
         strategy_facts["recovery_progress"] = dict(self._recovery.facts)

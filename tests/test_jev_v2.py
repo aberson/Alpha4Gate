@@ -480,6 +480,10 @@ def test_assignments_follow_the_node_that_takes_charge_and_are_pruned() -> None:
     first = runtime.tick(_observation(1.0, units=(at_point, far, held)))
     assert runtime.assigned_to("lane.move") == {7001, 7002}  # satisfied, or a new task
     assert runtime.assigned_to("other.move") == {7003}  # the holding node stays in charge
+    lane_move = next(
+        e for e in first.events if e.node_id == "lane.move" and e.kind == "node"
+    )
+    assert (lane_move.facts["satisfied"], lane_move.facts["blocked"]) == (1, 1)
     (group,) = [e for e in first.events if e.node_id == "probe.group" and e.kind == "node"]
     assert group.facts["tags"] == ["7001", "7002"]
     runtime.tick(_observation(2.0, units=(far, held)))  # 7001 is gone
@@ -1211,17 +1215,26 @@ class _HostedLauncher(_Launcher):
     ``--realtime``)."""
 
     def __init__(
-        self, world: Any, steps: int, hook: Any, wall: _Wall, game_per_wall: float = 1.0
+        self,
+        world: Any,
+        steps: int,
+        hook: Any,
+        wall: _Wall,
+        game_per_wall: float = 1.0,
+        after_step: Any = None,
     ) -> None:
         super().__init__(world, steps, hook)
         self.wall = wall
         self.wall_step = _STEP_SECONDS / game_per_wall
+        self.after_step = after_step
 
     async def _run(self, bot: JevBot, controller: JevController) -> None:
         for index in range(self.steps):
             if self.before_step is not None:
                 self.before_step(self.world, controller, index)
             await bot.on_step(index)
+            if self.after_step is not None:
+                self.after_step(self.world, controller, index)
             if self.world.left:
                 break
             self.world.advance()
@@ -1275,6 +1288,7 @@ def _hosted_match(
     max_requests: int = 450,
     game_per_wall: float = 1.0,
     bundle: Any = None,
+    after_step: Any = None,
 ) -> _Hosted:
     """Play ``world`` through run_match with the Typesafe provider over a scripted
     HTTP transport: ``answer(question_id, options)`` returns ``(choice, confidence)``
@@ -1310,7 +1324,9 @@ def _hosted_match(
             hook(world, controller, index)
 
     wall = _Wall()
-    launcher = _HostedLauncher(world, steps, run.hook(every), wall, game_per_wall)
+    launcher = _HostedLauncher(
+        world, steps, run.hook(every), wall, game_per_wall, after_step=after_step
+    )
     options = MatchOptions(decision_provider="typesafe", decision_max_requests=max_requests)
     chosen = load_v2_policy() if bundle is None else bundle  # a candidate policy, if given
     outcome = run_match(options, chosen, launcher=launcher, run_root=run_root, clock=wall)
@@ -1348,7 +1364,7 @@ def test_each_strategic_choice_selects_its_graph_branch(
             return branch.choice, 0.9
         return options[0], 0.2  # army intent below the floor: the local graph decides
 
-    hosted = _hosted_match(expansion_suite._world(core=False), 40, answer, monkeypatch, tmp_path)
+    hosted = _hosted_match(expansion_suite._world(core=False), 50, answer, monkeypatch, tmp_path)
     run = hosted.run
     assert hosted.outcome.exit_code == 0
     ((request_id, offered), *_) = hosted.asked("strategy")
@@ -1361,9 +1377,14 @@ def test_each_strategic_choice_selects_its_graph_branch(
     # choice's guard ever does.
     passed = _node_successes(run, branch.guard, after=applied_at - 1)
     assert passed
-    assert {(e.facts["source"], e.facts["request_id"]) for e in passed} == {
-        ("typesafe", request_id)
-    }
+    assert (passed[0].facts["source"], passed[0].facts["request_id"]) == (
+        "typesafe",
+        request_id,
+    )
+    if branch.choice != "recover":
+        assert {(e.facts["source"], e.facts["request_id"]) for e in passed} == {
+            ("typesafe", request_id)
+        }
     for other in _V2_BRANCHES:
         if other.choice != branch.choice:
             assert _node_successes(run, other.guard) == [], other.choice
@@ -1442,6 +1463,412 @@ def test_each_strategic_choice_selects_its_graph_branch(
     assert _node_successes(run, "army.attack.local", after=applied_at - 1) == []
     attacking = [t for t in runtime.active_tasks() if t.node_id == "army.attack.go"]
     assert attacking or [e for e in run.commands("army.attack.go") if e.game_loop >= applied_at]
+
+
+@pytest.mark.parametrize("conflict", ["already_home", "in_flight", "queued_attack"])
+def test_recovery_replaces_conflicting_attack_orders_before_success(
+    conflict: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Capture the production adapter result before the mock world advances.
+
+    Arrival never acknowledges an ATTACK queue as recovery. Both a conflict present
+    when recovery begins and one injected after its MOVE tasks start are replaced
+    through the same bounded task lifecycle.
+    """
+    import test_jev_plans as expansion_suite
+
+    world = expansion_suite._world(core=False)
+    injected: list[int] = []
+    replacements: dict[int, tuple[int, Any]] = {}
+    unsafe_success: list[int] = []
+    unsafe_acknowledgement: list[int] = []
+    target = (120.5, 120.5)
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        return ("recover", 0.9) if question_id == "strategy" else (options[0], 0.2)
+
+    def inject(world: Any, controller: JevController, index: int) -> None:
+        if injected:
+            if conflict == "queued_attack" and not replacements:
+                for body in world.own("Zealot"):
+                    body.position = (80.0, 80.0)
+                    body.orders = [
+                        (AbilityId.MOVE_MOVE, (36.16, 36.16), 0.0),
+                        (AbilityId.ATTACK_ATTACK, target, 0.0),
+                    ]
+                world.refresh()
+            return
+        recovery = [
+            task for task in controller.runtime.active_tasks()
+            if task.node_id == "army.recover.move"
+        ]
+        posture = controller.runtime.strategy("army")
+        ready = bool(recovery) if conflict != "already_home" else posture.choice == "recover"
+        if not ready:
+            return
+        injected.append(world.state.game_loop)
+        for body in world.own("Zealot"):
+            body.position = (36.16, 36.16) if conflict == "already_home" else (80.0, 80.0)
+            body.orders = (
+                [
+                    (AbilityId.MOVE_MOVE, (36.16, 36.16), 0.0),
+                    (AbilityId.ATTACK_ATTACK, target, 0.0),
+                ]
+                if conflict == "queued_attack"
+                else [(AbilityId.ATTACK_ATTACK, target, 0.0)]
+            )
+        world.refresh()
+
+    def capture(world: Any, controller: JevController, index: int) -> None:
+        if not injected:
+            return
+        recovery = [
+            task for task in controller.runtime.active_tasks()
+            if task.node_id == "army.recover.move"
+        ]
+        if conflict == "already_home" and not replacements:
+            unsafe_acknowledgement.extend(
+                task.actor_tag for task in recovery if task.status == "running"
+            )
+        if (
+            not replacements
+            and not recovery
+            and any(
+                event.game_loop == world.state.game_loop
+                and event.node_id == "army.recover.move"
+                and event.kind == "node"
+                and event.status == "success"
+                for event in controller.recent_events
+            )
+            and all(
+                any(order[0] == AbilityId.ATTACK_ATTACK for order in body.orders)
+                for body in world.own("Zealot")
+            )
+        ):
+            unsafe_success.append(world.state.game_loop)
+        for loop, command in world.sent:
+            if (
+                loop >= injected[0]
+                and command.ability == AbilityId.MOVE_MOVE
+                and command.unit.tag in expansion_suite.ZEALOTS
+                and command.unit.tag not in replacements
+            ):
+                body = world.bodies[command.unit.tag]
+                replacements[command.unit.tag] = (loop, tuple(body.orders))
+
+    hosted = _hosted_match(
+        world, 60, answer, monkeypatch, tmp_path, inject, after_step=capture
+    )
+    assert hosted.outcome.exit_code == 0
+    assert unsafe_success == []
+    assert unsafe_acknowledgement == []
+    assert injected and set(replacements) == set(expansion_suite.ZEALOTS)
+    assert max(loop for loop, _ in replacements.values()) - injected[0] <= 80
+    for _, orders in replacements.values():
+        assert orders and orders[0][0] == AbilityId.MOVE_MOVE
+        assert all(order[0] == AbilityId.MOVE_MOVE for order in orders)
+    false_success = [
+        event for event in hosted.run.tasks("army.recover.move", "succeeded")
+        if event.game_loop == injected[0]
+    ]
+    assert false_success == []
+
+
+def test_recovery_preserves_a_compatible_move_without_reissuing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A matching MOVE stays acknowledged through a long transit without order spam."""
+    import test_jev_plans as expansion_suite
+
+    world = expansion_suite._world(core=False)
+    injected: list[int] = []
+    running: list[int] = []
+    transit_steps = 18  # several one-second retry intervals at four loops per step
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        return ("recover", 0.9) if question_id == "strategy" else (options[0], 0.2)
+
+    def transit(world: Any, controller: JevController, index: int) -> None:
+        tasks = [
+            task for task in controller.runtime.active_tasks()
+            if task.node_id == "army.recover.move" and isinstance(task.target, tuple)
+        ]
+        if len(tasks) != len(expansion_suite.ZEALOTS):
+            return
+        if not injected:
+            injected.append((world.state.game_loop, index))
+        _, started = injected[0]
+        targets = {task.actor_tag: task.target for task in tasks}
+        for body in world.own("Zealot"):
+            target = targets[body.tag]
+            body.position = (80.0, 80.0) if index < started + transit_steps else target
+            body.orders = [(AbilityId.MOVE_MOVE, target, 0.0)]
+        world.refresh()
+        if index < started + transit_steps and all(task.status == "running" for task in tasks):
+            running.append(world.state.game_loop)
+
+    hosted = _hosted_match(world, 80, answer, monkeypatch, tmp_path, transit)
+    assert hosted.outcome.exit_code == 0 and injected
+    injected_loop, _ = injected[0]
+    transit_end = injected_loop + transit_steps * STEP_LOOPS
+    repeated = [
+        command for loop, command in world.sent
+        if injected_loop < loop < transit_end
+        and command.ability == AbilityId.MOVE_MOVE
+        and command.unit.tag in expansion_suite.ZEALOTS
+    ]
+    assert repeated == []
+    assert len(running) >= transit_steps - 2
+    assert any(
+        event.game_loop > running[-1]
+        for event in hosted.run.tasks("army.recover.move", "succeeded")
+    )
+
+
+def test_pending_recovery_move_accepts_compatible_observation_without_retry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A pending MOVE that appears in SC2 returns to running without dispatch."""
+    import test_jev_plans as expansion_suite
+
+    world = expansion_suite._world(core=False)
+    pending_loop: list[int] = []
+    observed_running: list[bool] = []
+    target_by_actor: dict[int, tuple[float, float]] = {}
+    attack_target = (120.5, 120.5)
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        return ("recover", 0.9) if question_id == "strategy" else (options[0], 0.2)
+
+    def transition(world: Any, controller: JevController, index: int) -> None:
+        tasks = [
+            task for task in controller.runtime.active_tasks()
+            if task.node_id == "army.recover.move" and isinstance(task.target, tuple)
+        ]
+        if len(tasks) != len(expansion_suite.ZEALOTS) or pending_loop:
+            return
+        target_by_actor.update({task.actor_tag: task.target for task in tasks})
+        pending = all(task.status == "pending" for task in tasks)
+        for body in world.own("Zealot"):
+            body.position = (80.0, 80.0)
+            body.orders = [
+                (AbilityId.MOVE_MOVE, target_by_actor[body.tag], 0.0)
+                if pending
+                else (AbilityId.ATTACK_ATTACK, attack_target, 0.0)
+            ]
+        world.refresh()
+        if pending:
+            pending_loop.append(world.state.game_loop)
+
+    def capture(world: Any, controller: JevController, index: int) -> None:
+        if not pending_loop or world.state.game_loop != pending_loop[0]:
+            return
+        tasks = [
+            task for task in controller.runtime.active_tasks()
+            if task.node_id == "army.recover.move"
+        ]
+        observed_running.append(bool(tasks) and all(task.status == "running" for task in tasks))
+
+    hosted = _hosted_match(
+        world, 80, answer, monkeypatch, tmp_path, transition, after_step=capture
+    )
+    assert hosted.outcome.exit_code == 0 and pending_loop
+    assert observed_running == [True]
+    assert [
+        event for event in hosted.run.commands("army.recover.move")
+        if event.game_loop == pending_loop[0]
+    ] == []
+
+
+def test_recovery_conflict_retries_are_bounded_and_hold_past_posture_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Persistent ATTACK orders cannot acknowledge, settle, or escape bounded retries."""
+    import test_jev_plans as expansion_suite
+
+    world = expansion_suite._world(core=False)
+    injected: list[int] = []
+    target = (120.5, 120.5)
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        return ("recover", 0.9) if question_id == "strategy" else (options[0], 0.2)
+
+    def contradict(world: Any, controller: JevController, index: int) -> None:
+        if controller.runtime.strategy("army").choice != "recover":
+            return
+        if not injected:
+            injected.append(world.state.game_loop)
+        for body in world.own("Zealot"):
+            body.position = (36.16, 36.16)
+            body.orders = [(AbilityId.ATTACK_ATTACK, target, 0.0)]
+        world.refresh()
+
+    hosted = _hosted_match(world, 240, answer, monkeypatch, tmp_path, contradict)
+    assert hosted.outcome.exit_code == 0 and injected
+    cutoff = injected[0] + round(31.0 * GAME_LOOPS_PER_SECOND)
+    held = [
+        event for event in _strategy_events(hosted.run)
+        if event.game_loop >= cutoff
+    ]
+    assert held
+    assert {event.facts["source"] for event in held} == {"typesafe"}
+    assert {event.facts["choice"] for event in held} == {"recover"}
+    assert {event.facts["posture_hold_until_game_seconds"] for event in held} == {None}
+    assert all(event.facts["recovery_progress"]["status"] != "completed" for event in held)
+    assert all(event.facts["recovery_progress"]["orders_pending"] is True for event in held)
+
+    commands = hosted.run.commands("army.recover.move")
+    attempts: dict[str, list[Event]] = {}
+    for event in commands:
+        assert event.task_id is not None
+        attempts.setdefault(event.task_id, []).append(event)
+    assert attempts and hosted.run.tasks("army.recover.move", "failed")
+    for events in attempts.values():
+        assert len(events) <= 4
+        assert [event.facts["attempt"] for event in events] == list(range(1, len(events) + 1))
+        assert all(
+            later.game_seconds - earlier.game_seconds >= 1.0
+            for earlier, later in zip(events, events[1:], strict=False)
+        )
+    assert hosted.run.tasks("army.recover.move", "succeeded") == []
+    assert [
+        event for event in hosted.run.commands("army.attack.go")
+        if event.game_loop >= injected[0]
+    ] == []
+
+
+def test_recovery_retry_yields_to_current_emergency_defense(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A due stale recovery retry cannot reserve actors ahead of the selected defense."""
+    import test_jev_plans as expansion_suite
+
+    world = expansion_suite._world(core=False)
+    injected: list[int] = []
+    due_loop: list[int] = []
+    target = (120.5, 120.5)
+
+    def answer(question_id: str, options: list[str]) -> tuple[str, float]:
+        return ("recover", 0.9) if question_id == "strategy" else (options[0], 0.2)
+
+    def conflict_then_raid(world: Any, controller: JevController, index: int) -> None:
+        tasks = [
+            task for task in controller.runtime.active_tasks()
+            if task.node_id == "army.recover.move"
+        ]
+        if not tasks:
+            return
+        if not injected:
+            injected.append(world.state.game_loop)
+        for body in world.own("Zealot"):
+            body.position = (80.0, 80.0)
+            body.orders = [(AbilityId.ATTACK_ATTACK, target, 0.0)]
+        deadlines = [task.deadline_game_seconds for task in tasks]
+        now = world.state.game_loop / GAME_LOOPS_PER_SECOND
+        if (
+            not due_loop
+            and all(task.status == "pending" for task in tasks)
+            and all(deadline is not None and deadline <= now for deadline in deadlines)
+        ):
+            due_loop.append(world.state.game_loop)
+            world.enemy("Marine", (33.0, 36.0))
+        world.refresh()
+
+    hosted = _hosted_match(world, 70, answer, monkeypatch, tmp_path, conflict_then_raid)
+    assert hosted.outcome.exit_code == 0 and injected and due_loop
+    defended = hosted.run.commands("army.defend.attack")
+    assert defended
+    assert min(event.game_loop for event in defended) == due_loop[0]
+    defended_onset = [event for event in defended if event.game_loop == due_loop[0]]
+    assert {
+        int(tag)
+        for event in defended_onset
+        if event.action is not None
+        for tag in event.action["actor_tags"]
+    } == set(expansion_suite.ZEALOTS)
+    recovery_on_defense_tick = [
+        event for event in hosted.run.commands("army.recover.move")
+        if event.game_loop == due_loop[0]
+    ]
+    assert recovery_on_defense_tick == []
+
+
+@pytest.mark.parametrize("refresh", ["low_confidence", "http_503"])
+def test_unfinished_recovery_survives_refusal_then_hands_off_to_valid_pressure(
+    refresh: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Only the accepted replacement retires unfinished recovery tasks."""
+    import test_jev_plans as expansion_suite
+
+    world = expansion_suite._world(core=False)
+    strategy_answers = 0
+    recover_loops: list[int] = []
+    recover_after_refusal: list[int] = []
+    pressure_active: list[tuple[int, tuple[str, ...]]] = []
+
+    def answer(question_id: str, options: list[str]) -> Any:
+        nonlocal strategy_answers
+        if question_id != "strategy":
+            return options[0], 0.2
+        strategy_answers += 1
+        if strategy_answers == 1:
+            return "recover", 0.9
+        if strategy_answers == 2:
+            if refresh == "http_503":
+                return httpx.Response(503)
+            return "recover", 0.2
+        return "pressure", 0.9
+
+    def keep_unfinished(world: Any, controller: JevController, index: int) -> None:
+        choice = controller.runtime.strategy("army").choice
+        if choice == "pressure":
+            pressure_active.append(
+                (
+                    world.state.game_loop,
+                    tuple(task.node_id for task in controller.runtime.active_tasks()),
+                )
+            )
+        if choice != "recover":
+            return
+        recover_loops.append(world.state.game_loop)
+        if strategy_answers >= 2:
+            recover_after_refusal.append(world.state.game_loop)
+        targets = {
+            task.actor_tag: task.target
+            for task in controller.runtime.active_tasks()
+            if task.node_id == "army.recover.move" and isinstance(task.target, tuple)
+        }
+        for body in world.own("Zealot"):
+            body.position = (80.0, 80.0)
+            body.orders = (
+                [(AbilityId.MOVE_MOVE, targets[body.tag], 0.0)]
+                if body.tag in targets
+                else [(AbilityId.ATTACK_ATTACK, (90.0, 90.0), 0.0)]
+            )
+        world.refresh()
+
+    hosted = _hosted_match(world, 140, answer, monkeypatch, tmp_path, keep_unfinished)
+    assert hosted.outcome.exit_code == 0 and strategy_answers >= 3 and recover_loops
+    assert recover_after_refusal
+    pressure = [
+        event for event in _strategy_events(hosted.run)
+        if event.facts["choice"] == "pressure"
+    ]
+    assert pressure, [
+        (event.facts["choice"], event.facts["reason"], event.game_loop)
+        for event in _strategy_events(hosted.run)
+    ][-20:]
+    assert pressure_active
+    assert all(
+        "army.recover.move" not in active for _, active in pressure_active
+    )
+    assert pressure and min(event.game_loop for event in pressure) >= max(recover_loops)
+    assert hosted.run.commands("army.attack.go")
+    assert hosted.run.controller is not None
+    assert all(
+        task.node_id != "army.recover.move"
+        for task in hosted.run.controller.runtime.active_tasks()
+    )
 
 
 def test_emergency_defense_runs_while_a_request_is_pending() -> None:

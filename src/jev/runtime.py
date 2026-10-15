@@ -191,6 +191,7 @@ from jev.operations import (
     EXECUTION_GUARDS,
     EXPANSION_STRUCTURE,
     MAX_TRACKED_FINISHES,
+    MOVE_ABILITY,
     OP_BUILD,
     OP_BUILD_EXPANSION,
     OP_BUILD_GAS,
@@ -219,10 +220,12 @@ from jev.operations import (
     TrackedMemory,
     Visit,
     compile_filter,
+    decode_arrive_within,
     decode_site,
     distance,
     execution_points,
     matching_sightings,
+    point_movement_state,
     resolve_args,
     tracked_nodes,
 )
@@ -1370,6 +1373,10 @@ class JevRuntime:
         self._path_requests = {}
         self._tick_spends = []
         self._update_tasks(observation)
+        if self._strategy["army"].choice not in (None, "recover"):
+            for task in list(self._active.values()):
+                if task.node_id == "army.recover.move":
+                    self._finish(task, "cancelled", "recovery superseded by accepted strategy")
         self._lapse_give_ups(observation)
         if self._army_mode is not None:
             for task in list(self._active.values()):
@@ -1964,7 +1971,12 @@ class JevRuntime:
     def _update_tasks(self, observation: Observation) -> None:
         now = observation.game_seconds
         for task in list(self._active.values()):
-            if task.status in UNACKNOWLEDGED_STATUSES:
+            observe_pending_move = (
+                task.status == "pending"
+                and task.ability == MOVE_ABILITY
+                and isinstance(task.target, tuple)
+            )
+            if task.status == "issued" or observe_pending_move:
                 if observation.own_entity(task.actor_tag) is None:
                     self._fail(task, "lost", "actor lost")
                     continue
@@ -1973,10 +1985,14 @@ class JevRuntime:
                 if target_lost is not None:
                     self._fail(task, "lost", target_lost)
                     continue
-            if task.status == "issued":
+            if task.status in UNACKNOWLEDGED_STATUSES:
                 ack = task.lifecycle.acknowledge(task.subject(), observation)
                 if ack is None:
-                    if now - task.issued_at >= self._life.ack_timeout_seconds - _TIME_EPSILON:
+                    if (
+                        task.status == "issued"
+                        and now - task.issued_at
+                        >= self._life.ack_timeout_seconds - _TIME_EPSILON
+                    ):
                         self._unacknowledged(task, now)
                     continue
                 if task.lifecycle.completes_on_ack:
@@ -2069,6 +2085,12 @@ class JevRuntime:
         now = observation.game_seconds
         for task in list(self._active.values()):
             if task.root_id != frame.root_id or task.status != "pending":
+                continue
+            # Point MOVE retries must pass through the current policy branch.  A
+            # stale retry must not reserve an actor before a higher-priority
+            # branch can preempt it, and the selected branch rechecks the latest
+            # observed order before issuing anything.
+            if task.ability == MOVE_ABILITY and isinstance(task.target, tuple):
                 continue
             if task.next_attempt_at is not None and now < task.next_attempt_at - _TIME_EPSILON:
                 continue
@@ -2268,11 +2290,20 @@ class JevRuntime:
         for intent in plan.intents:
             key = f"{node.id}|{intent.semantic}"
             if key in self._by_intent:
-                active += 1
-                if self._track_assignments:  # this node's own task holds the actor
-                    self._assign(self._active[self._by_intent[key]].actor_tag, node.id)
-                continue
+                task = self._active[self._by_intent[key]]
+                if self._reconcile_point_movement(task, frame, view.observation, now):
+                    active += 1
+                    if self._track_assignments:  # this node's own task holds the actor
+                        self._assign(task.actor_tag, node.id)
+                    continue
             if intent.satisfied and key not in self._gave_up_keys:
+                refusal = self._refusal(node, frame, view, key, intent, plan.preempt, now)
+                if refusal is not None:
+                    blocked.append(refusal)
+                    continue
+                holder = self._holder_of(intent.actor_tag)
+                if holder is not None:
+                    self._finish(holder, "cancelled", f"preempted by {node.id}")
                 satisfied += 1
                 self._record_visit(node.id, intent.target)  # an actor is already there
                 self._assign_if_free(intent.actor_tag, node.id)
@@ -2343,6 +2374,67 @@ class JevRuntime:
         if not plan.intents:
             return _NodeResult("failure", "nothing to act on", code=code)
         return _NodeResult("success", f"{satisfied} actor(s) already in the intended state")
+
+    def _reconcile_point_movement(
+        self,
+        task: _TaskRecord,
+        frame: _RootFrame,
+        observation: Observation,
+        now: float,
+    ) -> bool:
+        """Reissue an active point action whose observed queue contradicts it."""
+        if task.ability != MOVE_ABILITY or not isinstance(task.target, tuple):
+            return True
+        unit = observation.own_entity(task.actor_tag)
+        if unit is None:
+            return True
+        state = point_movement_state(
+            unit, task.ability, task.target, decode_arrive_within(task.params)
+        )
+        if state.acknowledged:
+            return True
+        conflict = state.orders == "incompatible"
+        reason = "incompatible observed order" if conflict else "movement not acknowledged"
+        if task.attempts > self._life.max_retries:
+            self._fail(
+                task,
+                "unacknowledged",
+                f"{reason} after {task.attempts} attempts",
+            )
+            return False
+        due = max(
+            task.issued_at + self._life.retry_interval_seconds,
+            task.next_attempt_at or task.issued_at,
+        )
+        if now < due - _TIME_EPSILON:
+            task.status = "pending"
+            task.next_attempt_at = due
+            task.reason = f"{reason}; retry scheduled"
+            self._task_event(task)
+            return True
+        if task.actor_tag in self._reserved_actors:
+            return True
+        owner = self._plan_owner_elsewhere(task.actor_tag, frame.root_id)
+        if owner is not None:
+            task.status = "pending"
+            task.next_attempt_at = now
+            task.reason = f"actor held by plan {owner[0]} ({owner[1]})"
+            self._task_event(task)
+            return True
+        if frame.commands_used >= frame.command_allowance:
+            self._command_budget_breach(task.node_id, frame)
+            task.status = "pending"
+            task.next_attempt_at = now
+            task.reason = f"{reason}; retry waiting for command budget"
+            self._task_event(task)
+            return True
+        task.status = "issued"
+        task.attempts += 1
+        task.issued_at = now
+        task.next_attempt_at = None
+        task.reason = f"{reason}; retry attempt {task.attempts}"
+        self._dispatch(task, frame)
+        return True
 
     def _refusal(
         self,
