@@ -1,0 +1,1331 @@
+{
+  "status": "NEEDS-WORK; unaccepted; no root application",
+  "candidate_commit": "f027bc2",
+  "candidate_branch": "fix/jev-order-repair",
+  "rounds": {
+    "4": {
+      "aggregate": {
+        "timestamp": "2026-10-15T15-01-21",
+        "plan_step": "C:/Users/abero/dev/Alpha4Gate/docs/plans/master_plan.md:232",
+        "skill_version": "v3",
+        "invocation": {
+          "reviewers_flag": "code",
+          "model_overrides": {},
+          "force_runtime": false,
+          "url": null,
+          "start_cmd": null,
+          "runtime_downgraded": false,
+          "runtime_downgrade_reason": null
+        },
+        "lens_verdicts": [
+          {
+            "lens_id": "correctness",
+            "model_tier": "sonnet",
+            "authority": "independent read-only review of the frozen round-4 increment",
+            "coverage_claim": "Reviewed the complete diff, stated increment, plan, mechanical receipts, changed functions, task lifecycle, recovery decision flow, adapter order mapping, policy branch, and production-entry test fixtures.",
+            "findings": [
+              {
+                "severity": "Block",
+                "file_line": "src/jev/runtime.py:2389",
+                "excerpt": "task.status = \"pending\"\n            task.next_attempt_at = due",
+                "rationale": "A transient conflicting order moves an active MOVE task to pending. If the previously issued MOVE appears in the next observation, _reconcile_point_movement returns without restoring the task; _update_tasks acknowledges only issued tasks, and _issue_retries dispatches every due pending task without checking its now-compatible order. This sends a duplicate command despite compatible movement, contrary to the increment's compatible-order preservation requirement."
+              }
+            ],
+            "overall_verdict": "NEEDS-WORK"
+          },
+          {
+            "lens_id": "bugs",
+            "model_tier": "sonnet",
+            "authority": "independent read-only review of frozen round-4 diff and relevant production dependencies",
+            "coverage_claim": "Traced complete changed order-classification, task-lifecycle, strategy-settlement and production adapter paths, including retry ordering, ownership, policy guards and regression fixtures. Lint pre-pass has no findings.",
+            "findings": [
+              {
+                "severity": "FYI",
+                "file_line": "src/jev/runtime.py:2389",
+                "excerpt": "task.status = \"pending\"",
+                "rationale": "Demoted per rule 2: A conflicting recovery MOVE observed before its retry interval becomes pending. On a later tick, _issue_retries dispatches that pending MOVE before evaluating the army selector and without rechecking its orders or guard (runtime.py:1398, 2071-2088). If a home threat appears when the retry is due, the MOVE reserves the actor, so _refusal blocks the higher-priority defending ATTACK for that tick (runtime.py:2424; policy army.defend.attack has preempt=true). If the original MOVE became compatible meanwhile, this path still sends an unnecessary repeat command."
+              },
+              {
+                "severity": "Block",
+                "file_line": "src/jev/strategy.py:1042",
+                "excerpt": "threatened=home_threat or natural_threat or air_threat or recovery_blocked,",
+                "rationale": "This prevents settlement while orders or tasks conflict, but _revalidate independently expires a recover posture after POSTURE_HOLD_SECONDS (strategy.py:1367-1372), regardless of recovery_blocked. A conflict lasting past 30 game seconds therefore releases the override while it remains unresolved. With enough combat units, army.recover.few fails and the local attack branch can preempt the unfinished recovery."
+              }
+            ],
+            "overall_verdict": "NEEDS-WORK"
+          },
+          {
+            "lens_id": "security",
+            "model_tier": "sonnet",
+            "authority": "Independent read-only security review of the frozen order-repair increment",
+            "coverage_claim": "Reviewed the complete diff, required inputs, changed functions, relevant ownership and command paths, observation validation, hosted-choice validation, and test fixtures for injection, unsafe configuration, secret disclosure, path traversal, access-control gaps, and unvalidated production input. This verdict covers the recorded increment, not all of Step 232.",
+            "findings": [],
+            "overall_verdict": "PASS"
+          },
+          {
+            "lens_id": "test-quality",
+            "model_tier": "sonnet",
+            "authority": "Independent read-only test-quality review of the frozen order-repair increment",
+            "coverage_claim": "Reviewed the full diff, hosted test fixtures, and relevant movement, task, ownership, and recovery lifecycles. Keep the production-entry test path; rewrite both new recovery tests to cover the critical cases below. The lint sidecar has no test findings.",
+            "findings": [
+              {
+                "severity": "Block",
+                "file_line": "tests/test_jev_v2.py:1510",
+                "excerpt": "body.position = (36.16, 36.16)",
+                "rationale": "Rewrite the in_flight case. Every conflict variant places every actor at the recovery rally point before presenting the conflicting order. Waiting until a MOVE task exists changes injection timing but never tests an incompatible order while the actor is outside the arrival radius, an explicit requirement of this increment."
+              },
+              {
+                "severity": "Block",
+                "file_line": "tests/test_jev_v2.py:1565",
+                "excerpt": "event for event in hosted.run.tasks(\"army.recover.move\", \"succeeded\")",
+                "rationale": "Rewrite the negative lifecycle assertion. It excludes immediate success but never checks acknowledgement. A MOVE task could incorrectly enter running on an incompatible ATTACK queue, then reconcile later, and this test would pass. Assert that each affected task remains unacknowledged until a compatible order is observed."
+              },
+              {
+                "severity": "Block",
+                "file_line": "tests/test_jev_v2.py:1549",
+                "excerpt": "and command.unit.tag not in replacements",
+                "rationale": "Rewrite the reconciliation case to maintain conflicting observed orders across retry windows. Recording only the first replacement per actor proves neither retry spacing nor the maximum attempt count; the existing generic retry tests exercise other paths. Assert bounded attempts, failure or cooldown on exhaustion, and no dispatch through an occupied actor or exhausted command budget."
+              },
+              {
+                "severity": "Block",
+                "file_line": "tests/test_jev_v2.py:1528",
+                "excerpt": "not replacements and not recovery",
+                "rationale": "Rewrite the conflict test to observe strategy settlement while the contradiction persists. Its guard checks action-node success only before the first replacement; it never asserts that recovery_progress stays incomplete and the hosted recovery posture remains in force while conflicting orders or tasks survive beyond the five-second settle interval."
+              },
+              {
+                "severity": "Block",
+                "file_line": "tests/test_jev_v2.py:1596",
+                "excerpt": "body.position = target",
+                "rationale": "Rewrite the compatible-order test to keep at least one actor in transit for multiple ticks. It jumps straight to arrival and checks only the injection tick, so repeated dispatch of an already compatible MOVE during travel would pass despite the explicit compatible-order preservation requirement."
+              }
+            ],
+            "overall_verdict": "NEEDS-WORK"
+          },
+          {
+            "lens_id": "style",
+            "model_tier": "haiku",
+            "authority": "Independent style review of the frozen round4 current increment; whole Step232 remains open.",
+            "coverage_claim": "Read the complete style instructions, candidate diff, intent, plan, mechanical receipt, linter findings, and input identities. Compared changed code with surrounding conventions in the frozen operations, runtime, and strategy sources. The linter sidecar reports no findings.",
+            "findings": [
+              {
+                "severity": "Nit",
+                "file_line": "src/jev/strategy.py:1014",
+                "excerpt": "        }\\n        def recovery_orders_compatible(unit: Entity) -> bool:",
+                "rationale": "The nested function starts immediately after the closing brace with no blank line. The nearby nested `rank` function in this file is separated from the preceding block by a blank line, so this is a small deviation from the local spacing convention."
+              }
+            ],
+            "overall_verdict": "NEEDS-WORK"
+          },
+          {
+            "lens_id": "plan-conformance",
+            "model_tier": "sonnet",
+            "authority": "docs/plans/master_plan.md:232, current increment only; full Step 232 remains open",
+            "coverage_claim": "Heading-format plan detected. Reviewed the complete frozen diff, required input records, changed functions, recovery lifecycle, ownership and retry paths, and run_match/mock-HTTP test fixtures. Files: PASS; out-of-scope additions: PASS; current-increment done-when: NEEDS-WORK.",
+            "findings": [
+              {
+                "severity": "FYI",
+                "file_line": "src/jev/strategy.py:1014",
+                "excerpt": "if target is not None:\n                return (\n                    point_movement_state(unit, MOVE_ABILITY, target, self._defense_radius).orders\n                    != \"incompatible\"\n                )",
+                "rationale": "Demoted per rule 2: The increment requires no early recovery release while orders or tasks contradict recovery. An active recovery MOVE with an empty observed queue is classified as idle, so this check accepts it; recovery_tasks_blocked also excludes recovery MOVE tasks. Eight idle units within the 20-unit home radius but outside the rally target's 4-unit arrival radius can therefore satisfy RecoveryProgress's 5-second settlement and release the hosted recover posture while their MOVE tasks remain unacknowledged. The new production-entry tests cover ATTACK queues and a matching MOVE, but not this state."
+              }
+            ],
+            "overall_verdict": "NEEDS-WORK"
+          }
+        ],
+        "aggregated_verdict": {
+          "result": "NEEDS-WORK",
+          "rationale": "7 Block findings; 1 Nit finding; lenses NEEDS-WORK: correctness, bugs, test-quality, style, plan-conformance."
+        },
+        "model_tiers_used": {
+          "correctness": "sonnet",
+          "bugs": "sonnet",
+          "security": "sonnet",
+          "test-quality": "sonnet",
+          "style": "haiku",
+          "plan-conformance": "sonnet"
+        },
+        "deferred_uat_items": []
+      },
+      "input_hashes": {
+        "candidate.diff": {
+          "bytes": 22721,
+          "sha256": "69bbd7de72950727275276d4c911157d58248810e2c30772a7ab42e330e7b55a"
+        },
+        "context.md": {
+          "bytes": 1726,
+          "sha256": "1e91df694a7f060c0165b2a5b4a2271b984e02c4a420e857c15a95581b85fcfe"
+        },
+        "instructions-bugs.md": {
+          "bytes": 18432,
+          "sha256": "e4bd4d50aab51232961b817de1d2404eec2162a590595e1b648c38f6e2355e14"
+        },
+        "instructions-correctness.md": {
+          "bytes": 16911,
+          "sha256": "ac9e4938436d6dcf21d579b028daf6f3b28ab4d0f9686f0844b2a90cb7f551db"
+        },
+        "instructions-plan-conformance.md": {
+          "bytes": 20147,
+          "sha256": "306d4af7b08cd4d5fd21db7581e55820fe4f140ab5e3d4d7fa39d56822653543"
+        },
+        "instructions-security.md": {
+          "bytes": 19521,
+          "sha256": "2f60e955c64e0b6f0d08ef7f33ab2b7e4cebe1139c57a051c8c9dc5281ecf289"
+        },
+        "instructions-style.md": {
+          "bytes": 19157,
+          "sha256": "8d31ebe3681c5fd3d4e73769aff600f49980b90f758bdce50fbb3e3e8656a0b6"
+        },
+        "instructions-test-quality.md": {
+          "bytes": 17930,
+          "sha256": "8f85eb05c809c30d4639310372e223db900c960176a58461f3df67007f99cda5"
+        },
+        "intent.md": {
+          "bytes": 3132,
+          "sha256": "9ca5118948638aef648c5e8cf9cf25881f9eeb9cfed4ffdb707241e582de8be3"
+        },
+        "lint-findings.json": {
+          "bytes": 134,
+          "sha256": "5a208676dde4642fe42653e7ce99fb666de81405ae126f72edbf68edeefe88e2"
+        },
+        "mechanical.json": {
+          "bytes": 50106,
+          "sha256": "59de10661139175c48a489066dfe5a40b603cf89145eb59f3bd9ecaabe50fc82"
+        },
+        "plan.md": {
+          "bytes": 2399,
+          "sha256": "1e515ddf13f11381abafec5184f161708e3aa663e0c22f8d1e07bef8e3daf053"
+        },
+        "source/tests/test_jev_decision.py": {
+          "bytes": 100699,
+          "sha256": "bc89cb45e26b053b21f48d9815cfdc57f88e8f73922510ce3c9235021ceaf683"
+        },
+        "source/tests/test_jev_v2.py": {
+          "bytes": 128327,
+          "sha256": "625efc55ddd290d18156dce9f2c1f519bb12e39fe1d124ad621187d01be4dd34"
+        },
+        "source/src/jev/operations.py": {
+          "bytes": 190308,
+          "sha256": "a00ea92aca38e42e6c8eaad8b1b31f7869db966fe41e682adf86721a6ee9b2d9"
+        },
+        "source/src/jev/runtime.py": {
+          "bytes": 134843,
+          "sha256": "672f785266c495b2b11a6acbda4db1945977dc6e8502076c70a79050fbd60a20"
+        },
+        "source/src/jev/strategy.py": {
+          "bytes": 82873,
+          "sha256": "a7576829148e2add3b361383a2506cf7e89fa81765f6ec43af0f68c85edd3f0d"
+        }
+      },
+      "python": "3411 passed, 13 skipped, 2 deselected, 104 warnings in 325.98s (0:05:25)",
+      "exit_codes": {
+        "pytest-full": 0,
+        "mypy-full": 0,
+        "ruff-full": 0,
+        "prepass": 0
+      }
+    },
+    "5": {
+      "aggregate": {
+        "timestamp": "2026-10-15T15-30-47",
+        "plan_step": "C:/Users/abero/dev/Alpha4Gate/docs/plans/master_plan.md:232",
+        "skill_version": "v3",
+        "invocation": {
+          "reviewers_flag": "code",
+          "model_overrides": {},
+          "force_runtime": false,
+          "url": null,
+          "start_cmd": null,
+          "runtime_downgraded": false,
+          "runtime_downgrade_reason": null
+        },
+        "lens_verdicts": [
+          {
+            "lens_id": "correctness",
+            "model_tier": "sonnet",
+            "authority": "independent frozen-source review",
+            "coverage_claim": "Reviewed the complete diff and required common inputs, changed function bodies, strategy request lifecycle, runtime task ownership and retries, recovery tracker, policy branches, production caller, and relevant test fixtures.",
+            "findings": [
+              {
+                "severity": "Block",
+                "file_line": "src/jev/strategy.py:1281",
+                "excerpt": "elif accepted:\n            self._apply(answer, request, game)\n        else:\n            self._fall_back()",
+                "rationale": "Strategy refreshes continue while recovery is active, but any low-confidence, stale, or invalid reply clears the recovery posture. The request failure path at lines 1233–1246 also clears it. An unfinished recovery can therefore end without observed completion or an explicit valid superseding choice or cancellation, contrary to the round-5 lifecycle decision. The new hold test sets max_requests=2, avoiding this path."
+              }
+            ],
+            "overall_verdict": "NEEDS-WORK"
+          },
+          {
+            "lens_id": "bugs",
+            "model_tier": "sonnet",
+            "authority": "independent read-only review of frozen round-5 diff and relevant source",
+            "coverage_claim": "Reviewed the complete diff, required common inputs, movement lifecycle, runtime task ownership and retries, strategy polling, recovery settlement, policy branches, adapter orders, and relevant test fixtures. Lint pre-pass reported no findings.",
+            "findings": [
+              {
+                "severity": "Block",
+                "file_line": "src/jev/runtime.py:2089",
+                "excerpt": "if task.ability == MOVE_ABILITY and isinstance(task.target, tuple):\n                continue",
+                "rationale": "A conflicting recovery MOVE becomes pending, but pending point MOVEs are excluded from generic retries. Reconciliation runs only when the same action node is evaluated. If a valid pressure choice supersedes recovery while an incompatible order remains, the recovery branch is no longer evaluated. The pending task then has no retry or timeout, continues holding its actor, and can prevent the pressure branch from commanding that unit indefinitely."
+              },
+              {
+                "severity": "Block",
+                "file_line": "src/jev/strategy.py:1284",
+                "excerpt": "elif accepted:\n            self._apply(answer, request, game)\n        else:\n            self._fall_back()",
+                "rationale": "Strategy refresh requests continue while recovery is executing. A stale, low-confidence, invalid, or failed refresh calls _fall_back(), releasing unfinished recovery even though no valid superseding choice or cancellation occurred. The local attack branch can then resume while recovery tasks or conflicting attack orders remain. The new indefinite recovery hold in _revalidate does not protect this error path."
+              }
+            ],
+            "overall_verdict": "NEEDS-WORK"
+          },
+          {
+            "lens_id": "security",
+            "model_tier": "sonnet",
+            "authority": "Independent read-only review of the frozen Step 232 increment",
+            "coverage_claim": "Reviewed the complete candidate diff, required common inputs, changed functions, relevant task lifecycle and ownership paths, model-answer validation, SC2 adapter boundaries, and production test fixtures against the specified injection, unsafe-config, secret-dump, and adjacent security defect classes.",
+            "findings": [],
+            "overall_verdict": "PASS"
+          },
+          {
+            "lens_id": "test-quality",
+            "model_tier": "sonnet",
+            "authority": "Independent static review of the frozen round-5 diff, tests, lifecycle code, and production test fixtures.",
+            "coverage_claim": "Keep the conflict, compatible-move, and bounded-retry probes; extend the recovery settlement and exit tests, and rewrite the emergency-priority timing assertion. Delete none.",
+            "findings": [
+              {
+                "severity": "Block",
+                "file_line": "tests/test_jev_v2.py:1647",
+                "excerpt": "body.position = (80.0, 80.0)",
+                "rationale": "Rewrite/extend: the persistent-conflict test keeps every unit away, so recovery cannot settle even if the new order and active-task blockers are removed. No test holds at least seven of eight units home through the five-second settlement window while an incompatible order or an active move remains. This critical current-increment behavior has no discriminating coverage."
+              },
+              {
+                "severity": "Block",
+                "file_line": "tests/test_jev_decision.py:1152",
+                "excerpt": "config = DecisionConfig(timeout=10, max_requests=2)  # no renewal after the answer",
+                "rationale": "Rewrite/extend: this verifies that unfinished recovery survives without renewal, but cannot exercise its other specified exit: an explicit valid superseding choice or cancellation. The production recovery scenarios likewise return `recover` for every strategy answer. Add a production-entry recover-to-valid-choice case while movement is unfinished and assert the old override releases and the new choice takes effect."
+              },
+              {
+                "severity": "Block",
+                "file_line": "tests/test_jev_v2.py:1724",
+                "excerpt": "assert recovery_on_defense_tick == []",
+                "rationale": "Rewrite: the test establishes only that recovery commands are absent on whichever later tick defense eventually issues. It never asserts defense on the raid-onset tick or proves a retry was due then. A stale recovery retry could take the actor first and defense could succeed a tick later while this test still passes. Capture the due retry and assert per-actor defense precedence on that decisive tick."
+              }
+            ],
+            "overall_verdict": "NEEDS-WORK"
+          },
+          {
+            "lens_id": "style",
+            "model_tier": "haiku",
+            "authority": "independent fresh reviewer",
+            "coverage_claim": "Reviewed the complete candidate diff, style instructions, plan and intent, lint findings, mechanical receipts, and relevant frozen source around changed operations, runtime, strategy, and test code. Compared naming, imports, formatting, docstrings, helper structure, and nearby conventions. The recorded Ruff and mypy checks pass; the style linter sidecar contains no findings.",
+            "findings": [],
+            "overall_verdict": "PASS"
+          },
+          {
+            "lens_id": "plan-conformance",
+            "model_tier": "sonnet",
+            "authority": "docs/plans/master_plan.md:Step 232, current increment and recovery lifecycle decision",
+            "coverage_claim": "Reviewed the frozen diff, required inputs, changed functions, recovery task lifecycle, strategy refresh path, policy priority, adapter order mapping, and production-entry fixtures. This verdict covers the current recovery increment; whole Step 232 remains open.",
+            "findings": [
+              {
+                "severity": "Block",
+                "file_line": "src/jev/strategy.py:1283",
+                "excerpt": "else:\n            self._fall_back()",
+                "rationale": "The strategy question is refreshed while recovery executes. A stale, invalid, out-of-set, or low-confidence refresh reaches this branch and clears the unfinished recover posture; a failed refresh also clears it at line 1244. Step 232 requires recovery to persist until observed completion or an explicit valid superseding choice or cancellation. Once cleared, the graph can resume another posture while recovery orders or tasks remain unresolved. Preserve an executing recovery posture on rejected or failed refreshes and cover that path through the production entry."
+              }
+            ],
+            "overall_verdict": "NEEDS-WORK"
+          }
+        ],
+        "aggregated_verdict": {
+          "result": "NEEDS-WORK",
+          "rationale": "7 Block findings; lenses NEEDS-WORK: correctness, bugs, test-quality, plan-conformance."
+        },
+        "model_tiers_used": {
+          "correctness": "sonnet",
+          "bugs": "sonnet",
+          "security": "sonnet",
+          "test-quality": "sonnet",
+          "style": "haiku",
+          "plan-conformance": "sonnet"
+        },
+        "deferred_uat_items": []
+      },
+      "input_hashes": {
+        "candidate.diff": {
+          "bytes": 34731,
+          "sha256": "e7c27d8ac9ab3bca6a751296c4ac35b179765427314bd4ddac557fcffebdc10a"
+        },
+        "context.md": {
+          "bytes": 1722,
+          "sha256": "dd5f003d04792a9fa465d5fff6313914479d6d94c81ab60de0a314ca6e7d5d71"
+        },
+        "instructions-bugs.md": {
+          "bytes": 18432,
+          "sha256": "e4bd4d50aab51232961b817de1d2404eec2162a590595e1b648c38f6e2355e14"
+        },
+        "instructions-correctness.md": {
+          "bytes": 16911,
+          "sha256": "ac9e4938436d6dcf21d579b028daf6f3b28ab4d0f9686f0844b2a90cb7f551db"
+        },
+        "instructions-plan-conformance.md": {
+          "bytes": 20147,
+          "sha256": "306d4af7b08cd4d5fd21db7581e55820fe4f140ab5e3d4d7fa39d56822653543"
+        },
+        "instructions-security.md": {
+          "bytes": 19521,
+          "sha256": "2f60e955c64e0b6f0d08ef7f33ab2b7e4cebe1139c57a051c8c9dc5281ecf289"
+        },
+        "instructions-style.md": {
+          "bytes": 19157,
+          "sha256": "8d31ebe3681c5fd3d4e73769aff600f49980b90f758bdce50fbb3e3e8656a0b6"
+        },
+        "instructions-test-quality.md": {
+          "bytes": 17930,
+          "sha256": "8f85eb05c809c30d4639310372e223db900c960176a58461f3df67007f99cda5"
+        },
+        "intent.md": {
+          "bytes": 3705,
+          "sha256": "6d91579eed4b7e7bc4f5cfef11b0b644da9eeda536ba58957309157df4d0b131"
+        },
+        "lint-findings.json": {
+          "bytes": 134,
+          "sha256": "add4c8a746fa7d30c5db0aabf4ec4c0513f9146365102878d490d564d3031289"
+        },
+        "mechanical.json": {
+          "bytes": 50106,
+          "sha256": "b6d91170334e623ba2777fd67a262f48ed7f9add1cefd6d93841a4f67c1908a8"
+        },
+        "plan.md": {
+          "bytes": 2957,
+          "sha256": "e9a42cc96d033fe382d74e84eb4a5454163b19a612e9203f8e0df0800dafc897"
+        },
+        "source/tests/test_jev_decision.py": {
+          "bytes": 100391,
+          "sha256": "f969f75835ffd01ba60774367fc26cff3255a35516389ef0b4c14ec459339525"
+        },
+        "source/tests/test_jev_v2.py": {
+          "bytes": 133461,
+          "sha256": "dc238364a0949c2131f98e59e976dae418d9c4ffb9d200328523f7e4994bd153"
+        },
+        "source/src/jev/operations.py": {
+          "bytes": 190308,
+          "sha256": "a00ea92aca38e42e6c8eaad8b1b31f7869db966fe41e682adf86721a6ee9b2d9"
+        },
+        "source/src/jev/runtime.py": {
+          "bytes": 136054,
+          "sha256": "b5558125ed3719205a6583546f45b88b04c89d5d41776a8c562c5425af3656cd"
+        },
+        "source/src/jev/strategy.py": {
+          "bytes": 82645,
+          "sha256": "3402c29d48dc945685b2df39c7791fe58f133fe262a2048f89aa2e4086aff669"
+        }
+      },
+      "python": "3413 passed, 13 skipped, 2 deselected, 104 warnings in 357.92s (0:05:57)",
+      "exit_codes": {
+        "pytest-full": 0,
+        "mypy-full": 0,
+        "ruff-full": 0,
+        "prepass": 0
+      }
+    },
+    "6": {
+      "aggregate": {
+        "timestamp": "2026-10-15T15-51-06",
+        "plan_step": "C:/Users/abero/dev/Alpha4Gate/docs/plans/master_plan.md:232",
+        "skill_version": "v3",
+        "invocation": {
+          "reviewers_flag": "code",
+          "model_overrides": {},
+          "force_runtime": false,
+          "url": null,
+          "start_cmd": null,
+          "runtime_downgraded": false,
+          "runtime_downgrade_reason": null
+        },
+        "lens_verdicts": [
+          {
+            "lens_id": "correctness",
+            "model_tier": "sonnet",
+            "authority": "independent read-only source review",
+            "coverage_claim": "Reviewed the frozen diff, intent, plan, gate results, changed functions, strategy and runtime call order, ownership rules, policy branches, adapter, and relevant production test fixtures. No tests were run.",
+            "findings": [
+              {
+                "severity": "Block",
+                "file_line": "src/jev/runtime.py:1376",
+                "excerpt": "if self._strategy[\"army\"].choice not in (None, \"recover\"):",
+                "rationale": "An accepted macro choice is a valid replacement for recovery: HostedQuestions._apply clears the recovery posture, while _slots makes the army slot local with choice None. This condition therefore leaves active army.recover.move tasks in place. Those MOVE tasks hold their actors, and the local attack selection excludes busy actors, so the accepted replacement can remain blocked until the old tasks fail or finish. The increment promises that a valid superseding choice releases executing recovery."
+              }
+            ],
+            "overall_verdict": "NEEDS-WORK"
+          },
+          {
+            "lens_id": "bugs",
+            "model_tier": "sonnet",
+            "authority": "Independent read-only review of frozen review-r6 inputs, relevant source, lifecycle code, and production test fixtures.",
+            "coverage_claim": "Reviewed the complete candidate diff, required common inputs, MOVE acknowledgement and retry lifecycle, recovery settlement and posture release, and relevant callers and fixtures. Lint pre-pass reported no findings.",
+            "findings": [
+              {
+                "severity": "Block",
+                "file_line": "src/jev/strategy.py:1010",
+                "excerpt": "return all(\n                order.ability == MOVE_ABILITY\n                and isinstance(order.target, tuple)\n                and math.dist(order.target, home) <= self._defense_radius\n                for order in unit.orders\n            )",
+                "rationale": "An empty order queue passes this check. If seven of eight ready units are home while the eighth stays away and its MOVE task exhausts retries, the failed task enters a 10-second cooldown and is absent from active_tasks(). Recovery then has no order or task blocker; its 80% grouping threshold can mark it complete after five seconds and release the posture while that unit remains away and idle."
+              }
+            ],
+            "overall_verdict": "NEEDS-WORK"
+          },
+          {
+            "lens_id": "security",
+            "model_tier": "sonnet",
+            "authority": "independent read-only review of the frozen round 6 current increment",
+            "coverage_claim": "Reviewed the complete candidate diff and required common inputs, changed function bodies, relevant task lifecycle and ownership paths, recovery state, model-answer validation, SC2 order normalization, and production test fixtures. The frozen source files match the worktree hashes. Found no new injection, secret exposure, unsafe configuration, access-control, path-traversal, or unvalidated-input path in this increment.",
+            "findings": [],
+            "overall_verdict": "PASS"
+          },
+          {
+            "lens_id": "test-quality",
+            "model_tier": "sonnet",
+            "authority": "Independent read-only review of the frozen round-6 increment, its relevant source and test fixtures, and the mechanical receipts.",
+            "coverage_claim": "Reviewed all changed tests and their production-path fixtures. Keep the conflict replacement, compatible transit, pending observation, bounded retry, defense priority, and strategy handoff tests. Rewrite the compatible transit coverage to also test partial regrouping with an active move. The documented recovery assertion change in the existing strategic-choice test is consistent with release after observed completion.",
+            "findings": [
+              {
+                "severity": "Block",
+                "file_line": "tests/test_jev_v2.py:1604",
+                "excerpt": "body.position = (80.0, 80.0) if index < started + transit_steps else target",
+                "rationale": "Rewrite/add a production-entry case with seven of eight units home, idle or on compatible orders, while the eighth still has an active compatible MOVE for over five game seconds. This test keeps all eight away until transit ends; the conflict test puts all eight home under ATTACK orders. Neither isolates the new active-task settlement guard. With seven home, the 80% home threshold is met, so removing that guard could release recovery before the eighth task completes while these tests still pass. The current increment explicitly requires active recovery tasks to block settlement."
+              }
+            ],
+            "overall_verdict": "NEEDS-WORK"
+          },
+          {
+            "lens_id": "style",
+            "model_tier": "haiku",
+            "authority": "Independent read-only style review",
+            "coverage_claim": "PASS: Read the complete candidate diff and required common inputs, including the empty style-class lint findings. Reviewed the changed operation, runtime, and strategy code with surrounding conventions, relevant lifecycle and ownership methods, and changed test fixtures. The increment matches nearby naming, import, typing, formatting, and documentation patterns; no style deviations found. Scope is the current Step 232 increment; the whole step remains open.",
+            "findings": [],
+            "overall_verdict": "PASS"
+          },
+          {
+            "lens_id": "plan-conformance",
+            "model_tier": "sonnet",
+            "authority": "docs/plans/master_plan.md:Step 232, current increment and recovery lifecycle decision",
+            "coverage_claim": "Heading-format plan. Done-when: NEEDS-WORK for the current increment; whole Step 232 remains open. Files: PASS; changes are within the listed source and test files. Out-of-scope: PASS; no unrelated feature addition found. Reviewed the complete diff and common inputs, changed functions, relevant runtime and strategy lifecycle paths, recovery progress, ownership, and production test fixtures.",
+            "findings": [
+              {
+                "severity": "Block",
+                "file_line": "src/jev/strategy.py:1020",
+                "excerpt": "recovery_tasks_blocked = recovery_active and any(task.actor_tag in army_tags for task in recovery_tasks)",
+                "rationale": "Step 232 explicitly requires active recovery tasks to block strategic settlement until completion. This check only counts tasks whose actors are currently in the ready combat army. A recovery MOVE task can remain active while its actor is alive but absent from that filtered army; once the other units settle, the strategy can mark recovery complete despite the active task. Check active recovery tasks directly."
+              }
+            ],
+            "overall_verdict": "NEEDS-WORK"
+          }
+        ],
+        "aggregated_verdict": {
+          "result": "NEEDS-WORK",
+          "rationale": "4 Block findings; lenses NEEDS-WORK: correctness, bugs, test-quality, plan-conformance."
+        },
+        "model_tiers_used": {
+          "correctness": "sonnet",
+          "bugs": "sonnet",
+          "security": "sonnet",
+          "test-quality": "sonnet",
+          "style": "haiku",
+          "plan-conformance": "sonnet"
+        },
+        "deferred_uat_items": []
+      },
+      "input_hashes": {
+        "candidate.diff": {
+          "bytes": 42675,
+          "sha256": "8f5237b87c4e08309d96d5d0700608bf098e73b739c9616154b867819899af03"
+        },
+        "context.md": {
+          "bytes": 1722,
+          "sha256": "5b63425558285269e7a7a83375ed2205c7a23e19b4bab81d7002117cb2d1421d"
+        },
+        "instructions-bugs.md": {
+          "bytes": 18432,
+          "sha256": "e4bd4d50aab51232961b817de1d2404eec2162a590595e1b648c38f6e2355e14"
+        },
+        "instructions-correctness.md": {
+          "bytes": 16911,
+          "sha256": "ac9e4938436d6dcf21d579b028daf6f3b28ab4d0f9686f0844b2a90cb7f551db"
+        },
+        "instructions-plan-conformance.md": {
+          "bytes": 20147,
+          "sha256": "306d4af7b08cd4d5fd21db7581e55820fe4f140ab5e3d4d7fa39d56822653543"
+        },
+        "instructions-security.md": {
+          "bytes": 19521,
+          "sha256": "2f60e955c64e0b6f0d08ef7f33ab2b7e4cebe1139c57a051c8c9dc5281ecf289"
+        },
+        "instructions-style.md": {
+          "bytes": 19157,
+          "sha256": "8d31ebe3681c5fd3d4e73769aff600f49980b90f758bdce50fbb3e3e8656a0b6"
+        },
+        "instructions-test-quality.md": {
+          "bytes": 17930,
+          "sha256": "8f85eb05c809c30d4639310372e223db900c960176a58461f3df67007f99cda5"
+        },
+        "intent.md": {
+          "bytes": 3705,
+          "sha256": "6d91579eed4b7e7bc4f5cfef11b0b644da9eeda536ba58957309157df4d0b131"
+        },
+        "lint-findings.json": {
+          "bytes": 134,
+          "sha256": "ed5e113c5d308922e0bdc83190dff191599046fc3015a9bc2e6921261bb5718f"
+        },
+        "mechanical.json": {
+          "bytes": 50106,
+          "sha256": "4bc02a1d6f1b6a8aacf9d31af4a3817400fb5f5d18efe5596a4f1516dac7cb11"
+        },
+        "plan.md": {
+          "bytes": 2957,
+          "sha256": "e9a42cc96d033fe382d74e84eb4a5454163b19a612e9203f8e0df0800dafc897"
+        },
+        "source/tests/test_jev_decision.py": {
+          "bytes": 100391,
+          "sha256": "f969f75835ffd01ba60774367fc26cff3255a35516389ef0b4c14ec459339525"
+        },
+        "source/tests/test_jev_v2.py": {
+          "bytes": 139545,
+          "sha256": "9f1f739ad5dce16b25c86061a6f7a5ccefa1e89fe255d927621103988175d8d2"
+        },
+        "source/src/jev/operations.py": {
+          "bytes": 190308,
+          "sha256": "a00ea92aca38e42e6c8eaad8b1b31f7869db966fe41e682adf86721a6ee9b2d9"
+        },
+        "source/src/jev/runtime.py": {
+          "bytes": 136165,
+          "sha256": "fc0126400cf6083d07014c882038d2bc29f2994a9d8e2048d53d8e5296682c6d"
+        },
+        "source/src/jev/strategy.py": {
+          "bytes": 83047,
+          "sha256": "4bcb37dc389f0c8250be15f51be057503514dcaacbb27ae42d9d4d7191e8156a"
+        }
+      },
+      "python": "3416 passed, 13 skipped, 2 deselected, 104 warnings in 346.21s (0:05:46)",
+      "exit_codes": {
+        "pytest-full": 0,
+        "mypy-full": 0,
+        "ruff-full": 0,
+        "prepass": 0
+      }
+    }
+  },
+  "final_judge": "Final independent strong judge: NEEDS-WORK for current increment; whole Step232 remains OPEN.\n\n1. Correctness Block CONFIRMED at runtime.py:1376-79. strategy.py:1311-14 accepts expand/tech by clearing posture; strategy.py:1564-72 makes army choice None; bot.py:808-10 passes that into runtime. Old recovery MOVE survives and holder_of at runtime.py:1713-17 blocks new ownership. Round5 had the same stale-task handoff shape for pressure; round6 repair covered pressure only. Stop patch churn and audit the full transition matrix.\n2. Bugs Block at strategy.py:1010 DISMISS as stated: after a task fails and cooldown removes it from active, idle-away eighth with seven of eight home satisfies the existing80% criterion (recovery.py:39-41); no incompatible observed order or active task remains. Do not silently tighten to100% home.\n3. Test-quality Block CONFIRMED at test_jev_v2.py:1604: all eight transit together, so80% threshold is never reached while the task is active. Add seven-home/one-compatible-in-transit >5game seconds production-entry observation; assert posture and orders_pending retained until task completion.\n4. Plan-conformance Block CONFIRMED at strategy.py:1020-23: policy.json:3644-66 selects Zealot/Stalker without ready filter, operations.py:2006-25 allows actor, while strategy.py:997 filters ready army. A live active recover MOVE on an unready combat actor can be excluded. Scope fix to any active army.recover.move task (node identity), not all unrelated tasks. Add a test with an unready actor or otherwise prove all selected actors must be ready.\n\nMechanical tests green but these paths are not covered. Preserve rejected-refresh handling and bounded retries. No code changes or tests in review. Parent retains raw deterministic aggregate4Block unchanged; final adjudication confirms3 and dismisses1, still NEEDS-WORK. Source/root audits remained clean.\n",
+  "last_scene": {
+    "run_id": "749c6893eb384f74989c893d5622eaa4",
+    "source": {
+      "label": "after",
+      "source_root": "C:\\Users\\abero\\dev\\worktree_jev-order-repair",
+      "runner": "C:\\Users\\abero\\dev\\worktree_jev-order-repair\\src\\jev\\runner.py",
+      "kind": "real SC2 with forced local mock choices; NOT hosted-model behavior",
+      "debug_units": true,
+      "external_model_requests": 0,
+      "scene": "Debug-created wave; real attack orders before local recover. No direct orders after release."
+    },
+    "scene": {
+      "game_seconds": 8.035714285714286,
+      "rally": [
+        33.97740369331239,
+        54.669215423248104
+      ],
+      "attack_tags_within_arrival": [
+        4323278849,
+        4322754561,
+        4324327425,
+        4323803137,
+        4323016705,
+        4324589569,
+        4324065281,
+        4323540993
+      ],
+      "army_tags": [
+        4323278849,
+        4323803137,
+        4323016705,
+        4322754561,
+        4324327425,
+        4324589569,
+        4324065281,
+        4323540993
+      ],
+      "arrive_within": 4,
+      "all_actors_witnessed": true,
+      "proof_scope": "Only attack_tags_within_arrival; recheck each at actual acceptance",
+      "label": "DEBUG SCENE; real ATTACK observed before forced local recover"
+    },
+    "accepted_recover": {
+      "schema_version": 1,
+      "run_id": "749c6893eb384f74989c893d5622eaa4",
+      "sequence": 2589,
+      "game_loop": 184,
+      "game_seconds": 8.214285714285715,
+      "node_id": "tech",
+      "task_id": null,
+      "kind": "diagnostic",
+      "status": "success",
+      "reason": "Strategy decision source",
+      "facts": {
+        "decision_provider": "typesafe",
+        "question_id": "strategy",
+        "reason": "accepted",
+        "pending": false,
+        "requested_model": "jev-1.13.0",
+        "model": "LOCAL-MOCK-recovery-order-demo",
+        "question": "Choose Jev's strategic priority in StarCraft II. We are Protoss after a four-Gateway Zealot opening and its first attack; we can add a Cybernetics Core for Stalkers and one natural expansion, nothing more. The choice decides which macro plan, if any, gets the next reservation and the army's posture; economy, supply, production and emergency home defense always continue locally, and a plan already started continues until it completes or aborts. Fog of war hides enemies; absence of visible enemies does not imply safety. Choose only an offered option. Local code handles targets, movement, production and resources.",
+        "options": [
+          "pressure",
+          "recover"
+        ],
+        "available_options": [
+          "pressure",
+          "recover"
+        ],
+        "answer_request_id": 3,
+        "pending_request_id": null,
+        "answer": "recover",
+        "confidence": 1.0,
+        "probabilities": {
+          "pressure": 0.0,
+          "recover": 1.0
+        },
+        "latency_ms": 400.1,
+        "calls": 3,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "max_requests": 450,
+        "observation_game_seconds": 7.500000000000001,
+        "source": "typesafe",
+        "choice": "recover",
+        "in_force_request_id": 3,
+        "slots": {
+          "macro": {
+            "local": false,
+            "choice": null,
+            "request_id": 3,
+            "source": "typesafe"
+          },
+          "army": {
+            "local": false,
+            "choice": "recover",
+            "request_id": 3,
+            "source": "typesafe"
+          }
+        },
+        "posture_hold_until_game_seconds": null,
+        "started_plan": null,
+        "recovery_progress": {
+          "status": "available",
+          "started_game_seconds": null,
+          "elapsed_game_seconds": null,
+          "ready_combat_units": 8,
+          "units_at_home": 8,
+          "minimum_units": 4,
+          "home_fraction_required": 0.8,
+          "home_radius": 20.0,
+          "base_threatened": false,
+          "new_losses_or_damage": false,
+          "settled_game_seconds": 0.0,
+          "settle_required_game_seconds": 5.0,
+          "completed_game_seconds": null,
+          "orders_pending": false
+        },
+        "response_age_game_seconds": 0.7142857142857144
+      },
+      "action": null
+    },
+    "first_action": {
+      "schema_version": 1,
+      "run_id": "749c6893eb384f74989c893d5622eaa4",
+      "sequence": 2715,
+      "game_loop": 184,
+      "game_seconds": 8.214285714285715,
+      "node_id": "army.recover.move",
+      "task_id": null,
+      "kind": "node",
+      "status": "running",
+      "reason": "8 task(s) in progress (8 issued now)",
+      "facts": {
+        "target": "33.98,54.67",
+        "units": 8,
+        "active": 8,
+        "issued": 8,
+        "satisfied": 0,
+        "blocked": 0
+      },
+      "action": null
+    },
+    "pre_accept_raw": {
+      "game_seconds": 8.035714285714286,
+      "units": [
+        {
+          "tag": 4323278849,
+          "type": "ZEALOT",
+          "position": [
+            35.36279296875,
+            55.009765625
+          ],
+          "home_distance": 8.788663198937371,
+          "rally_distance": 1.4266316568795199,
+          "orders": [
+            {
+              "ability": "ATTACK",
+              "target": [
+                59.5,
+                27.5
+              ]
+            }
+          ]
+        },
+        {
+          "tag": 4322754561,
+          "type": "ZEALOT",
+          "position": [
+            34.424560546875,
+            55.00537109375
+          ],
+          "home_distance": 8.080307202760665,
+          "rally_distance": 0.5594192403721853,
+          "orders": [
+            {
+              "ability": "ATTACK",
+              "target": [
+                59.5,
+                27.5
+              ]
+            }
+          ]
+        },
+        {
+          "tag": 4324327425,
+          "type": "ZEALOT",
+          "position": [
+            35.43408203125,
+            55.996337890625
+          ],
+          "home_distance": 8.268280716782915,
+          "rally_distance": 1.970574998225954,
+          "orders": [
+            {
+              "ability": "ATTACK",
+              "target": [
+                59.5,
+                27.5
+              ]
+            }
+          ]
+        },
+        {
+          "tag": 4323803137,
+          "type": "ZEALOT",
+          "position": [
+            33.48876953125,
+            54.992431640625
+          ],
+          "home_distance": 7.431092158567068,
+          "rally_distance": 0.5858601091641605,
+          "orders": [
+            {
+              "ability": "ATTACK",
+              "target": [
+                59.5,
+                27.5
+              ]
+            }
+          ]
+        },
+        {
+          "tag": 4323016705,
+          "type": "ZEALOT",
+          "position": [
+            34.42041015625,
+            54.067626953125
+          ],
+          "home_distance": 8.742235379603555,
+          "rally_distance": 0.7471033486670702,
+          "orders": [
+            {
+              "ability": "ATTACK",
+              "target": [
+                59.5,
+                27.5
+              ]
+            }
+          ]
+        },
+        {
+          "tag": 4324589569,
+          "type": "ZEALOT",
+          "position": [
+            33.451904296875,
+            55.968994140625
+          ],
+          "home_distance": 6.712031753731479,
+          "rally_distance": 1.4019894185770405,
+          "orders": [
+            {
+              "ability": "ATTACK",
+              "target": [
+                59.5,
+                27.5
+              ]
+            }
+          ]
+        },
+        {
+          "tag": 4324065281,
+          "type": "ZEALOT",
+          "position": [
+            35.405029296875,
+            54.033447265625
+          ],
+          "home_distance": 9.460218488869845,
+          "rally_distance": 1.5627910974263273,
+          "orders": [
+            {
+              "ability": "ATTACK",
+              "target": [
+                59.5,
+                27.5
+              ]
+            }
+          ]
+        },
+        {
+          "tag": 4323540993,
+          "type": "ZEALOT",
+          "position": [
+            34.42822265625,
+            55.94287109375
+          ],
+          "home_distance": 7.477382411663531,
+          "rally_distance": 1.3510871564580043,
+          "orders": [
+            {
+              "ability": "ATTACK",
+              "target": [
+                59.5,
+                27.5
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "post_accept_raw": {
+      "game_seconds": 8.571428571428571,
+      "units": [
+        {
+          "tag": 4322754561,
+          "type": "ZEALOT",
+          "position": [
+            34.6103515625,
+            55.125244140625
+          ],
+          "home_distance": 8.13783735185412,
+          "rally_distance": 0.7801187064681585,
+          "orders": []
+        },
+        {
+          "tag": 4324327425,
+          "type": "ZEALOT",
+          "position": [
+            35.369873046875,
+            55.676025390625
+          ],
+          "home_distance": 8.394396149341194,
+          "rally_distance": 1.718323954037928,
+          "orders": [
+            {
+              "ability": "MOVE",
+              "target": [
+                33.97998046875,
+                54.669921875
+              ]
+            }
+          ]
+        },
+        {
+          "tag": 4323540993,
+          "type": "ZEALOT",
+          "position": [
+            34.517333984375,
+            56.06982421875
+          ],
+          "home_distance": 7.4722664387914035,
+          "rally_distance": 1.5010761863557178,
+          "orders": []
+        },
+        {
+          "tag": 4324589569,
+          "type": "ZEALOT",
+          "position": [
+            33.757080078125,
+            55.515625
+          ],
+          "home_distance": 7.244369198794589,
+          "rally_distance": 0.8746151536684943,
+          "orders": []
+        },
+        {
+          "tag": 4323278849,
+          "type": "ZEALOT",
+          "position": [
+            35.786865234375,
+            54.83544921875
+          ],
+          "home_distance": 9.229601318437487,
+          "rally_distance": 1.8170813804977595,
+          "orders": []
+        },
+        {
+          "tag": 4323016705,
+          "type": "ZEALOT",
+          "position": [
+            34.2021484375,
+            53.708984375
+          ],
+          "home_distance": 8.867490627132224,
+          "rally_distance": 0.9861814569639848,
+          "orders": []
+        },
+        {
+          "tag": 4323803137,
+          "type": "ZEALOT",
+          "position": [
+            33.779541015625,
+            54.56494140625
+          ],
+          "home_distance": 7.943454780315199,
+          "rally_distance": 0.22365757273686213,
+          "orders": []
+        },
+        {
+          "tag": 4324065281,
+          "type": "ZEALOT",
+          "position": [
+            35.039306640625,
+            54.227783203125
+          ],
+          "home_distance": 9.061083538248784,
+          "rally_distance": 1.150000119336525,
+          "orders": []
+        }
+      ]
+    },
+    "first_commands": [
+      {
+        "schema_version": 1,
+        "run_id": "749c6893eb384f74989c893d5622eaa4",
+        "sequence": 2693,
+        "game_loop": 184,
+        "game_seconds": 8.214285714285715,
+        "node_id": "army.recover.move",
+        "task_id": "749c6893eb384f74989c893d5622eaa4:18",
+        "kind": "command",
+        "status": "issued",
+        "reason": "MOVE for task 749c6893eb384f74989c893d5622eaa4:18",
+        "facts": {
+          "intent_key": "army.recover.move|4322754561>33.98,54.67",
+          "attempt": 1
+        },
+        "action": {
+          "node_id": "army.recover.move",
+          "task_id": "749c6893eb384f74989c893d5622eaa4:18",
+          "ability": "MOVE",
+          "actor_tags": [
+            "4322754561"
+          ],
+          "target": [
+            33.98,
+            54.67
+          ],
+          "alternatives": []
+        }
+      },
+      {
+        "schema_version": 1,
+        "run_id": "749c6893eb384f74989c893d5622eaa4",
+        "sequence": 2696,
+        "game_loop": 184,
+        "game_seconds": 8.214285714285715,
+        "node_id": "army.recover.move",
+        "task_id": "749c6893eb384f74989c893d5622eaa4:19",
+        "kind": "command",
+        "status": "issued",
+        "reason": "MOVE for task 749c6893eb384f74989c893d5622eaa4:19",
+        "facts": {
+          "intent_key": "army.recover.move|4323016705>33.98,54.67",
+          "attempt": 1
+        },
+        "action": {
+          "node_id": "army.recover.move",
+          "task_id": "749c6893eb384f74989c893d5622eaa4:19",
+          "ability": "MOVE",
+          "actor_tags": [
+            "4323016705"
+          ],
+          "target": [
+            33.98,
+            54.67
+          ],
+          "alternatives": []
+        }
+      },
+      {
+        "schema_version": 1,
+        "run_id": "749c6893eb384f74989c893d5622eaa4",
+        "sequence": 2699,
+        "game_loop": 184,
+        "game_seconds": 8.214285714285715,
+        "node_id": "army.recover.move",
+        "task_id": "749c6893eb384f74989c893d5622eaa4:20",
+        "kind": "command",
+        "status": "issued",
+        "reason": "MOVE for task 749c6893eb384f74989c893d5622eaa4:20",
+        "facts": {
+          "intent_key": "army.recover.move|4323278849>33.98,54.67",
+          "attempt": 1
+        },
+        "action": {
+          "node_id": "army.recover.move",
+          "task_id": "749c6893eb384f74989c893d5622eaa4:20",
+          "ability": "MOVE",
+          "actor_tags": [
+            "4323278849"
+          ],
+          "target": [
+            33.98,
+            54.67
+          ],
+          "alternatives": []
+        }
+      },
+      {
+        "schema_version": 1,
+        "run_id": "749c6893eb384f74989c893d5622eaa4",
+        "sequence": 2702,
+        "game_loop": 184,
+        "game_seconds": 8.214285714285715,
+        "node_id": "army.recover.move",
+        "task_id": "749c6893eb384f74989c893d5622eaa4:21",
+        "kind": "command",
+        "status": "issued",
+        "reason": "MOVE for task 749c6893eb384f74989c893d5622eaa4:21",
+        "facts": {
+          "intent_key": "army.recover.move|4323540993>33.98,54.67",
+          "attempt": 1
+        },
+        "action": {
+          "node_id": "army.recover.move",
+          "task_id": "749c6893eb384f74989c893d5622eaa4:21",
+          "ability": "MOVE",
+          "actor_tags": [
+            "4323540993"
+          ],
+          "target": [
+            33.98,
+            54.67
+          ],
+          "alternatives": []
+        }
+      },
+      {
+        "schema_version": 1,
+        "run_id": "749c6893eb384f74989c893d5622eaa4",
+        "sequence": 2705,
+        "game_loop": 184,
+        "game_seconds": 8.214285714285715,
+        "node_id": "army.recover.move",
+        "task_id": "749c6893eb384f74989c893d5622eaa4:22",
+        "kind": "command",
+        "status": "issued",
+        "reason": "MOVE for task 749c6893eb384f74989c893d5622eaa4:22",
+        "facts": {
+          "intent_key": "army.recover.move|4323803137>33.98,54.67",
+          "attempt": 1
+        },
+        "action": {
+          "node_id": "army.recover.move",
+          "task_id": "749c6893eb384f74989c893d5622eaa4:22",
+          "ability": "MOVE",
+          "actor_tags": [
+            "4323803137"
+          ],
+          "target": [
+            33.98,
+            54.67
+          ],
+          "alternatives": []
+        }
+      },
+      {
+        "schema_version": 1,
+        "run_id": "749c6893eb384f74989c893d5622eaa4",
+        "sequence": 2708,
+        "game_loop": 184,
+        "game_seconds": 8.214285714285715,
+        "node_id": "army.recover.move",
+        "task_id": "749c6893eb384f74989c893d5622eaa4:23",
+        "kind": "command",
+        "status": "issued",
+        "reason": "MOVE for task 749c6893eb384f74989c893d5622eaa4:23",
+        "facts": {
+          "intent_key": "army.recover.move|4324065281>33.98,54.67",
+          "attempt": 1
+        },
+        "action": {
+          "node_id": "army.recover.move",
+          "task_id": "749c6893eb384f74989c893d5622eaa4:23",
+          "ability": "MOVE",
+          "actor_tags": [
+            "4324065281"
+          ],
+          "target": [
+            33.98,
+            54.67
+          ],
+          "alternatives": []
+        }
+      },
+      {
+        "schema_version": 1,
+        "run_id": "749c6893eb384f74989c893d5622eaa4",
+        "sequence": 2711,
+        "game_loop": 184,
+        "game_seconds": 8.214285714285715,
+        "node_id": "army.recover.move",
+        "task_id": "749c6893eb384f74989c893d5622eaa4:24",
+        "kind": "command",
+        "status": "issued",
+        "reason": "MOVE for task 749c6893eb384f74989c893d5622eaa4:24",
+        "facts": {
+          "intent_key": "army.recover.move|4324327425>33.98,54.67",
+          "attempt": 1
+        },
+        "action": {
+          "node_id": "army.recover.move",
+          "task_id": "749c6893eb384f74989c893d5622eaa4:24",
+          "ability": "MOVE",
+          "actor_tags": [
+            "4324327425"
+          ],
+          "target": [
+            33.98,
+            54.67
+          ],
+          "alternatives": []
+        }
+      },
+      {
+        "schema_version": 1,
+        "run_id": "749c6893eb384f74989c893d5622eaa4",
+        "sequence": 2714,
+        "game_loop": 184,
+        "game_seconds": 8.214285714285715,
+        "node_id": "army.recover.move",
+        "task_id": "749c6893eb384f74989c893d5622eaa4:25",
+        "kind": "command",
+        "status": "issued",
+        "reason": "MOVE for task 749c6893eb384f74989c893d5622eaa4:25",
+        "facts": {
+          "intent_key": "army.recover.move|4324589569>33.98,54.67",
+          "attempt": 1
+        },
+        "action": {
+          "node_id": "army.recover.move",
+          "task_id": "749c6893eb384f74989c893d5622eaa4:25",
+          "ability": "MOVE",
+          "actor_tags": [
+            "4324589569"
+          ],
+          "target": [
+            33.98,
+            54.67
+          ],
+          "alternatives": []
+        }
+      }
+    ],
+    "first_completed": {
+      "schema_version": 1,
+      "run_id": "749c6893eb384f74989c893d5622eaa4",
+      "sequence": 4200,
+      "game_loop": 312,
+      "game_seconds": 13.928571428571429,
+      "node_id": "tech",
+      "task_id": null,
+      "kind": "diagnostic",
+      "status": "success",
+      "reason": "Strategy decision source",
+      "facts": {
+        "decision_provider": "typesafe",
+        "question_id": "strategy",
+        "reason": "expired_or_changed_state",
+        "pending": false,
+        "requested_model": "jev-1.13.0",
+        "model": "LOCAL-MOCK-recovery-order-demo",
+        "question": "Choose Jev's strategic priority in StarCraft II. We are Protoss after a four-Gateway Zealot opening and its first attack; we can add a Cybernetics Core for Stalkers and one natural expansion, nothing more. The choice decides which macro plan, if any, gets the next reservation and the army's posture; economy, supply, production and emergency home defense always continue locally, and a plan already started continues until it completes or aborts. Fog of war hides enemies; absence of visible enemies does not imply safety. Choose only an offered option. Local code handles targets, movement, production and resources.",
+        "options": [
+          "pressure",
+          "recover"
+        ],
+        "available_options": [
+          "pressure"
+        ],
+        "answer_request_id": 3,
+        "pending_request_id": null,
+        "answer": "recover",
+        "confidence": 1.0,
+        "probabilities": {
+          "pressure": 0.0,
+          "recover": 1.0
+        },
+        "latency_ms": 400.1,
+        "calls": 6,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "max_requests": 450,
+        "observation_game_seconds": 7.500000000000001,
+        "source": "local_fallback",
+        "choice": null,
+        "in_force_request_id": null,
+        "slots": {
+          "macro": {
+            "local": true,
+            "choice": null,
+            "request_id": null,
+            "source": "local_fallback"
+          },
+          "army": {
+            "local": true,
+            "choice": null,
+            "request_id": null,
+            "source": "local_fallback"
+          }
+        },
+        "posture_hold_until_game_seconds": null,
+        "started_plan": null,
+        "recovery_progress": {
+          "status": "completed",
+          "started_game_seconds": 8.571428571428571,
+          "elapsed_game_seconds": 5.357142857142858,
+          "ready_combat_units": 8,
+          "units_at_home": 8,
+          "minimum_units": 4,
+          "home_fraction_required": 0.8,
+          "home_radius": 20.0,
+          "base_threatened": false,
+          "new_losses_or_damage": false,
+          "settled_game_seconds": 5.0,
+          "settle_required_game_seconds": 5.0,
+          "completed_game_seconds": 13.928571428571429,
+          "orders_pending": false
+        },
+        "response_age_game_seconds": null
+      },
+      "action": null
+    }
+  },
+  "hosted_spend_usd": 0
+}
