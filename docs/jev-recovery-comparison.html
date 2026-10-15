@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Jev recovery: observed before and after</title>
+<style>body{margin:0;background:#10151e;color:#eef2fa;font:16px/1.55 system-ui,sans-serif}main{max-width:1600px;margin:auto;padding:32px}h1{font-size:clamp(28px,4vw,46px);line-height:1.15}p{max-width:90ch}a{color:#9bdcff}.status{border-left:4px solid #edb96a;background:#202635;padding:16px}.pair{display:grid;grid-template-columns:1fr 1fr;gap:20px}article{background:#1b2230;padding:18px;border-radius:12px}video{width:100%;background:black}table{border-collapse:collapse;width:100%;margin:24px 0}th,td{text-align:left;border-bottom:1px solid #465168;padding:12px}small{color:#bdc9dc}code{overflow-wrap:anywhere}button{background:#a9deff;color:#102030;border:0;border-radius:5px;padding:10px 18px;font:inherit;cursor:pointer}button:focus-visible,a:focus-visible{outline:3px solid white;outline-offset:3px}@media(max-width:850px){.pair{grid-template-columns:1fr}main{padding:18px}}</style>
+<main>
+<p><a href="jev-decision-integration-progress.html">Jev progress</a> · October 15, 2026</p>
+<h1>Recovery repair: observed before and after</h1>
+<p class="status" id="status">Development candidate under review. The controlled scene demonstrates an improvement; additional lifecycle repairs and review are still in progress. This is not whole-Step232 acceptance or a claim of stronger play.</p>
+<p>Both scenes run real StarCraft II with eight debug-created Zealots and an explicitly forced, local-mock recovery choice. No hosted model was called. The local graph and production adapter own all orders after setup.</p>
+<button id="play">Replay both scenes</button>
+<div class="pair">
+<article><h2>Before</h2><video id="before" controls playsinline preload="metadata" src="media/jev-recovery-before.mp4" poster="media/jev-recovery-before.jpg"></video><p>The action reported all eight units satisfied while their attack orders survived. Corrective movement arrived 0.7–2.5 game seconds later.</p><small>Run <code>eb8572e5937f4c429d37594ecb2cdcba</code>, events2589/2691; raw observations8.036/8.571s.</small></article>
+<article><h2>After — first candidate</h2><video id="after" controls playsinline preload="metadata" src="media/jev-recovery-after.mp4" poster="media/jev-recovery-after.jpg"></video><p>All eight movement commands were issued on the recovery decision tick. By the next raw observation, none of the eight retained an attack order.</p><small>Run <code>5568a45d270a4d548deeb3a2ddcc5a09</code>, events2589/2693–2715; raw observation8.571s. Candidate later rejected for additional edge cases.</small></article>
+</div>
+<table><thead><tr><th>Observed measure</th><th>Before</th><th>First candidate</th></tr></thead><tbody><tr><td>Recovery accepted</td><td>8.214s</td><td>8.214s</td></tr><tr><td>Movement commands issued that tick</td><td>0 of8</td><td>8 of8</td></tr><tr><td>Attack orders at next sampled observation</td><td>8 of8</td><td>0 of8</td></tr><tr><td>Final recovery completion</td><td>13.571s</td><td>13.571s</td></tr></tbody></table>
+<p>The change demonstrated here is immediate order correction, not a faster final completion: both scenes ultimately settled at the same time. The videos are approximately aligned; the recorded event timestamps are the measurement.</p>
+<h2>A harder ordinary match</h2>
+<video controls playsinline preload="metadata" src="media/jev-harder-terran.mp4" poster="media/jev-harder-terran.jpg"></video>
+<p>Scripted Jev versus Harder Terran, Simple64, seed11: <strong>loss at9:46.61</strong>, no match error. This is ordinary gameplay without injected choices or debug units. The excerpt shows the late attack on Jev's base, with live node details and Follow decisions enabled. It used the first candidate and does not validate later repairs.</p>
+<small>Run <code>c7a98527acab4cd7a447e57f23207af4</code>. $0 hosted spend across these demonstrations. <a href="investigations/jev-order-repair-2026-10-15.md">Evidence and current repair status</a>.</small>
+</main>
+<script>document.getElementById('play').addEventListener('click',async()=>{const videos=['before','after'].map(id=>document.getElementById(id));for(const video of videos){video.pause();video.currentTime=0;}await Promise.allSettled(videos.map(video=>video.play()));});</script></html>
