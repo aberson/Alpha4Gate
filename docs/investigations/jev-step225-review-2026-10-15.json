@@ -1,0 +1,455 @@
+{
+  "candidate": "324d5f0",
+  "five_file_source_commit": "84c8525",
+  "plan_binding": "docs/plans/master_plan.md:225",
+  "status": "NEEDS-WORK; held, unmerged",
+  "baseline_review": {
+    "verdict": "PASS",
+    "coverage": "Reviewed the sole test diff, the complete changed test and hosted fixture, recovery and strategy code, plan-start event behavior, the documented recovery contract, and existing validation receipts. The assertions catch a macro start before recovery completion and require the later tech plan to have local fallback attribution with no hosted request ID.",
+    "findings": []
+  },
+  "mechanical": {
+    "candidate": "324d5f0",
+    "five_file_source_commit": "84c8525",
+    "independently_reviewed_baseline_test_fix": "e41e4b9",
+    "scope": "five new campaign files, no gameplay change or execution authority",
+    "pytest": {
+      "exit": 0,
+      "passed": 3407,
+      "skipped": 13,
+      "deselected": 2,
+      "log": "C:\\Users\\abero\\dev\\worktree_build-step-225-jdi-contracts\\.build-step\\overnight-pytest.log"
+    },
+    "mypy": {
+      "exit": 0,
+      "files": 834,
+      "command": "uv run mypy src bots --strict",
+      "log": "C:\\Users\\abero\\dev\\worktree_build-step-225-jdi-contracts\\.build-step\\overnight-mypy.log"
+    },
+    "ruff": {
+      "exit": 0,
+      "command": "uv run ruff check .",
+      "log": "C:\\Users\\abero\\dev\\worktree_build-step-225-jdi-contracts\\.build-step\\overnight-ruff.log"
+    },
+    "frontend": {
+      "tests_exit": 0,
+      "passed": 417,
+      "skipped": 6,
+      "build_exit": 0,
+      "lint_exit": 0,
+      "reuse_basis": "git diff c0836c3 324d5f0 -- frontend pyproject.toml uv.lock is empty; fresh baseline dependencies and full gates",
+      "receipt": "C:\\Users\\abero\\dev\\worktree_jev-recovery-test-lifetime\\.build-step\\frontend-exits.json"
+    },
+    "installed_prepass": "lint-findings.json",
+    "root_status": "Python3408pass12skip and frontend417pass6skip; Ruff306pre-existing violations in five untouched migration scripts. Not a clean-root claim."
+  },
+  "source_hashes": {
+    "src/jev/campaign.py": "28e3c913240747672e2f236b20c4c02af36c549994729f7b4bed30e20de635c7",
+    "src/jev/campaign_evaluation.py": "05db0d6f037ed52442cbc619defe4a172ff28183c5b92dd0d249584c8d11bb23",
+    "scripts/run_jev_campaign.py": "7f55bdb9da9753b2cd48cc63494f09dacd4341118b5407b2e74abdf17b3feee7",
+    "tests/test_jev_campaign.py": "dcc869732de17cd815f75ed019d309d668de8c312e24d5cd30e9fb7f130b93d1",
+    "tests/test_jev_campaign_evaluation.py": "70acfa0683fde252febfa2a465e0b0bde5e6219bbf75b4d68b7950546f9c015c"
+  },
+  "raw_lenses": {
+    "correctness": {
+      "lens_id": "correctness",
+      "model_tier": "sonnet",
+      "authority": "Independent read-only review of the frozen Step 225 packet and all five source files.",
+      "coverage_claim": "Checked the frozen D2/D3 preparation and scoring requirements against the complete diff and source.",
+      "findings": [
+        {
+          "severity": "Block",
+          "file_line": "src/jev/campaign.py:538",
+          "excerpt": "for source in promotion_sources:",
+          "rationale": "The candidate is first in promotion_sources for every case, so the promotion panel never alternates candidate and reference order as D3 requires."
+        },
+        {
+          "severity": "Block",
+          "file_line": "src/jev/campaign.py:514",
+          "excerpt": "excluded = set(J2_SEEDS)",
+          "rationale": "Preparation excludes J2 seeds and seeds within this manifest, but has no inventory of previously exposed seeds in the campaign lineage. Later candidates can reuse an exposed promotion seed, violating the fresh sealed panel requirement."
+        },
+        {
+          "severity": "Block",
+          "file_line": "src/jev/campaign.py:323",
+          "excerpt": "sum(w.weight_millionths for w in self.champion_weights) == WEIGHT_SCALE,",
+          "rationale": "Validation checks the total and source set, but does not enforce D2's 50/25/25 role allocations or unique weight entries. A parsed manifest can assign nearly all weight to the parent and still pass, changing the historical reference score."
+        },
+        {
+          "severity": "Block",
+          "file_line": "src/jev/campaign_evaluation.py:316",
+          "excerpt": "improved = bool(",
+          "rationale": "OfflineEvidence contains outcomes and critical-test booleans but no accepted hosted-decision count. Complete caller-supplied wins can therefore produce projected_verdict='improved' even with zero hosted participation, contrary to D3's required participation check."
+        }
+      ],
+      "overall_verdict": "NEEDS-WORK"
+    },
+    "bugs": {
+      "lens_id": "bugs",
+      "model_tier": "sonnet",
+      "authority": "Read-only review of the frozen Step 225 packet and permitted baseline dependencies.",
+      "coverage_claim": "Read every required packet input and all five complete source files. Inspected manifest validation, champion weighting, offline scoring, and CLI error propagation. Lint findings were empty.",
+      "findings": [
+        {
+          "severity": "Block",
+          "file_line": "src/jev/campaign.py:327",
+          "excerpt": "{w.source_fingerprint for w in self.champion_weights} == set(source_by_fp)",
+          "rationale": "Validation allows duplicate ChampionWeight entries for one fingerprint when their listed weights sum to one million. evaluate_offline converts the entries to a dict, silently retaining only the last weight. For a sole parent champion represented by two 500,000 entries, the reference is scored at half its proper value; a candidate with only one additional win can be reported as projected improved despite missing the 0.10 threshold."
+        },
+        {
+          "severity": "Block",
+          "file_line": "src/jev/campaign.py:183",
+          "excerpt": "((distinct or original), 250_000, \"distinct_champion\"),",
+          "rationale": "If the supplied distinct snapshot has the parent's fingerprint, the builder assigns 75% to the parent and 25% to the original. With no third distinct champion, the frozen rule assigns that extra 25% to the original, yielding 50% parent and 50% original. The resulting reference score and projected verdict can change."
+        },
+        {
+          "severity": "Nit",
+          "file_line": "scripts/run_jev_campaign.py:112",
+          "excerpt": "except CampaignSchemaError as exc:",
+          "rationale": "Missing snapshot paths raise FileNotFoundError from SourceReference.from_snapshot; corrupt snapshots raise ProvenanceMismatch, and invalid policy bundles raise PolicyError. None are caught here, so ordinary invalid prepare or report inputs produce a traceback instead of the CLI's documented invalid-input result."
+        }
+      ],
+      "overall_verdict": "NEEDS-WORK"
+    },
+    "security": {
+      "lens_id": "security",
+      "model_tier": "sonnet",
+      "authority": "Read-only review of the frozen Step 225 candidate; no live execution or promotion authority.",
+      "coverage_claim": "Read the required packet and all five complete source files. Traced snapshot validation, manifest paths, caller-supplied evidence, CLI commands, and every report-authority field. Reports remain explicitly unverified/offline with authoritative and promotion_authorized fixed to false; run and resume refuse execution.",
+      "findings": [],
+      "overall_verdict": "PASS"
+    },
+    "test-quality": {
+      "lens_id": "test-quality",
+      "model_tier": "sonnet",
+      "authority": "Read-only offline review; no execution or promotion authority.",
+      "coverage_claim": "Read all required packet inputs and five complete source files. Linter findings were empty; no tests were run. Of 11 tests, keep the unchanged-candidate, J2-seed rejection, missing-stratum, malformed-evidence, infrastructure-interruption, and no-change scoring tests. Keep the duplicate-anchor and race-regression tests but add missing gate cases. Rewrite the matrix, preparation, and CLI tests to exercise the claimed contracts.",
+      "findings": [
+        {
+          "severity": "Block",
+          "file_line": "tests/test_jev_campaign.py:111",
+          "excerpt": "test_production_cli_prepares_offline_and_refuses_live_authority",
+          "rationale": "The CLI test mocks snapshot loading and never makes network dispatch fail if called. A prepare path that makes a network request could pass. The Step 225 no-network requirement has no adversarial test."
+        },
+        {
+          "severity": "Block",
+          "file_line": "tests/test_jev_campaign.py:24",
+          "excerpt": "monkeypatch.setattr(SourceReference, \"verify\", lambda self: None)",
+          "rationale": "This autouse fixture bypasses source rehashing in every preparation and manifest test. Tampering with frozen source bytes has no coverage, although immutable source validation is central to preparation."
+        },
+        {
+          "severity": "Block",
+          "file_line": "tests/test_jev_campaign.py:45",
+          "excerpt": "test_duplicate_anchor_weights_are_coalesced",
+          "rationale": "The sole weight test collapses all roles onto one fingerprint. It cannot detect incorrect 50/25/25 weights for three distinct champions or incorrect 50/50 allocation when the third is absent. These D2 weights determine the promotion threshold."
+        },
+        {
+          "severity": "Block",
+          "file_line": "tests/test_jev_campaign.py:65",
+          "excerpt": "test_matrix_is_exact_and_excludes_j2_seeds",
+          "rationale": "Counts and coordinate uniqueness do not test D3's alternating candidate/reference order. The current generator places the candidate first at every promotion coordinate, while this test passes."
+        },
+        {
+          "severity": "Block",
+          "file_line": "tests/test_jev_campaign_evaluation.py:64",
+          "excerpt": "test_weighted_improvement_cannot_hide_race_regression",
+          "rationale": "The only favorable weighted example is forced to regress on race. No test reaches an improved verdict or checks the 0.10 boundary, screen rejection, difficulty floor, or failed critical fact. Removing these critical D3 gates could leave the suite green."
+        }
+      ],
+      "overall_verdict": "NEEDS-WORK"
+    },
+    "style": {
+      "lens_id": "style",
+      "model_tier": "haiku",
+      "authority": "Independent style lens",
+      "coverage_claim": "Reviewed the complete diff and all five complete source files, plus the style instructions, intent, plan, campaign contract, mechanical results, and lint findings. Compared conventions with neighboring Jev modules, scripts, and tests. The lint sidecar reports no findings.",
+      "findings": [],
+      "overall_verdict": "PASS"
+    },
+    "plan-conformance": {
+      "lens_id": "plan-conformance",
+      "model_tier": "sonnet",
+      "authority": "Heading-format Step 225 at docs/plans/master_plan.md:190-204, read with D2, D3 and D7 of campaign-contract.md.",
+      "coverage_claim": "Read the complete candidate diff, all five complete source files, required packet documents and the bound master-plan step. Files verdict: PASS; Done-when verdict: NEEDS-WORK; out-of-scope additions verdict: PASS. Read-only review; no tests run.",
+      "findings": [
+        {
+          "severity": "Block",
+          "file_line": "src/jev/campaign.py:275",
+          "excerpt": "CampaignManifest fields end with critical_test_ids and scoring_rule_version.",
+          "rationale": "D7 requires the immutable manifest to freeze creation time, mode, pricing snapshot/hash, environment fingerprint, viewer hashes/settings and critical-suite hash. These are absent from the schema written by prepare_campaign, so the prepared contract cannot bind the comparison conditions and suite required by D2/D3."
+        },
+        {
+          "severity": "Block",
+          "file_line": "src/jev/campaign.py:322",
+          "excerpt": "Validation checks only that weights sum to WEIGHT_SCALE and their fingerprints match champion sources.",
+          "rationale": "D2 fixes parent/original/distinct weights at 50/25/25, with specified coalescing. Deserialization accepts a different allocation or role assignment if it sums to one million, and offline scoring then uses those altered weights."
+        },
+        {
+          "severity": "Block",
+          "file_line": "src/jev/campaign.py:514",
+          "excerpt": "excluded = set(J2_SEEDS)",
+          "rationale": "D7 requires promotion seeds to exclude every previously exposed seed in the campaign lineage and development seeds to come from a recorded random seed. Preparation has no lineage seed inventory or recorded development seed, so a later panel can reuse exposed cases."
+        },
+        {
+          "severity": "Block",
+          "file_line": "src/jev/campaign.py:535",
+          "excerpt": "for difficulty in PROMOTION_DIFFICULTIES: ... for source in promotion_sources:",
+          "rationale": "D3 requires alternating candidate/reference order. promotion_sources always begins with the candidate and is reused unchanged for every promotion coordinate, so the order never alternates."
+        }
+      ],
+      "overall_verdict": "NEEDS-WORK"
+    }
+  },
+  "aggregate": {
+    "timestamp": "2026-10-15T06-56-52",
+    "plan_step": "C:/Users/abero/dev/Alpha4Gate/docs/plans/master_plan.md:225",
+    "skill_version": "v3",
+    "invocation": {
+      "reviewers_flag": "code",
+      "model_overrides": {},
+      "force_runtime": false,
+      "url": null,
+      "start_cmd": null,
+      "runtime_downgraded": false,
+      "runtime_downgrade_reason": null
+    },
+    "lens_verdicts": [
+      {
+        "lens_id": "correctness",
+        "model_tier": "sonnet",
+        "authority": "Independent read-only review of the frozen Step 225 packet and all five source files.",
+        "coverage_claim": "Checked the frozen D2/D3 preparation and scoring requirements against the complete diff and source.",
+        "findings": [
+          {
+            "severity": "Block",
+            "file_line": "src/jev/campaign.py:538",
+            "excerpt": "for source in promotion_sources:",
+            "rationale": "The candidate is first in promotion_sources for every case, so the promotion panel never alternates candidate and reference order as D3 requires."
+          },
+          {
+            "severity": "Block",
+            "file_line": "src/jev/campaign.py:514",
+            "excerpt": "excluded = set(J2_SEEDS)",
+            "rationale": "Preparation excludes J2 seeds and seeds within this manifest, but has no inventory of previously exposed seeds in the campaign lineage. Later candidates can reuse an exposed promotion seed, violating the fresh sealed panel requirement."
+          },
+          {
+            "severity": "Block",
+            "file_line": "src/jev/campaign.py:323",
+            "excerpt": "sum(w.weight_millionths for w in self.champion_weights) == WEIGHT_SCALE,",
+            "rationale": "Validation checks the total and source set, but does not enforce D2's 50/25/25 role allocations or unique weight entries. A parsed manifest can assign nearly all weight to the parent and still pass, changing the historical reference score."
+          },
+          {
+            "severity": "Block",
+            "file_line": "src/jev/campaign_evaluation.py:316",
+            "excerpt": "improved = bool(",
+            "rationale": "OfflineEvidence contains outcomes and critical-test booleans but no accepted hosted-decision count. Complete caller-supplied wins can therefore produce projected_verdict='improved' even with zero hosted participation, contrary to D3's required participation check."
+          }
+        ],
+        "overall_verdict": "NEEDS-WORK"
+      },
+      {
+        "lens_id": "bugs",
+        "model_tier": "sonnet",
+        "authority": "Read-only review of the frozen Step 225 packet and permitted baseline dependencies.",
+        "coverage_claim": "Read every required packet input and all five complete source files. Inspected manifest validation, champion weighting, offline scoring, and CLI error propagation. Lint findings were empty.",
+        "findings": [
+          {
+            "severity": "Block",
+            "file_line": "src/jev/campaign.py:327",
+            "excerpt": "{w.source_fingerprint for w in self.champion_weights} == set(source_by_fp)",
+            "rationale": "Validation allows duplicate ChampionWeight entries for one fingerprint when their listed weights sum to one million. evaluate_offline converts the entries to a dict, silently retaining only the last weight. For a sole parent champion represented by two 500,000 entries, the reference is scored at half its proper value; a candidate with only one additional win can be reported as projected improved despite missing the 0.10 threshold."
+          },
+          {
+            "severity": "Block",
+            "file_line": "src/jev/campaign.py:183",
+            "excerpt": "((distinct or original), 250_000, \"distinct_champion\"),",
+            "rationale": "If the supplied distinct snapshot has the parent's fingerprint, the builder assigns 75% to the parent and 25% to the original. With no third distinct champion, the frozen rule assigns that extra 25% to the original, yielding 50% parent and 50% original. The resulting reference score and projected verdict can change."
+          },
+          {
+            "severity": "Nit",
+            "file_line": "scripts/run_jev_campaign.py:112",
+            "excerpt": "except CampaignSchemaError as exc:",
+            "rationale": "Missing snapshot paths raise FileNotFoundError from SourceReference.from_snapshot; corrupt snapshots raise ProvenanceMismatch, and invalid policy bundles raise PolicyError. None are caught here, so ordinary invalid prepare or report inputs produce a traceback instead of the CLI's documented invalid-input result."
+          }
+        ],
+        "overall_verdict": "NEEDS-WORK"
+      },
+      {
+        "lens_id": "security",
+        "model_tier": "sonnet",
+        "authority": "Read-only review of the frozen Step 225 candidate; no live execution or promotion authority.",
+        "coverage_claim": "Read the required packet and all five complete source files. Traced snapshot validation, manifest paths, caller-supplied evidence, CLI commands, and every report-authority field. Reports remain explicitly unverified/offline with authoritative and promotion_authorized fixed to false; run and resume refuse execution.",
+        "findings": [],
+        "overall_verdict": "PASS"
+      },
+      {
+        "lens_id": "test-quality",
+        "model_tier": "sonnet",
+        "authority": "Read-only offline review; no execution or promotion authority.",
+        "coverage_claim": "Read all required packet inputs and five complete source files. Linter findings were empty; no tests were run. Of 11 tests, keep the unchanged-candidate, J2-seed rejection, missing-stratum, malformed-evidence, infrastructure-interruption, and no-change scoring tests. Keep the duplicate-anchor and race-regression tests but add missing gate cases. Rewrite the matrix, preparation, and CLI tests to exercise the claimed contracts.",
+        "findings": [
+          {
+            "severity": "Block",
+            "file_line": "tests/test_jev_campaign.py:111",
+            "excerpt": "test_production_cli_prepares_offline_and_refuses_live_authority",
+            "rationale": "The CLI test mocks snapshot loading and never makes network dispatch fail if called. A prepare path that makes a network request could pass. The Step 225 no-network requirement has no adversarial test."
+          },
+          {
+            "severity": "Block",
+            "file_line": "tests/test_jev_campaign.py:24",
+            "excerpt": "monkeypatch.setattr(SourceReference, \"verify\", lambda self: None)",
+            "rationale": "This autouse fixture bypasses source rehashing in every preparation and manifest test. Tampering with frozen source bytes has no coverage, although immutable source validation is central to preparation."
+          },
+          {
+            "severity": "Block",
+            "file_line": "tests/test_jev_campaign.py:45",
+            "excerpt": "test_duplicate_anchor_weights_are_coalesced",
+            "rationale": "The sole weight test collapses all roles onto one fingerprint. It cannot detect incorrect 50/25/25 weights for three distinct champions or incorrect 50/50 allocation when the third is absent. These D2 weights determine the promotion threshold."
+          },
+          {
+            "severity": "Block",
+            "file_line": "tests/test_jev_campaign.py:65",
+            "excerpt": "test_matrix_is_exact_and_excludes_j2_seeds",
+            "rationale": "Counts and coordinate uniqueness do not test D3's alternating candidate/reference order. The current generator places the candidate first at every promotion coordinate, while this test passes."
+          },
+          {
+            "severity": "Block",
+            "file_line": "tests/test_jev_campaign_evaluation.py:64",
+            "excerpt": "test_weighted_improvement_cannot_hide_race_regression",
+            "rationale": "The only favorable weighted example is forced to regress on race. No test reaches an improved verdict or checks the 0.10 boundary, screen rejection, difficulty floor, or failed critical fact. Removing these critical D3 gates could leave the suite green."
+          }
+        ],
+        "overall_verdict": "NEEDS-WORK"
+      },
+      {
+        "lens_id": "style",
+        "model_tier": "haiku",
+        "authority": "Independent style lens",
+        "coverage_claim": "Reviewed the complete diff and all five complete source files, plus the style instructions, intent, plan, campaign contract, mechanical results, and lint findings. Compared conventions with neighboring Jev modules, scripts, and tests. The lint sidecar reports no findings.",
+        "findings": [],
+        "overall_verdict": "PASS"
+      },
+      {
+        "lens_id": "plan-conformance",
+        "model_tier": "sonnet",
+        "authority": "Heading-format Step 225 at docs/plans/master_plan.md:190-204, read with D2, D3 and D7 of campaign-contract.md.",
+        "coverage_claim": "Read the complete candidate diff, all five complete source files, required packet documents and the bound master-plan step. Files verdict: PASS; Done-when verdict: NEEDS-WORK; out-of-scope additions verdict: PASS. Read-only review; no tests run.",
+        "findings": [
+          {
+            "severity": "Block",
+            "file_line": "src/jev/campaign.py:275",
+            "excerpt": "CampaignManifest fields end with critical_test_ids and scoring_rule_version.",
+            "rationale": "D7 requires the immutable manifest to freeze creation time, mode, pricing snapshot/hash, environment fingerprint, viewer hashes/settings and critical-suite hash. These are absent from the schema written by prepare_campaign, so the prepared contract cannot bind the comparison conditions and suite required by D2/D3."
+          },
+          {
+            "severity": "Block",
+            "file_line": "src/jev/campaign.py:322",
+            "excerpt": "Validation checks only that weights sum to WEIGHT_SCALE and their fingerprints match champion sources.",
+            "rationale": "D2 fixes parent/original/distinct weights at 50/25/25, with specified coalescing. Deserialization accepts a different allocation or role assignment if it sums to one million, and offline scoring then uses those altered weights."
+          },
+          {
+            "severity": "FYI",
+            "file_line": "src/jev/campaign.py:514",
+            "excerpt": "excluded = set(J2_SEEDS)",
+            "rationale": "Demoted per rule 2: D7 requires promotion seeds to exclude every previously exposed seed in the campaign lineage and development seeds to come from a recorded random seed. Preparation has no lineage seed inventory or recorded development seed, so a later panel can reuse exposed cases."
+          },
+          {
+            "severity": "Block",
+            "file_line": "src/jev/campaign.py:535",
+            "excerpt": "for difficulty in PROMOTION_DIFFICULTIES: ... for source in promotion_sources:",
+            "rationale": "D3 requires alternating candidate/reference order. promotion_sources always begins with the candidate and is reused unchanged for every promotion coordinate, so the order never alternates."
+          }
+        ],
+        "overall_verdict": "NEEDS-WORK"
+      }
+    ],
+    "aggregated_verdict": {
+      "result": "NEEDS-WORK",
+      "rationale": "14 Block findings; 1 Nit finding; lenses NEEDS-WORK: correctness, bugs, test-quality, plan-conformance."
+    },
+    "model_tiers_used": {
+      "correctness": "sonnet",
+      "bugs": "sonnet",
+      "security": "sonnet",
+      "test-quality": "sonnet",
+      "style": "haiku",
+      "plan-conformance": "sonnet"
+    },
+    "deferred_uat_items": []
+  },
+  "final_judge": {
+    "verdict": "NEEDS-WORK",
+    "coverage": "Read the required packet, complete diff, and all five source files within the 320 KiB ceiling. Their hashes match candidate 324d5f0. Candidate mechanical gates passed; root Ruff remains red in untouched migration helpers. No tests, writes, or network calls were made.",
+    "confirmed_blockers": [
+      {
+        "file_line": "src/jev/campaign.py:275",
+        "excerpt": "class CampaignManifest:",
+        "reason": "The write-once manifest omits D7 creation time, mode, pricing, environment, viewer configuration, and critical-suite hash. Case records also omit assessment identity and per-case limits. These comparison conditions cannot be frozen by preparation."
+      },
+      {
+        "file_line": "src/jev/campaign.py:183",
+        "excerpt": "((distinct or original), 250_000, \"distinct_champion\"),",
+        "reason": "When the supplied distinct champion equals the parent, this assigns 75% to parent and 25% to original; D2 requires 50% each when no third distinct champion exists."
+      },
+      {
+        "file_line": "src/jev/campaign.py:323",
+        "excerpt": "sum(w.weight_millionths for w in self.champion_weights) == WEIGHT_SCALE,",
+        "reason": "Parsed manifests can change D2's role allocations while preserving the total, altering the reference score."
+      },
+      {
+        "file_line": "src/jev/campaign.py:327",
+        "excerpt": "{w.source_fingerprint for w in self.champion_weights} == set(source_by_fp),",
+        "reason": "Duplicate entries for one fingerprint pass validation; the scorer's dict retains only the last weight. This is a distinct scoring defect from a wrong allocation."
+      },
+      {
+        "file_line": "src/jev/campaign.py:514",
+        "excerpt": "excluded = set(J2_SEEDS)",
+        "reason": "Preparation cannot exclude previously exposed lineage seeds and does not record a development random seed, both required by D7's preparation contract."
+      },
+      {
+        "file_line": "src/jev/campaign.py:538",
+        "excerpt": "for source in promotion_sources:",
+        "reason": "The candidate is first at every promotion coordinate; D3 requires alternating candidate/reference order."
+      },
+      {
+        "file_line": "src/jev/campaign_evaluation.py:316",
+        "excerpt": "improved = bool(",
+        "reason": "The typed offline facts contain no accepted hosted-decision count, so a zero-participation case set can project improvement. Add the D3 participation predicate to pure scoring while leaving verification and authority to Step 227."
+      },
+      {
+        "file_line": "tests/test_jev_campaign.py:111",
+        "excerpt": "test_production_cli_prepares_offline_and_refuses_live_authority",
+        "reason": "The no-network dry-run test does not fail if dispatch is attempted, despite the explicit D9 test requirement."
+      },
+      {
+        "file_line": "tests/test_jev_campaign.py:24",
+        "excerpt": "monkeypatch.setattr(SourceReference, \"verify\", lambda self: None)",
+        "reason": "The autouse fixture bypasses source rehashing in every preparation test; add a real tampered-snapshot rejection check."
+      },
+      {
+        "file_line": "tests/test_jev_campaign.py:45",
+        "excerpt": "test_duplicate_anchor_weights_are_coalesced",
+        "reason": "Weight coverage omits the three-champion 50/25/25 and no-third-champion 50/50 allocations."
+      },
+      {
+        "file_line": "tests/test_jev_campaign.py:65",
+        "excerpt": "test_matrix_is_exact_and_excludes_j2_seeds",
+        "reason": "The matrix test checks counts but misses alternating source order, allowing the current defect to pass."
+      },
+      {
+        "file_line": "tests/test_jev_campaign_evaluation.py:64",
+        "excerpt": "test_weighted_improvement_cannot_hide_race_regression",
+        "reason": "Scoring tests never reach improvement or exercise the 0.10 boundary, screen rejection, difficulty floor, and failed critical fact."
+      }
+    ],
+    "qualified_or_duplicated_findings": [
+      "The plan-conformance excerpts at campaign.py:275, :322, and :535 are paraphrases, not exact source quotations. The underlying omissions, weight defect, and ordering defect are independently visible in source; :322 and :535 duplicate correctness findings.",
+      "The plan-conformance seed FYI and correctness seed Block describe the same preparation gap. D7 explicitly applies lineage exclusion and recorded development seeding.",
+      "The weight and ordering test findings identify separate missing regression coverage, not additional runtime mechanisms.",
+      "The CLI traceback finding is a supported Nit, not a reason to expand this batch's blocking scope.",
+      "Security and style passed. Reports remain unverified/offline with authority flags false, and run/resume refuse execution."
+    ],
+    "next_action": "Park candidate 324d5f0 after this failed single batch. Preserve the reviewed bytes and findings; do not start another implementation or review loop under the current authorization."
+  },
+  "read_only_audits": "root and candidate snapshots unchanged after each lens batch and final judge"
+}
