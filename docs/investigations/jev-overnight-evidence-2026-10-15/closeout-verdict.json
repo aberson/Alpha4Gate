@@ -1,0 +1,5 @@
+{
+  "verdict": "STOP_ALLOWED",
+  "reason": "All four lanes have current, concrete useful-work dispositions.",
+  "next_action": "Record remaining time and evidence; stop only if those assertions are true."
+}
