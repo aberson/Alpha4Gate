@@ -62,3 +62,18 @@ This is another ownership-lifetime variant after rounds4/5. Stop the patch loop 
 Latest real-SC2 repeat: run`749c6893eb384f74989c893d5622eaa4`, round6 source. Recover accepted#2589 at8.214286s; action#2715 issued8MOVE that tick; raw8.571429s observation hadzeroATTACK. Recovery completed#4200 at13.928571s. Host exited0; recording `battle/2026-10-15 08-45-17.mkv`. This validates immediate order correction only, not the remaining handoff cases. The comparison page deliberately retains the labeled first-candidate footage.
 
 Unaccepted source preserved at `f027bc2` on `fix/jev-order-repair`; no merge or default-launcher application. Original held225/232 worktrees and root foreign migration remain untouched. No post-merge gate is claimed because nothing was merged. No games remain running; Typesafe spending$0. Work stops within the authorized09:00Pacific window.
+
+## Recovery exit audit for the next repair
+
+Source inventory at `f027bc2`: all `_fall_back()` calls and posture assignments in `strategy.py`, plus the controller-to-runtime setters in `bot.py` and task cancellation in `runtime.py`, were searched. The repeated defect is disagreement between strategy lifetime and task ownership; it is not a reason to add campaign infrastructure.
+
+| Transition | Current source | Required treatment in the next bounded repair |
+|---|---|---|
+| Failed or rejected refresh | `strategy.py:1244`, `:1285` | Keep executing recovery; round6 now guards these paths. |
+| Valid army replacement or repeated recover | `strategy.py:1314`; `runtime.py:1376` | Release obsolete recovery ownership for replacement; retain it for equivalent recover. |
+| Valid macro replacement | `strategy.py:1312`, `:1564`; `runtime.py:1376` | Confirmed gap: release obsolete recovery tasks before army selection despite local/None army slot. |
+| Completion or loss of executability | `strategy.py:973`, `:1370` | Follow the actual exit transition; do not infer cancellation from a choice-name whitelist. |
+| Defensive parse fallback, macro invalidation, answer-wait expiry | `strategy.py:1308`, `:1363`, `:1455` | Establish reachability and ownership effects; preserve the existing distinction between invalid refresh and valid supersession. |
+| Coordinator failure / scripted fallback | `bot.py:832` | Keep local scripted recovery functional; do not cancel every recovery task whenever the army slot is None. |
+
+Two discriminating production cases remain necessary: a valid macro replacement while recovery holds actors, and seven ready units home while another selected actor still owns an active recovery MOVE. Include the unready-actor case permitted by the policy. This inventory is a diagnosis and follow-up scope, not a reviewed implementation or acceptance.
