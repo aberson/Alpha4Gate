@@ -1,3 +1,5 @@
+<img src="documentation/images/alpha4gate-hero.png" alt="Alpha4Gate conceptual artwork: four gateways meet a decision graph" width="100%">
+
 # Alpha4Gate
 
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue) [![linux-tests](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml/badge.svg?branch=master)](https://github.com/aberson/Alpha4Gate/actions/workflows/linux-tests.yml) ![Jev](https://img.shields.io/badge/Jev-Typesafe%20%2B%20decision%20graph-8b5cf6)
@@ -121,10 +123,6 @@ What the diagram can't show: **stack-apply is a re-write, not a merge** — each
 ---
 
 ## The Jev adventure: from four Gateways to a live decision graph
-
-![Alpha4Gate conceptual artwork: four gateways meet a decision graph](documentation/images/alpha4gate-hero.png)
-
-*Conceptual project artwork; the animated panel above and video below show the actual UI.*
 
 Jev began with one deliberately modest plan: a Zealot rush, with **four Gateways**
 in honor of the project name. That became the frozen `v1.jev` player. The first
