@@ -5,7 +5,7 @@ import { readCache, writeCache } from "../lib/idbCache";
  * Offline-first data-fetching hook for API endpoints.
  *
  * Part of Phase 1a of the offline-first dashboard work (see
- * `documentation/improvements/offline-first.md`). Replaces the existing
+ * `docs/improvements/offline-first.md`). Replaces the existing
  * per-tab `fetch` + `useEffect` + polling pattern with a single shared
  * hook that:
  *

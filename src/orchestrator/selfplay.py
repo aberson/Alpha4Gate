@@ -83,7 +83,7 @@ def _install_port_collision_patch() -> None:
     This patch pushes all picked ports into a shared blocklist and wraps
     ``pick_unused_port`` to retry when it returns a blocked port.
 
-    See ``documentation/wiki/subprocess-selfplay.md`` §1 for full details.
+    See ``docs/wiki/subprocess-selfplay.md`` §1 for full details.
     """
     global _PATCH_INSTALLED  # noqa: PLW0603
     if _PATCH_INSTALLED:

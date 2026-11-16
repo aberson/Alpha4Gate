@@ -21,7 +21,7 @@ Per generation the script:
 
 The composition phase (a third Bernoulli filter that tested the stacked
 candidate against the parent before promotion) was removed 2026-04-23;
-see ``documentation/plans/evolve-gate-reduction-plan.md``. Regression
+see ``docs/completed/evolve-gate-reduction-plan.md``. Regression
 already catches bad-interaction stacks, so the composition gate added
 cost without adding unique detection capability.
 
@@ -109,8 +109,8 @@ _log = logging.getLogger("evolve")
 
 
 # Per-imp status vocabulary (also used by the dashboard). See
-# documentation/investigations/evolve-algorithm-redesign-investigation.md
-# and documentation/plans/evolve-gate-reduction-plan.md for the post-
+# docs/investigations/evolve-algorithm-redesign-investigation.md
+# and docs/completed/evolve-gate-reduction-plan.md for the post-
 # gate-reduction vocabulary — the two legacy promotion statuses were
 # collapsed into a single ``promoted`` status.
 PoolItemStatus = str
@@ -294,7 +294,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Human-readable markdown run log "
-            "(default: documentation/soak-test-runs/evolve-<ts>.md)"
+            "(default: docs/soak-test-runs/evolve-<ts>.md)"
         ),
     )
     parser.add_argument(
@@ -2083,7 +2083,7 @@ def _default_import_check(
 
     Migrated from the deleted ``orchestrator.evolve._default_import_check``
     when the composition phase was removed 2026-04-23; see
-    ``documentation/plans/evolve-gate-reduction-plan.md``. The gate now
+    ``docs/completed/evolve-gate-reduction-plan.md``. The gate now
     runs AFTER the snapshot + apply + promote-to-``vN+1`` step, so a
     failure here rolls back the snapshot and skips regression.
     """
@@ -3723,7 +3723,7 @@ def _load_lineage_registry_if_engaged(
     ``--lineages > 1`` run whose registry is absent or malformed,
     destroying a hand-authored file and permanently engaging multi-lineage
     scheduling for every later bare invocation. See
-    ``documentation/plans/evolve-operational-hardening-plan.md`` §6 D-2.
+    ``docs/archived-plans/evolve-operational-hardening-plan.md`` §6 D-2.
     """
     from orchestrator.lineages import (
         DEFAULT_LINEAGE_ID,
@@ -4628,7 +4628,7 @@ def run_loop(
         # but BEFORE regression; import failure rolls back the snapshot
         # and skips regression. Pre-2026-04-23 this was a full
         # composition phase with its own 5-game Bernoulli gate — removed
-        # per documentation/plans/evolve-gate-reduction-plan.md.
+        # per docs/completed/evolve-gate-reduction-plan.md.
         prior_parent = parent_current
         stack_outcome_label: str = "none"
         promote_sha: str | None = None
@@ -5479,7 +5479,7 @@ def run_loop(
         safe_ts = started_at_iso.replace(":", "-")
         run_log_path = (
             _REPO_ROOT
-            / "documentation"
+            / "docs"
             / "soak-test-runs"
             / f"evolve-{safe_ts}.md"
         )

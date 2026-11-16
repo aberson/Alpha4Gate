@@ -48,7 +48,7 @@ step is needed beyond the readiness probes above.
 /judge-motion --adapter a4g-motion --flow dashboard-critical --dry-run
 ```
 
-Flow specs live in [`flows/`](flows/) (currently one: `dashboard-critical.json`). Calibration
+Flow specs live in [`flows/`](flows) (currently one: `dashboard-critical.json`). Calibration
 (`--calibrate`), verdict semantics, run artifacts, and every other mechanic are the engine's —
 see its SKILL.md. Run artifacts land in the Alpha4Gate project root at `.judge-motion/<run-id>/`
 (gitignored via this project's `.gitignore`).

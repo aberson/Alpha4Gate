@@ -2468,7 +2468,7 @@ def test_each_attempt_gets_a_new_empty_unpredictable_bytecode_prefix(
 # The operator guide cannot drift from the command
 # ---------------------------------------------------------------------------
 
-GUIDE = REPO / "documentation" / "operator" / "jev-v2-validation.md"
+GUIDE = REPO / "docs" / "operator" / "jev-v2-validation.md"
 _GUIDE_VARIABLES: Final = {"$batch", "$jiRun", "$plan"}
 
 

@@ -4,7 +4,7 @@ Models tab Step 2 deliverable. Walks ``bots/v*/manifest.json``,
 cross-references ``data/improvement_log.json`` (advised) and
 ``data/evolve_results.jsonl`` (evolve) and ``data/selfplay_results.jsonl``
 (self-play, forward-compat), and writes a single ``data/lineage.json``
-with the schema documented in ``documentation/plans/models-tab-plan.md``::
+with the schema documented in ``docs/completed/models-tab-plan.md``::
 
     {
       "nodes": [

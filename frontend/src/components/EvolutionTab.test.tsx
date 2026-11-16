@@ -158,7 +158,7 @@ const completedState = {
   ...runningState,
   status: "completed",
   stop_reason: "wall-clock",
-  run_log_path: "documentation/soak-test-runs/evolve-2026-04-21.md",
+  run_log_path: "docs/soak-test-runs/evolve-2026-04-21.md",
 };
 
 describe("EvolutionTab", () => {

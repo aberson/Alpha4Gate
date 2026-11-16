@@ -36,7 +36,7 @@ could not be written), 2 for a usage error -- a malformed command line, or an
 invalid ``--run-id`` / ``--api-base`` (reported as ``FAIL invalid_run_id`` /
 ``FAIL invalid_api_base``; nothing is read and no report is written). Failure
 codes are stable; see :data:`FAILURE_CODES` and
-``documentation/operator/jev-validation.md``.
+``docs/operator/jev-validation.md``.
 """
 
 from __future__ import annotations

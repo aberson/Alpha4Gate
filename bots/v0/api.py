@@ -143,14 +143,14 @@ app = FastAPI(title="Alpha4Gate", version="0.1.0", lifespan=_lifespan)
 
 @app.get("/api/operator-commands")
 async def get_operator_commands() -> dict[str, str]:
-    """Return the contents of `documentation/wiki/operator-commands.md`.
+    """Return the contents of `docs/wiki/operator-commands.md`.
 
     The Help dashboard tab renders this directly via react-markdown so the
     on-disk doc is the single source of truth — edits to the markdown file
     surface immediately in the UI without a frontend rebuild.
     """
     repo_root = Path(__file__).resolve().parents[2]
-    doc_path = repo_root / "documentation" / "wiki" / "operator-commands.md"
+    doc_path = repo_root / "docs" / "wiki" / "operator-commands.md"
     if not doc_path.is_file():
         raise HTTPException(
             status_code=404,

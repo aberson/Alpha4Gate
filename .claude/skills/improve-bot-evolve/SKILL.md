@@ -15,7 +15,7 @@ Autonomous generation-phase improvement loop. Every generation:
 3. **Regression** — if anything was promoted, new parent plays prior parent for `--games-per-eval` games. On rollback, `git revert` the promote commit (also under `EVO_AUTO=1`) and restore the pointer.
 4. **Pool refresh** — close-loss and benched-pass imps go back to active (retry cap enforced; cap=3 total evals before eviction). Claude tops up the active pool back to `--pool-size` with fresh orthogonal imps targeting the new parent.
 
-**Gate-reduction note (2026-04-23):** The legacy third gate — a 5-game composition batch testing the stacked candidate against the parent before promotion — was removed per [evolve-gate-reduction-plan.md](../../../documentation/plans/evolve-gate-reduction-plan.md). Regression already catches bad-interaction stacks as "new parent loses to prior parent", and the extra Bernoulli filter dominated promotion rate without adding unique detection capability. The import-check gate that used to live inside composition migrated into the stack-apply step.
+**Gate-reduction note (2026-04-23):** The legacy third gate — a 5-game composition batch testing the stacked candidate against the parent before promotion — was removed per [evolve-gate-reduction-plan.md](../../../docs/completed/evolve-gate-reduction-plan.md). Regression already catches bad-interaction stacks as "new parent loses to prior parent", and the extra Bernoulli filter dominated promotion rate without adding unique detection capability. The import-check gate that used to live inside composition migrated into the stack-apply step.
 
 **Design goal:** `/improve-bot-evolve` in a fresh context window with no additional input should produce a measurably stronger parent version after a few hours, with every promotion recorded as an `[evo-auto]` commit and every regression recorded as an `[evo-auto]` revert.
 
@@ -36,7 +36,7 @@ The outer phase shape (pre-flight → seed → loop → decision → report) is 
 | `--pool-size` | int | `10` | Number of improvements Claude generates (and tops up to between generations) |
 | `--games-per-eval` | int | `5` | Games in each phase evaluation (fitness / regression). Pass threshold = strict majority of this count. |
 | `--hours` | float | `4.0` | Wall-clock budget. `0` disables the check (test-only). |
-| `--concurrency` | int | `1` | Number of fitness-eval workers run in parallel by `scripts/evolve.py`. `1` is byte-identical to the historical serial path (Decision D-1 in `documentation/plans/evolve-parallelization-plan.md`). `>1` fans the fitness phase out across N worker subprocesses; stack-apply + regression remain serial. **`--viewer` requires this to be `1`** — the two coexist fine at `1`; only `--viewer` with `> 1` is rejected, exiting immediately with guidance (see the Viewer note). |
+| `--concurrency` | int | `1` | Number of fitness-eval workers run in parallel by `scripts/evolve.py`. `1` is byte-identical to the historical serial path (Decision D-1 in `docs/completed/evolve-parallelization-plan.md`). `>1` fans the fitness phase out across N worker subprocesses; stack-apply + regression remain serial. **`--viewer` requires this to be `1`** — the two coexist fine at `1`; only `--viewer` with `> 1` is rejected, exiting immediately with guidance (see the Viewer note). |
 | `--lineages` | int | `1` | Number of parallel lineages to round-robin across. `1` with no `data/lineages.json` is byte-identical to the historical single-lineage path. `>1` (or a non-empty `data/lineages.json`) flips `bots/current/current.txt` to each lineage's head before its generation, so the loop interleaves divergent branches (Phase EL). A bare `/improve-bot-evolve` invocation stays single-lineage. |
 | `--map` | str | `Simple64` | SC2 map name |
 | `--game-time-limit` | int | `1800` | SC2 in-game time limit per game, in seconds |
@@ -159,8 +159,8 @@ if state.get('status') == 'running':
 LOOP_START=$(date +%s)
 RUN_TS=$(date -d @$LOOP_START +%Y%m%d-%H%M)
 
-LOGFILE="documentation/soak-test-runs/evolve-$(date +%F).md"
-i=0; while [ -e "$LOGFILE" ]; do i=$((i+1)); suf=$(printf "\\x$(printf '%x' $((96+i)))"); LOGFILE="documentation/soak-test-runs/evolve-$(date +%F)-$suf.md"; done
+LOGFILE="docs/soak-test-runs/evolve-$(date +%F).md"
+i=0; while [ -e "$LOGFILE" ]; do i=$((i+1)); suf=$(printf "\\x$(printf '%x' $((96+i)))"); LOGFILE="docs/soak-test-runs/evolve-$(date +%F)-$suf.md"; done
 ```
 
 Capture baseline: current parent, recent win rate, Elo, git SHA. Write run header to `$LOGFILE`.
@@ -595,6 +595,6 @@ git push origin master --force-with-lease
 
 - **`/improve-bot-advised`** — sibling. Linear. Mutually exclusive with evolve.
 - **`/improve-bot`** — building block used inside advised's dev path. Not called by evolve.
-- **`/improve-bot-triage`** — post-run helper; can read `documentation/soak-test-runs/evolve-*.md`.
+- **`/improve-bot-triage`** — post-run helper; can read `docs/soak-test-runs/evolve-*.md`.
 - **`/a4g-dashboard-check`** — pre-flight (Phase 0.6) and post-run validation.
 - **`/repo-update`** — end-of-cycle docs + README sync after a productive run.

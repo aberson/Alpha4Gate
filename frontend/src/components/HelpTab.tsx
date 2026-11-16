@@ -5,7 +5,7 @@ import { StaleDataBanner } from "./StaleDataBanner";
 
 /**
  * "Help" tab — renders the operator-commands cheat sheet from
- * `documentation/wiki/operator-commands.md` so the dashboard mirrors
+ * `docs/wiki/operator-commands.md` so the dashboard mirrors
  * the on-disk doc without duplicate maintenance.
  *
  * The backend endpoint `/api/operator-commands` reads the file on each

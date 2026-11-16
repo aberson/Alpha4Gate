@@ -1,7 +1,7 @@
 """Tests for the parallel fitness-phase dispatcher in ``scripts/evolve.py``.
 
 Step 3 of the evolve-parallelization plan
-(``documentation/plans/evolve-parallelization-plan.md``). The dispatcher
+(``docs/completed/evolve-parallelization-plan.md``). The dispatcher
 fans the strict-serial fitness loop out across N concurrent worker
 subprocesses (``scripts/evolve_worker.py``) under a configurable
 ``--concurrency N`` flag.

@@ -2,7 +2,7 @@
 
 A thin command over :mod:`jev.benchmark`; see that module for the panels, frozen
 source snapshots, limits, model pinning, storage, scoring and exit codes, and
-``documentation/operator/jev-v2-validation.md`` for the operator procedure.
+``docs/operator/jev-v2-validation.md`` for the operator procedure.
 
 Usage, from the repository root (PowerShell)::
 

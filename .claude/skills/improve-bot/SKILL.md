@@ -114,18 +114,18 @@ ls -la data/
 
 ### Soak-test pre-flight checklists
 
-Canonical pre-flight lives in `documentation/soak-test-runs/README.md`. Execute both of these in order; stop on any failure:
+Canonical pre-flight lives in `docs/soak-test-runs/README.md`. Execute both of these in order; stop on any failure:
 
 - **§2 Pre-soak checklist** (§2.1–§2.5): `data/` snapshot-or-reset, daemon config values, disk budget, duration/stop conditions, create the run log.
 - **§3 Startup sequence** (§3.1–§3.5): start SC2, start backend with daemon enabled, start frontend, open dashboard, run the **§3.5 synthetic alert pre-flight** (verifies the alerts pipeline end-to-end before the long run begins).
 
 Note that §3.5 specifically is the alerts-pipeline verification — do not conflate it with "the pre-flight" broadly. Both §2 and §3 must pass.
 
-For **demo** flavor, §2 still applies (minus daemon config values, since the daemon is off), and §3 still applies except §3.2 runs **without** `--daemon`. Run §3.5 as written — the alerts-pipeline verification is exactly what demo mode is for. If either document's section numbers drift, read `documentation/soak-test-runs/README.md` top-to-bottom to find the current checklist boundaries and adapt — do not invent pre-flight items that aren't in the doc.
+For **demo** flavor, §2 still applies (minus daemon config values, since the daemon is off), and §3 still applies except §3.2 runs **without** `--daemon`. Run §3.5 as written — the alerts-pipeline verification is exactly what demo mode is for. If either document's section numbers drift, read `docs/soak-test-runs/README.md` top-to-bottom to find the current checklist boundaries and adapt — do not invent pre-flight items that aren't in the doc.
 
 ### Launch command
 
-Read the most recent `documentation/soak-test-runs/soak-*.md` to learn the current soak-launch convention. **Mimic it exactly** — do not invent a new invocation. If the convention is unclear, stop and ask. For **demo** flavor, take that same launch command and remove the `--daemon` flag — everything else stays (env vars, tee, DEBUG_ENDPOINTS, etc.); do not invent a different backend entry point.
+Read the most recent `docs/soak-test-runs/soak-*.md` to learn the current soak-launch convention. **Mimic it exactly** — do not invent a new invocation. If the convention is unclear, stop and ask. For **demo** flavor, take that same launch command and remove the `--daemon` flag — everything else stays (env vars, tee, DEBUG_ENDPOINTS, etc.); do not invent a different backend entry point.
 
 ### Stdout buffering + tee from start
 
@@ -136,8 +136,8 @@ export PYTHONUNBUFFERED=1
 Auto-disambiguate the run log filename (per feedback memory: if `soak-<today>.md` exists, use `-b`, `-c`, … suffix):
 
 ```bash
-LOGFILE="documentation/soak-test-runs/improve-$(date +%F).md"
-i=0; while [ -e "$LOGFILE" ]; do i=$((i+1)); suf=$(printf "\\x$(printf '%x' $((96+i)))"); LOGFILE="documentation/soak-test-runs/improve-$(date +%F)-$suf.md"; done
+LOGFILE="docs/soak-test-runs/improve-$(date +%F).md"
+i=0; while [ -e "$LOGFILE" ]; do i=$((i+1)); suf=$(printf "\\x$(printf '%x' $((96+i)))"); LOGFILE="docs/soak-test-runs/improve-$(date +%F)-$suf.md"; done
 ```
 
 All subsequent soak launches use `2>&1 | tee -a "$LOGFILE"`.
@@ -154,7 +154,7 @@ Before doing anything else in Phase 3, check how long the **interactive** portio
 INTERACTIVE_ELAPSED = now - SKILL_START
 ```
 
-If `INTERACTIVE_ELAPSED > 30 min`, the Phase 1 + Phase 2 portion has eaten significant wall clock while the daemon was likely running autonomously (backend launched in §3.2). **This is the "wall-clock leak" failure mode from the 2026-04-11 improve-bot run** (run log `documentation/soak-test-runs/improve-2026-04-11.md`, skill-feedback memory `feedback_improve-bot_wall_clock_leak.md`).
+If `INTERACTIVE_ELAPSED > 30 min`, the Phase 1 + Phase 2 portion has eaten significant wall clock while the daemon was likely running autonomously (backend launched in §3.2). **This is the "wall-clock leak" failure mode from the 2026-04-11 improve-bot run** (run log `docs/soak-test-runs/improve-2026-04-11.md`, skill-feedback memory `feedback_improve-bot_wall_clock_leak.md`).
 
 When this fires, STOP and ask the user one explicit question with three options:
 
@@ -206,7 +206,7 @@ Write a run-start header to `$LOGFILE`:
 
 ### Flavor: dev
 
-- Synthesize a plan doc at `documentation/improvements/self-improve/$RUN_TS-<slug>.md`.
+- Synthesize a plan doc at `docs/improvements/self-improve/$RUN_TS-<slug>.md`.
 - `/repo-sync --plan <path>` to create issues.
 - `/build-phase --plan <path>`.
 - Commits/pushes follow normal build-phase behavior.

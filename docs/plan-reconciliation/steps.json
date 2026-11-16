@@ -1,0 +1,2591 @@
+[
+  {
+    "step_id": "232",
+    "original_step_id": "232",
+    "title": "Make local emergency execution independent of model intent",
+    "type": "code",
+    "status": "HELD \u2014 three failed review rounds; structural audit, no fourth patch round",
+    "dependencies": [],
+    "hours": [
+      12,
+      28,
+      1.5,
+      4
+    ],
+    "rationale": "Scope-specific model estimate for make local emergency execution independent of model intent. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 355,
+    "hold_reason": "HELD \u2014 three failed review rounds; structural audit, no fourth patch round",
+    "source": "documentation/plans/jev-decision-integration-plan.md"
+  },
+  {
+    "step_id": "233",
+    "original_step_id": "233",
+    "title": "Record opportunities and compare production behavior offline",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "232"
+    ],
+    "hours": [
+      10,
+      18,
+      1,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for record opportunities and compare production behavior offline. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 356,
+    "hold_reason": null,
+    "source": "documentation/plans/jev-decision-integration-plan.md"
+  },
+  {
+    "step_id": "234",
+    "original_step_id": "234",
+    "title": "Ask timely army questions with bounded, richer context",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "233"
+    ],
+    "hours": [
+      12,
+      22,
+      1,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for ask timely army questions with bounded, richer context. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 357,
+    "hold_reason": null,
+    "source": "documentation/plans/jev-decision-integration-plan.md"
+  },
+  {
+    "step_id": "235",
+    "original_step_id": "235",
+    "title": "Expose independent macro choices and scripted equivalents",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "234"
+    ],
+    "hours": [
+      14,
+      26,
+      1.5,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for expose independent macro choices and scripted equivalents. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 358,
+    "hold_reason": null,
+    "source": "documentation/plans/jev-decision-integration-plan.md"
+  },
+  {
+    "step_id": "236",
+    "original_step_id": "236",
+    "title": "Integrate the matched experiment into the existing benchmark/campaign tools",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "235",
+      "225",
+      "226",
+      "227"
+    ],
+    "hours": [
+      14,
+      24,
+      1,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for integrate the matched experiment into the existing benchmark/campaign tools. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 359,
+    "hold_reason": null,
+    "source": "documentation/plans/jev-decision-integration-plan.md"
+  },
+  {
+    "step_id": "237",
+    "original_step_id": "237",
+    "title": "Approve and observe the real integration smoke",
+    "type": "operator",
+    "status": "PENDING",
+    "dependencies": [
+      "236",
+      "228"
+    ],
+    "hours": [
+      1,
+      3,
+      1,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for approve and observe the real integration smoke. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 360,
+    "hold_reason": null,
+    "source": "documentation/plans/jev-decision-integration-plan.md"
+  },
+  {
+    "step_id": "238",
+    "original_step_id": "238",
+    "title": "Run and review the predeclared first matched block",
+    "type": "wait",
+    "status": "PENDING",
+    "dependencies": [
+      "237"
+    ],
+    "hours": [
+      1,
+      2,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for run and review the predeclared first matched block. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 361,
+    "hold_reason": null,
+    "source": "documentation/plans/jev-decision-integration-plan.md"
+  },
+  {
+    "step_id": "239",
+    "original_step_id": "239",
+    "title": "Complete the sealed panel within the cumulative allowance",
+    "type": "wait",
+    "status": "PENDING",
+    "dependencies": [
+      "238"
+    ],
+    "hours": [
+      2,
+      4,
+      1,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for complete the sealed panel within the cumulative allowance. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 362,
+    "hold_reason": null,
+    "source": "documentation/plans/jev-decision-integration-plan.md"
+  },
+  {
+    "step_id": "240",
+    "original_step_id": "240",
+    "title": "Recommend the model's role from the paired evidence",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "239"
+    ],
+    "hours": [
+      3,
+      7,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for recommend the model's role from the paired evidence. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 363,
+    "hold_reason": null,
+    "source": "documentation/plans/jev-decision-integration-plan.md"
+  },
+  {
+    "step_id": "225",
+    "original_step_id": "225",
+    "title": "Freeze campaign contracts and weighted evaluation",
+    "type": "code",
+    "status": "HELD \u2014 original three-review authenticity/execution-authority failure; bounded prospective round only after reorientation",
+    "dependencies": [],
+    "hours": [
+      10,
+      24,
+      1,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for freeze campaign contracts and weighted evaluation. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 347,
+    "hold_reason": "HELD \u2014 original three-review authenticity/execution-authority failure; bounded prospective round only after reorientation",
+    "source": "documentation/plans/jev-overnight-improvement-plan.md"
+  },
+  {
+    "step_id": "226",
+    "original_step_id": "226",
+    "title": "Enforce the managed $5 ceiling",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "225"
+    ],
+    "hours": [
+      10,
+      20,
+      1,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for enforce the managed $5 ceiling. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 348,
+    "hold_reason": null,
+    "source": "documentation/plans/jev-overnight-improvement-plan.md"
+  },
+  {
+    "step_id": "227",
+    "original_step_id": "227",
+    "title": "Sequential Observer Rush controller and launcher",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "226"
+    ],
+    "hours": [
+      16,
+      32,
+      1.5,
+      4
+    ],
+    "rationale": "Scope-specific model estimate for sequential observer rush controller and launcher. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 349,
+    "hold_reason": null,
+    "source": "documentation/plans/jev-overnight-improvement-plan.md"
+  },
+  {
+    "step_id": "228",
+    "original_step_id": "228",
+    "title": "Real pipeline smoke before unattended work",
+    "type": "operator",
+    "status": "PENDING",
+    "dependencies": [
+      "227"
+    ],
+    "hours": [
+      1.5,
+      3,
+      1,
+      2.5
+    ],
+    "rationale": "Scope-specific model estimate for real pipeline smoke before unattended work. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 350,
+    "hold_reason": null,
+    "source": "documentation/plans/jev-overnight-improvement-plan.md"
+  },
+  {
+    "step_id": "229",
+    "original_step_id": "229",
+    "title": "Observe the first fixed-candidate overnight campaign",
+    "type": "wait",
+    "status": "PENDING",
+    "dependencies": [
+      "228"
+    ],
+    "hours": [
+      1,
+      3,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for observe the first fixed-candidate overnight campaign. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 351,
+    "hold_reason": null,
+    "source": "documentation/plans/jev-overnight-improvement-plan.md"
+  },
+  {
+    "step_id": "230",
+    "original_step_id": "230",
+    "title": "Add bounded one-change advised iterations",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "229"
+    ],
+    "hours": [
+      14,
+      28,
+      1,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for add bounded one-change advised iterations. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 352,
+    "hold_reason": null,
+    "source": "documentation/plans/jev-overnight-improvement-plan.md"
+  },
+  {
+    "step_id": "231",
+    "original_step_id": "231",
+    "title": "Observe a complete advised cycle",
+    "type": "wait",
+    "status": "PENDING",
+    "dependencies": [
+      "230"
+    ],
+    "hours": [
+      1.5,
+      4,
+      0.5,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for observe a complete advised cycle. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 353,
+    "hold_reason": null,
+    "source": "documentation/plans/jev-overnight-improvement-plan.md"
+  },
+  {
+    "step_id": "207",
+    "original_step_id": "207",
+    "title": "Observe the live pipeline smoke",
+    "type": "operator",
+    "status": "PENDING",
+    "dependencies": [],
+    "hours": [
+      0.5,
+      1.5,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for observe the live pipeline smoke. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 324,
+    "hold_reason": null,
+    "source": "documentation/plans/jev-player-plan.md"
+  },
+  {
+    "step_id": "208",
+    "original_step_id": "208",
+    "title": "Accept the basic player and viewer",
+    "type": "operator",
+    "status": "PENDING",
+    "dependencies": [
+      "207"
+    ],
+    "hours": [
+      1,
+      3,
+      1,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for accept the basic player and viewer. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 325,
+    "hold_reason": null,
+    "source": "documentation/plans/jev-player-plan.md"
+  },
+  {
+    "step_id": "213",
+    "original_step_id": "213",
+    "title": "Observe the harder-opponent baseline",
+    "type": "operator",
+    "status": "DEFERRED \u2014 operator stopped baseline; new testing request required",
+    "dependencies": [],
+    "hours": [
+      1,
+      3,
+      1,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for observe the harder-opponent baseline. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 330,
+    "hold_reason": "DEFERRED \u2014 operator stopped baseline; new testing request required",
+    "source": "documentation/plans/jev-v2-plan.md"
+  },
+  {
+    "step_id": "222",
+    "original_step_id": "222",
+    "title": "Prove the full v2 decision cycle in SC2",
+    "type": "operator",
+    "status": "HELD \u2014 remaining development matches paused for recovery/attack investigation",
+    "dependencies": [],
+    "hours": [
+      1.5,
+      4,
+      1.5,
+      4
+    ],
+    "rationale": "Scope-specific model estimate for prove the full v2 decision cycle in sc2. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 339,
+    "hold_reason": "Interrupted development match did not prove acceptance; recovery/attack investigation pending",
+    "source": "documentation/plans/jev-v2-plan.md"
+  },
+  {
+    "step_id": "223",
+    "original_step_id": "223",
+    "title": "Evaluate harder-opponent improvement",
+    "type": "wait",
+    "status": "PENDING",
+    "dependencies": [
+      "222",
+      "J2.0"
+    ],
+    "hours": [
+      2,
+      5,
+      1,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for evaluate harder-opponent improvement. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 340,
+    "hold_reason": null,
+    "source": "documentation/plans/jev-v2-plan.md"
+  },
+  {
+    "step_id": "J2.0",
+    "original_step_id": "J2.0",
+    "title": "Decide ownership of unbuilt J2 scope",
+    "type": "operator",
+    "status": "HELD \u2014 explicit scope decision",
+    "dependencies": [],
+    "hours": [
+      1,
+      3,
+      1,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for decide ownership of unbuilt j2 scope. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Unowned design requirements need operator disposition",
+    "source": "documentation/plans/jev-v2-plan.md"
+  },
+  {
+    "step_id": "EH.3",
+    "original_step_id": "EH.3",
+    "title": "Fail loudly when the gauntlet is inert",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [],
+    "hours": [
+      2,
+      5,
+      0.25,
+      0.75
+    ],
+    "rationale": "Scope-specific model estimate for fail loudly when the gauntlet is inert. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 308,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-operational-hardening-plan.md"
+  },
+  {
+    "step_id": "EH.4",
+    "original_step_id": "EH.4",
+    "title": "Runner-side control-file reader",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [],
+    "hours": [
+      8,
+      16,
+      0.75,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for runner-side control-file reader. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 309,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-operational-hardening-plan.md"
+  },
+  {
+    "step_id": "EH.5",
+    "original_step_id": "EH.5",
+    "title": "Frontend stop honesty",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "EH.4"
+    ],
+    "hours": [
+      3,
+      7,
+      0.5,
+      1
+    ],
+    "rationale": "Scope-specific model estimate for frontend stop honesty. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 310,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-operational-hardening-plan.md"
+  },
+  {
+    "step_id": "EH.6",
+    "original_step_id": "EH.6",
+    "title": "Launcher `--generations` passthrough",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "EH.8"
+    ],
+    "hours": [
+      3,
+      6,
+      0.25,
+      1
+    ],
+    "rationale": "Scope-specific model estimate for launcher `--generations` passthrough. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 311,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-operational-hardening-plan.md"
+  },
+  {
+    "step_id": "EH.7",
+    "original_step_id": "EH.7",
+    "title": "Single-run lock + stale run-state reconciliation",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [],
+    "hours": [
+      8,
+      16,
+      0.75,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for single-run lock + stale run-state reconciliation. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 312,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-operational-hardening-plan.md"
+  },
+  {
+    "step_id": "EH.8",
+    "original_step_id": "EH.8",
+    "title": "Path-scope the `[evo-auto]` commit",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [],
+    "hours": [
+      8,
+      18,
+      1,
+      2.5
+    ],
+    "rationale": "Scope-specific model estimate for path-scope the `[evo-auto]` commit. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 313,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-operational-hardening-plan.md"
+  },
+  {
+    "step_id": "EH.9",
+    "original_step_id": "EH.9",
+    "title": "Producer\u2192consumer smoke gate",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [],
+    "hours": [
+      4,
+      9,
+      0.5,
+      1
+    ],
+    "rationale": "Scope-specific model estimate for producer\u2192consumer smoke gate. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 314,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-operational-hardening-plan.md"
+  },
+  {
+    "step_id": "EH.10",
+    "original_step_id": "EH.10",
+    "title": "Operator verification \u2014 Gate 0 plus one armed short run",
+    "type": "operator",
+    "status": "PENDING",
+    "dependencies": [
+      "EH.3",
+      "EH.4",
+      "EH.5",
+      "EH.6",
+      "EH.7",
+      "EH.9"
+    ],
+    "hours": [
+      1,
+      2,
+      1,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for operator verification \u2014 gate 0 plus one armed short run. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 315,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-operational-hardening-plan.md"
+  },
+  {
+    "step_id": "EI.1",
+    "original_step_id": "EI.1",
+    "title": "Per-game log identity + retention",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "EI.0",
+      "EH.10"
+    ],
+    "hours": [
+      8,
+      15,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for per-game log identity + retention. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-evidence-layer-plan.md"
+  },
+  {
+    "step_id": "EI.2",
+    "original_step_id": "EI.2",
+    "title": "`src/orchestrator/trace.py` \u2014 stdlib trace parser",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "EI.0",
+      "EH.10"
+    ],
+    "hours": [
+      3,
+      6,
+      0.25,
+      0.75
+    ],
+    "rationale": "Scope-specific model estimate for `src/orchestrator/trace.py` \u2014 stdlib trace parser. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-evidence-layer-plan.md"
+  },
+  {
+    "step_id": "EI.3",
+    "original_step_id": "EI.3",
+    "title": "Trace capture at the two existing game-end seams",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "EI.1",
+      "EI.2"
+    ],
+    "hours": [
+      5,
+      9,
+      0.5,
+      1
+    ],
+    "rationale": "Scope-specific model estimate for trace capture at the two existing game-end seams. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-evidence-layer-plan.md"
+  },
+  {
+    "step_id": "EI.4",
+    "original_step_id": "EI.4",
+    "title": "Proposer evidence provenance",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "EI.1"
+    ],
+    "hours": [
+      3,
+      6,
+      0.25,
+      1
+    ],
+    "rationale": "Scope-specific model estimate for proposer evidence provenance. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-evidence-layer-plan.md"
+  },
+  {
+    "step_id": "EI.5",
+    "original_step_id": "EI.5",
+    "title": "`SelfPlayRecord` evaluation id + bidirectional compat",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "EI.0",
+      "EH.10"
+    ],
+    "hours": [
+      7,
+      14,
+      0.75,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for `selfplayrecord` evaluation id + bidirectional compat. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-evidence-layer-plan.md"
+  },
+  {
+    "step_id": "EI.6",
+    "original_step_id": "EI.6",
+    "title": "Persist `wins_parent` and games-played",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "EI.0",
+      "EH.10"
+    ],
+    "hours": [
+      6,
+      11,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for persist `wins_parent` and games-played. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-evidence-layer-plan.md"
+  },
+  {
+    "step_id": "EI.7",
+    "original_step_id": "EI.7",
+    "title": "Patch capture, log-only",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "EI.0",
+      "EH.10"
+    ],
+    "hours": [
+      5,
+      10,
+      0.5,
+      1
+    ],
+    "rationale": "Scope-specific model estimate for patch capture, log-only. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-evidence-layer-plan.md"
+  },
+  {
+    "step_id": "EI.8",
+    "original_step_id": "EI.8",
+    "title": "`--fitness-stop rule|majority`",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "EI.6"
+    ],
+    "hours": [
+      6,
+      12,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for `--fitness-stop rule|majority`. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-evidence-layer-plan.md"
+  },
+  {
+    "step_id": "EI.9",
+    "original_step_id": "EI.9",
+    "title": "`--stack-size K`",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "EI.6"
+    ],
+    "hours": [
+      6,
+      12,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for `--stack-size k`. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-evidence-layer-plan.md"
+  },
+  {
+    "step_id": "EI.10",
+    "original_step_id": "EI.10",
+    "title": "`--stack-model MODEL`",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "EI.0",
+      "EH.10"
+    ],
+    "hours": [
+      3,
+      6,
+      0.25,
+      0.75
+    ],
+    "rationale": "Scope-specific model estimate for `--stack-model model`. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-evidence-layer-plan.md"
+  },
+  {
+    "step_id": "EI.11",
+    "original_step_id": "EI.11",
+    "title": "`--stack-static-gate`",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "EI.9"
+    ],
+    "hours": [
+      7,
+      14,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for `--stack-static-gate`. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-evidence-layer-plan.md"
+  },
+  {
+    "step_id": "EI.12",
+    "original_step_id": "EI.12",
+    "title": "Frontend token repair + dashboard file counts",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "EI.1",
+      "EI.3",
+      "EI.11"
+    ],
+    "hours": [
+      4,
+      8,
+      0.5,
+      1
+    ],
+    "rationale": "Scope-specific model estimate for frontend token repair + dashboard file counts. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-evidence-layer-plan.md"
+  },
+  {
+    "step_id": "EI.13",
+    "original_step_id": "EI.13",
+    "title": "Producer\u2192consumer smoke gate",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "EI.1",
+      "EI.2",
+      "EI.3",
+      "EI.4",
+      "EI.5",
+      "EI.6",
+      "EI.7"
+    ],
+    "hours": [
+      6,
+      12,
+      0.5,
+      1
+    ],
+    "rationale": "Scope-specific model estimate for producer\u2192consumer smoke gate. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-evidence-layer-plan.md"
+  },
+  {
+    "step_id": "EI.14",
+    "original_step_id": "EI.14",
+    "title": "Shadow-half observation soak",
+    "type": "wait",
+    "status": "PENDING",
+    "dependencies": [
+      "EI.11",
+      "EI.12",
+      "EI.13",
+      "EL.7"
+    ],
+    "hours": [
+      1.5,
+      3,
+      0.5,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for shadow-half observation soak. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-evidence-layer-plan.md"
+  },
+  {
+    "step_id": "EI.0",
+    "original_step_id": "EI.0",
+    "title": "Approve evidence-layer defaults and synchronize issues",
+    "type": "operator",
+    "status": "HELD \u2014 product decisions and issue synchronization pending",
+    "dependencies": [],
+    "hours": [
+      1,
+      3,
+      0.75,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for approve evidence-layer defaults and synchronize issues. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "EI defaults not operator-ratified",
+    "source": "documentation/plans/evolve-evidence-layer-plan.md"
+  },
+  {
+    "step_id": "EL.7",
+    "original_step_id": "EL.7",
+    "title": "Multi-hour observation soak",
+    "type": "wait",
+    "status": "PENDING",
+    "dependencies": [
+      "EH.10"
+    ],
+    "hours": [
+      1,
+      3,
+      0.75,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for multi-hour observation soak. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 279,
+    "hold_reason": null,
+    "source": "documentation/plans/evolution-lines-plan.md"
+  },
+  {
+    "step_id": "EJ.7",
+    "original_step_id": "EJ.7",
+    "title": "Flags-on smoke gate (real SC2)",
+    "type": "operator",
+    "status": "PENDING",
+    "dependencies": [],
+    "hours": [
+      1,
+      2,
+      1,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for flags-on smoke gate (real sc2). Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 288,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-judging-plan.md"
+  },
+  {
+    "step_id": "EJ.8",
+    "original_step_id": "EJ.8",
+    "title": "Overnight flags-on A/B validation soak",
+    "type": "wait",
+    "status": "PENDING",
+    "dependencies": [
+      "EJ.7",
+      "EH.6",
+      "EH.7"
+    ],
+    "hours": [
+      1.5,
+      3,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for overnight flags-on a/b validation soak. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 289,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-judging-plan.md"
+  },
+  {
+    "step_id": "EV.4",
+    "original_step_id": "EV.4",
+    "title": "Real-SC2 smoke gate",
+    "type": "operator",
+    "status": "PENDING",
+    "dependencies": [],
+    "hours": [
+      1.5,
+      3,
+      1.5,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for real-sc2 smoke gate. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 294,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-viewer-plan.md"
+  },
+  {
+    "step_id": "EV.5",
+    "original_step_id": "EV.5",
+    "title": "Attended-then-detached observation run",
+    "type": "wait",
+    "status": "PENDING",
+    "dependencies": [
+      "EV.4",
+      "EH.6",
+      "EH.7",
+      "EV.6"
+    ],
+    "hours": [
+      1,
+      3,
+      0.5,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for attended-then-detached observation run. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 295,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-viewer-plan.md"
+  },
+  {
+    "step_id": "EV.6",
+    "original_step_id": "EV.6",
+    "title": "Refresh viewer stop instructions after EH reader lands",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "EH.4",
+      "EH.5",
+      "EH.6"
+    ],
+    "hours": [
+      1,
+      2,
+      0.25,
+      0.5
+    ],
+    "rationale": "Scope-specific model estimate for refresh viewer stop instructions after eh reader lands. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 302,
+    "hold_reason": null,
+    "source": "documentation/plans/evolve-operational-hardening-plan.md"
+  },
+  {
+    "step_id": "M1",
+    "original_step_id": "M1",
+    "title": "Train 3 cycles + measure early-game reward variance",
+    "type": "operator",
+    "status": "PENDING",
+    "dependencies": [],
+    "hours": [
+      1,
+      3,
+      1,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for train 3 cycles + measure early-game reward variance. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 170,
+    "hold_reason": null,
+    "source": "documentation/plans/phase-d-build-plan.md"
+  },
+  {
+    "step_id": "M2",
+    "original_step_id": "M2",
+    "title": "Snapshot to `vN+1` on promotion",
+    "type": "operator",
+    "status": "PENDING",
+    "dependencies": [
+      "M1"
+    ],
+    "hours": [
+      0.75,
+      2,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for snapshot to `vn+1` on promotion. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 171,
+    "hold_reason": null,
+    "source": "documentation/plans/phase-d-build-plan.md"
+  },
+  {
+    "step_id": "6.1",
+    "original_step_id": "6.1",
+    "title": "`/improve-bot-advised --opponent vN` curriculum flag",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [],
+    "hours": [
+      6,
+      12,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for `/improve-bot-advised --opponent vn` curriculum flag. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": null,
+    "source": "documentation/plans/phase-6-build-plan.md"
+  },
+  {
+    "step_id": "6.2",
+    "original_step_id": "6.2",
+    "title": "PFSP-lite pool sampling (stretch)",
+    "type": "code",
+    "status": "DEFERRED \u2014 optional PFSP stretch",
+    "dependencies": [
+      "6.1"
+    ],
+    "hours": [
+      6,
+      14,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for pfsp-lite pool sampling (stretch). Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "DEFERRED \u2014 optional PFSP stretch",
+    "source": "documentation/plans/phase-6-build-plan.md"
+  },
+  {
+    "step_id": "6.3",
+    "original_step_id": "6.3",
+    "title": "Demonstrate cross-version PPO improvement",
+    "type": "wait",
+    "status": "PENDING",
+    "dependencies": [
+      "6.1"
+    ],
+    "hours": [
+      1,
+      3,
+      0.5,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for demonstrate cross-version ppo improvement. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": null,
+    "source": "documentation/plans/phase-6-build-plan.md"
+  },
+  {
+    "step_id": "7.6",
+    "original_step_id": "Phase7 Step6",
+    "title": "End-to-end advised staleness/soak validation",
+    "type": "operator",
+    "status": "PENDING",
+    "dependencies": [],
+    "hours": [
+      1.5,
+      3,
+      1,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for end-to-end advised staleness/soak validation. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 280,
+    "hold_reason": null,
+    "source": "documentation/plans/phase-7-build-plan.md"
+  },
+  {
+    "step_id": "E.0",
+    "original_step_id": "E.0",
+    "title": "Resolve action-space cardinality before implementation",
+    "type": "operator",
+    "status": "HELD \u2014 conflicting action-space specification",
+    "dependencies": [],
+    "hours": [
+      1,
+      3,
+      0.75,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for resolve action-space cardinality before implementation. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "10 enumerated pairs versus required12",
+    "source": "documentation/plans/phase-e-build-plan.md"
+  },
+  {
+    "step_id": "E.1",
+    "original_step_id": "E.1",
+    "title": "Structured `(strategic_state, target)` action space",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "E.0"
+    ],
+    "hours": [
+      5,
+      10,
+      0.5,
+      1
+    ],
+    "rationale": "Scope-specific model estimate for structured `(strategic_state, target)` action space. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": null,
+    "source": "documentation/plans/phase-e-build-plan.md"
+  },
+  {
+    "step_id": "E.2",
+    "original_step_id": "E.2",
+    "title": "Custom `ActorCriticPolicy` with two sequential softmax heads",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "E.1"
+    ],
+    "hours": [
+      10,
+      20,
+      0.75,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for custom `actorcriticpolicy` with two sequential softmax heads. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": null,
+    "source": "documentation/plans/phase-e-build-plan.md"
+  },
+  {
+    "step_id": "E.3",
+    "original_step_id": "E.3",
+    "title": "DB column `action_space_version`",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "E.1"
+    ],
+    "hours": [
+      4,
+      8,
+      0.5,
+      1
+    ],
+    "rationale": "Scope-specific model estimate for db column `action_space_version`. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": null,
+    "source": "documentation/plans/phase-e-build-plan.md"
+  },
+  {
+    "step_id": "E.4",
+    "original_step_id": "E.4",
+    "title": "Cascade target picking into `_compute_next_state` + rules KL teacher",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "E.1",
+      "E.2"
+    ],
+    "hours": [
+      7,
+      14,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for cascade target picking into `_compute_next_state` + rules kl teacher. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": null,
+    "source": "documentation/plans/phase-e-build-plan.md"
+  },
+  {
+    "step_id": "E.5",
+    "original_step_id": "E.5",
+    "title": "6-way \u2192 12-way DB migration with target inference",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "E.3",
+      "E.4"
+    ],
+    "hours": [
+      7,
+      14,
+      0.75,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for 6-way \u2192 12-way db migration with target inference. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": null,
+    "source": "documentation/plans/phase-e-build-plan.md"
+  },
+  {
+    "step_id": "E.6",
+    "original_step_id": "E.6",
+    "title": "Snapshot to `vN+1` on promotion",
+    "type": "operator",
+    "status": "PENDING",
+    "dependencies": [
+      "E.5"
+    ],
+    "hours": [
+      1.5,
+      4,
+      1,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for snapshot to `vn+1` on promotion. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": null,
+    "source": "documentation/plans/phase-e-build-plan.md"
+  },
+  {
+    "step_id": "K.1",
+    "original_step_id": "K.1",
+    "title": "Pool metadata schema + file",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [],
+    "hours": [
+      4,
+      8,
+      0.25,
+      1
+    ],
+    "rationale": "Scope-specific model estimate for pool metadata schema + file. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 223,
+    "hold_reason": null,
+    "source": "documentation/plans/phase-k-build-plan.md"
+  },
+  {
+    "step_id": "K.2",
+    "original_step_id": "K.2",
+    "title": "Manifest extension",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "K.1"
+    ],
+    "hours": [
+      3,
+      6,
+      0.25,
+      0.75
+    ],
+    "rationale": "Scope-specific model estimate for manifest extension. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 224,
+    "hold_reason": null,
+    "source": "documentation/plans/phase-k-build-plan.md"
+  },
+  {
+    "step_id": "K.3",
+    "original_step_id": "K.3",
+    "title": "Build-order signature",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "K.2"
+    ],
+    "hours": [
+      5,
+      10,
+      0.5,
+      1
+    ],
+    "rationale": "Scope-specific model estimate for build-order signature. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 225,
+    "hold_reason": null,
+    "source": "documentation/plans/phase-k-build-plan.md"
+  },
+  {
+    "step_id": "K.4",
+    "original_step_id": "K.4",
+    "title": "API endpoint + dashboard surface",
+    "type": "code",
+    "status": "PENDING",
+    "dependencies": [
+      "K.3"
+    ],
+    "hours": [
+      6,
+      12,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for api endpoint + dashboard surface. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 226,
+    "hold_reason": null,
+    "source": "documentation/plans/phase-k-build-plan.md"
+  },
+  {
+    "step_id": "K.5",
+    "original_step_id": "K.5",
+    "title": "Operator smoke gate",
+    "type": "operator",
+    "status": "PENDING",
+    "dependencies": [
+      "K.4"
+    ],
+    "hours": [
+      0.5,
+      1.5,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for operator smoke gate. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": 227,
+    "hold_reason": null,
+    "source": "documentation/plans/phase-k-build-plan.md"
+  },
+  {
+    "step_id": "G.1",
+    "original_step_id": "G.1",
+    "title": "Extract race interfaces",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "6.3"
+    ],
+    "hours": [
+      24,
+      56,
+      2,
+      5
+    ],
+    "rationale": "Scope-specific model estimate for extract race interfaces. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-g-build-plan.md"
+  },
+  {
+    "step_id": "G.2",
+    "original_step_id": "G.2",
+    "title": "Implement and validate Zerg",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "G.1"
+    ],
+    "hours": [
+      80,
+      160,
+      5,
+      12
+    ],
+    "rationale": "Scope-specific model estimate for implement and validate zerg. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-g-build-plan.md"
+  },
+  {
+    "step_id": "G.3",
+    "original_step_id": "G.3",
+    "title": "Implement and validate Terran",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "G.2"
+    ],
+    "hours": [
+      64,
+      120,
+      4,
+      10
+    ],
+    "rationale": "Scope-specific model estimate for implement and validate terran. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-g-build-plan.md"
+  },
+  {
+    "step_id": "G.4",
+    "original_step_id": "G.4",
+    "title": "Enable cross-race informational ladder",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "G.3"
+    ],
+    "hours": [
+      12,
+      24,
+      1,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for enable cross-race informational ladder. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-g-build-plan.md"
+  },
+  {
+    "step_id": "H.0",
+    "original_step_id": "H.0",
+    "title": "Conclude mini-game role investigation",
+    "type": "operator",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [],
+    "hours": [
+      8,
+      20,
+      1,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for conclude mini-game role investigation. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-h-build-plan.md"
+  },
+  {
+    "step_id": "H.1",
+    "original_step_id": "H.1",
+    "title": "Pin PySC2 and verify imports",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "H.0"
+    ],
+    "hours": [
+      3,
+      8,
+      0.25,
+      1
+    ],
+    "rationale": "Scope-specific model estimate for pin pysc2 and verify imports. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-h-build-plan.md"
+  },
+  {
+    "step_id": "H.2",
+    "original_step_id": "H.2",
+    "title": "Define MinigameResult and storage",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "H.1"
+    ],
+    "hours": [
+      4,
+      8,
+      0.5,
+      1
+    ],
+    "rationale": "Scope-specific model estimate for define minigameresult and storage. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-h-build-plan.md"
+  },
+  {
+    "step_id": "H.3",
+    "original_step_id": "H.3",
+    "title": "Implement minigame runner",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "H.2"
+    ],
+    "hours": [
+      8,
+      18,
+      0.5,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for implement minigame runner. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-h-build-plan.md"
+  },
+  {
+    "step_id": "H.4",
+    "original_step_id": "H.4",
+    "title": "Expose minigame CLI",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "H.3"
+    ],
+    "hours": [
+      2,
+      5,
+      0.25,
+      0.75
+    ],
+    "rationale": "Scope-specific model estimate for expose minigame cli. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-h-build-plan.md"
+  },
+  {
+    "step_id": "H.5",
+    "original_step_id": "H.5",
+    "title": "Observe mini-game end-to-end smoke",
+    "type": "operator",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "H.4"
+    ],
+    "hours": [
+      1,
+      3,
+      1,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for observe mini-game end-to-end smoke. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-h-build-plan.md"
+  },
+  {
+    "step_id": "I.1",
+    "original_step_id": "I.1",
+    "title": "Build custom Protoss mini-game corpus",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "H.5"
+    ],
+    "hours": [
+      24,
+      60,
+      2,
+      6
+    ],
+    "rationale": "Scope-specific model estimate for build custom protoss mini-game corpus. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/master_plan.md"
+  },
+  {
+    "step_id": "J.1",
+    "original_step_id": "J.1",
+    "title": "Wire approved mini-game role",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "H.5",
+      "H.0"
+    ],
+    "hours": [
+      10,
+      28,
+      1,
+      4
+    ],
+    "rationale": "Scope-specific model estimate for wire approved mini-game role. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/master_plan.md"
+  },
+  {
+    "step_id": "L.0",
+    "original_step_id": "L.0",
+    "title": "Prove replay-tail observer spike",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [],
+    "hours": [
+      8,
+      16,
+      1,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for prove replay-tail observer spike. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/master_plan.md"
+  },
+  {
+    "step_id": "L.1",
+    "original_step_id": "L.1",
+    "title": "Implement replay exhibition pipeline",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "L.0"
+    ],
+    "hours": [
+      20,
+      48,
+      2,
+      5
+    ],
+    "rationale": "Scope-specific model estimate for implement replay exhibition pipeline. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/master_plan.md"
+  },
+  {
+    "step_id": "L.2",
+    "original_step_id": "L.2",
+    "title": "Observe exhibition fidelity",
+    "type": "operator",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "L.1"
+    ],
+    "hours": [
+      2,
+      5,
+      2,
+      5
+    ],
+    "rationale": "Scope-specific model estimate for observe exhibition fidelity. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/master_plan.md"
+  },
+  {
+    "step_id": "M.1",
+    "original_step_id": "M.1",
+    "title": "Build NL matchup selector",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "K.5",
+      "L.2"
+    ],
+    "hours": [
+      8,
+      20,
+      1,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for build nl matchup selector. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/master_plan.md"
+  },
+  {
+    "step_id": "O.0",
+    "original_step_id": "O.0",
+    "title": "Prove four-way evolve soak reliability",
+    "type": "wait",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [],
+    "hours": [
+      2,
+      5,
+      1,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for prove four-way evolve soak reliability. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/master_plan.md"
+  },
+  {
+    "step_id": "O.1",
+    "original_step_id": "O.1",
+    "title": "Train themed Hydra experts",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "O.0"
+    ],
+    "hours": [
+      16,
+      36,
+      2,
+      5
+    ],
+    "rationale": "Scope-specific model estimate for train themed hydra experts. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/master_plan.md"
+  },
+  {
+    "step_id": "O.2",
+    "original_step_id": "O.2",
+    "title": "Implement scripted expert switching",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "O.1"
+    ],
+    "hours": [
+      12,
+      28,
+      1,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for implement scripted expert switching. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/master_plan.md"
+  },
+  {
+    "step_id": "O.3",
+    "original_step_id": "O.3",
+    "title": "Validate expert use and Elo",
+    "type": "wait",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "O.2"
+    ],
+    "hours": [
+      2,
+      5,
+      1,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for validate expert use and elo. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/master_plan.md"
+  },
+  {
+    "step_id": "P.1",
+    "original_step_id": "P.1",
+    "title": "Investigate licensed replay pretraining",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [],
+    "hours": [
+      8,
+      24,
+      1,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for investigate licensed replay pretraining. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/master_plan.md"
+  },
+  {
+    "step_id": "Q.0",
+    "original_step_id": "Q.0",
+    "title": "Conclude harvest skill scope investigation",
+    "type": "operator",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [],
+    "hours": [
+      6,
+      12,
+      1,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for conclude harvest skill scope investigation. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-q-build-plan.md"
+  },
+  {
+    "step_id": "Q.1",
+    "original_step_id": "Q.1",
+    "title": "Draft Mode A paper intake",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "Q.0"
+    ],
+    "hours": [
+      4,
+      10,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for draft mode a paper intake. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-q-build-plan.md"
+  },
+  {
+    "step_id": "Q.2",
+    "original_step_id": "Q.2",
+    "title": "Wire conditional harvest sandbox",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "Q.0",
+      "Q.1"
+    ],
+    "hours": [
+      4,
+      10,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for wire conditional harvest sandbox. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-q-build-plan.md"
+  },
+  {
+    "step_id": "Q.3",
+    "original_step_id": "Q.3",
+    "title": "Review three retroactive harvest cases",
+    "type": "operator",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "Q.1"
+    ],
+    "hours": [
+      2,
+      5,
+      1,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for review three retroactive harvest cases. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-q-build-plan.md"
+  },
+  {
+    "step_id": "Q.4",
+    "original_step_id": "Q.4",
+    "title": "Observe one fresh paper intake",
+    "type": "operator",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "Q.1"
+    ],
+    "hours": [
+      1,
+      3,
+      1,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for observe one fresh paper intake. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-q-build-plan.md"
+  },
+  {
+    "step_id": "Q.5",
+    "original_step_id": "Q.5",
+    "title": "Consider Mode B suggestion wrapper",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "Q.4"
+    ],
+    "hours": [
+      3,
+      7,
+      0.5,
+      1
+    ],
+    "rationale": "Scope-specific model estimate for consider mode b suggestion wrapper. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-q-build-plan.md"
+  },
+  {
+    "step_id": "R.1",
+    "original_step_id": "R.1",
+    "title": "Rescope Wilson confidence reporting",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "EJ.8"
+    ],
+    "hours": [
+      5,
+      12,
+      0.5,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for rescope wilson confidence reporting. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/master_plan.md"
+  },
+  {
+    "step_id": "S.1",
+    "original_step_id": "S.1",
+    "title": "Investigate build-order entropy metric",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "R.1"
+    ],
+    "hours": [
+      6,
+      18,
+      1,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for investigate entropy reward bonus. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/master_plan.md"
+  },
+  {
+    "step_id": "S.2",
+    "original_step_id": "S.2",
+    "title": "Investigate time-to-win signal",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "R.1"
+    ],
+    "hours": [
+      6,
+      16,
+      1,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for investigate time-to-win signal. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/master_plan.md"
+  },
+  {
+    "step_id": "S.3",
+    "original_step_id": "S.3",
+    "title": "Measure higher-n per-difficulty evaluations",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "R.1"
+    ],
+    "hours": [
+      3,
+      8,
+      1,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for measure higher-n per-difficulty evaluations. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/master_plan.md"
+  },
+  {
+    "step_id": "S.4",
+    "original_step_id": "S.4",
+    "title": "Investigate informative priors",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "R.1"
+    ],
+    "hours": [
+      8,
+      20,
+      1,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for investigate informative priors. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/master_plan.md"
+  },
+  {
+    "step_id": "ER.1",
+    "original_step_id": "ER.1",
+    "title": "Clarify truncated restructure idea ii",
+    "type": "operator",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [],
+    "hours": [
+      1,
+      3,
+      1,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for clarify truncated restructure idea ii. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-e-build-plan.md"
+  },
+  {
+    "step_id": "ER.2",
+    "original_step_id": "ER.2",
+    "title": "Plan deterministic replay of tested patches",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "EI.7",
+      "EI.9",
+      "EI.14"
+    ],
+    "hours": [
+      10,
+      24,
+      1,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for plan deterministic replay of tested patches. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-e-build-plan.md"
+  },
+  {
+    "step_id": "ER.3",
+    "original_step_id": "ER.3",
+    "title": "Consider rule-derived fitness bar after evidence",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "EI.8",
+      "EI.14"
+    ],
+    "hours": [
+      5,
+      14,
+      0.5,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for consider rule-derived fitness bar after evidence. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-e-build-plan.md"
+  },
+  {
+    "step_id": "ER.4",
+    "original_step_id": "ER.4",
+    "title": "Retain PFSP ancestor regression follow-up",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "EL.7"
+    ],
+    "hours": [
+      8,
+      18,
+      1,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for retain pfsp ancestor regression follow-up. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-e-build-plan.md"
+  },
+  {
+    "step_id": "ER.5",
+    "original_step_id": "ER.5",
+    "title": "Enrich fingerprints after v1 evidence",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "EL.7"
+    ],
+    "hours": [
+      8,
+      20,
+      1,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for enrich fingerprints after v1 evidence. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-e-build-plan.md"
+  },
+  {
+    "step_id": "ER.6",
+    "original_step_id": "ER.6",
+    "title": "Revisit species knobs after scored mini-games",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "H.5",
+      "J.1"
+    ],
+    "hours": [
+      8,
+      20,
+      1,
+      3
+    ],
+    "rationale": "Scope-specific model estimate for revisit species knobs after scored mini-games. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-e-build-plan.md"
+  },
+  {
+    "step_id": "ER.7",
+    "original_step_id": "ER.7",
+    "title": "Consider true concurrent lineage execution",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "EL.7",
+      "EH.7",
+      "EH.8"
+    ],
+    "hours": [
+      16,
+      40,
+      2,
+      4
+    ],
+    "rationale": "Scope-specific model estimate for consider true concurrent lineage execution. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-e-build-plan.md"
+  },
+  {
+    "step_id": "ER.8",
+    "original_step_id": "ER.8",
+    "title": "Repair PFSP seat alternation when activated",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "6.2"
+    ],
+    "hours": [
+      3,
+      7,
+      0.25,
+      1
+    ],
+    "rationale": "Scope-specific model estimate for repair pfsp seat alternation when activated. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-e-build-plan.md"
+  },
+  {
+    "step_id": "ER.9",
+    "original_step_id": "ER.9",
+    "title": "Repair result-out collision when consumer exists",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "EI.1"
+    ],
+    "hours": [
+      3,
+      7,
+      0.25,
+      1
+    ],
+    "rationale": "Scope-specific model estimate for repair result-out collision when consumer exists. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/plans/phase-e-build-plan.md"
+  },
+  {
+    "step_id": "JV.9",
+    "original_step_id": "JV.9",
+    "title": "Complete production Observer Rush lifecycle",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "222"
+    ],
+    "hours": [
+      16,
+      40,
+      2,
+      6
+    ],
+    "rationale": "Scope-specific model estimate for complete production observer rush lifecycle. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/master_plan.md"
+  },
+  {
+    "step_id": "JV.10",
+    "original_step_id": "JV.10",
+    "title": "Consider v13 grouping adaptation and decision flattening",
+    "type": "code",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "232"
+    ],
+    "hours": [
+      10,
+      28,
+      1,
+      4
+    ],
+    "rationale": "Scope-specific model estimate for consider v13 grouping adaptation and decision flattening. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/master_plan.md"
+  },
+  {
+    "step_id": "BL.1",
+    "original_step_id": "BL.1",
+    "title": "Decide and execute branch landing when authorized",
+    "type": "operator",
+    "status": "DEFERRED \u2014 future or investigation-gated scope",
+    "dependencies": [
+      "EV.4"
+    ],
+    "hours": [
+      2,
+      5,
+      1,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for decide and execute branch landing when authorized. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Preserved future scope; prerequisites and product decision before implementation",
+    "source": "documentation/master_plan.md"
+  },
+  {
+    "step_id": "T.1",
+    "original_step_id": "T.1",
+    "title": "Soften max-supply ATTACK override (PARTIAL)",
+    "type": "code",
+    "status": "DEFERRED \u2014 historical residual; revalidate current state",
+    "dependencies": [],
+    "hours": [
+      4,
+      10,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for soften max-supply attack override (partial). Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Historical backlog lacks current closure evidence",
+    "source": "documentation/sc2/protoss/tactical-bugs.md"
+  },
+  {
+    "step_id": "T.3",
+    "original_step_id": "T.3",
+    "title": "Tech structures placed on low ground",
+    "type": "code",
+    "status": "DEFERRED \u2014 historical residual; revalidate current state",
+    "dependencies": [],
+    "hours": [
+      5,
+      12,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for tech structures placed on low ground. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Historical backlog lacks current closure evidence",
+    "source": "documentation/sc2/protoss/tactical-bugs.md"
+  },
+  {
+    "step_id": "T.4",
+    "original_step_id": "T.4",
+    "title": "Target priority: engage producers, not their spawns",
+    "type": "code",
+    "status": "DEFERRED \u2014 historical residual; revalidate current state",
+    "dependencies": [],
+    "hours": [
+      4,
+      10,
+      0.5,
+      1
+    ],
+    "rationale": "Scope-specific model estimate for target priority: engage producers, not their spawns. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Historical backlog lacks current closure evidence",
+    "source": "documentation/sc2/protoss/tactical-bugs.md"
+  },
+  {
+    "step_id": "T.7",
+    "original_step_id": "T.7",
+    "title": "Units in melee don't deal damage proportional to count",
+    "type": "code",
+    "status": "DEFERRED \u2014 historical residual; revalidate current state",
+    "dependencies": [],
+    "hours": [
+      6,
+      14,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for units in melee don't deal damage proportional to count. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Historical backlog lacks current closure evidence",
+    "source": "documentation/sc2/protoss/tactical-bugs.md"
+  },
+  {
+    "step_id": "T.8",
+    "original_step_id": "T.8",
+    "title": "Production structures placed inside the mineral line",
+    "type": "code",
+    "status": "DEFERRED \u2014 historical residual; revalidate current state",
+    "dependencies": [],
+    "hours": [
+      4,
+      10,
+      0.5,
+      1
+    ],
+    "rationale": "Scope-specific model estimate for production structures placed inside the mineral line. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Historical backlog lacks current closure evidence",
+    "source": "documentation/sc2/protoss/tactical-bugs.md"
+  },
+  {
+    "step_id": "T.9",
+    "original_step_id": "T.9",
+    "title": "Natural expansion undefended; fall-back point softer than main",
+    "type": "code",
+    "status": "DEFERRED \u2014 historical residual; revalidate current state",
+    "dependencies": [],
+    "hours": [
+      4,
+      9,
+      0.5,
+      1
+    ],
+    "rationale": "Scope-specific model estimate for natural expansion undefended; fall-back point softer than main. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Historical backlog lacks current closure evidence",
+    "source": "documentation/sc2/protoss/tactical-bugs.md"
+  },
+  {
+    "step_id": "T.10",
+    "original_step_id": "T.10",
+    "title": "Army idles inside enemy base instead of finishing the game",
+    "type": "code",
+    "status": "DEFERRED \u2014 historical residual; revalidate current state",
+    "dependencies": [],
+    "hours": [
+      5,
+      12,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for army idles inside enemy base instead of finishing the game. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Historical backlog lacks current closure evidence",
+    "source": "documentation/sc2/protoss/tactical-bugs.md"
+  },
+  {
+    "step_id": "T.11",
+    "original_step_id": "T.11",
+    "title": "Split army: engaged force + still-rallying force in parallel",
+    "type": "code",
+    "status": "DEFERRED \u2014 historical residual; revalidate current state",
+    "dependencies": [],
+    "hours": [
+      5,
+      12,
+      0.5,
+      1.5
+    ],
+    "rationale": "Scope-specific model estimate for split army: engaged force + still-rallying force in parallel. Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Historical backlog lacks current closure evidence",
+    "source": "documentation/sc2/protoss/tactical-bugs.md"
+  },
+  {
+    "step_id": "T.12",
+    "original_step_id": "T.12",
+    "title": "Re-validate Archon morph fix in hybrid mode (DEBUG ONLY)",
+    "type": "operator",
+    "status": "DEFERRED \u2014 historical residual; revalidate current state",
+    "dependencies": [],
+    "hours": [
+      1,
+      3,
+      1,
+      2
+    ],
+    "rationale": "Scope-specific model estimate for re-validate archon morph fix in hybrid mode (debug only). Includes implementation/review or active evidence collection; excludes unattended game duration.",
+    "issue": null,
+    "hold_reason": "Historical backlog lacks current closure evidence",
+    "source": "documentation/sc2/protoss/tactical-bugs.md"
+  },
+  {
+    "step_id": "T.2.1",
+    "original_step_id": "T.2 deferred proactive tail",
+    "title": "Revisit proactive elevation-aware rally placement",
+    "type": "code",
+    "status": "DEFERRED \u2014 reactive fix shipped, proactive placement future",
+    "dependencies": [],
+    "hours": [
+      5,
+      12,
+      0.5,
+      1.5
+    ],
+    "rationale": "Terrain-aware placement needs current-code investigation and real map/rally regression evidence; lower bound reuses existing placement seams, upper bound covers pathing and tactical regressions.",
+    "issue": null,
+    "hold_reason": "Deferred proactive alternative",
+    "source": "documentation/sc2/protoss/tactical-bugs.md"
+  },
+  {
+    "step_id": "SV.1",
+    "original_step_id": "2screen Step9/#147 residual",
+    "title": "Resolve shared self-play detach and orphan cleanup",
+    "type": "code",
+    "status": "HELD \u2014 historical residual; current closure or activation decision required",
+    "dependencies": [],
+    "hours": [
+      6,
+      14,
+      0.75,
+      2
+    ],
+    "rationale": "Range covers resolve shared self-play detach and orphan cleanup; existing evidence and current shared-viewer/legacy-UI drift determine whether this is closure review or corrective implementation. No unattended game hours counted.",
+    "issue": 147,
+    "hold_reason": "Historical partial/unverified acceptance; revalidate current code and later evidence",
+    "source": "documentation/archived/selfplay-viewer-2-screen-plan.md"
+  },
+  {
+    "step_id": "SV.2",
+    "original_step_id": "2screen Step9/#147 residual",
+    "title": "Repair threaded viewer interrupt ownership",
+    "type": "code",
+    "status": "HELD \u2014 historical residual; current closure or activation decision required",
+    "dependencies": [
+      "SV.1"
+    ],
+    "hours": [
+      8,
+      18,
+      1,
+      2
+    ],
+    "rationale": "Range covers repair threaded viewer interrupt ownership; existing evidence and current shared-viewer/legacy-UI drift determine whether this is closure review or corrective implementation. No unattended game hours counted.",
+    "issue": 147,
+    "hold_reason": "Historical partial/unverified acceptance; revalidate current code and later evidence",
+    "source": "documentation/archived/selfplay-viewer-2-screen-plan.md"
+  },
+  {
+    "step_id": "SV.3",
+    "original_step_id": "2screen Step9/#147 residual",
+    "title": "Revisit viewer sizing on the operator display",
+    "type": "code",
+    "status": "HELD \u2014 historical residual; current closure or activation decision required",
+    "dependencies": [],
+    "hours": [
+      5,
+      12,
+      1,
+      2
+    ],
+    "rationale": "Range covers revisit viewer sizing on the operator display; existing evidence and current shared-viewer/legacy-UI drift determine whether this is closure review or corrective implementation. No unattended game hours counted.",
+    "issue": 147,
+    "hold_reason": "Historical partial/unverified acceptance; revalidate current code and later evidence",
+    "source": "documentation/archived/selfplay-viewer-2-screen-plan.md"
+  },
+  {
+    "step_id": "SV.4",
+    "original_step_id": "2screen Step9/#147 residual",
+    "title": "Audit viewer surrender-label cosmetic leak",
+    "type": "code",
+    "status": "HELD \u2014 historical residual; current closure or activation decision required",
+    "dependencies": [],
+    "hours": [
+      1,
+      3,
+      0.25,
+      0.5
+    ],
+    "rationale": "Range covers audit viewer surrender-label cosmetic leak; existing evidence and current shared-viewer/legacy-UI drift determine whether this is closure review or corrective implementation. No unattended game hours counted.",
+    "issue": 147,
+    "hold_reason": "Historical partial/unverified acceptance; revalidate current code and later evidence",
+    "source": "documentation/archived/selfplay-viewer-2-screen-plan.md"
+  },
+  {
+    "step_id": "SV.5",
+    "original_step_id": "2screen Step9/#147 residual",
+    "title": "Consider nonblocking HWND discovery",
+    "type": "code",
+    "status": "HELD \u2014 historical residual; current closure or activation decision required",
+    "dependencies": [
+      "SV.1"
+    ],
+    "hours": [
+      5,
+      12,
+      0.5,
+      1.5
+    ],
+    "rationale": "Range covers consider nonblocking hwnd discovery; existing evidence and current shared-viewer/legacy-UI drift determine whether this is closure review or corrective implementation. No unattended game hours counted.",
+    "issue": 147,
+    "hold_reason": "Historical partial/unverified acceptance; revalidate current code and later evidence",
+    "source": "documentation/archived/selfplay-viewer-2-screen-plan.md"
+  },
+  {
+    "step_id": "SV.6",
+    "original_step_id": "2screen Step9/#147 residual",
+    "title": "Resolve legacy self-play viewer acceptance residuals",
+    "type": "operator",
+    "status": "HELD \u2014 historical residual; current closure or activation decision required",
+    "dependencies": [
+      "SV.1",
+      "SV.2"
+    ],
+    "hours": [
+      1,
+      3,
+      1,
+      3
+    ],
+    "rationale": "Range covers resolve legacy self-play viewer acceptance residuals; existing evidence and current shared-viewer/legacy-UI drift determine whether this is closure review or corrective implementation. No unattended game hours counted.",
+    "issue": 147,
+    "hold_reason": "Historical partial/unverified acceptance; revalidate current code and later evidence",
+    "source": "documentation/archived/selfplay-viewer-2-screen-plan.md"
+  },
+  {
+    "step_id": "UI.7",
+    "original_step_id": "UI Step7",
+    "title": "Resolve historical live-smoke acceptance provenance",
+    "type": "operator",
+    "status": "HELD \u2014 historical residual; current closure or activation decision required",
+    "dependencies": [],
+    "hours": [
+      0.5,
+      2,
+      0.5,
+      1
+    ],
+    "rationale": "Range covers resolve historical live-smoke acceptance provenance; existing evidence and current shared-viewer/legacy-UI drift determine whether this is closure review or corrective implementation. No unattended game hours counted.",
+    "issue": null,
+    "hold_reason": "Historical partial/unverified acceptance; revalidate current code and later evidence",
+    "source": "documentation/archived/ui-live-test-plan.md"
+  },
+  {
+    "step_id": "UI.8",
+    "original_step_id": "UI Step8",
+    "title": "Resolve historical visual-check acceptance provenance",
+    "type": "operator",
+    "status": "HELD \u2014 historical residual; current closure or activation decision required",
+    "dependencies": [
+      "UI.7"
+    ],
+    "hours": [
+      0.5,
+      2,
+      0.5,
+      1
+    ],
+    "rationale": "Range covers resolve historical visual-check acceptance provenance; existing evidence and current shared-viewer/legacy-UI drift determine whether this is closure review or corrective implementation. No unattended game hours counted.",
+    "issue": null,
+    "hold_reason": "Historical partial/unverified acceptance; revalidate current code and later evidence",
+    "source": "documentation/archived/ui-live-test-plan.md"
+  }
+]

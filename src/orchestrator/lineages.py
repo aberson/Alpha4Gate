@@ -392,7 +392,7 @@ def next_lineage(
     persists culled lineages as ``status="extinct"`` at the generation
     boundary (Phase EH Step EH.2), so without this filter a restart would
     resurrect an extinct lineage into the round-robin — see
-    ``documentation/plans/evolve-operational-hardening-plan.md`` §6 D-3.
+    ``docs/archived-plans/evolve-operational-hardening-plan.md`` §6 D-3.
 
     Ordering is the iteration order of *registry* **restricted to its
     active records**, and that is NOT interchangeable with insertion

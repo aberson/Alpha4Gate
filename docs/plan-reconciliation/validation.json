@@ -1,0 +1,36 @@
+{
+  "master_bytes": 193720,
+  "master_sha256": "af8bd8fcb2578f26d48bec2b06af1cfd403f682c6ec7291b7c3024e55199b88c",
+  "pending_leaf_steps": 131,
+  "estimate_exact_leaf_coverage": true,
+  "unit_id_grammar": "PASS",
+  "immutable_originals_verified": 46,
+  "moved_documents": 221,
+  "modified_python_files_parsed": 104,
+  "frozen_reference_ast_check": "83 modified frozen Python files: no differences beyond documented path-string mapping; see frozen-reference-check.json",
+  "preserved_initial_dirty_task_state": true,
+  "git_diff_check_exit": 0,
+  "targeted_tests": {
+    "command": "uv run pytest tests/test_api.py::TestOperatorCommandsEndpoint tests/test_advisor_bridge.py tests/test_jev_benchmark.py tests/test_jev_validation.py -q",
+    "passed": 176,
+    "warnings": 101,
+    "elapsed_seconds": 70.34,
+    "note": "Previously executed result, not rerun by this audit script."
+  },
+  "resource_loads": "14 versions load 34 principles; 8 original operator endpoints return exact wiki bytes; 6 versions never had endpoint. See resource-loads.json.",
+  "markdown_link_audit": {
+    "scope": "Alpha4Gate and void_furnace docs plus root README/CLAUDE; excludes completed, archived-plans, legacy archive, and fenced code; relative target existence only, not heading anchors or remote URLs; renderer line suffixes normalized",
+    "checked": 796,
+    "missing": [],
+    "legacy_cp1252_read_without_conversion": [
+      "Alpha4Gate/docs/soak-test-runs/advised-2026-04-14.md",
+      "Alpha4Gate/docs/soak-test-runs/evolve-2026-04-22.md"
+    ]
+  },
+  "limitations": [
+    "No live SC2 matches, provider requests, browser UAT, or full-suite claim.",
+    "Historical unavailable private memory, deleted source, and runtime artifacts are labeled; immutable originals retain original link bytes.",
+    "Product architecture conflicts and existing human acceptance holds remain pending.",
+    "Coordinator owns final Observatory fingerprint binding and cross-workspace integration."
+  ]
+}

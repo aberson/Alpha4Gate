@@ -2,7 +2,7 @@
 name: improve-bot-triage
 description: Triage the findings from the most recent /improve-bot run log into a pickable list, classify each finding by action-type, and emit a ready-to-run /improve-bot invocation for the picked item. Use between /improve-bot runs to decide what to target next without re-reading the full report.
 user-invocable: true
-argument: Optional flags — `--run <RUN_TS>` to target a specific run log instead of the most recent, or `--file <path>` for an arbitrary markdown file. Without args, reads the most recent `documentation/soak-test-runs/improve-*.md`.
+argument: Optional flags — `--run <RUN_TS>` to target a specific run log instead of the most recent, or `--file <path>` for an arbitrary markdown file. Without args, reads the most recent `docs/soak-test-runs/improve-*.md`.
 ---
 
 # /improve-bot-triage
@@ -31,12 +31,12 @@ Short skill that reads the most recent `/improve-bot` run log, extracts findings
 
 Default:
 ```bash
-LOG=$(ls -t documentation/soak-test-runs/improve-*.md 2>/dev/null | head -1)
+LOG=$(ls -t docs/soak-test-runs/improve-*.md 2>/dev/null | head -1)
 ```
 
 With `--run <RUN_TS>`:
 ```bash
-LOG="documentation/soak-test-runs/improve-${RUN_TS}.md"
+LOG="docs/soak-test-runs/improve-${RUN_TS}.md"
 ```
 
 With `--file <path>`:

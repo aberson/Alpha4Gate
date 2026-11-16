@@ -2,7 +2,7 @@
 
 This is an observational audit, NOT a counterfactual SC2 replay. Missing observations
 stay unknown. Outputs are per-answer evidence and bounded local branch comparisons.
-Run with the repository's Python and --output documentation/investigations/<stem>.
+Run with the repository's Python and --output docs/investigations/<stem>.
 """
 
 from __future__ import annotations

@@ -15,7 +15,7 @@ answering with the real API's documents, one field changed. Every failure code t
 verifier knows has a producing case. Staleness comes from the writer's injected
 wall clock; nothing sleeps.
 
-The operator guide (``documentation/operator/jev-validation.md``) is checked
+The operator guide (``docs/operator/jev-validation.md``) is checked
 against the code: every command it gives for the verifier or the Jev CLI must
 parse, and every failure code must be documented.
 """
@@ -78,7 +78,7 @@ from jev.telemetry import (
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = _REPO_ROOT / "scripts" / "validate_jev.py"
-GUIDE = _REPO_ROOT / "documentation" / "operator" / "jev-validation.md"
+GUIDE = _REPO_ROOT / "docs" / "operator" / "jev-validation.md"
 BUNDLE = load_policy()
 START = (30.5, 30.5)
 #: JavaScript-unsafe unit tags (> 2**53) for the probes.

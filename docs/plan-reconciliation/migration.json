@@ -1,0 +1,1754 @@
+{
+  "sources": [
+    {
+      "original_path": "documentation/branch-landing-phase-ev.md",
+      "new_path": "docs/archived-plans/branch-landing-phase-ev.md",
+      "sha256": "2db63cc0c33078b90455301cab7d9a56f9cca6f980bd42c0fd7088bb72286b73",
+      "bytes": 9973,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/jev-decision-integration-progress.html",
+      "new_path": "docs/jev-decision-integration-progress.html",
+      "sha256": "475e420f1a17da27fcbc0eeb2d0d14e951ce4ed1d52f5f7dbd42432232112b57",
+      "bytes": 28098,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/jev-typesafe-progress.html",
+      "new_path": "docs/jev-typesafe-progress.html",
+      "sha256": "16f58c29919c9f4df91cfeb78fe2a889a4a3dd0bd2fd5db43dc608bd1682ebb7",
+      "bytes": 15189,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/jev-v2-progress.html",
+      "new_path": "docs/jev-v2-progress.html",
+      "sha256": "740eb6d14e3b98310f75512c453930d3c8877d4fbcb7fb7fc4e280db895428f9",
+      "bytes": 30890,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/master_plan.md",
+      "new_path": "docs/archived-plans/master_plan.md",
+      "sha256": "0720cb1ec7566b1e9a4e9f353cd954a982ef8ead3bf48e6bcdb5b208080ef1b0",
+      "bytes": 134331,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/operator-gate-runbook.md",
+      "new_path": "docs/operator-gate-runbook.md",
+      "sha256": "c7413862b4e0e95b26ab55a7cca6dfbca1e50cd5c4a3fed100c82959c8c20128",
+      "bytes": 27652,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-2026-04-24-observer-spike.md",
+      "new_path": "docs/soak-2026-04-24-observer-spike.md",
+      "sha256": "0b49462b432803a50a9861aa0eef8baf3410d1a70990d04a6ff227d800bf0700",
+      "bytes": 10837,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/archived/alphastar-upgrade-plan.md",
+      "new_path": "docs/archived-plans/legacy/alphastar-upgrade-plan.md",
+      "sha256": "3e62f111213e895c0aa57eb56e5b619aefe616e7475f523ca3b102d6b80b99c4",
+      "bytes": 30917,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/always-up-plan.md",
+      "new_path": "docs/archived-plans/legacy/always-up-plan.md",
+      "sha256": "5e14e333b3f899107556da38741fed87c37aba95a861f88257cdb3766e5328e6",
+      "bytes": 55139,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/army-coherence-and-engagement.md",
+      "new_path": "docs/history/army-coherence-and-engagement.md",
+      "sha256": "a568fbc405455ebcac0a4eb46f9d0710bb812b8eb29c3d9b70f4b93bdb4f19a1",
+      "bytes": 7629,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/archived/bot-versioning-selfplay-plan.md",
+      "new_path": "docs/archived-plans/legacy/bot-versioning-selfplay-plan.md",
+      "sha256": "666ce39bdcefdbd95e709f32f8e4a48f16d034e6ae2e607c2290ca4ff1f1b41e",
+      "bytes": 12703,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/dashboard-refactor-plan.md",
+      "new_path": "docs/completed/dashboard-refactor-plan.md",
+      "sha256": "a2218d1150c10d2d243d06da415a626222fb34e2b43d5443607ac62c343a1364",
+      "bytes": 23757,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/defensive-fortification.md",
+      "new_path": "docs/history/defensive-fortification.md",
+      "sha256": "097a9c1583cdcd231693573d0cb2c2934bff285a66d3147fee999ff179502140",
+      "bytes": 11427,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/archived/evolve-gate-reduction-plan.md",
+      "new_path": "docs/completed/evolve-gate-reduction-plan.md",
+      "sha256": "c831fafa3e9a1a81c87d1479357d576d8db92b11a7f9c2dee169d9368152eb7f",
+      "bytes": 27585,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/evolve-parallelization-iter3-prompt.md",
+      "new_path": "docs/history/evolve-parallelization-iter3-prompt.md",
+      "sha256": "bdd1d85eed1591c785547d71e4dfae2c8acf351a8087e6483c786eb694bb73b9",
+      "bytes": 12331,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/archived/evolve-parallelization-plan.md",
+      "new_path": "docs/completed/evolve-parallelization-plan.md",
+      "sha256": "99bfcc4df90a847e9f06bb5a07a4c6e07cc4f71669c023bc9fcad1e872f8d50d",
+      "bytes": 54333,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/master-plan-structural-diff-2026-04-26.md",
+      "new_path": "docs/archived-plans/legacy/master-plan-structural-diff-2026-04-26.md",
+      "sha256": "4b57dc97e2ffd3f4d7a7fec80ddcf303feb21e6bbc14377e2c926187c057f206",
+      "bytes": 23870,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/models-tab-plan.md",
+      "new_path": "docs/completed/models-tab-plan.md",
+      "sha256": "b12d70c0cd96dbd7bc1cc3475fb97a9e9e0a935a2205f107e549523c53ecdee9",
+      "bytes": 67790,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/natural-denial-and-critical-mass.md",
+      "new_path": "docs/history/natural-denial-and-critical-mass.md",
+      "sha256": "4a0a65c0e9607109d3a7addf122e5db8f412195ca3109b1dea70d0f69f60e989",
+      "bytes": 5086,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/archived/neural-training-pipeline.md",
+      "new_path": "docs/history/neural-training-pipeline.md",
+      "sha256": "a619a3301d023bc77b80cddba012b4559b2a55812ce592a1cfb1b773b020251b",
+      "bytes": 25934,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/archived/phase-1-build-plan.md",
+      "new_path": "docs/completed/phase-1-build-plan.md",
+      "sha256": "7d130d31a1e6c024de316e7fbcd64cc9995f2454153be9e332ed7e2d1eb3a652",
+      "bytes": 29529,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/phase-1-plan.md",
+      "new_path": "docs/archived-plans/legacy/phase-1-plan.md",
+      "sha256": "5765aae9bca5c5dc44730ec6f768bc0722f6195f9b19e27491013743eaac3b47",
+      "bytes": 37921,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/phase-2-build-plan.md",
+      "new_path": "docs/completed/phase-2-build-plan.md",
+      "sha256": "08f52724a62a72724ce9069c0a3b6fb7deb7bd9e4bee6d610bcab8b0326e9626",
+      "bytes": 9849,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/phase-2-deep-learning-plan.md",
+      "new_path": "docs/archived-plans/legacy/phase-2-deep-learning-plan.md",
+      "sha256": "972bcb5ea36f708954f2130be4093f656376fefde0c13db14ab24ca44b93ebf5",
+      "bytes": 49883,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/phase-3-build-plan.md",
+      "new_path": "docs/completed/phase-3-build-plan.md",
+      "sha256": "7bbbdf240e2d83c45b46d7163a4ee9b786a8bebb2bfb12702779ba4145c53339",
+      "bytes": 14543,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/phase-4-5-backlog.md",
+      "new_path": "docs/history/phase-4-5-backlog.md",
+      "sha256": "a7c8a04144b0c8ffa052e363e1aee837446f481208b42891db40c933246617aa",
+      "bytes": 11397,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/archived/phase-4-7-eval-pipeline-fixes.md",
+      "new_path": "docs/history/phase-4-7-eval-pipeline-fixes.md",
+      "sha256": "ca33e91ddb63d42b0d1659c301e75ff2a6d370203b55e51610865f5005e66bc4",
+      "bytes": 31339,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/archived/phase-4-build-plan.md",
+      "new_path": "docs/completed/phase-4-build-plan.md",
+      "sha256": "d6461effd1072a8c00943165474a8140156774dcb0ced8cd07135c1192c0411d",
+      "bytes": 22936,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/phase-4-transparency-dashboard-plan.md",
+      "new_path": "docs/archived-plans/legacy/phase-4-transparency-dashboard-plan.md",
+      "sha256": "427ef894afad574d443ff75bb115080edc3f4b4ad65ccf20d7fea45177dbd3a7",
+      "bytes": 52493,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/phase-5-build-plan.md",
+      "new_path": "docs/completed/phase-5-build-plan.md",
+      "sha256": "622897111553a53c92899961f0e26f6013db8ec5b3646b193bc91bd9e71e5c78",
+      "bytes": 15045,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/phase-8-build-plan.md",
+      "new_path": "docs/completed/phase-8-build-plan.md",
+      "sha256": "6127d5984e271046296fd451112b948a6b25af7f6b7abf780224eef8bb378772",
+      "bytes": 51516,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/phase-9-build-plan.md",
+      "new_path": "docs/completed/phase-9-build-plan.md",
+      "sha256": "23ed1247d6f29a42bbab798f7fe81e0bff4040ec2ee91ebf317f985fc50de341",
+      "bytes": 42973,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/phase-a-buildphase-runbook.md",
+      "new_path": "docs/history/phase-a-buildphase-runbook.md",
+      "sha256": "ee7a11b39c9494db45f75656e90d7ebd784df211149af95249cac9aeabc0607c",
+      "bytes": 8012,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/archived/phase-b-build-plan.md",
+      "new_path": "docs/completed/phase-b-build-plan.md",
+      "sha256": "1488d45ed67f2a2fc4e48744f8130e19020b966fb8963fb1c489969fb33f9386",
+      "bytes": 14483,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/phase-d-snapshot-counts-plan.md",
+      "new_path": "docs/completed/phase-d-snapshot-counts-plan.md",
+      "sha256": "c2af9957a613f2e70eeb497f55af492bcb08d6e5e5dc086b1d79a28c1f73b41c",
+      "bytes": 12971,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/phase-f-build-plan.md",
+      "new_path": "docs/archived-plans/legacy/phase-f-build-plan.md",
+      "sha256": "67456d1b1d149a9a8e9b15f62862feb3311b0513f08020889fc994900e8b36d7",
+      "bytes": 3512,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/phase-n-build-plan.md",
+      "new_path": "docs/completed/phase-n-build-plan.md",
+      "sha256": "ee47c3b3899942b79c7f151ea4074877e3c47a7bb56c5602780753a05e1bbc6c",
+      "bytes": 13091,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/selfplay-viewer-2-screen-plan.md",
+      "new_path": "docs/archived-plans/legacy/selfplay-viewer-2-screen-plan.md",
+      "sha256": "f688f611dab6d040428cd2b16c9178fc7f5a2240df7c40590a0befa00981c76c",
+      "bytes": 36543,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/selfplay-viewer-observer-plan.md",
+      "new_path": "docs/archived-plans/legacy/selfplay-viewer-observer-plan.md",
+      "sha256": "801b2831d176d4c2d97aab9e594635c706b7e61291d814b2ced44456a00a82ac",
+      "bytes": 33750,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/soak-2026-04-11-fixes.md",
+      "new_path": "docs/history/soak-2026-04-11-fixes.md",
+      "sha256": "0e7d0df830cc53f5ca5890cd971222e937e2c8f49b6e4bd084af6a9b17e06407",
+      "bytes": 28016,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/archived/strategic-command-system.md",
+      "new_path": "docs/history/strategic-command-system.md",
+      "sha256": "45ea8d75f7a2c923d054f17ca2837b28e02b6c9e5da1f13f187a48209b6c2990",
+      "bytes": 34673,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/archived/ui-live-test-plan.md",
+      "new_path": "docs/archived-plans/legacy/ui-live-test-plan.md",
+      "sha256": "637b102f123c2bd152bf44c7de833e5163bfa1530a4b5037996a530c94044683",
+      "bytes": 13221,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/archived/ui-verification-phase.md",
+      "new_path": "docs/history/ui-verification-phase.md",
+      "sha256": "688795ec7089c65465ab3b0ff9fc4bc3842655363bd9a3471b213341e2e73896",
+      "bytes": 6379,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/images/advisor-completed.png",
+      "new_path": "docs/images/advisor-completed.png",
+      "sha256": "37e877f99ade9e98715825607d2c3940aabc1ee4ecec452212ccf0719edb8a70",
+      "bytes": 64238,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/images/alpha4gate-hero.png",
+      "new_path": "docs/images/alpha4gate-hero.png",
+      "sha256": "d485b4915e17018a54eb12951d53df656cf90214a5e52ac693b5d9dbe06309f1",
+      "bytes": 2255501,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/images/evolution-running.png",
+      "new_path": "docs/images/evolution-running.png",
+      "sha256": "363db1197216a3056296e9e99f4b267150b77b86f2363e817e1f122d20fb3189",
+      "bytes": 196080,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/images/evolve-arena-dark.svg",
+      "new_path": "docs/images/evolve-arena-dark.svg",
+      "sha256": "094c047dc9a9f8ce7006a1cf3c9934c78946afdd94818ae53b66ff5d3c89c42e",
+      "bytes": 4225,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/images/evolve-arena-light.svg",
+      "new_path": "docs/images/evolve-arena-light.svg",
+      "sha256": "c612af0391f97809b2624bca6e5c3e14e63e8fe1616d1bb6eb52df1f272874ce",
+      "bytes": 4242,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/images/jev-battle-preview.gif",
+      "new_path": "docs/images/jev-battle-preview.gif",
+      "sha256": "76587827ae4978f13bb9256eda33b9298b26f7461d34d5db50b2c140e32a9bdd",
+      "bytes": 2593242,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/images/JevPlayer rush.mp4",
+      "new_path": "docs/images/JevPlayer rush.mp4",
+      "sha256": "e5ef9658f8777948118dbfc75414bf4d08a71cbd65709c78584df870d56268bc",
+      "bytes": 6420670,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/images/Recording 2026-04-15 223435.mp4",
+      "new_path": "docs/images/Recording 2026-04-15 223435.mp4",
+      "sha256": "72b7a47f8b1a01a67f1ba41351e7dc0fe385b40c8710d6b8c97c4d110a97de46",
+      "bytes": 199528926,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/images/reward-trends.png",
+      "new_path": "docs/images/reward-trends.png",
+      "sha256": "bce683aa831e5d634d3f52df0c676760240ff93c0d1c612f1be985f16c7f044d",
+      "bytes": 315814,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/images/sc2-gameplay.gif",
+      "new_path": "docs/images/sc2-gameplay.gif",
+      "sha256": "a88befaad400cd6be808b31b587ce8d7eb9b86c9fb6441a00eca8f4366cb9419",
+      "bytes": 6340998,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/evolve-algorithm-redesign-investigation.md",
+      "new_path": "docs/investigations/evolve-algorithm-redesign-investigation.md",
+      "sha256": "fcd00bb3f6c8bcdc2f0f04ba6d18f5d6fdda6def9245b07215e683cc34b34960",
+      "bytes": 11397,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/evolve-judging-alternatives.md",
+      "new_path": "docs/investigations/evolve-judging-alternatives.md",
+      "sha256": "5c6d80042a6abd679abc315cc98201e282d23795c96b2aa41193a6e3c278574c",
+      "bytes": 20750,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/evolve-restructure-round1.md",
+      "new_path": "docs/investigations/evolve-restructure-round1.md",
+      "sha256": "de8ac02faf63dff43c81b9499f1e62481af5127b9ee6941e1a0ff04629cfe8b3",
+      "bytes": 55067,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/evolve-restructure-round2.md",
+      "new_path": "docs/investigations/evolve-restructure-round2.md",
+      "sha256": "56b481cc6e1d29d33fbf76985971b9351527cbaea8803959d8677e70aa72d963",
+      "bytes": 41692,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/harvest-engineer-skill-scope-investigation.md",
+      "new_path": "docs/investigations/harvest-engineer-skill-scope-investigation.md",
+      "sha256": "3663c5d87d276ddf50ffe574611dbd611ac4c248584310b38486052a5bb10928",
+      "bytes": 11385,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/headless-linux-training-investigation.md",
+      "new_path": "docs/investigations/headless-linux-training-investigation.md",
+      "sha256": "f5148d222c5a9ef4d7d1385194108e410cea1c6bd8df2df3ec94205cbb360b19",
+      "bytes": 38471,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/headless-sc2-investigation.md",
+      "new_path": "docs/investigations/headless-sc2-investigation.md",
+      "sha256": "43774150c9a4a03f6314dcfeef44f2cf4bbf9e882955127ae567553519e58a95",
+      "bytes": 11436,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/hydra-hierarchical-ppo-investigation.md",
+      "new_path": "docs/investigations/hydra-hierarchical-ppo-investigation.md",
+      "sha256": "1c8efd731bc10f358410065267a9eff82d398e68b35062e1e46dd7bb13e42320",
+      "bytes": 13282,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/jev-battle-view-feasibility-2026-10-11.md",
+      "new_path": "docs/investigations/jev-battle-view-feasibility-2026-10-11.md",
+      "sha256": "f6256f37c083545ea76005b6cef649f2ced8c3a824df41469316b4f829e1124b",
+      "bytes": 16287,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/jev-battle-view-wrap-2026-10-11.md",
+      "new_path": "docs/investigations/jev-battle-view-wrap-2026-10-11.md",
+      "sha256": "04e13f38de921280b70a94ddee2173fb76a96c149a77f58d30a5b21b90fe06f9",
+      "bytes": 4701,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/jev-improvement-gates-2026-10-12.md",
+      "new_path": "docs/investigations/jev-improvement-gates-2026-10-12.md",
+      "sha256": "0ba7312eb4d776f3472e68b29591cb4f1b890e596fc292f6aea945ecd599137c",
+      "bytes": 4711,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/jev-integration-recovery-audit-2026-10-14.json",
+      "new_path": "docs/investigations/jev-integration-recovery-audit-2026-10-14.json",
+      "sha256": "e7cfe37e35cdd6d3a2ddbf66b73d56042b0408645b4870f94c4d6efb2e05643a",
+      "bytes": 20848,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/jev-integration-safety-audit-2026-10-14.md",
+      "new_path": "docs/investigations/jev-integration-safety-audit-2026-10-14.md",
+      "sha256": "7f74a9d09374260970608dae282f94bbfe8fa2473a7920c9410fc106e5484ce6",
+      "bytes": 12018,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/jev-model-involvement-2026-10-13-adversarial-review.md",
+      "new_path": "docs/investigations/jev-model-involvement-2026-10-13-adversarial-review.md",
+      "sha256": "929d7a13f7be835b806e4123cc92dda2f2eb33622b2b40d7744c0083c48e62cb",
+      "bytes": 6286,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/jev-model-involvement-2026-10-13-evidence.csv",
+      "new_path": "docs/investigations/jev-model-involvement-2026-10-13-evidence.csv",
+      "sha256": "cb630f058513c79bf2c1048174cd26c29e5f8d431a54df91618a105e4a0d1628",
+      "bytes": 312288,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/jev-model-involvement-2026-10-13-evidence.json",
+      "new_path": "docs/investigations/jev-model-involvement-2026-10-13-evidence.json",
+      "sha256": "20f54d7821af1400db04187b9616376608674ad3df0cb817d1396795b9ceb18f",
+      "bytes": 1863932,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/jev-model-involvement-2026-10-13-incidents.md",
+      "new_path": "docs/investigations/jev-model-involvement-2026-10-13-incidents.md",
+      "sha256": "5a869079f257f7d1239e9582a0d5529be19e94cdb7c93ff932fb0463a8f89ccd",
+      "bytes": 11426,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/jev-model-involvement-2026-10-13.md",
+      "new_path": "docs/investigations/jev-model-involvement-2026-10-13.md",
+      "sha256": "c7379bb00c69d251216f5257e7000006631c89529a903030c9608539cb6789e9",
+      "bytes": 13091,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/jev-model-involvement-2026-10-14.md",
+      "new_path": "docs/investigations/jev-model-involvement-2026-10-14.md",
+      "sha256": "308166dc97fef203d0ea6a26212899decf29fdbb921feb0443e1456ddc980034",
+      "bytes": 11004,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/jev-overnight-boundary-review-2026-10-14.md",
+      "new_path": "docs/investigations/jev-overnight-boundary-review-2026-10-14.md",
+      "sha256": "339438ed417a22f49e5df4d6808813e2c1e941a95594f7914291b38dd5216b5f",
+      "bytes": 5933,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/jev-overnight-boundary-wrap-2026-10-14.md",
+      "new_path": "docs/investigations/jev-overnight-boundary-wrap-2026-10-14.md",
+      "sha256": "82a40cc230413ca239654f9d38b310f0abf2485b191e4a10043cfd5a60025557",
+      "bytes": 2563,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/jev-overnight-plan-review-2026-10-13.md",
+      "new_path": "docs/investigations/jev-overnight-plan-review-2026-10-13.md",
+      "sha256": "44feef46ed998733c8923dc4d452b04a92034ff27dd4e60ccc2f677f4d5ae08a",
+      "bytes": 4878,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/jev-overnight-plan-wrap-2026-10-13.md",
+      "new_path": "docs/investigations/jev-overnight-plan-wrap-2026-10-13.md",
+      "sha256": "e8939c0cb8b3ea868c5a0beb764c6554d092bae14617f84d069c8db089a52cd5",
+      "bytes": 2512,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/jev-overnight-repo-sync-2026-10-13.md",
+      "new_path": "docs/investigations/jev-overnight-repo-sync-2026-10-13.md",
+      "sha256": "f9e058746a4b013bc13028abc510a98575ae120688d1201ff7e1ab2036b7aecd",
+      "bytes": 1422,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/jev-recovery-comparison-2026-10-12.json",
+      "new_path": "docs/investigations/jev-recovery-comparison-2026-10-12.json",
+      "sha256": "51e53efecfec4cccc86eff11a1c71c5661b723479e3de311946e08041579a093",
+      "bytes": 1484,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/jev-recovery-completion-2026-10-12.md",
+      "new_path": "docs/investigations/jev-recovery-completion-2026-10-12.md",
+      "sha256": "1968ea9461da09267163a5490ca6223c6a64d2d429dd962a5b724630980a7d9a",
+      "bytes": 5455,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/jev-recovery-live-2026-10-12.json",
+      "new_path": "docs/investigations/jev-recovery-live-2026-10-12.json",
+      "sha256": "70c2b305dd998af0947cce707911447df3079e80f97fc0c72b95ea397c286ae2",
+      "bytes": 3483,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/jev-recovery-stall-2026-10-11.md",
+      "new_path": "docs/investigations/jev-recovery-stall-2026-10-11.md",
+      "sha256": "6ef91339935ff82c9c21f6c4013a54a11e820e3bdc34fd0ed882b86f2064b44f",
+      "bytes": 6492,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/jev-speed-baseline-2026-10-11.json",
+      "new_path": "docs/investigations/jev-speed-baseline-2026-10-11.json",
+      "sha256": "4c29af86ff2c310f717afd4c0f9e4395358ea80a2ab647fd75ff7a07e971de70",
+      "bytes": 17502,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/jev-speed-baseline-2026-10-11.md",
+      "new_path": "docs/investigations/jev-speed-baseline-2026-10-11.md",
+      "sha256": "362389d87383c7f0f89b000181e2aa73284341f371731506ee578143e99bc40f",
+      "bytes": 8168,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/knowledge-distillation-pretraining-investigation.md",
+      "new_path": "docs/investigations/knowledge-distillation-pretraining-investigation.md",
+      "sha256": "223fcecc5bbb0b289dc3ecc4232cea0279d90bbbae8816e28bae9dc9376435f1",
+      "bytes": 10748,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/mini-game-role-investigation.md",
+      "new_path": "docs/investigations/mini-game-role-investigation.md",
+      "sha256": "617104384d2ef02ebccf14cf210d3edfdf3c1d5e398b286dff2897120f9b87a5",
+      "bytes": 11346,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/observer-player-viewer-investigation.md",
+      "new_path": "docs/investigations/observer-player-viewer-investigation.md",
+      "sha256": "0f67192879c52e4b09df8b4c25cecd810eb6539efb8d69ff6d81e2f3de91381e",
+      "bytes": 13237,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/observer-restriction-workarounds-investigation.md",
+      "new_path": "docs/investigations/observer-restriction-workarounds-investigation.md",
+      "sha256": "a705d42a369f2a766f90f137eb8f73b5934664a813ba0b386c089f60581a2241",
+      "bytes": 24139,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/observer-rush-surface-launch-2026-10-12.md",
+      "new_path": "docs/investigations/observer-rush-surface-launch-2026-10-12.md",
+      "sha256": "ca4ec9ef65d7860a53a7156025f84b206267c1ad92ee3599bf986a1a4494708d",
+      "bytes": 4729,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/phase-d-audit.md",
+      "new_path": "docs/investigations/phase-d-audit.md",
+      "sha256": "87a780ec153c85d22d8680b0b313b9b45a15efeba4dfc606dd995db1de133c6b",
+      "bytes": 21425,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/skill-md-runner-references-investigation.md",
+      "new_path": "docs/investigations/skill-md-runner-references-investigation.md",
+      "sha256": "aa8c51238fcb6d8e784ba0701dd25c20562fb7af6d5170cb77e5380bf054d235",
+      "bytes": 10481,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/soak-volume-statistical-robustness-investigation.md",
+      "new_path": "docs/investigations/soak-volume-statistical-robustness-investigation.md",
+      "sha256": "a96e07a5527d52f782e7f7f67bd85d0080ee174b9c1dc0580935de10e848fc77",
+      "bytes": 9982,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/investigations/win-probability-forecast-investigation.md",
+      "new_path": "docs/investigations/win-probability-forecast-investigation.md",
+      "sha256": "cd6d14aa1b45ae48a24dec2e335e08fde1d3bf6d47f0d2a4f599b1ecccd2700e",
+      "bytes": 14724,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/media/jev-battle-view.mp4",
+      "new_path": "docs/media/jev-battle-view.mp4",
+      "sha256": "f40ef036b00f52939eb703e2454b76dbee2b6511355409541179e940d32cc7c6",
+      "bytes": 6373330,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/media/README.md",
+      "new_path": "docs/media/README.md",
+      "sha256": "b9e871a1440a1e8e90c57b5fb17209ad77c7928c7e2796a01493344f98dc9a50",
+      "bytes": 3629,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/operator/jev-battle-view.md",
+      "new_path": "docs/operator/jev-battle-view.md",
+      "sha256": "8bde585b85cd2a3b832d69a9de6d6e27a33a599a685c1cfd365c5bd49c713116",
+      "bytes": 8944,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/operator/jev-speed-measurement.md",
+      "new_path": "docs/operator/jev-speed-measurement.md",
+      "sha256": "219c20c7447051d878e504d3c2b8a12a693ccd10f98ff30860526bad32b27855",
+      "bytes": 6406,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/operator/jev-v2-validation.md",
+      "new_path": "docs/operator/jev-v2-validation.md",
+      "sha256": "ec36863a9f8c06617d65f8627e4f79737fde25c7929e46a6ec4895ca32a6f1ce",
+      "bytes": 64528,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/operator/jev-validation.md",
+      "new_path": "docs/operator/jev-validation.md",
+      "sha256": "fdf62d9d1ca2b536322291e4331135335d588844cce87b4a9345cd8572a0afba",
+      "bytes": 29113,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/plans/evolution-lines-plan.md",
+      "new_path": "docs/archived-plans/evolution-lines-plan.md",
+      "sha256": "589f84f41087311d258c43fc91f5622cf63b4a64efa9e1f372959b6c1cc0abad",
+      "bytes": 22767,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/plans/evolve-evidence-layer-plan.md",
+      "new_path": "docs/archived-plans/evolve-evidence-layer-plan.md",
+      "sha256": "098842cd6e55cb7354d85d5a252228e9f6118b951b2a0d0189fcfdb82b6e0ddc",
+      "bytes": 71828,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/plans/evolve-judging-plan.md",
+      "new_path": "docs/archived-plans/evolve-judging-plan.md",
+      "sha256": "c164163dede003489fe4c66fdedf285ea91df7c4ecfe6f60f6e1b8da3a9b5110",
+      "bytes": 36179,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/plans/evolve-operational-hardening-plan.md",
+      "new_path": "docs/archived-plans/evolve-operational-hardening-plan.md",
+      "sha256": "16f73fd6b99df6f1bc2ab19aec259ca2f47d3216b19c86ebd3781704db74d2e9",
+      "bytes": 95717,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/plans/evolve-viewer-plan.md",
+      "new_path": "docs/archived-plans/evolve-viewer-plan.md",
+      "sha256": "17355dc7b64a496de63a7e455cac6728f0b067bc2943cbe4e518cb6aad0e27c9",
+      "bytes": 73815,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/plans/jev-decision-integration-plan.md",
+      "new_path": "docs/archived-plans/jev-decision-integration-plan.md",
+      "sha256": "9909870e883d1c8bf5c07a9a1c470fe4e1304f1326ed31bbc9ecabc074807b1b",
+      "bytes": 48642,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/plans/jev-decision-integration-planning-checks.md",
+      "new_path": "docs/plan-reconciliation/source-reviews/jev-decision-integration-planning-checks.md",
+      "sha256": "b53b36025edc3cede4714c2dd510072d34e84c4d3f5e459be4bd8d4359a1f4b0",
+      "bytes": 9789,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/plans/jev-decision-integration-proposal.html",
+      "new_path": "docs/plan-reconciliation/source-reviews/jev-decision-integration-proposal.html",
+      "sha256": "86bfa7fdd5b7d5775b7816ea91226c2815f1b1a7659db2a33589030caa4ecc60",
+      "bytes": 13588,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/plans/jev-overnight-improvement-plan.md",
+      "new_path": "docs/archived-plans/jev-overnight-improvement-plan.md",
+      "sha256": "dffefc1dd9519741f880f527914f1b43ea7fde2a0857fa01e0b5d63d18154c14",
+      "bytes": 44302,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/plans/jev-overnight-improvement-proposal.html",
+      "new_path": "docs/plan-reconciliation/source-reviews/jev-overnight-improvement-proposal.html",
+      "sha256": "b7799a7380340a60cbb28d66af22d61db442f494704aa977881ee20d9b738e4d",
+      "bytes": 8001,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/plans/jev-player-plan.md",
+      "new_path": "docs/archived-plans/jev-player-plan.md",
+      "sha256": "ab2378c86b65093f70724b11f1bbacf58f2357289975a11d9a2d96bebf6b285c",
+      "bytes": 45844,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/plans/jev-player-proposal.html",
+      "new_path": "docs/plan-reconciliation/source-reviews/jev-player-proposal.html",
+      "sha256": "1a686ad0cfb88a253d73111a1ed0064c17c2382bfc11a0505786b44bad045f53",
+      "bytes": 10071,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/plans/jev-player-review.md",
+      "new_path": "docs/plan-reconciliation/source-reviews/jev-player-review.md",
+      "sha256": "6d50f11870d71a05bb6ee50c98af751e6aba1d1bbc7dab910f46ffe83cc2ef12",
+      "bytes": 5805,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/plans/jev-player-sync.md",
+      "new_path": "docs/plan-reconciliation/source-reviews/jev-player-sync.md",
+      "sha256": "30e3f3cc9a6b82313e79c705cb273846395c1156ab0b3f0e0f55a3f0d0b1211d",
+      "bytes": 3258,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/plans/jev-player-wrap.md",
+      "new_path": "docs/plan-reconciliation/source-reviews/jev-player-wrap.md",
+      "sha256": "65f88ede51e2ddaf9e01fd995973e63875bfea76c2c8fb2e9dfe11e221256ef0",
+      "bytes": 3931,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/plans/jev-typesafe-code-review.md",
+      "new_path": "docs/plan-reconciliation/source-reviews/jev-typesafe-code-review.md",
+      "sha256": "90f4afefa46e7dbeb128cb482d52681450ca8b4c1ca9f7d3dc319f98c85ce7eb",
+      "bytes": 2360,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/plans/jev-typesafe-plan.md",
+      "new_path": "docs/completed/jev-typesafe-plan.md",
+      "sha256": "c0d829e6b93c3f67c35c94d8fd25c5107a64bb826bf65ce44d6f151eb959d825",
+      "bytes": 18109,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/plans/jev-typesafe-proposal.html",
+      "new_path": "docs/plan-reconciliation/source-reviews/jev-typesafe-proposal.html",
+      "sha256": "c7689842e31950bfec7a6bca71bed4e35c05635999b06895a9c483032c7e28c5",
+      "bytes": 5464,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/plans/jev-typesafe-review.md",
+      "new_path": "docs/plan-reconciliation/source-reviews/jev-typesafe-review.md",
+      "sha256": "4f5f6683a45f9f377da54d0855f320bf57d144a0d07714f6d50047df1078f4df",
+      "bytes": 4250,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/plans/jev-typesafe-validation.md",
+      "new_path": "docs/plan-reconciliation/source-reviews/jev-typesafe-validation.md",
+      "sha256": "89d4b12800dbd1dfb2908ddcd9e05a184b47d7f31095a2ecd4958881fcc6295e",
+      "bytes": 7431,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/plans/jev-typesafe-wrap.md",
+      "new_path": "docs/plan-reconciliation/source-reviews/jev-typesafe-wrap.md",
+      "sha256": "923f5d633c42ad48623a58ea892fe170f4d8eb64f6cbdf99744a11d3dfe84a68",
+      "bytes": 1771,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/plans/jev-v2-handoff.md",
+      "new_path": "docs/plan-reconciliation/source-reviews/jev-v2-handoff.md",
+      "sha256": "e6001c39350f75971c70c31181b57bda54548f55da9753a6e4ebd2cf46053184",
+      "bytes": 6037,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/plans/jev-v2-plan.md",
+      "new_path": "docs/archived-plans/jev-v2-plan.md",
+      "sha256": "c402179a88ffcb6be27181cec9d8f98ab7302d10191b51a0ead163ac69a877ee",
+      "bytes": 100484,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/plans/jev-v2-proposal.html",
+      "new_path": "docs/plan-reconciliation/source-reviews/jev-v2-proposal.html",
+      "sha256": "359e2647b0499fbe3d148ca7fc03c43e2fa6ae017f0f99981cab8f05d4ad8a03",
+      "bytes": 8265,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/plans/jev-v2-review.md",
+      "new_path": "docs/plan-reconciliation/source-reviews/jev-v2-review.md",
+      "sha256": "ffb7af66d9305b522ce0ca8eb036e134a5175f0f19d21e3597460618c6d21e69",
+      "bytes": 10089,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/plans/jev-v2-sync.md",
+      "new_path": "docs/plan-reconciliation/source-reviews/jev-v2-sync.md",
+      "sha256": "70003ec7bc11ae88b31e8e34e69b5db28928a59ad70ee397fafe3544568880d3",
+      "bytes": 2801,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/plans/jev-v2-validation.md",
+      "new_path": "docs/plan-reconciliation/source-reviews/jev-v2-validation.md",
+      "sha256": "4285ff405ffa9a429cf229b52db957b9226f8d36cce91ee14ac3164d6c59f090",
+      "bytes": 7273,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/plans/jev-v2-wrap.md",
+      "new_path": "docs/plan-reconciliation/source-reviews/jev-v2-wrap.md",
+      "sha256": "ba3d3a51cca6e442bab29ca8966208959ba6a9f7069c4083704ba407ad6e754a",
+      "bytes": 6274,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/plans/phase-6-build-plan.md",
+      "new_path": "docs/archived-plans/phase-6-build-plan.md",
+      "sha256": "d1456255541ae436c3c5ff7d6461d35197ff5ac08647e9c49420df768c419472",
+      "bytes": 8045,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/plans/phase-7-build-plan.md",
+      "new_path": "docs/archived-plans/phase-7-build-plan.md",
+      "sha256": "633f2bc3050ae7bcb930fbe55c825a5c26a97a3abb1450cc3de642863819d2f9",
+      "bytes": 16939,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/plans/phase-d-build-plan.md",
+      "new_path": "docs/archived-plans/phase-d-build-plan.md",
+      "sha256": "a28360aa465cfed69e489d3b40f1c075e3a86f1175539b44e93ef99b2e11cb2c",
+      "bytes": 37297,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/plans/phase-e-build-plan.md",
+      "new_path": "docs/archived-plans/phase-e-build-plan.md",
+      "sha256": "bc2ab63c060b1a6cb16dfaf1aa989630f78d09e34390a7ab845bc9f600c7c1b1",
+      "bytes": 12416,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/plans/phase-g-build-plan.md",
+      "new_path": "docs/archived-plans/phase-g-build-plan.md",
+      "sha256": "158e9823e4070642f08e47dbc2696a2d45891c8f2693267fec2268ac4570a20f",
+      "bytes": 5185,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/plans/phase-h-build-plan.md",
+      "new_path": "docs/archived-plans/phase-h-build-plan.md",
+      "sha256": "f72a3ab2ad30934b7251aa755da789b55bd8c06160863f7477e32c0aa27e6379",
+      "bytes": 4277,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/plans/phase-k-build-plan.md",
+      "new_path": "docs/archived-plans/phase-k-build-plan.md",
+      "sha256": "c588b27cbbfb0c4ea131d8df2042ac1a53e07cf121acc5ea5e3631b3b6068188",
+      "bytes": 8550,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/plans/phase-q-build-plan.md",
+      "new_path": "docs/archived-plans/phase-q-build-plan.md",
+      "sha256": "6e8bba88c0115d019a02c665b90e618c91bfb81e232aaeee27e0ad3068d482b1",
+      "bytes": 6112,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/soak-test-runs/advised-2026-04-12-a.md",
+      "new_path": "docs/soak-test-runs/advised-2026-04-12-a.md",
+      "sha256": "7fc4889faacb0ef150b457166794ab2425d391d25202fd2b2be3d88db7fe98ba",
+      "bytes": 441,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/advised-2026-04-12-b.md",
+      "new_path": "docs/soak-test-runs/advised-2026-04-12-b.md",
+      "sha256": "452d91c0c3ff15abd6d324919b65c4f258bc75b191839bcb442ed6ed8adc0368",
+      "bytes": 1696,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/advised-2026-04-12-c.md",
+      "new_path": "docs/soak-test-runs/advised-2026-04-12-c.md",
+      "sha256": "cb29ec411e155e2f8c27a9ef34923c15bb5690140268ab2cfe2e78a66c40b710",
+      "bytes": 6288,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/advised-2026-04-12-d.md",
+      "new_path": "docs/soak-test-runs/advised-2026-04-12-d.md",
+      "sha256": "5a910ef30598272b120b935112c3597186aca62c11c89f4dfc0d971e7f2b7e07",
+      "bytes": 1973,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/advised-2026-04-12.md",
+      "new_path": "docs/soak-test-runs/advised-2026-04-12.md",
+      "sha256": "d9895830e8a8550600c8ed2afb092925dd6fb0d7a42b9d6ce61ef588ffeb3376",
+      "bytes": 7252,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/advised-2026-04-13-a.md",
+      "new_path": "docs/soak-test-runs/advised-2026-04-13-a.md",
+      "sha256": "e45f53a2652d9e2d9f997ac0e46bd392697a14007f8ecbf263bb6bd8b0aa1814",
+      "bytes": 8884,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/advised-2026-04-13-b.md",
+      "new_path": "docs/soak-test-runs/advised-2026-04-13-b.md",
+      "sha256": "719aadc6557c490ebf98963d095d9853b17377c104525247155a2b3e91f7a9f0",
+      "bytes": 4671,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/advised-2026-04-13-c.md",
+      "new_path": "docs/soak-test-runs/advised-2026-04-13-c.md",
+      "sha256": "3b02674d3a5ce2a02ad66418b1ccf778882c975529796cd0166371f07139279e",
+      "bytes": 8760,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/advised-2026-04-13-d.md",
+      "new_path": "docs/soak-test-runs/advised-2026-04-13-d.md",
+      "sha256": "512a7df5a163d7165a1ee7b1f3eddf522fc4c4926bc9688659509be2a2c2ec17",
+      "bytes": 7812,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/advised-2026-04-13-e.md",
+      "new_path": "docs/soak-test-runs/advised-2026-04-13-e.md",
+      "sha256": "2793ad0b7618ba0c597cd4c2b4629b2d547eca75fa41ca4a671b88636836bad9",
+      "bytes": 11055,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/advised-2026-04-13-g.md",
+      "new_path": "docs/soak-test-runs/advised-2026-04-13-g.md",
+      "sha256": "285309d3c23013aae449723fafc0699515fb79f73a7d25c44f502b95091bbc01",
+      "bytes": 5957,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/advised-2026-04-13-h.md",
+      "new_path": "docs/soak-test-runs/advised-2026-04-13-h.md",
+      "sha256": "1bba4aed3c6f8b3de6d3594ffbf9bd7e648d87fa6d10f81e23192b66278393aa",
+      "bytes": 7271,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/advised-2026-04-13-i.md",
+      "new_path": "docs/soak-test-runs/advised-2026-04-13-i.md",
+      "sha256": "b1fd1db38fc296b62a18d4d556954a30db41b1dcf3c89494c3ecc56e097422c9",
+      "bytes": 8074,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/advised-2026-04-13-j.md",
+      "new_path": "docs/soak-test-runs/advised-2026-04-13-j.md",
+      "sha256": "c3998667eecc7317b2944ea8c191ec6a59692b85efe4a288fac490a1421a1e63",
+      "bytes": 5738,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/advised-2026-04-13-k.md",
+      "new_path": "docs/soak-test-runs/advised-2026-04-13-k.md",
+      "sha256": "f9da694e8b00c10bb2321f1d1de851d582f701d4d817f3bbfee678d803ab95b6",
+      "bytes": 6531,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/advised-2026-04-13-l.md",
+      "new_path": "docs/soak-test-runs/advised-2026-04-13-l.md",
+      "sha256": "a98ea740438581fba68dd7ae16d2832c2e98e3000e54c2972b24fa790e7f7ae1",
+      "bytes": 5001,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/advised-2026-04-13.md",
+      "new_path": "docs/soak-test-runs/advised-2026-04-13.md",
+      "sha256": "03b2a0230a6b130991c7258a9d102c268df98acd778c809b38364db0e49d8a76",
+      "bytes": 4032,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/advised-2026-04-14.md",
+      "new_path": "docs/soak-test-runs/advised-2026-04-14.md",
+      "sha256": "7ad5a351ee686881d2fa93aa1553f5f19512a5436e49cbb3578652de1b092161",
+      "bytes": 12726,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/advised-2026-04-17.md",
+      "new_path": "docs/soak-test-runs/advised-2026-04-17.md",
+      "sha256": "be1290d619385e8c28806af1a86577a3ce5052cab4a0f35524bcc80d169b6743",
+      "bytes": 11542,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/evolution-lines-smoke-20260620.md",
+      "new_path": "docs/soak-test-runs/evolution-lines-smoke-20260620.md",
+      "sha256": "a9a3d463bb46684bfbe8e7f7610bf6235aea0cc146b1bdcaf0d4c0a4dfb3092e",
+      "bytes": 4457,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/evolve-2026-04-20T18-03-35+00-00.md",
+      "new_path": "docs/soak-test-runs/evolve-2026-04-20T18-03-35+00-00.md",
+      "sha256": "3aa0e9a024eaada0e5c40667ee262ec46fc009884d74e5f98f5bae489a3ba8b0",
+      "bytes": 307,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/evolve-2026-04-20T20-13-49+00-00.md",
+      "new_path": "docs/soak-test-runs/evolve-2026-04-20T20-13-49+00-00.md",
+      "sha256": "e876c91dac00fa419769bb6f727fe0afae7b7fd30e5cafc1cc8a5c023f13aa30",
+      "bytes": 807,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/evolve-2026-04-20T23-03-11+00-00.md",
+      "new_path": "docs/soak-test-runs/evolve-2026-04-20T23-03-11+00-00.md",
+      "sha256": "b88c5e97f6b5de9ed49c7caafb7c9233bbdb6b5d8e67e22da29c9f7a5970233d",
+      "bytes": 509,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/evolve-2026-04-21T03-15-05+00-00.md",
+      "new_path": "docs/soak-test-runs/evolve-2026-04-21T03-15-05+00-00.md",
+      "sha256": "c1fb9c70116fa308896621b2064a07f45ea078c286bd521930460a40159470e8",
+      "bytes": 1195,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/evolve-2026-04-21T05-27-14+00-00.md",
+      "new_path": "docs/soak-test-runs/evolve-2026-04-21T05-27-14+00-00.md",
+      "sha256": "09159f0574889f06e0c7ca2cfa47607a83bd1043d8ed1d748583dd80e219415b",
+      "bytes": 1111,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/evolve-2026-04-22.md",
+      "new_path": "docs/soak-test-runs/evolve-2026-04-22.md",
+      "sha256": "30221bbc3acee67b05b7e999c003144bf09d9a80878869c45086803c9d517bd8",
+      "bytes": 1054500,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/evolve-2026-04-22T15-28-00+00-00.md",
+      "new_path": "docs/soak-test-runs/evolve-2026-04-22T15-28-00+00-00.md",
+      "sha256": "e6ca6a5323a24a5740920d6f7f68ebc65e9f93d24ec0ff81d4cc1ac6675c55c7",
+      "bytes": 646,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/evolve-2026-04-29T06-10-21+00-00.md",
+      "new_path": "docs/soak-test-runs/evolve-2026-04-29T06-10-21+00-00.md",
+      "sha256": "520681578e5b6ced49fa3e569ffff34ec49cba6b45f903597f400fbec626a408",
+      "bytes": 492,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/evolve-2026-04-30T05-30-07+00-00.md",
+      "new_path": "docs/soak-test-runs/evolve-2026-04-30T05-30-07+00-00.md",
+      "sha256": "97ed0b6bff281ecec2d7ddf404bb9ab14a521743eab658cc3507188cf1ac4f57",
+      "bytes": 2429,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/evolve-2026-04-30T20-15-20+00-00.md",
+      "new_path": "docs/soak-test-runs/evolve-2026-04-30T20-15-20+00-00.md",
+      "sha256": "da741992a3a2eb8eaa65c0f5395ffe3074c7d94da58d4705a33869dc4f08a6fc",
+      "bytes": 3885,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/evolve-2026-05-01T05-55-48+00-00.md",
+      "new_path": "docs/soak-test-runs/evolve-2026-05-01T05-55-48+00-00.md",
+      "sha256": "16c12465fa48186b4cbd97ab23aecca0df2383941fe1eb12378ae4524cd06b8b",
+      "bytes": 566,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/evolve-2026-05-01T06-36-20+00-00.md",
+      "new_path": "docs/soak-test-runs/evolve-2026-05-01T06-36-20+00-00.md",
+      "sha256": "0a7a89dbe103c90bf7c71c96a29fa1b83ddfa38fd10cf999ce605ffe06cf5050",
+      "bytes": 445,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/evolve-2026-05-01T07-18-33+00-00.md",
+      "new_path": "docs/soak-test-runs/evolve-2026-05-01T07-18-33+00-00.md",
+      "sha256": "5d2e488af96d11bb5188ced20e8c416e6d90a9eeddf34b063a09c01de39367a1",
+      "bytes": 826,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/evolve-2026-05-02T15-10-33+00-00.md",
+      "new_path": "docs/soak-test-runs/evolve-2026-05-02T15-10-33+00-00.md",
+      "sha256": "e96d752e6c17e982ef95687d3abe6f976793cccda92a51b361ff7d00f0933301",
+      "bytes": 503,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/evolve-2026-05-02T22-06-27+00-00.md",
+      "new_path": "docs/soak-test-runs/evolve-2026-05-02T22-06-27+00-00.md",
+      "sha256": "3f188e66cfcaf65efe230125d08e002023f08b7c3bc838934731a59bfa87c5b2",
+      "bytes": 503,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/evolve-2026-05-08T00-44-53+00-00.md",
+      "new_path": "docs/soak-test-runs/evolve-2026-05-08T00-44-53+00-00.md",
+      "sha256": "26702dab4ac4658a42634f6b3766eef0f114b72723f664847ade67d79997551b",
+      "bytes": 503,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/evolve-20260423-2052.md",
+      "new_path": "docs/soak-test-runs/evolve-20260423-2052.md",
+      "sha256": "0bcc4dbd74f0b189f950d4ef76ca338c70a1b783f29cb40dac477e16a25df865",
+      "bytes": 3503,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/evolve-smoke-20260423.md",
+      "new_path": "docs/soak-test-runs/evolve-smoke-20260423.md",
+      "sha256": "2ab061c90a4df8604e5ab7d3e2b22faa6eb8ac4aa4a961039b6e474750f85d2f",
+      "bytes": 1151,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/improve-2026-04-11.md",
+      "new_path": "docs/soak-test-runs/improve-2026-04-11.md",
+      "sha256": "61c18cdf9b3977c2f49fae8939235570bbbabba61ccf366e844ef2fb4f52e4f1",
+      "bytes": 26463,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/improve-2026-04-12-b.md",
+      "new_path": "docs/soak-test-runs/improve-2026-04-12-b.md",
+      "sha256": "03acbe2a33af666c4f763214f5e53c39463b269676d88280cb6bbd60de588bb3",
+      "bytes": 3036,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/improve-2026-04-12.md",
+      "new_path": "docs/soak-test-runs/improve-2026-04-12.md",
+      "sha256": "c479f8fe648b8b12cd3db37eea506b463306d7007233e378a80af3befd583f96",
+      "bytes": 12524,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/improve-2026-04-14-retry-storm-dedup.md",
+      "new_path": "docs/soak-test-runs/improve-2026-04-14-retry-storm-dedup.md",
+      "sha256": "fd7ff870e1b178da94001d03bbd810e9cdfdbb2d34a0c9f8d8ef0886e28ea3c8",
+      "bytes": 5236,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/improve-2026-04-14.md",
+      "new_path": "docs/soak-test-runs/improve-2026-04-14.md",
+      "sha256": "b635b8544321a15de32ce6cefe95ea50e79689ea8df8c1797d8fe5ab47ad0c23",
+      "bytes": 8338,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/models-tab-observation-2026-05-02.md",
+      "new_path": "docs/soak-test-runs/models-tab-observation-2026-05-02.md",
+      "sha256": "b64ec57ea980ed3a454e8e83f4bf97c30b31f333754732b0da924f3cd2b42d36",
+      "bytes": 17550,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/models-tab-smoke-2026-05-02T12-20-08Z.md",
+      "new_path": "docs/soak-test-runs/models-tab-smoke-2026-05-02T12-20-08Z.md",
+      "sha256": "91c4d505d55c7e920169235bbead2e860d16b4652d357f75122f1bd3f8e81d09",
+      "bytes": 3570,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/phase-8-smoke-gate-20260426-1204.md",
+      "new_path": "docs/soak-test-runs/phase-8-smoke-gate-20260426-1204.md",
+      "sha256": "652475fc42c0e69eb6e2eccc5251d29c7ef3e4dad363651b334b0ec8027cbdb0",
+      "bytes": 11835,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/README.md",
+      "new_path": "docs/soak-test-runs/README.md",
+      "sha256": "e012fb3bf7134f3ba56331ba881b97e98bd578fb6a102e1d8f03860efb10b34c",
+      "bytes": 36030,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/smoke-2026-04-10.md",
+      "new_path": "docs/soak-test-runs/smoke-2026-04-10.md",
+      "sha256": "0d292d10483170b6405ca5827bd19df9449073604c0f66e1c66f7b87de07bea2",
+      "bytes": 14685,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/smoke-2026-04-10b.md",
+      "new_path": "docs/soak-test-runs/smoke-2026-04-10b.md",
+      "sha256": "df6876c24405bcd9e488316a31ed5b7a20f8fc3e428c12d1be369eca53aae5b8",
+      "bytes": 9824,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/smoke-2026-04-10c.md",
+      "new_path": "docs/soak-test-runs/smoke-2026-04-10c.md",
+      "sha256": "bbb395e43941df8ab1f8f9ef7dc5f7359ea00ca4c76405851ee0fa67fb326ad8",
+      "bytes": 10825,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/smoke-2026-04-10d.md",
+      "new_path": "docs/soak-test-runs/smoke-2026-04-10d.md",
+      "sha256": "52b4bd302c96c918eccb6cd316f5542963602b6d5513edaf8157784e01c70929",
+      "bytes": 9112,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/soak-2026-04-10.md",
+      "new_path": "docs/soak-test-runs/soak-2026-04-10.md",
+      "sha256": "ddae5e8763aca04888da044c574279afa43d2cabcc106709374aa463b48cb371",
+      "bytes": 22565,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/soak-2026-04-10b.md",
+      "new_path": "docs/soak-test-runs/soak-2026-04-10b.md",
+      "sha256": "b3f57ea97c0df1a12da4c34642e35c76eac1b085a9fb55f6927ef9db00ba95ec",
+      "bytes": 4909,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/soak-2026-04-10c.md",
+      "new_path": "docs/soak-test-runs/soak-2026-04-10c.md",
+      "sha256": "065bde80afa8790c67233ef73791d7c016d13aa8ea87a3235141c0fe2b9c9c69",
+      "bytes": 21594,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/soak-2026-04-11.md",
+      "new_path": "docs/soak-test-runs/soak-2026-04-11.md",
+      "sha256": "4e11575c3f15245696563a2e59f3ad31411799814a9433b6b0155634b534cfc3",
+      "bytes": 24947,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/soak-2026-04-11b.md",
+      "new_path": "docs/soak-test-runs/soak-2026-04-11b.md",
+      "sha256": "7999bfe7c6461e5c6223228008cc306a2a48d209d615a4224311e405bb97961d",
+      "bytes": 19257,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/soak-2026-04-14.md",
+      "new_path": "docs/soak-test-runs/soak-2026-04-14.md",
+      "sha256": "a2d7e650dbb0d9ba8a4c9d40b66a8c17ba3e755af861a6255176aaf0882042c8",
+      "bytes": 5804,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/soak-2026-04-15.md",
+      "new_path": "docs/soak-test-runs/soak-2026-04-15.md",
+      "sha256": "1c4483498157c5d4d14e2ba56d263f35a8371d8c58d272dbf76a0281509c88c2",
+      "bytes": 9213,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/soak-2026-04-18-selfplay-viewer.md",
+      "new_path": "docs/soak-test-runs/soak-2026-04-18-selfplay-viewer.md",
+      "sha256": "ccc4ee6e0655b353129aec4d8a6c9b36453748a3eedd4000bb051043b39c3dad",
+      "bytes": 7165,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/spike-1-hello-world-linux-sc2-20260425-2218.md",
+      "new_path": "docs/soak-test-runs/spike-1-hello-world-linux-sc2-20260425-2218.md",
+      "sha256": "650109df1a458ee8e88d3c4a72128a11eb97af434284f2d984ba6d04675268fe",
+      "bytes": 8730,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/spike-2-selfplay-linux-20260425-2307.md",
+      "new_path": "docs/soak-test-runs/spike-2-selfplay-linux-20260425-2307.md",
+      "sha256": "a143534dedab7ea8b491dbe55cb0e4896a6923b5d1cd9711aa771c139aab9137",
+      "bytes": 7713,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/soak-test-runs/spike-3-parallel-linux-20260425-2335.md",
+      "new_path": "docs/soak-test-runs/spike-3-parallel-linux-20260425-2335.md",
+      "sha256": "76ce24f66ad17dabef63db2ffa770f5b43f05dff90bce65466c4c5867e7ec185",
+      "bytes": 11097,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/wiki/architecture.md",
+      "new_path": "docs/wiki/architecture.md",
+      "sha256": "baa63b56e41ea172118b837a92f3cfa4c1baa5fcfe9b3cdd3c866e7ff745765c",
+      "bytes": 16465,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/wiki/army-combat.md",
+      "new_path": "docs/wiki/army-combat.md",
+      "sha256": "f9532e9777485637389e5b0f84fed65157c09dff2022ef001b7e4c4fd742f50b",
+      "bytes": 4607,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/wiki/claude-advisor.md",
+      "new_path": "docs/wiki/claude-advisor.md",
+      "sha256": "2ab4ffe29d0602099f0c322c026868b4e8491335ea92723ae91fdab0249ea9a0",
+      "bytes": 3397,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/wiki/cloud-deployment.md",
+      "new_path": "docs/wiki/cloud-deployment.md",
+      "sha256": "6844d0a35b64b8e74183414a28e9ba2026b81b578d90a4787db13d8cec82f68b",
+      "bytes": 9419,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/wiki/command-system.md",
+      "new_path": "docs/wiki/command-system.md",
+      "sha256": "18236ba74a694d09796c1997449ac7fe8aa92640725e8018246e96565ce5f52d",
+      "bytes": 4372,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/wiki/decision-engine.md",
+      "new_path": "docs/wiki/decision-engine.md",
+      "sha256": "00cc608626a100bc4eba0d91d2179bd2436a4d9af5690e19596d85379123fd4d",
+      "bytes": 4391,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/wiki/domain-coupling.md",
+      "new_path": "docs/wiki/domain-coupling.md",
+      "sha256": "2e8bc98e41857296b6382b04f74b7a0a520824522b93cf30f506da6e23ef5c9a",
+      "bytes": 11617,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/wiki/economy.md",
+      "new_path": "docs/wiki/economy.md",
+      "sha256": "f23e938cfde433737f2649d1610bcf5625d1a2d2ce673795a456671ebf89d7cc",
+      "bytes": 3922,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/wiki/evaluation-pipeline.md",
+      "new_path": "docs/wiki/evaluation-pipeline.md",
+      "sha256": "fdcda110ccd88ecbf898fd7b99981698561f61b1dc9abe82a3f1aabf13c8359f",
+      "bytes": 11830,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/wiki/faq.md",
+      "new_path": "docs/wiki/faq.md",
+      "sha256": "4f85826352b3501b144125f45b44d98a88071d2ba2627930d586429e75eb2141",
+      "bytes": 11572,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/wiki/frontend.md",
+      "new_path": "docs/wiki/frontend.md",
+      "sha256": "f3ee17fc651da5a0c14d3c5adc815d62b9e4bfb420cd942e364582ecb04eb949",
+      "bytes": 24387,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/wiki/improve-bot-advised-architecture.md",
+      "new_path": "docs/wiki/improve-bot-advised-architecture.md",
+      "sha256": "ba5c85a42f7c80dfcde25e8661f72bcaa5e4b34613ea919e3b27c47f17430d6a",
+      "bytes": 15268,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/wiki/index.md",
+      "new_path": "docs/wiki/index.md",
+      "sha256": "b46f92ea41e034cf37f1876b50a74762212e3bccb3673c1bcfd31a0414cacb51",
+      "bytes": 8832,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/wiki/linux-dev-environment.md",
+      "new_path": "docs/wiki/linux-dev-environment.md",
+      "sha256": "f1fe5eb86d4cbc6e3f294bdaab91c1ec7f8d627c19136fce241b8139002276af",
+      "bytes": 10219,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/wiki/models-tab.md",
+      "new_path": "docs/wiki/models-tab.md",
+      "sha256": "4f1bd4173c4bc109c192717201f396dc1d8f396a991884e60ecf18800f4ea249",
+      "bytes": 9414,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/wiki/monitoring.md",
+      "new_path": "docs/wiki/monitoring.md",
+      "sha256": "1e8501c884d75699ab732d78212847912069c875df6406d915e756755083f817",
+      "bytes": 24186,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/wiki/operator-commands.md",
+      "new_path": "docs/wiki/operator-commands.md",
+      "sha256": "395626f3e62c6ebbaa70e2c988f38977cdfb881502dabcd45ff58b2eafbe9883",
+      "bytes": 37904,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/wiki/project-history.md",
+      "new_path": "docs/wiki/project-history.md",
+      "sha256": "7f0e01dbc3e8da0ec556239a1811e0a155a91d1a352668803c63ce23f37a6711",
+      "bytes": 2964,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/wiki/promotions.md",
+      "new_path": "docs/wiki/promotions.md",
+      "sha256": "105a0edafd82b87a3757ed7d09be947e62744bb10f266237cf871dbe55637bcf",
+      "bytes": 8412,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/wiki/subprocess-selfplay.md",
+      "new_path": "docs/wiki/subprocess-selfplay.md",
+      "sha256": "98c9413aeb88cd04c30cdba9d0be92721341e48df6cc5ea9335166c0ac02918c",
+      "bytes": 7746,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/wiki/testing.md",
+      "new_path": "docs/wiki/testing.md",
+      "sha256": "9f025673c06afd7083dc25f5fcba7fa0b47259ac779440717e43ed7277453b3e",
+      "bytes": 9463,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/wiki/training-pipeline.md",
+      "new_path": "docs/wiki/training-pipeline.md",
+      "sha256": "b37e46864242a602df64fe10e6af12d73a85679a5dea6339dbc9e4c9e18e7cb2",
+      "bytes": 29702,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/sc2/protoss/guiding-principles.md",
+      "new_path": "docs/sc2/protoss/guiding-principles.md",
+      "sha256": "acb8789ac5b0e1416405fae2d74e476cc9ee215195c9e2fe9e0257b853e2feca",
+      "bytes": 28976,
+      "immutable": false
+    },
+    {
+      "original_path": "documentation/sc2/protoss/tactical-bugs.md",
+      "new_path": "docs/archived-plans/tactical-bugs.md",
+      "sha256": "542f0d100cd970d0869ea9d990a645e420f92e473743537dd4a6389840d79c5f",
+      "bytes": 15931,
+      "immutable": true
+    },
+    {
+      "original_path": "documentation/sc2/protoss/tech-tree.md",
+      "new_path": "docs/sc2/protoss/tech-tree.md",
+      "sha256": "cca55ec8844c28a60d87834e0cf153605d51a1dcc3283569db68d733c9a7ae0c",
+      "bytes": 760,
+      "immutable": false
+    }
+  ],
+  "references_updated": [
+    ".claude/skills/a4g-motion/SKILL.md",
+    ".claude/skills/improve-bot-advised/SKILL.md",
+    ".claude/skills/improve-bot-advised/evals/test_scenarios.json",
+    ".claude/skills/improve-bot-evolve/SKILL.md",
+    ".claude/skills/improve-bot-triage/SKILL.md",
+    ".claude/skills/improve-bot-triage/evals/test_scenarios.json",
+    ".claude/skills/improve-bot/SKILL.md",
+    ".gitignore",
+    "CLAUDE.md",
+    "README.md",
+    "bots/v0/api.py",
+    "bots/v0/learning/advisor_bridge.py",
+    "bots/v0/learning/promotion.py",
+    "bots/v0/learning/reward_aggregator.py",
+    "bots/v0/learning/trainer.py",
+    "bots/v0/learning/winprob_heuristic.py",
+    "bots/v1/api.py",
+    "bots/v1/learning/advisor_bridge.py",
+    "bots/v1/learning/promotion.py",
+    "bots/v1/learning/reward_aggregator.py",
+    "bots/v1/learning/trainer.py",
+    "bots/v10/api.py",
+    "bots/v10/learning/advisor_bridge.py",
+    "bots/v10/learning/promotion.py",
+    "bots/v10/learning/reward_aggregator.py",
+    "bots/v10/learning/trainer.py",
+    "bots/v10/learning/winprob_heuristic.py",
+    "bots/v11/api.py",
+    "bots/v11/learning/advisor_bridge.py",
+    "bots/v11/learning/promotion.py",
+    "bots/v11/learning/reward_aggregator.py",
+    "bots/v11/learning/trainer.py",
+    "bots/v11/learning/winprob_heuristic.py",
+    "bots/v12/api.py",
+    "bots/v12/learning/advisor_bridge.py",
+    "bots/v12/learning/promotion.py",
+    "bots/v12/learning/reward_aggregator.py",
+    "bots/v12/learning/trainer.py",
+    "bots/v12/learning/winprob_heuristic.py",
+    "bots/v13/api.py",
+    "bots/v13/learning/advisor_bridge.py",
+    "bots/v13/learning/features.py",
+    "bots/v13/learning/promotion.py",
+    "bots/v13/learning/reward_aggregator.py",
+    "bots/v13/learning/trainer.py",
+    "bots/v13/learning/winprob_heuristic.py",
+    "bots/v2/api.py",
+    "bots/v2/learning/advisor_bridge.py",
+    "bots/v2/learning/promotion.py",
+    "bots/v2/learning/reward_aggregator.py",
+    "bots/v2/learning/trainer.py",
+    "bots/v3/api.py",
+    "bots/v3/learning/advisor_bridge.py",
+    "bots/v3/learning/promotion.py",
+    "bots/v3/learning/reward_aggregator.py",
+    "bots/v3/learning/trainer.py",
+    "bots/v3/learning/winprob_heuristic.py",
+    "bots/v4/api.py",
+    "bots/v4/learning/advisor_bridge.py",
+    "bots/v4/learning/promotion.py",
+    "bots/v4/learning/reward_aggregator.py",
+    "bots/v4/learning/trainer.py",
+    "bots/v4/learning/winprob_heuristic.py",
+    "bots/v5/api.py",
+    "bots/v5/learning/advisor_bridge.py",
+    "bots/v5/learning/promotion.py",
+    "bots/v5/learning/reward_aggregator.py",
+    "bots/v5/learning/trainer.py",
+    "bots/v5/learning/winprob_heuristic.py",
+    "bots/v6/api.py",
+    "bots/v6/learning/advisor_bridge.py",
+    "bots/v6/learning/promotion.py",
+    "bots/v6/learning/reward_aggregator.py",
+    "bots/v6/learning/trainer.py",
+    "bots/v6/learning/winprob_heuristic.py",
+    "bots/v7/api.py",
+    "bots/v7/learning/advisor_bridge.py",
+    "bots/v7/learning/promotion.py",
+    "bots/v7/learning/reward_aggregator.py",
+    "bots/v7/learning/trainer.py",
+    "bots/v7/learning/winprob_heuristic.py",
+    "bots/v8/api.py",
+    "bots/v8/learning/advisor_bridge.py",
+    "bots/v8/learning/promotion.py",
+    "bots/v8/learning/reward_aggregator.py",
+    "bots/v8/learning/trainer.py",
+    "bots/v8/learning/winprob_heuristic.py",
+    "bots/v9/api.py",
+    "bots/v9/learning/advisor_bridge.py",
+    "bots/v9/learning/promotion.py",
+    "bots/v9/learning/reward_aggregator.py",
+    "bots/v9/learning/trainer.py",
+    "bots/v9/learning/winprob_heuristic.py",
+    "data-snapshots/README.md",
+    "docs/history/evolve-parallelization-iter3-prompt.md",
+    "docs/history/neural-training-pipeline.md",
+    "docs/history/phase-4-5-backlog.md",
+    "docs/history/phase-4-7-eval-pipeline-fixes.md",
+    "docs/history/soak-2026-04-11-fixes.md",
+    "docs/investigations/evolve-restructure-round1.md",
+    "docs/investigations/evolve-restructure-round2.md",
+    "docs/investigations/harvest-engineer-skill-scope-investigation.md",
+    "docs/investigations/headless-linux-training-investigation.md",
+    "docs/investigations/hydra-hierarchical-ppo-investigation.md",
+    "docs/investigations/jev-battle-view-wrap-2026-10-11.md",
+    "docs/investigations/jev-improvement-gates-2026-10-12.md",
+    "docs/investigations/jev-integration-safety-audit-2026-10-14.md",
+    "docs/investigations/jev-model-involvement-2026-10-13.md",
+    "docs/investigations/jev-model-involvement-2026-10-14.md",
+    "docs/investigations/jev-overnight-boundary-review-2026-10-14.md",
+    "docs/investigations/jev-overnight-boundary-wrap-2026-10-14.md",
+    "docs/investigations/jev-overnight-plan-review-2026-10-13.md",
+    "docs/investigations/jev-overnight-repo-sync-2026-10-13.md",
+    "docs/investigations/knowledge-distillation-pretraining-investigation.md",
+    "docs/investigations/mini-game-role-investigation.md",
+    "docs/investigations/observer-player-viewer-investigation.md",
+    "docs/investigations/observer-restriction-workarounds-investigation.md",
+    "docs/investigations/skill-md-runner-references-investigation.md",
+    "docs/investigations/soak-volume-statistical-robustness-investigation.md",
+    "docs/media/README.md",
+    "docs/operator-gate-runbook.md",
+    "docs/operator/jev-v2-validation.md",
+    "docs/operator/jev-validation.md",
+    "docs/plan-reconciliation/source-reviews/jev-decision-integration-planning-checks.md",
+    "docs/plan-reconciliation/source-reviews/jev-decision-integration-proposal.html",
+    "docs/plan-reconciliation/source-reviews/jev-player-proposal.html",
+    "docs/plan-reconciliation/source-reviews/jev-player-sync.md",
+    "docs/plan-reconciliation/source-reviews/jev-typesafe-proposal.html",
+    "docs/plan-reconciliation/source-reviews/jev-typesafe-review.md",
+    "docs/plan-reconciliation/source-reviews/jev-typesafe-validation.md",
+    "docs/plan-reconciliation/source-reviews/jev-v2-handoff.md",
+    "docs/plan-reconciliation/source-reviews/jev-v2-proposal.html",
+    "docs/plan-reconciliation/source-reviews/jev-v2-review.md",
+    "docs/plan-reconciliation/source-reviews/jev-v2-sync.md",
+    "docs/plan-reconciliation/source-reviews/jev-v2-wrap.md",
+    "docs/seeds/evolve-restructure-operator-notes.md",
+    "docs/soak-2026-04-24-observer-spike.md",
+    "docs/soak-test-runs/README.md",
+    "docs/soak-test-runs/advised-2026-04-13-d.md",
+    "docs/soak-test-runs/evolve-2026-04-30T05-30-07+00-00.md",
+    "docs/soak-test-runs/evolve-2026-04-30T20-15-20+00-00.md",
+    "docs/soak-test-runs/evolve-20260423-2052.md",
+    "docs/soak-test-runs/improve-2026-04-11.md",
+    "docs/soak-test-runs/improve-2026-04-12.md",
+    "docs/soak-test-runs/improve-2026-04-14.md",
+    "docs/soak-test-runs/models-tab-observation-2026-05-02.md",
+    "docs/soak-test-runs/models-tab-smoke-2026-05-02T12-20-08Z.md",
+    "docs/soak-test-runs/smoke-2026-04-10.md",
+    "docs/soak-test-runs/smoke-2026-04-10b.md",
+    "docs/soak-test-runs/soak-2026-04-10.md",
+    "docs/soak-test-runs/soak-2026-04-10b.md",
+    "docs/soak-test-runs/soak-2026-04-11.md",
+    "docs/soak-test-runs/soak-2026-04-18-selfplay-viewer.md",
+    "docs/soak-test-runs/spike-3-parallel-linux-20260425-2335.md",
+    "docs/wiki/cloud-deployment.md",
+    "docs/wiki/faq.md",
+    "docs/wiki/frontend.md",
+    "docs/wiki/improve-bot-advised-architecture.md",
+    "docs/wiki/index.md",
+    "docs/wiki/linux-dev-environment.md",
+    "docs/wiki/monitoring.md",
+    "docs/wiki/operator-commands.md",
+    "docs/wiki/subprocess-selfplay.md",
+    "docs/wiki/testing.md",
+    "frontend/brand/guide.md",
+    "frontend/src/__tests__/e2e/models-tab.test.tsx",
+    "frontend/src/components/EvolutionTab.test.tsx",
+    "frontend/src/components/EvolutionTab.tsx",
+    "frontend/src/components/HelpTab.tsx",
+    "frontend/src/components/ObservableTab.test.tsx",
+    "frontend/src/components/ObservableTab.tsx",
+    "frontend/src/hooks/useApi.ts",
+    "frontend/src/hooks/useEvolveRun.ts",
+    "frontend/src/lib/idbCache.ts",
+    "frontend/src/types/lineage.ts",
+    "scripts/analyze_jev_model_involvement.py",
+    "scripts/benchmark_jev.py",
+    "scripts/build_lineage.py",
+    "scripts/evolve.py",
+    "scripts/evolve_worker.py",
+    "scripts/launch-jev-battle.ps1",
+    "scripts/launch-jev.ps1",
+    "scripts/smoke_models_tab.sh",
+    "scripts/spike_observer.py",
+    "scripts/validate_jev.py",
+    "src/orchestrator/evolve.py",
+    "src/orchestrator/lineages.py",
+    "src/orchestrator/selfplay.py",
+    "src/orchestrator/snapshot.py",
+    "src/selfplay_viewer/overlay.py",
+    "tests/test_advisor_bridge.py",
+    "tests/test_evolve.py",
+    "tests/test_evolve_parallel.py",
+    "tests/test_evolve_round_state.py",
+    "tests/test_jev_benchmark.py",
+    "tests/test_jev_validation.py",
+    "tests/test_overlay.py",
+    "tests/test_repo_hygiene.py",
+    "tests/test_snapshot.py"
+  ],
+  "master_sha256": "af8bd8fcb2578f26d48bec2b06af1cfd403f682c6ec7291b7c3024e55199b88c",
+  "pending_steps": 131
+}

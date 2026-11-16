@@ -1,0 +1,491 @@
+[
+  {
+    "file": "Alpha4Gate/docs/history/phase-4-5-backlog.md",
+    "before_sha256": "3f7a6ce2a062a10c6146968e2371add73d646fb0add7f5398b1d7a42b699c7af",
+    "after_sha256": "50e707488047b10ba01e334759e39ca3eb4bd9654b782941a104dd3b701a85a2",
+    "changes": [
+      {
+        "old_target": "../../src/alpha4gate/learning/checkpoints.py#L63",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "../../src/alpha4gate/learning/environment.py#L209-L219",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/history/phase-4-7-eval-pipeline-fixes.md",
+    "before_sha256": "ccfa2854c455b4dc519c96f7fb7cb196af5fa6a507f894a34029bb496c1e8605",
+    "after_sha256": "679da03eab8594782f072030113e19ec8e141896372604ffc165dcc7d31c2bce",
+    "changes": [
+      {
+        "old_target": "../headless-sc2-investigation.md",
+        "new_target": "../investigations/headless-sc2-investigation.md",
+        "reason": "resolved existing document or source"
+      },
+      {
+        "old_target": "../win-probability-forecast-investigation.md",
+        "new_target": "../investigations/win-probability-forecast-investigation.md",
+        "reason": "resolved existing document or source"
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/history/soak-2026-04-11-fixes.md",
+    "before_sha256": "2019bbf1c4160afc205c1000b956280469cf2d1003b5db8911342f58cba454e3",
+    "after_sha256": "b0cab17758e668faa4722eda019c17191f377e07237df20900b6491afce82abd",
+    "changes": [
+      {
+        "old_target": "../../src/alpha4gate/api.py#L319-L326",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "../../src/alpha4gate/web_socket.py#L52",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/investigations/headless-linux-training-investigation.md",
+    "before_sha256": "fc77047fdbe2a11bd15d69b9c87be98cfcfb0910dc34cb4fdb67316e7c5d8d35",
+    "after_sha256": "adac28e44f796f5a62b6da3ef4bf883e650a0d3da968b8900341bcc457d7d0c2",
+    "changes": [
+      {
+        "old_target": "../../$env:USERPROFILE/.claude/projects/c--Users-x-dev-Alpha4Gate/memory/project_evolve_2gate_validated.md",
+        "reason": "historical personal memory, not distributed with this checkout",
+        "path_retained_as_code": true
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/investigations/mini-game-role-investigation.md",
+    "before_sha256": "9aa70e5c9e67040187f4710f32e0c817ef0b2f1e21df7db095c5dfdadadf53c7",
+    "after_sha256": "7c5f47bd340738652751040074abf8a74425a674a137ed554429669a20525119",
+    "changes": [
+      {
+        "old_target": "../plans/evolve-gate-reduction-plan.md",
+        "new_target": "../completed/evolve-gate-reduction-plan.md",
+        "reason": "resolved existing document or source"
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/soak-test-runs/README.md",
+    "before_sha256": "c50c504f1244bfc46d246ef954b96a8e6fa71914cd07c6b6f736cd57c310189a",
+    "after_sha256": "f0d00d569300c7e3368fe848893853e4ded6b4b2c1a01d3128d3be208dc5bc5a",
+    "changes": [
+      {
+        "old_target": "../src/alpha4gate/learning/daemon.py",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/soak-test-runs/advised-2026-04-13-g.md",
+    "before_sha256": "285309d3c23013aae449723fafc0699515fb79f73a7d25c44f502b95091bbc01",
+    "after_sha256": "fd21e658e20c3f7a221231f6fd0278c2d766618f3fddc4c7da244233846a3c3a",
+    "changes": [
+      {
+        "old_target": "src/alpha4gate/bot.py#L866-L872",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "src/alpha4gate/bot.py#L872",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/soak-test-runs/advised-2026-04-13-h.md",
+    "before_sha256": "1bba4aed3c6f8b3de6d3594ffbf9bd7e648d87fa6d10f81e23192b66278393aa",
+    "after_sha256": "26a00767515ac4befd46ca7a8661480c62372ad9de87f1fe0e1f5d265c9e1319",
+    "changes": [
+      {
+        "old_target": "src/alpha4gate/bot.py#L866-L872",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "src/alpha4gate/bot.py#L872",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/soak-test-runs/advised-2026-04-13-i.md",
+    "before_sha256": "b1fd1db38fc296b62a18d4d556954a30db41b1dcf3c89494c3ecc56e097422c9",
+    "after_sha256": "2dd5a398e2d9bd5906f62f98b06f5c9203dc28bd37924c48771347fd0087e646",
+    "changes": [
+      {
+        "old_target": "src/alpha4gate/bot.py",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "src/alpha4gate/learning/environment.py#L684",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "src/alpha4gate/bot.py#L866-L872",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/soak-test-runs/advised-2026-04-13-j.md",
+    "before_sha256": "c3998667eecc7317b2944ea8c191ec6a59692b85efe4a288fac490a1421a1e63",
+    "after_sha256": "e195db1c511366d1e0022b1084a5354e59e9d94b12891c250b536b3e104cdcfe",
+    "changes": [
+      {
+        "old_target": "../../memory/",
+        "reason": "historical personal memory, not distributed with this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "src/alpha4gate/bot.py#L866-L872",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/soak-test-runs/advised-2026-04-13-k.md",
+    "before_sha256": "f9da694e8b00c10bb2321f1d1de851d582f701d4d817f3bbfee678d803ab95b6",
+    "after_sha256": "64ce81d7124c4c0c6ab849bb8276ac064c11b41d4d39335460a1fdf9fa5d08b5",
+    "changes": [
+      {
+        "old_target": "src/alpha4gate/bot.py#L872",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/soak-test-runs/advised-2026-04-13-l.md",
+    "before_sha256": "a98ea740438581fba68dd7ae16d2832c2e98e3000e54c2972b24fa790e7f7ae1",
+    "after_sha256": "fab8fcb1b3327d93f6fac7a82b6532e0a5c39c6e8eeddc1ea0a552e4bb940018",
+    "changes": [
+      {
+        "old_target": "src/alpha4gate/bot.py#L872",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/soak-test-runs/evolve-20260423-2052.md",
+    "before_sha256": "2722634cac41bea138833a0f2103b43b78828ebd73cedb7ab77de0a3aab348ac",
+    "after_sha256": "14196cfd67ed562e96adf3519d71b93274694db73ec1a4a3b46efd387755ebaa",
+    "changes": [
+      {
+        "old_target": "../plans/evolve-gate-reduction-plan.md",
+        "new_target": "../completed/evolve-gate-reduction-plan.md",
+        "reason": "resolved existing document or source"
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/soak-test-runs/improve-2026-04-14-retry-storm-dedup.md",
+    "before_sha256": "fd7ff870e1b178da94001d03bbd810e9cdfdbb2d34a0c9f8d8ef0886e28ea3c8",
+    "after_sha256": "cab99e34516bddf928f5dc69d02d0a31c869d1ba3a0b3f5641c7db008f73acaf",
+    "changes": [
+      {
+        "old_target": "logs/game_2026-04-14T07-21-03.jsonl",
+        "reason": "historical runtime artifact, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "src/alpha4gate/bot.py",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "src/alpha4gate/bot.py#L661-L701",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "src/alpha4gate/bot.py#L633-L655",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "src/alpha4gate/bot.py#L501-L531",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/soak-test-runs/improve-2026-04-14.md",
+    "before_sha256": "5afc82f446f1ae260a468442aa09429a446ed06254505a3a1a85d2799cd4524a",
+    "after_sha256": "ff8477fc4f97f17971b5074439beb70077df33efd2b0c9c70bdfd2f2e6ba0c98",
+    "changes": [
+      {
+        "old_target": "src/alpha4gate/bot.py",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "src/alpha4gate/bot.py#L661-L701",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "src/alpha4gate/bot.py#L633-L655",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "src/alpha4gate/bot.py#L501-L531",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "docs/improvements/self-improve/20260414-1127-retry-storm-dedup.md",
+        "new_target": "improve-2026-04-14-retry-storm-dedup.md",
+        "reason": "resolved existing document or source"
+      },
+      {
+        "old_target": "src/alpha4gate/bot.py#L697-L708",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "src/alpha4gate/bot.py#L648-L661",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "src/alpha4gate/bot.py#L146",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "tests/commands/test_dispatch_guard.py",
+        "new_target": "../../tests/commands/test_dispatch_guard.py",
+        "reason": "resolved existing document or source"
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/soak-test-runs/models-tab-observation-2026-05-02.md",
+    "before_sha256": "8baa04b0d8b4c4f64090d9c89d8750527ec7a760c517a76782e08d823483dd12",
+    "after_sha256": "85d560d57a49712218e9fc5851bd2976760970514343525ed296e6211f2be435",
+    "changes": [
+      {
+        "old_target": "../plans/models-tab-plan.md",
+        "new_target": "../completed/models-tab-plan.md",
+        "reason": "resolved existing document or source"
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/soak-test-runs/phase-8-smoke-gate-20260426-1204.md",
+    "before_sha256": "652475fc42c0e69eb6e2eccc5251d29c7ef3e4dad363651b334b0ec8027cbdb0",
+    "after_sha256": "81a1b1965508a5bc12d07cb9a8d447caa0b60b248e1db12dc3d67fb5668ffc58",
+    "changes": [
+      {
+        "old_target": "../plans/phase-8-build-plan.md#L283-L290",
+        "new_target": "../completed/phase-8-build-plan.md#L283-L290",
+        "reason": "resolved existing document or source"
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/soak-test-runs/smoke-2026-04-10c.md",
+    "before_sha256": "bbb395e43941df8ab1f8f9ef7dc5f7359ea00ca4c76405851ee0fa67fb326ad8",
+    "after_sha256": "522d7079a741f7187a2c47a316da5bd4f44609b50c2073ff8c1221942c4213f5",
+    "changes": [
+      {
+        "old_target": "Alpha4Gate/src/alpha4gate/learning/trainer.py#L311",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "Alpha4Gate/src/alpha4gate/learning/environment.py#L57",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/soak-test-runs/soak-2026-04-10c.md",
+    "before_sha256": "065bde80afa8790c67233ef73791d7c016d13aa8ea87a3235141c0fe2b9c9c69",
+    "after_sha256": "763053f951ff1f0941cae1b0fe65b33c55a22840b4a3c2c29824b6a9f2e1720a",
+    "changes": [
+      {
+        "old_target": "../../src/alpha4gate/runner.py#L231",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "../../src/alpha4gate/bot.py#L397",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "../../src/alpha4gate/runner.py#L291",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "../../src/alpha4gate/runner.py#L270",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "../../src/alpha4gate/learning/daemon.py#L517",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/soak-test-runs/soak-2026-04-11.md",
+    "before_sha256": "cccabe0a923da1fa94a9f0f10f370b4edfc5210c2967ff4949063cf7a18f5721",
+    "after_sha256": "1b5ee484a18b42dcd605d8b2971fa3bf72e22eeada93d5e8726456f6f2c3fcd0",
+    "changes": [
+      {
+        "old_target": "../../src/alpha4gate/api.py#L319-L326",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "../../src/alpha4gate/web_socket.py#L52",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "../../src/alpha4gate/api.py#L229-L232",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "../../src/alpha4gate/learning/promotion.py#L52",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "../../src/alpha4gate/api.py#L93-L100",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "../../src/alpha4gate/api.py#L44",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/soak-test-runs/soak-2026-04-15.md",
+    "before_sha256": "1c4483498157c5d4d14e2ba56d263f35a8371d8c58d272dbf76a0281509c88c2",
+    "after_sha256": "b5dfd37ac7272b5fed1822894f94bedb0a2f609b3d01a72e9467c1242385969b",
+    "changes": [
+      {
+        "old_target": "../../src/alpha4gate/config.py#L58",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      },
+      {
+        "old_target": "../../src/alpha4gate/learning/daemon.py#L820",
+        "reason": "historical source path, absent from this checkout",
+        "path_retained_as_code": true
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/soak-test-runs/spike-1-hello-world-linux-sc2-20260425-2218.md",
+    "before_sha256": "650109df1a458ee8e88d3c4a72128a11eb97af434284f2d984ba6d04675268fe",
+    "after_sha256": "5d19773d8c2c1aff1cc6e02179f2345d88e206c58258e4e350bb67440d65f77d",
+    "changes": [
+      {
+        "old_target": "../plans/phase-8-build-plan.md",
+        "new_target": "../completed/phase-8-build-plan.md",
+        "reason": "resolved existing document or source"
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/soak-test-runs/spike-2-selfplay-linux-20260425-2307.md",
+    "before_sha256": "a143534dedab7ea8b491dbe55cb0e4896a6923b5d1cd9711aa771c139aab9137",
+    "after_sha256": "58dde694358c80eb0d5975db7481d820203774c703136e62e27abb5b7050fe00",
+    "changes": [
+      {
+        "old_target": "../plans/phase-8-build-plan.md",
+        "new_target": "../completed/phase-8-build-plan.md",
+        "reason": "resolved existing document or source"
+      },
+      {
+        "old_target": "../plans/phase-8-build-plan.md#step-4-operator--spike-3-4-way-parallel-self-play-decisive-on-unlock-size",
+        "new_target": "../completed/phase-8-build-plan.md#step-4-operator--spike-3-4-way-parallel-self-play-decisive-on-unlock-size",
+        "reason": "resolved existing document or source"
+      }
+    ]
+  },
+  {
+    "file": "Alpha4Gate/docs/soak-test-runs/spike-3-parallel-linux-20260425-2335.md",
+    "before_sha256": "874d3383725180b53850e3ffa51224ed3125cd5b8a644e6c0e077daa8a950ce2",
+    "after_sha256": "7b92949d3d8c7b7bb06d79afef8775149f488732e973382055a9a9f027cdb6ce",
+    "changes": [
+      {
+        "old_target": "../plans/phase-8-build-plan.md",
+        "new_target": "../completed/phase-8-build-plan.md",
+        "reason": "resolved existing document or source"
+      }
+    ]
+  },
+  {
+    "file": "void_furnace/docs/ideas/idea-adversarial-twin-factory.md",
+    "before_sha256": "444b7d5970650f51cc2dbb7af19606208509c862c9e835fc12d5a27b85f9c4b0",
+    "after_sha256": "3a2041534b6b16e60760538ae9598988b16a62d99f279b5ef9a9fc404947984b",
+    "changes": [
+      {
+        "old_target": "../../.claude/rules/security.md",
+        "new_target": "../../../.claude/rules/security.md",
+        "reason": "resolved existing document or source"
+      }
+    ]
+  },
+  {
+    "file": "void_furnace/docs/ideas/idea-autoresearch-observability.md",
+    "before_sha256": "6df7cba7251739801ccb8e830deecebc0232c73362584ab1f0f365adb946439f",
+    "after_sha256": "f26bf24a847adbd606039552254f591ed7618c545960810beca3d41f5f5e0832",
+    "changes": [
+      {
+        "old_target": "idea-graphical-flow-page.md",
+        "new_target": "../archived-plans/legacy/idea-graphical-flow-page.md",
+        "reason": "resolved existing document or source"
+      },
+      {
+        "old_target": "../../../.claude/projects/c--Users-x-dev-void-furnace/memory/feedback_ui_change_deploy_then_restart.md",
+        "reason": "historical personal memory, not distributed with this checkout",
+        "path_retained_as_code": true
+      }
+    ]
+  },
+  {
+    "file": "void_furnace/docs/investigations/open-model-benchmark.md",
+    "before_sha256": "049828f3a11ea2f522dab0ef59a695f7c477f9d677696f48a9e7d563a3f84ff4",
+    "after_sha256": "f5e489fb6df9a02f04a105c32eb195ac8e29c46327512f3b8d32e00f2cbcd3f5",
+    "changes": [
+      {
+        "old_target": "../../../dev/.claude/rules/security.md",
+        "new_target": "../../../.claude/rules/security.md",
+        "reason": "resolved existing document or source"
+      }
+    ]
+  }
+]

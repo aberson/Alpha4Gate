@@ -26,7 +26,7 @@ Autonomous improvement loop that combines Claude strategic analysis with the exi
 | `--difficulty` | integer | current curriculum | SC2 AI difficulty level |
 | `--fresh` | flag | off | Discard prior iteration context; start analysis fresh each cycle |
 | `--self-improve-code` | flag | off | Enables autonomous source-code changes. Implies `--mode both` if `--mode` is not explicitly set. |
-| `--backlog` | optional path | off | Pull candidates from a triaged backlog instead of running fresh strategic analysis (Phase 2). Default path `documentation/plans/alpha4gate-master-plan.md`, parsing the `## Tactical refinements backlog` section. Implies `--self-improve-code` (backlog items are code-change work). See §Backlog Mode. |
+| `--backlog` | optional path | off | Pull candidates from a triaged backlog instead of running fresh strategic analysis (Phase 2). Default path `docs/plans/master_plan.md`, parsing the `### Step T.` blocks. Implies `--self-improve-code` (backlog items are code-change work). See §Backlog Mode. |
 | `--fail-threshold` | integer (%) | `30` | Win rate drop % that triggers a fail. Highly tunable — see §Validation Philosophy |
 
 **Flag resolution (no user interaction — resolve automatically):**
@@ -34,7 +34,7 @@ Autonomous improvement loop that combines Claude strategic analysis with the exi
 - `--self-improve-code` without explicit `--mode` → `--mode both` (auto-upgrade)
 - `--self-improve-code` with `--mode training` → ignore the flag, stay training-only (no conflict, just redundant)
 - `--mode dev` or `--mode both` without `--self-improve-code` → **auto-downgrade to `--mode training`**, log: "dev/both mode requires --self-improve-code, falling back to training-only". Do NOT ask the user.
-- `--backlog` set → auto-enable `--self-improve-code` (backlog items are code-change work) and resolve `--mode` per the `--self-improve-code` rules above. Log: "backlog mode implies --self-improve-code". If `--backlog` has no value, use default path `documentation/plans/alpha4gate-master-plan.md` and look for the `## Tactical refinements backlog` section; if an explicit path is given, read that file whole (no section filter).
+- `--backlog` set → auto-enable `--self-improve-code` (backlog items are code-change work) and resolve `--mode` per the `--self-improve-code` rules above. Log: "backlog mode implies --self-improve-code". If `--backlog` has no value, use default path `docs/plans/master_plan.md` and look for the `### Step T.` headings section; if an explicit path is given, read that file whole (no section filter).
 - `--backlog` set but no open (non-SHIPPED) items found → log "backlog exhausted, falling back to fresh strategic analysis" and proceed as if `--backlog` were unset. Do NOT stop the run.
 - Ambiguous difficulty → read current curriculum level from `data/checkpoints/manifest.json`, fall back to 1 if not found
 
@@ -113,8 +113,8 @@ LOOP_START=$(date +%s)
 RUN_TS=$(date -d @$LOOP_START +%Y%m%d-%H%M)
 
 # Auto-disambiguate log filename
-LOGFILE="documentation/soak-test-runs/advised-$(date +%F).md"
-i=0; while [ -e "$LOGFILE" ]; do i=$((i+1)); suf=$(printf "\\x$(printf '%x' $((96+i)))"); LOGFILE="documentation/soak-test-runs/advised-$(date +%F)-$suf.md"; done
+LOGFILE="docs/soak-test-runs/advised-$(date +%F).md"
+i=0; while [ -e "$LOGFILE" ]; do i=$((i+1)); suf=$(printf "\\x$(printf '%x' $((96+i)))"); LOGFILE="docs/soak-test-runs/advised-$(date +%F)-$suf.md"; done
 ```
 
 Capture baseline metrics:
@@ -217,7 +217,7 @@ When `--backlog` is set, **replace** the fresh strategic-analysis step (2.1/2.2)
 **Parse rules:**
 
 1. Read the backlog source:
-   - Default: `documentation/plans/alpha4gate-master-plan.md`, extract the section bounded by `## Tactical refinements backlog` and the next `## ` heading.
+   - Default: `docs/plans/master_plan.md`, select the canonical `### Step T.` blocks through their next step heading; skip DONE/COMPLETE/CUT and do not dispatch DEFERRED/HELD work without its activation decision.
    - Explicit path: read the file whole, no section filter.
 2. Split the region on `### ` headings. Each heading starts one backlog item. The heading text (e.g. `T.3 — Tech structures placed on low ground`) is the item's `title`.
 3. Within each item body, look for a `**Status:**` line.
@@ -268,7 +268,7 @@ Construct a Claude prompt that includes:
 
 1. **Game data summary:** Win/loss record, average game duration, per-game timeline highlights, aggregate stats
 2. **Decision log entries** (if available from live mode): What the advisor suggested, what the bot did
-3. **The full guiding principles document** (`documentation/sc2/protoss/guiding-principles.md` — all 32 sections)
+3. **The full guiding principles document** (`docs/sc2/protoss/guiding-principles.md` — all 32 sections)
 4. **Iteration context** (unless `--fresh`): What was tried in prior iterations and outcomes
 5. **`staleness_report` input block:** Inject the captured JSON verbatim as a labelled block, e.g.:
    ```text
@@ -882,7 +882,7 @@ cp data/hyperparams.pre-advised-<RUN_TS>.json data/hyperparams.json
 ### Morning-after checklist
 
 When reviewing an overnight run:
-1. Read `$LOGFILE` (the run log in `documentation/soak-test-runs/advised-*.md`)
+1. Read `$LOGFILE` (the run log in `docs/soak-test-runs/advised-*.md`)
 2. Check the iteration table — which passed, which failed, which were marginal
 3. Run `git log "advised/run/<RUN_TS>/baseline..master" --oneline` to see what landed
 4. Run a quick validation: `uv run pytest && uv run mypy src && uv run ruff check .`

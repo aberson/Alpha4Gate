@@ -5,7 +5,7 @@
  * `"/api/training/status"`). Each record stores `{data, fetchedAt, endpoint}`.
  *
  * Part of Phase 1a of the offline-first dashboard work (see
- * `documentation/improvements/offline-first.md`). The goal is that any tab
+ * `docs/improvements/offline-first.md`). The goal is that any tab
  * using `useApi` can immediately render the last-known-good response on
  * mount, even if the backend is unreachable, and show a stale-data banner
  * while retrying in the background.

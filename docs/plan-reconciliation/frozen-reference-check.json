@@ -1,0 +1,5 @@
+{
+  "frozen_python_files": 83,
+  "non_documentation_changes": [],
+  "method": "Compare AST against HEAD; normalize strings using migration source map and documentation -> docs. Comments excluded by AST."
+}

@@ -7,7 +7,7 @@ pygame lazily via ``pytest.importorskip`` so this module still
 collects cleanly on Linux CI without the ``[viewer]`` extra.
 
 Authoritative layout numbers come from
-``documentation/plans/selfplay-viewer-plan.md`` (Section 5).
+``docs/archived-plans/legacy/selfplay-viewer-observer-plan.md`` (Section 5).
 """
 
 from __future__ import annotations

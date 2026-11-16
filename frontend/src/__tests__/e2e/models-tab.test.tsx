@@ -11,7 +11,7 @@ import App from "../../App";
 /**
  * Models tab + Observable tab END-TO-END test invoking a REAL backend.
  *
- * Plan: documentation/plans/models-tab-plan.md §7 Step 11 — "vitest e2e
+ * Plan: docs/completed/models-tab-plan.md §7 Step 11 — "vitest e2e
  * suite invoking real backend".
  *
  * GATING:

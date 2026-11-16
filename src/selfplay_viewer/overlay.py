@@ -12,7 +12,7 @@ already running a pygame loop so the lazy import is a no-cost noop on
 Windows.
 
 Authoritative layout numbers come from
-``documentation/plans/selfplay-viewer-plan.md`` (Section 5). Tuning
+``docs/archived-plans/legacy/selfplay-viewer-observer-plan.md`` (Section 5). Tuning
 is a one-line edit here; ``container.py`` and tests both read from
 these constants — no magic values elsewhere.
 """
@@ -170,7 +170,7 @@ OVERLAY_SMALL_FONT_PX: Final[int] = 24
 #: window vanishes mid-game (process died, HWND destroyed by crash).
 #: Each entry must contain the ``{label}`` placeholder so
 #: ``.format(label=...)`` substitution works. See Step 7 of
-#: ``documentation/plans/selfplay-viewer-plan.md``.
+#: ``docs/archived-plans/legacy/selfplay-viewer-observer-plan.md``.
 PLACEHOLDER_MESSAGES: Final[tuple[str, ...]] = (
     "{label} has rage-quit",
     "{label} is refusing to come out of the base",

@@ -1,0 +1,170 @@
+# FAQ
+
+Quick answers for anyone looking at this system for the first time.
+
+> **At a glance:** This page answers what a new observer — human or Claude
+> session — would ask when first encountering Alpha4Gate. Start here if you
+> want to understand the system without reading every wiki page.
+
+---
+
+## What is this?
+
+Alpha4Gate is an **autonomous AI agent that teaches itself to get better at a
+task**. The task happens to be StarCraft II, but the loop is general:
+
+- It plays games.
+- Claude watches them and diagnoses what's going wrong.
+- Claude writes a fix — either a config tweak or actual code.
+- It validates the fix against new games.
+- It commits, trains the neural policy, and loops.
+
+Two loops run at different timescales:
+- **Outer loop** (hours): improves the bot's code and config via `/improve-bot-advised`.
+- **Inner loop** (minutes): improves the neural policy via the `TrainingDaemon`, with automated promotion/rollback.
+
+See [index.md](index.md) for the system diagram, [improve-bot-advised-architecture.md](improve-bot-advised-architecture.md) for the outer loop.
+
+## What is happening right now?
+
+**To check live status:** if the bot is running, open `http://localhost:3000`. The nav bar shows a green dot when an advised run is active.
+
+- **Advisor tab** — current advised-loop phase, iteration, win-rate delta vs baseline
+- **Evolution tab** — live evolve generation: fitness pool, stack-apply, regression
+- **Processes tab** — is everything actually alive
+
+## What are the recent accomplishments?
+
+| When | What |
+|------|------|
+| Phase 1 | Rule-based bot (10 build steps) — full games, macro + micro |
+| Phase 2 | Deep learning pipeline (PPO + imitation) — hybrid mode |
+| Phase 3 | Always-up autonomous training loop — daemon, promotion gate, rollback |
+| Phase 4 | Transparency dashboard (originally 10 tabs incl. Ladder; refactored 2026-04-29 to 6 tabs) |
+| Phase A | Imitation-init + LSTM + KL-to-rules — 19/20 wins at difficulty 3 |
+| Phases 0–4 | Full-stack versioning: registry, snapshots, self-play runner, Elo ladder, promotion gate |
+| Phase 5 | Sandbox enforcement — pre-commit hook locks autonomous commits to `bots/current/` |
+| 2026-04 | `/improve-bot-advised` skill — hours-long autonomous sessions that write code. First diff-5 win. |
+| Phase 9 | `/improve-bot-evolve` operational — sibling-tournament loop produces auto-promotions. v0→v2 in the validating 7h soak. |
+| Phase 8 | Headless Linux training substrate — SC2PATH resolver, Linux CI, multi-stage Dockerfile. v4→v7 in the 8h Linux soak (2026-04-30). |
+| Phase N | Win-prob heuristic + give-up trigger — 30-step `winprob<0.05` after 8 min triggers `RequestLeaveGame`. |
+| 2026-04-30 | Evolve parallelization shipped — 4-way concurrency window + worker-slot recycling. Lineage extended to v10. |
+| Phase 7 | Advised-loop stale-policy detection — `staleness.py` + a staleness-gated `soak` improvement type (2026-06-20). |
+| Phase EL | Evolution Lines — parallel lineages, frozen-baseline gauntlet, diversity fingerprint, extinction (2026-06-20). |
+| Phase EJ | Evolve judging noise-floor — null-diff screen, one-sided posterior rollback bar, panel floor (2026-07-06). |
+| Phase EV | Evolve `--viewer` — evolution runs rendered inside the themed container (2026-08-10). |
+| Phase EH | Evolve operational hardening — EH.1 lineage registry CLI, EH.2 generation-boundary persistence (2026-10-04). |
+| Phase JV | Jev player — graph-controlled four-Gateway Zealot rush (no PPO or LLM in-game), run evidence + read-only `/api/jev`, dashboard Jev tab, live-validation verifier; Steps 201-206 (2026-10-08). |
+| Phase JI | Typesafe Jev integration — opt-in hosted army decisions with explicit provider/fallback evidence; Steps 209-211 (2026-10-08). |
+| Phase J2 | Adaptive Jev player (in progress) — Step 212 reproducible benchmarks (2026-10-08), Step 224 dashboard-first exact-game launch (2026-10-09), Steps 214-221 packaged v2 player (scouting with bounded enemy memory, gas, persistent expansion and tech plans, Zealot/Stalker army, hosted strategy and execution questions) plus the live Jev graph (2026-10-09 to 2026-10-10). |
+
+## What's being worked on now?
+
+The active plan is [master_plan.md](../plans/master_plan.md). Phases A, 0–5, 7, 8, 9 and N are complete, and Phases EL (evolution lines), EJ (judging noise-floor) and EV (evolve `--viewer`) have shipped. Evolve has carried the lineage to v13 via successive auto-promotions (the last on 2026-05-07). Phase EH (evolve operational hardening) has EH.1 and EH.2 of 10 shipped.
+
+**Direction reset, 2026-11-11 ([§16](../plans/master_plan.md#16-direction-reset-and-decision-register-2026-11-11)):** the goal is measurable playing strength.
+
+1. Fix SC2 build 98310 compatibility for the older versions.
+2. Build a staged scoreboard: built-in AI from VeryHard upward, all three races, plus frozen anchors.
+3. Promote only versions that also hold up on that scoreboard (Phase ES, [seed](../seeds/evolve-for-strength.md)).
+
+Alongside it: PPO is under active exploration of what it should control ([seed](../seeds/ppo-direction.md)), and the viewer gets a Jev-style refresh for spot-checking candidates ([seed](../seeds/strength-viewer.md)). Jev (Phases JV, JI and J2) is closed as a completed proof of concept: its operator acceptance gates were not run, and its reusable ideas are in the [Jev harvest](../seeds/jev-harvest.md). Hydra, mini-games, multi-race, replay exhibition and similar research tracks are parked as later diversification work.
+
+## How does the bot decide what to do?
+
+Seven layers ([architecture.md](architecture.md)):
+1. Claude Advisor (optional, mid-game)
+2. Neural Engine (PPO, optional override)
+3. Decision Engine (state machine — OPENING/EXPAND/ATTACK/DEFEND/LATE_GAME/FORTIFY)
+4. Commands (human/AI text commands → actions)
+5. Tactics (macro, fortification, build backlog)
+6. Coherence (`army_coherence.py` — army staging, grouping, engage/retreat)
+7. Micro (`micro.py` — per-unit combat, kiting, focus fire)
+
+## How does training work?
+
+Two stages ([training-pipeline.md](training-pipeline.md)):
+
+1. **Imitation pre-training** — clone the rule-based bot via behavior cloning (~95% agreement)
+2. **RL training** — PPO fine-tunes on game outcomes; curriculum auto-advances difficulty at 80% win rate
+
+The `TrainingDaemon` background thread triggers RL cycles autonomously based on
+transitions-since-last-run and time-since-last-run. Each cycle ends with a
+promotion gate: the new checkpoint is evaluated against the current best on a
+deterministic inference-only eval, and promoted only if strictly better.
+`RollbackMonitor` reverts a regression.
+
+## How does the bot know if it's improving?
+
+Four mechanisms at different timescales ([evaluation-pipeline.md](evaluation-pipeline.md)):
+
+- **Per-step:** 63 shaped reward rules (JSON-driven) give dense feedback
+- **Per-game:** Win/loss stored in SQLite (`bots/<active>/data/training.db` — `bots/v10/data/` today)
+- **Cross-game:** Sliding-window win rates (last 10/50/100 games)
+- **Per-checkpoint:** `ModelEvaluator` runs N inference-only eval games; `PromotionManager` compares new vs best
+- **Gap (2026-11-11):** nothing yet compares versions against a fixed set of opponents. Evolve promotions are judged only against the immediate parent in self-play, so the planned Phase ES scoreboard is the missing cross-version measure.
+
+## What can I see in the dashboard?
+
+Seven tabs. The 2026-04-29 refactor left six — Models and Observable replaced Improvements and Alerts in a
+later pass — and Phase JV added Jev ([frontend.md](frontend.md)):
+
+| Tab | What it shows |
+|---|---|
+| Advisor | `/improve-bot-advised` phase, iteration, loop controls, strategic-hint injection |
+| Evolution | `/improve-bot-evolve` live generation: fitness pool, stack-apply, regression, generation outcomes |
+| Models | Lineage timeline (absorbs the old unified improvements feed), live runs, version inspector, compare, forensics |
+| Observable | Exhibition / replay-stream surface (Phase L placeholder) |
+| Processes | Live process inventory, port bindings, state-file contents, WSL processes, and the severity-filtered alerts panel |
+| Help | Renders `docs/wiki/operator-commands.md` from disk |
+| Jev | Jev decision graph: run selector, graph with colored root lanes, recorded edge activity and an opt-in Follow activity, node details with the decision behind each node, Army decision (model vs scripted fallback), a Plans and decisions panel for v2 runs, recent trace; follows a dashboard-first launch via `?launch=` |
+
+## How does Claude fit in?
+
+Three roles:
+
+1. **Outer-loop strategist** — the `/improve-bot-advised` skill uses Claude to diagnose games against the Protoss guiding principles and write fixes (THINK + FIX phases).
+2. **Mid-game advisor** — async subprocess call, rate-limited to 1 per 30 game-seconds, optional live-mode commentary during PLAY. See [claude-advisor.md](claude-advisor.md).
+3. **Command interpreter** — Claude Haiku parses free-text commands the regex parser can't handle.
+
+## Is the bot SC2-specific?
+
+Partially. The learning pipeline (training, evaluation, rewards, features, checkpoints, promotion, rollback) is domain-agnostic. SC2 coupling concentrates in a handful of modules (bot, connection, observer, macro, micro, scouting, executor). See [domain-coupling.md](domain-coupling.md).
+
+The `/improve-bot-advised` loop treats SC2 as an opaque task: code + config go in, win/loss + stats come out. The same loop would work for any measurable task with machine-readable output.
+
+## What's the tech stack?
+
+| Layer | Tool |
+|-------|------|
+| Language | Python 3.12, uv |
+| SC2 interface | burnysc2 v7.1.3 |
+| AI | Claude CLI (async subprocess) + Claude Code skills |
+| Backend | FastAPI (REST + WebSocket) |
+| Frontend | React + TypeScript + Vite |
+| Deep learning | PyTorch, Stable Baselines 3 (PPO), recurrent PPO + custom KL variants |
+| Training data | SQLite |
+| Testing | pytest (3345 unit tests passing with the `[viewer]` extra), ruff, mypy strict |
+
+## How many tests are there?
+
+3345 unit tests passing (12 skipped, 2 deselected) across 131 test files with the optional `[viewer]` extra (3310 passing + 32 skipped without it) — plus 399 frontend vitest tests (393 passing, 6 skipped). Zero type errors, zero lint violations. SC2 integration tests are separate (`pytest -m sc2`) and require a running SC2 client. See [testing.md](testing.md).
+
+## Where do I start if I want to work on this?
+
+1. Read this FAQ (you're here)
+2. Read [improve-bot-advised-architecture.md](improve-bot-advised-architecture.md) for the autonomous loop
+3. Read [architecture.md](architecture.md) for the SC2 bot layers
+4. Read the wiki page for the specific system you're touching
+5. Check [master_plan.md](../plans/master_plan.md) for the active roadmap
+6. Read `CLAUDE.md` at the project root for commands and conventions
+
+## What are the known limitations?
+
+- **Wins at difficulty 1-3 reliably; struggles at 4-5.** Pure-PPO regressed to 5% WR on a recent diff-5 soak.
+- **Training is slow.** Each RL cycle plays full SC2 games (no vectorized envs, no GPU parallelism).
+- **No self-play.** The bot trains against SC2's built-in AI.
+- **Claude advisor latency.** Subprocess call can take several seconds; advice often arrives after the situation has changed.
+- **Claude advisor fires only once per game/cycle.** Known issue, still under investigation.
+- **No email/push alerting.** All alerts are dashboard-only; overnight failures become visible only after the morning report issue is created.
+- **Training WR is noisy.** PPO exploration noise means training win rate is not a learning signal; use the deterministic `ModelEvaluator` output instead.

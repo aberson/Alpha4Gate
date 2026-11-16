@@ -1,0 +1,146 @@
+# Testing
+
+What's tested, how to run it, and what's not covered.
+
+> **At a glance:** 3345 unit tests passing (12 skipped, 2 deselected) across 131 files (130 `tests/test_*.py` + `tests/commands/test_dispatch_guard.py`) with the optional `[viewer]` extra (3310 passing + 32 skipped without it); 9 of the skips are opt-in real-browser tests (6 dashboard-first launch tests in `test_jev_launch.py` and 3 live-graph fixtures in `test_jev_live_graph.py`: a hosted v2 match through the production runner with Typesafe on an in-process `httpx.MockTransport`, plus an old v1 archive), enabled with `$env:JEV_BROWSER_TESTS = "1"` and `uv run --with playwright`; collected in ~13s. Heavy mocking of SC2 BotAI via MagicMock/AsyncMock — no SC2 client needed for unit tests. Integration tests require a running SC2 client and are marked `@pytest.mark.sc2`. No `conftest.py` — fixtures are inline. The suite covers the full autonomous loop (daemon, promotion, rollback, evaluator, advised-run bridge) plus the evolve substrate (orchestrator, pool, fitness/regression gates, evolve worker, sandbox hook, lineage registry + CLI, baseline gauntlet, diversity fingerprint, extinction, posterior gate stats), the Phase 8 Linux substrate (SC2PATH resolver), and the Jev player (policy validation, runtime, economy, army, SC2 adapter, telemetry, API, live-validation verifier, Typesafe decision coordinator, benchmark harness, dashboard-first launch sessions, the v2 package and opening, scouting with bounded enemy memory, gas economy and limited tech, persistent expansion plans, hosted strategy/execution question scheduling, live-graph browser fixtures). Frontend has its own 399-test vitest suite (393 passing, 6 skipped) — see [frontend.md](frontend.md).
+
+## Purpose & Design
+
+Tests are organized one file per module. Unit tests mock the SC2 API boundary so they run fast and deterministically. Integration tests that need a live SC2 client are opt-in via marker.
+
+> Note: this doc covers the **code-level unit test** layer. Don't confuse it with the TEST phase of the outer learning loop (see [improve-bot-advised-architecture.md](improve-bot-advised-architecture.md)) — that's game-playing validation of a behavioral fix, not unit tests.
+
+### Running tests
+
+```bash
+uv run pytest                    # All unit tests (no SC2 needed)
+uv run pytest -m sc2             # SC2 integration tests (SC2 must be running)
+uv run ruff check .              # Lint
+uv run mypy src bots --strict   # Type check (strict mode, 828 source files)
+cd frontend && npx tsc --noEmit  # TypeScript check
+cd frontend && npm test          # Frontend tests (vitest)
+```
+
+### Test distribution — bot (the task)
+
+| File | Module tested |
+|------|--------------|
+| test_executor.py | commands/executor |
+| test_commands.py | commands (parsing + integration) |
+| test_interpreter.py | Claude Haiku command interpreter |
+| test_army_coherence.py | ArmyCoherenceManager |
+| test_build_orders.py | BuildOrder, BuildSequencer |
+| test_build_backlog.py | BuildBacklog retry queue |
+| test_scouting.py | ScoutManager, threat assessment |
+| test_decision_engine.py | StrategicState transitions |
+| test_micro.py | MicroController, target selection |
+| test_claude_advisor.py | ClaudeAdvisor async + parsing |
+| test_macro_manager.py | MacroManager economy checks |
+| test_fortification.py | FortificationManager scaling |
+| test_observer.py | observe() snapshot extraction |
+| test_logger.py | GameLogger JSONL output |
+| test_api.py | FastAPI endpoints |
+| test_api_commands.py | Command API integration |
+| test_web_socket.py | WebSocket queue/broadcast |
+| test_bot_coherence.py | Bot coherence integration |
+| test_bot_fortify.py | Bot fortification integration |
+| test_bot_transitions.py | Bot state-transition recording |
+| test_connection.py | SC2 launcher |
+| test_replay_parser.py | Replay parsing |
+| test_runner.py | Game runner lifecycle |
+| test_config.py | Configuration loading |
+| test_console.py | Console formatting |
+| test_audit_log.py | Decision audit log persistence |
+
+### Test distribution — learning & loop
+
+| File | Module tested |
+|------|--------------|
+| test_trainer.py | TrainingOrchestrator |
+| test_daemon.py | TrainingDaemon — triggers, cycles, watchdog |
+| test_environment.py | SC2Env gymnasium wrapper |
+| test_environment_teardown.py | Episode teardown contract (#72 regression) |
+| test_rewards.py | RewardCalculator rule evaluation |
+| test_reward_aggregator.py | Per-rule trend aggregation for dashboard |
+| test_checkpoints.py | Checkpoint save/load/prune/promote |
+| test_database.py | TrainingDB (SQLite) |
+| test_database_threadsafety.py | DB thread-safety guards |
+| test_features.py | Feature encoding (47-dim v0 / 55-dim v13) |
+| test_neural_engine.py | NeuralDecisionEngine inference |
+| test_rules_policy.py | Rule-based policy reference (for KL targets) |
+| test_ppo_kl.py | PPO-with-KL-to-rules variant |
+| test_imitation.py | Imitation learning — behavior cloning |
+| test_imitation_init.py | Imitation-init path for PPO warm-start |
+| test_evaluator.py | ModelEvaluator — including crash-game handling (#67) |
+| test_evaluator_db_roundtrip.py | Game-ID regression guard (#84 / Phase 4.7 Step 1) |
+| test_promotion.py | PromotionManager gate logic |
+| test_rollback.py | RollbackMonitor regression detection |
+| test_advisor_bridge.py | Thread-safe advisor bridge for training |
+| test_error_log_buffer.py | ErrorLogBuffer ring buffer |
+| test_batch_runner.py | GameRecord aggregation |
+| test_ladder.py | Elo ladder, match recording, promotion gate |
+| test_sandbox_hook.py | Pre-commit sandbox enforcement (9 cases: passthrough, allowed/forbidden paths, traversal, mixed) |
+| test_lineages.py | Lineage registry read/write + head advance |
+| test_lineage_cli.py | scripts/lineage.py add/list/remove |
+| test_baselines.py | Frozen-baseline opponent registry |
+| test_baseline_cli.py | scripts/baseline.py add/list/remove |
+| test_population.py | Diversity-driven extinction |
+| test_fingerprint.py | Behavioural diversity fingerprint |
+| test_gate_stats.py | One-sided posterior rollback bar |
+| test_staleness_signal.py | Advised-loop staleness detection |
+| test_api_evolve_lineages.py | /api/evolve/lineages endpoint |
+
+Plus `pyproject.toml` config for pytest, mypy, ruff.
+
+### What's well-tested
+
+- **Command pipeline** — parser, interpreter, executor, queue, recipes
+- **Reward system** — rule evaluation, terminal rewards, edge cases
+- **Army coherence** — parameter randomization, attack/retreat decisions
+- **Decision engine** — all state transitions, overrides, edge cases
+- **Inner loop (new since last doc pass)** — promotion gate, rollback monitor, evaluator crash handling, daemon triggers + watchdog
+- **Environment teardown** — regression-guarded #72 blocker (episode-exit contract) in `test_environment_teardown.py`
+- **Game-ID round-trip** — regression-guarded #84 in `test_evaluator_db_roundtrip.py`
+
+### What's thin
+
+- **Runner lifecycle** — single test; relies on SC2 integration tests for coverage
+- **Replay parsing** — basic parsing only; no fidelity tests against full replays
+- **Bot integration** — on_step() pipeline tested indirectly through component tests
+- **Frontend Python-side contract** — no end-to-end HTTP→WS integration tests for the dashboard
+- **Advised-run skill itself** — no code-level tests; validated by actually running `/improve-bot-advised` (the run logs are the evidence)
+
+### Testing patterns
+
+- **No conftest.py.** All fixtures are inline within test files using class-scoped setup or function-level MagicMock construction.
+- **SC2 mocking:** BotAI is replaced with MagicMock. Unit lists, structure lists, mineral counts, and game state are all mock properties.
+- **Async mocking:** AsyncMock for async methods (on_step, execute, Claude API calls).
+- **Deterministic seeds:** ArmyCoherenceManager tests use fixed seeds for reproducible parameter rolls.
+- **DB tests:** use tmp_path for isolated SQLite files; no shared state between tests.
+- **Thread-safety tests:** `test_database_threadsafety` and `test_advisor_bridge` spawn real threads to exercise the queue-based bridges.
+
+---
+
+## Implementation Notes
+
+**SC2 integration tests:** Marked with `@pytest.mark.sc2`. Require StarCraft II installed and running. Test actual game launch, bot initialization, and basic gameplay. Not run in CI.
+
+**Type checking:** mypy strict mode (`disallow_untyped_defs`, `no_implicit_optional`). All functions require type annotations.
+
+**Linting:** ruff with rules E, F, I, UP, B. Line length 100.
+
+**Frontend tests:** vitest (399 tests: 393 passing, 6 skipped). Run via `cd frontend && npm test`.
+
+**Jev browser follow-up (2026-10-11):** the default suites pass after the branch-focused
+viewer (`57f7274`), but two opt-in live-graph fixtures still read removed legend
+attributes. Adapt their branch-card assertions and explicitly enter full-graph mode
+where simultaneous graph lanes are required, then rerun all nine Jev browser tests
+before the next live acceptance session. The [handoff](../plan-reconciliation/source-reviews/jev-v2-handoff.md)
+contains the command and coverage requirements; default pytest skips are not browser
+acceptance evidence.
+
+| File | Purpose |
+|------|---------|
+| `tests/test_*.py` | 130 Python test modules (plus `tests/commands/test_dispatch_guard.py`) |
+| `frontend/src/**/*.test.{ts,tsx}` | Frontend tests (vitest) |
+| `pyproject.toml` | pytest, mypy, ruff configuration |

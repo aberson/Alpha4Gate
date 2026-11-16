@@ -84,9 +84,9 @@ frontend/build/
 # /judge-motion run artifacts (a4g-motion adapter) - append-only capture runs
 .judge-motion/
 
-# Raw capture files — only cropped/optimized GIFs should be committed in documentation/images/
-documentation/images/*.mp4
-documentation/images/*.mov
+# Raw capture files — only cropped/optimized GIFs should be committed in docs/images/
+docs/images/*.mp4
+docs/images/*.mov
 
 # plan-expedite resume state (transient, session-local)
 .plan-expedite-state

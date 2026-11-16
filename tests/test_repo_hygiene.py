@@ -132,7 +132,7 @@ def test_guard_detects_a_planted_violation() -> None:
         "c--Users-x-dev-Alpha4Gate",
         r"C:\Users\x\dev",
         "https://github.com/aberson/Alpha4Gate",
-        "documentation/wiki/operator-commands.md",
+        "docs/wiki/operator-commands.md",
     ]
     for line in allowed:
         assert not _violations_in(line, "allowed"), line

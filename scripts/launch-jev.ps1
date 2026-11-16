@@ -69,7 +69,7 @@ $gameKey = $originalKey
 if ($DecisionProvider -eq 'typesafe' -and [string]::IsNullOrWhiteSpace($gameKey)) {
     $keyFile = Join-Path $env:LOCALAPPDATA 'Alpha4Gate\typesafe-key.dpapi'
     if (-not (Test-Path -LiteralPath $keyFile)) {
-        Write-Host "No Typesafe key: set $keyName or save the encrypted key at $keyFile (see documentation/operator/jev-validation.md). Nothing was started." -ForegroundColor Red
+        Write-Host "No Typesafe key: set $keyName or save the encrypted key at $keyFile (see docs/operator/jev-validation.md). Nothing was started." -ForegroundColor Red
         exit 1
     }
     $secret = ConvertTo-SecureString -String ((Get-Content -LiteralPath $keyFile -Raw).Trim())

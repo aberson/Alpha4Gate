@@ -212,7 +212,7 @@ def encode(
 
     # Z-slot one-hot block (next 8 entries). Filled from
     # ``snapshot.current_build_order`` via the registry resolver — the
-    # ``z_slot_<i>`` names in _FEATURE_SPEC are documentation/order
+    # ``z_slot_<i>`` names in _FEATURE_SPEC are docs/order
     # markers, not attributes on GameSnapshot.
     z_index = _resolve_z_index(snapshot.current_build_order, _load_z_registry())
     z_one_hot = [0.0] * Z_SLOT_COUNT

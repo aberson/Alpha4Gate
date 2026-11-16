@@ -1397,8 +1397,8 @@ class _ScriptedClaude:
 
 
 def _seed_principles(root: Path, text: str = "placeholder principles") -> None:
-    """Seed ``documentation/sc2/protoss/guiding-principles.md`` under root."""
-    principles_dir = root / "documentation" / "sc2" / "protoss"
+    """Seed ``docs/sc2/protoss/guiding-principles.md`` under root."""
+    principles_dir = root / "docs" / "sc2" / "protoss"
     principles_dir.mkdir(parents=True, exist_ok=True)
     (principles_dir / "guiding-principles.md").write_text(text, encoding="utf-8")
 

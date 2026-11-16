@@ -43,7 +43,7 @@ provenance: AGENT — verified against primary source 2026-08-06 (5 parallel rea
   re-verified 2026-09-02 — every mechanism claim still holds. `src/orchestrator/*` anchors are
   byte-unchanged; the three `scripts/evolve.py` anchors drifted +222 lines from the Phase EV
   commits and have been corrected in place
-rendered: README.md § "The self-play arena" (documentation/images/evolve-arena-{light,dark}.svg, added 2026-08-10)
+rendered: README.md § "The self-play arena" (docs/images/evolve-arena-{light,dark}.svg, added 2026-08-10)
 ---
 
 Corrections to the operator's 11-step model, keyed to their numbering:
@@ -81,9 +81,9 @@ four-lens critic, then synthesized into a 30-row decisions table and three fault
 Round 2: each of the five resulting propositions argued by an independent defender AND refuter
 under a rule that arguments must **compute, not assert**, then adjudicated.
 
-- Round 1 record: [`documentation/investigations/evolve-restructure-round1.md`](../../documentation/investigations/evolve-restructure-round1.md)
+- Round 1 record: [`docs/investigations/evolve-restructure-round1.md`](../investigations/evolve-restructure-round1.md)
 - Round 2 record, **authoritative where the two disagree**, and the source of the final
-  `/plan-feature` scope: [`documentation/investigations/evolve-restructure-round2.md`](../../documentation/investigations/evolve-restructure-round2.md)
+  `/plan-feature` scope: [`docs/investigations/evolve-restructure-round2.md`](../investigations/evolve-restructure-round2.md)
 
 The adjudicator's explicit verdict is that the conversation has **converged and round 3 is
 unnecessary**. Round 2 also re-checked round 1's citations and found 19 wrong; its section 3 is
