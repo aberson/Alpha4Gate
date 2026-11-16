@@ -14,11 +14,14 @@ in rules mode on that scoreboard.
   `hybrid`. In the default `rules` mode PPO is never consulted.
 - **Control surface:** PPO chooses one of six strategic states (`OPENING`, `EXPAND`, `ATTACK`,
   `DEFEND`, `LATE_GAME`, `FORTIFY`). The rules engine, commands, tactics and micro carry it out.
-- **Observation:** v13 has 55 dimensions (48 base plus an 8-slot build-order one-hot); v0 has 47.
+- **Observation:** v13 has 55 dimensions: 40 scalar game features plus an 8-slot build-order
+  one-hot (48 base total), plus 7 advisor features; v0 has 47.
 - **Reward:** 63 shaped JSON rules, plus Phase D's build-order trajectory reward (flag off) and
   Phase N's win-probability heuristic.
-- **Training:** Stable Baselines 3 PPO on CPU through `TrainingDaemon`, warm-started by
-  imitation of the rules engine (`v0_pretrain.zip`).
+- **Training:** Stable Baselines 3 PPO through `TrainingDaemon`; imitation initialization
+  (`v0_pretrain.zip`) and rules-teacher KL are available, but v13's checked-in
+  `hyperparams.json` sets `use_imitation_init=false` and `kl_rules_coef=0.0` (verified
+  2026-11-16). Check the actual run configuration before describing a run as warm-started.
 - **Evidence so far:**
   - 2026-04-15: pure-PPO soaks reached 36% training win rate at difficulty 3 over 421 games
     and were called a dead end.
@@ -91,6 +94,11 @@ Windows CPU or headless Linux (an older SC2 package; see the ES substrate questi
    single-machine SC2 bots use RL for.
 3. **P3 — pick one control surface** for a spike with a pre-registered claim and a kill
    criterion.
+
+**P2 evidence (2026-11-16):** [design-space survey](../investigations/ppo-design-space-2026-11-16.md)
+answers questions 1–6 and proposes an army-intent spike, evaluation rules and held-step
+dispositions. These are recommendations, not the P3 decision. P1 remains pending Stage 0;
+no games or training were run for the survey.
 
 ## Existing steps this exploration will keep, reshape or retire
 

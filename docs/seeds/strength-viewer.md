@@ -34,8 +34,9 @@ editing frozen trees. Flags go through `scripts/scoreboard.py flag` (ES.10).
 v13 has no policy graph, but it has decision "lanes" that serve the same purpose:
 
 - the strategic-state timeline (six states)
-- `data/decision_audit.json`
-- the `/ws/game`, `/ws/decisions` and `/ws/commands` WebSockets
+- `data/decision_audit.json` (currently advisor responses, not rules/PPO decisions)
+- the `/ws/game`, `/ws/decisions` and `/ws/commands` WebSockets (their queues are
+  process-local; a separate candidate worker needs an explicit telemetry bridge)
 - the build backlog, army targets and win probability (Phase N)
 - in hybrid mode, the PPO action and its probabilities
 
@@ -43,7 +44,7 @@ v13 has no policy graph, but it has decision "lanes" that serve the same purpose
 
 - **Single, for candidate vs built-in AI:** one SC2 client plus the decision-lanes panel,
   laid out like Observer Rush.
-- **Dual, for bot vs bot (evolve and self-play):** SC2 allows only two API clients and both
+- **Dual, for separate live bot-vs-bot spot checks:** SC2 allows only two API clients and both
   players use them, so there is no observer client. Show each player's own client side by
   side, with a decision strip per side. This extends the existing `src/selfplay_viewer`
   container, which already hosts two SC2 clients with a stats bar and a win-loss overlay.
@@ -80,3 +81,15 @@ v13 has no policy graph, but it has decision "lanes" that serve the same purpose
 
 1. Which lanes to show first. Proposed: strategic state, army target and win probability.
 2. The dual layout's size on the operator display.
+
+**Draft (2026-11-16):** [VW.0 viewer plan](../investigations/viewer-plan-2026-11-16.md)
+proposes three build slices and a separate manual acceptance bundle. It is HELD for
+shared-interface/ownership agreement and downstream review, not implementation approval.
+The draft distinguishes the current evolve detach behavior from self-play's boundary-stop
+behavior and identifies telemetry fields that are not yet produced.
+
+**Plan (2026-11-16, lane evolve-demo):** [VW.1–VW.3 build steps](../investigations/viewer-vw-steps-2026-11-16.md)
+supersedes that draft and is sent to main for the master plan. Operator decisions the same day:
+one Observer Rush-style window for both layouts (the old pygame container is left for legacy
+callers), and flags go through ES.10's `flag` command unchanged, so VW.3 waits for ES.10.
+The measured display is 3440×1440 (work area 3440×1392), which answers open question 2.
