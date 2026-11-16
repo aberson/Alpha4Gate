@@ -48,7 +48,7 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 - **Status:** PENDING
 - **Problem:** Evolve and the scoreboard move to headless Linux SC2 in WSL (D16), but that substrate has not run a game since 2026-04-30, and its venv and lockfile have drifted since.
 - **Type:** operator
-- **Issue:** #
+- **Issue:** #366
 - **Files:** none authored; evidence in `docs/soak-test-runs/headless-substrate-check-<date>.md`
 - **Produces:** a recorded check: Linux venv synced, one solo game and one two-game self-play completed headless, SC2 build reported, wall-clock per game measured.
 - **Done when:** run from PowerShell, in order, observing each:
@@ -82,7 +82,7 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 - **Status:** PENDING
 - **Problem:** Nothing measures a bot version against a fixed external opponent: evolve plays only bot-vs-bot, and every runner forces a Random-race opponent and writes into the current tree's database.
 - **Type:** code
-- **Issue:** #
+- **Issue:** #367
 - **Flags:** --reviewers deep --isolation worktree
 - **Files:** new `src/orchestrator/scoreboard.py` (schedule, result rows, resume), new `scripts/scoreboard_worker.py` (one game per subprocess, launched by path, RD1), new `scripts/scoreboard.py` (`run` subcommand), `src/orchestrator/sc2_compat.py` + `tests/test_sc2_compat.py` (already in the tree since 52f1afd, #364; the worker imports it, no edit expected), new `tests/test_scoreboard.py`
 - **Produces:** `uv run python scripts/scoreboard.py run --versions <list> --difficulty <1-10> --races zerg,terran,protoss --games-per-race N --maps Simple64,Simple96,Simple128 [--decision-mode rules|neural|hybrid] [--model-path P] [--concurrency K] [--out DIR] [--resume DIR] [--dry-run]`. It expands a sealed schedule (maps and races rotated in a fixed order) and writes one JSONL row per game: version, race, difficulty, map, schedule index, result (`win|loss|tie|crash`), in-game and wall seconds, replay path, decision mode, model path, error. Each game runs in its own subprocess that installs the SC2 compatibility shim, sets an isolated `DATA_DIR` under the run directory, and builds the bot exactly as `bots.<v>.runner._run_single_game` does (`bots/v13/runner.py:307`), adding only `opponent_race` to `bots.<v>.connection.run_bot` (`bots/v13/connection.py:46`). No frozen tree is edited. It runs on Windows (SC2 build 98310) for stage scoreboards and headless in WSL (SC2 4.10) for the promotion panel (T1); every row records the substrate and SC2 base build.
@@ -98,7 +98,7 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 - **Status:** PENDING
 - **Problem:** Raw game rows do not say whether a version improved, which stage it passes, or whether an older version should challenge the champion.
 - **Type:** code
-- **Issue:** #
+- **Issue:** #368
 - **Flags:** --reviewers deep --isolation worktree
 - **Files:** `src/orchestrator/scoreboard.py` (`STAGES` constant and report), `scripts/scoreboard.py` (`report` subcommand), `tests/test_scoreboard.py`
 - **Produces:** `uv run python scripts/scoreboard.py report --run DIR [--stage N]` writes `report.json` and `report.md`. They give win rates per version × difficulty × race and overall, with Wilson 95% intervals, in an intention-to-test view (ties, timeouts and crashes count as losses) and a completed-only view. They give a stage verdict (`PASS | TARGET-UNMET | INCOMPLETE`) per the `STAGES` table in the Phase ES design (§17) and a challenger list: anchors whose overall rate exceeds the current champion's (`bots/current/current.txt`).
@@ -111,7 +111,7 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 - **Status:** PENDING
 - **Problem:** Nobody knows whether thirteen promotions made the bot stronger, or which version is strongest against a fixed opponent.
 - **Type:** wait
-- **Issue:** #
+- **Issue:** #369
 - **Files:** generated `data/scoreboard/<run-id>/` (rows, replays, `report.json`, `report.md`); summary in `docs/soak-test-runs/scoreboard-stage0-<date>.md`
 - **Produces:** calibration results plus the Stage 0 report for v0, v3, v7, v11, v12 and v13: VeryHard (7), Zerg/Terran/Protoss, 10 games per race per version, maps rotated over Simple64/96/128 (180 games, about 8 hours at concurrency 1).
 - **Done when:** calibration runs first and passes before the baseline starts: v13 at Easy (2) wins at least 8 of 9 (3 per race), and v13 at CheatInsane (10) wins at most 1 of 9. A failed calibration stops the step with the evidence recorded. The baseline runs on Windows, the build real matches are played on (T1), from PowerShell in the repo root: `uv run python scripts/scoreboard.py run --versions v0,v3,v7,v11,v12,v13 --difficulty 7 --races zerg,terran,protoss --games-per-race 10 --maps Simple64,Simple96,Simple128 --out data/scoreboard/stage0`. The report accounts for all 180 scheduled games or names each missing one; the summary records per-version rates with intervals, the challenger list and wall-clock cost. No result-driven reruns.
@@ -123,7 +123,7 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 - **Status:** PENDING
 - **Problem:** On Windows build 98310, self-play launches each version as `python -m bots.<v>` (`src/orchestrator/selfplay.py:277-293`), so v0–v12 crash about 45 game-seconds in; the Windows champion challenge (ES.5, T1) and the evolve-demo two-bot viewer both need older versions to play there.
 - **Type:** code
-- **Issue:** #
+- **Issue:** #370
 - **Flags:** --reviewers deep --isolation worktree
 - **Files:** new `scripts/compat_launch.py`, `src/orchestrator/selfplay.py` (launch list), `tests/test_selfplay.py`
 - **Produces:** self-play launches every version as `[python, scripts/compat_launch.py, <version>, ...]`; the wrapper calls `orchestrator.sc2_compat.install()` and then runs that version's own `bots.<v>.__main__` entry with the original arguments. No frozen tree is edited, and the wrapper lives in `scripts/` because `src/orchestrator/` must not import `bots.*`.
@@ -137,7 +137,7 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 - **Status:** PENDING
 - **Problem:** If an older version outscores v13 at Stage 0, evolution may be building on a weaker parent (operator rule, §16 answer 4).
 - **Type:** operator
-- **Issue:** #
+- **Issue:** #371
 - **Files:** none authored; record in `docs/soak-test-runs/champion-challenge-<date>.md`
 - **Produces:** either "no challenger" (copied from the Stage 0 report) or head-to-head results and a pointer decision.
 - **Done when:** if the Stage 0 challenger list is empty, record that and finish. Otherwise, for the top challenger `vX`, run on Windows, the build real matches are played on (T1; seats alternate automatically):
@@ -164,7 +164,7 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 - **Decision (2026-11-16):** Paused until PPO.0's build phase is planned and the operator re-decides the order. The step text stands as written.
 - **Problem:** The production launcher and dashboard button run evolve on Windows with the live `--viewer` (`scripts/launch-evolve.ps1:72`), which the operator wants retired: evolution should run headless (D16).
 - **Type:** code
-- **Issue:** #
+- **Issue:** #372
 - **Flags:** --reviewers deep --isolation worktree
 - **Files:** `scripts/launch-evolve.ps1` (ASCII-only, no BOM; pinned by `tests/test_evolve_cli.py:5167-5172`), `scripts/evolve.py` (`--viewer` deprecation warning), `.claude/skills/improve-bot-evolve/SKILL.md`, `docs/wiki/operator-commands.md`, `tests/test_evolve_cli.py`
 - **Produces:** the launcher opens one console window that runs `wsl -d Ubuntu-22.04 --cd <repo> -- bash -lc "uv run python scripts/evolve.py ..."` in the foreground (no `--viewer`), so closing that console remains the stop gesture. `-Hours` and `-Generations` (EH.6) are forwarded, and a new `-EvolveArgs "<flags>"` string is appended verbatim. The `--viewer` flag still works but logs a deprecation warning naming the live spot-check path (VW.0).
@@ -178,7 +178,7 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 - **Decision (2026-11-16):** Paused until PPO.0's build phase is planned and the operator re-decides the order. The step text stands as written.
 - **Problem:** Fitness scores a candidate tree that is deleted afterwards (`src/orchestrator/evolve.py:675-681`), and promotion re-authors each winner from its text (`scripts/evolve.py:2219-2221`), so what ships was never tested.
 - **Type:** code
-- **Issue:** #
+- **Issue:** #373
 - **Flags:** --reviewers deep --isolation worktree
 - **Files:** `src/orchestrator/evolve.py` (`run_fitness_eval` capture before cleanup), `scripts/evolve.py` (`_stack_apply_and_promote`, new `--promote-scored` flag, default off), `scripts/evolve_worker.py` (parallel path), new run-scoped store `data/evolve_scored/<run-id>/<imp-id>/`, `tests/test_evolve_cli.py`
 - **Produces:** with `--promote-scored`, each scored candidate's changed files are saved, with version-name tokens normalized, before the scratch tree is deleted. Stack-apply writes those exact bytes into the new version in rank order instead of calling the dev sub-agent. A later winner whose files conflict with an earlier one is benched for the next generation, never re-authored. Without the flag, behavior is unchanged.
@@ -195,7 +195,7 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 - **Decision (2026-11-16):** Paused until PPO.0's build phase is planned and the operator re-decides the order. The step text stands as written.
 - **Problem:** Promotion is checked only against bot versions (`data/baselines.json` holds versions only, `src/orchestrator/baselines.py:105-125`), so a promotion that plays worse against real opponents still ships.
 - **Type:** code
-- **Issue:** #
+- **Issue:** #374
 - **Flags:** --reviewers deep --isolation worktree
 - **Files:** `scripts/evolve.py` (new `--ai-panel` flag next to the gauntlet at `:4769-4789`), `src/orchestrator/scoreboard.py` (panel schedule and cache), `tests/test_evolve_cli.py`, `tests/test_scoreboard.py`
 - **Produces:** with `--ai-panel`, after each promotion commit the new version plays the current stage's panel: 12 games, 4 per race, at the stage difficulty, maps rotated, through the ES.2 worker. Results are persisted under `data/scoreboard/panel/<version>.jsonl` and summarized in the run log; the incumbent's panel result is reused rather than replayed. `Baseline` and `data/baselines.json` keep their shape (the lineage fingerprint reads them, `src/orchestrator/fingerprint.py:197`). Log-only in this step.
@@ -209,7 +209,7 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 - **Decision (2026-11-16):** Paused until PPO.0's build phase is planned and the operator re-decides the order. The step text stands as written.
 - **Problem:** A promotion that beats its parent in self-play can still play worse against the built-in AI, and nothing rolls it back.
 - **Type:** code
-- **Issue:** #
+- **Issue:** #375
 - **Flags:** --reviewers deep --isolation worktree
 - **Files:** `src/orchestrator/gate_stats.py` (two-sample posterior), `scripts/evolve.py` (`--panel-gate posterior`, wired into `_apply_rollback` at `:4946-5002`), `tests/test_gate_stats.py`, `tests/test_evolve_cli.py`
 - **Produces:** with `--panel-gate posterior` (requires `--ai-panel`), a promotion is rolled back when P(new version's panel win rate < incumbent's) ≥ 0.85 under independent Beta(1,1) priors (exact, stdlib only, matching the existing `ROLLBACK_THRESHOLD`, `gate_stats.py:53`). The verdict and probability are logged; a panel crash fails open, as the panel floor does today.
@@ -226,7 +226,7 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 - **Decision (2026-11-16):** Paused until PPO.0's build phase is planned and the operator re-decides the order. The step text stands as written.
 - **Problem:** The improvement proposer never sees how the bot loses to real opponents or what the operator spotted while watching.
 - **Type:** code
-- **Issue:** #
+- **Issue:** #376
 - **Flags:** --reviewers deep --isolation worktree
 - **Files:** `scripts/scoreboard.py` (`flag` subcommand), `src/orchestrator/scoreboard.py` (findings store `data/findings.jsonl`), `src/orchestrator/evolve.py` (`generate_pool` prompt), `tests/test_scoreboard.py`, `tests/test_evolve_cli.py`
 - **Produces:** `uv run python scripts/scoreboard.py flag --version vN --replay PATH --game-time MM:SS --class execution|information|composition|strategy|infrastructure [--tactical T.n] --note TEXT` appends one finding. Pool generation includes a bounded evidence block: the latest scoreboard summary (per-race rates at the current stage) and the most recent findings, each labeled with its source.
@@ -240,7 +240,7 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 - **Decision (2026-11-16):** Paused until PPO.0's build phase is planned and the operator re-decides the order. The step text stands as written.
 - **Problem:** The T.* tactical bugs were observed in April on older versions; nobody knows which still happen on v13 (or the new champion).
 - **Type:** operator
-- **Issue:** #
+- **Issue:** #377
 - **Files:** none authored; findings in `data/findings.jsonl`, summary in `docs/soak-test-runs/stage0-loss-review-<date>.md`
 - **Produces:** at least 12 reviewed losses of the current champion (4 per race) with flagged findings, and a disposition for every T step (T.1, T.3, T.4, T.7–T.12, T.2.1): `reproduces` (with replay and game time), `not observed` or `unclear`.
 - **Done when:** each reviewed loss has a `scripts/scoreboard.py flag` entry, and the summary table lists every T step's disposition. Replays are watched in the Windows client if ES.1 showed Linux replays open there; otherwise the same matchups are replayed live on Windows (`uv run python -m bots.current.runner --map Simple64 --difficulty 7`) and observed. Reproducing T steps stay PENDING for fixes; the others are retired in this plan with the evidence linked.
@@ -253,7 +253,7 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 - **Decision (2026-11-16):** Paused until PPO.0's build phase is planned and the operator re-decides the order. The step text stands as written.
 - **Problem:** The new launcher, scored-code promotion, AI panel, panel gate and evidence block have only been tested with stubs.
 - **Type:** operator
-- **Issue:** #
+- **Issue:** #378
 - **Files:** none authored; record in `docs/soak-test-runs/es-armed-smoke-<date>.md`
 - **Produces:** a 45-minute armed run on the production launcher with its observations.
 - **Done when:** Gate 0 is done (`uv run python scripts/baseline.py add v10 v10 --note "frozen anchor"`, the same for v13, then `list`), the staged index is empty (`git diff --staged --stat`), and this runs:
@@ -281,7 +281,7 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 - **Decision (2026-11-16):** Paused until PPO.0's build phase is planned and the operator re-decides the order. The step text stands as written.
 - **Problem:** Only a multi-hour unattended run shows whether scoreboard-judged evolution produces a measurably stronger champion.
 - **Type:** wait
-- **Issue:** #
+- **Issue:** #379
 - **Files:** generated run artifacts and `data/scoreboard/stage1/`; record in `docs/soak-test-runs/es-soak-<date>.md`
 - **Produces:** a six-hour armed headless soak (`.\scripts\launch-evolve.ps1 -Hours 6 -Generations 0 -EvolveArgs "<the ES.12 flags>"`), then a Stage 1 scoreboard of the resulting champion on Windows (T1): VeryHard, 20 games per race, maps rotated.
 - **Done when:** the soak completes or stops with a recorded reason. The record lists every promotion with its scored-code provenance, panel verdict and rollback outcome, plus the observed fitness pass rate and rollback rate (absorbing the former EJ.8 measurement). The Stage 1 report gives a verdict; `TARGET-UNMET` is a valid, recorded outcome and is not rerun on new seeds. The record states the next stage or the next gap.
@@ -323,7 +323,7 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 
 - **Status:** PENDING
 - **Type:** code
-- **Issue:** #
+- **Issue:** #381
 - **Files:** new `src/selfplay_viewer/strength/{__init__,__main__,player,telemetry,host}.py`, new `scripts/launch-strength-viewer.ps1`, `frontend/src/main.tsx`, new `frontend/src/components/StrengthViewer.tsx` + `StrengthViewer.test.tsx`, new `tests/test_strength_viewer.py`
 - **Depends on:** none outstanding (the SC2 compatibility shim is in the tree; ES.2 is not required)
 - **Source:** [viewer-vw-steps-2026-11-16.md](../investigations/viewer-vw-steps-2026-11-16.md) §7 VW.1; design decisions there §6. Owned by lane evolve-demo.
@@ -338,7 +338,7 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 
 - **Status:** PENDING
 - **Type:** code
-- **Issue:** #
+- **Issue:** #382
 - **Files:** `src/selfplay_viewer/strength/{host,telemetry,__main__}.py`, new `src/selfplay_viewer/strength/dual.py`, `scripts/launch-strength-viewer.ps1`, `frontend/src/components/StrengthViewer.tsx` + test, `src/orchestrator/selfplay.py` (opt-in `launch_prefix`), `tests/test_strength_viewer.py`, `tests/test_selfplay.py`
 - **Depends on:** VW.1; lane evolve lands or agrees to the `selfplay.py` `launch_prefix` change (lanes table: evolve owns `selfplay.py` and adds this keyword)
 - **Source:** [viewer-vw-steps-2026-11-16.md](../investigations/viewer-vw-steps-2026-11-16.md) §7 VW.2. Owned by lane evolve-demo.
@@ -353,7 +353,7 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 
 - **Status:** PARKED — operator 2026-11-16: needs ES.10, which is HELD under T2; revisit when ES.10 is released
 - **Type:** code
-- **Issue:** #
+- **Issue:** #383
 - **Files:** `src/selfplay_viewer/strength/host.py`, new `src/selfplay_viewer/strength/flags.py`, `frontend/src/components/StrengthViewer.tsx` + test, `tests/test_strength_viewer.py`
 - **Depends on:** VW.1, VW.2, ES.10
 - **Source:** [viewer-vw-steps-2026-11-16.md](../investigations/viewer-vw-steps-2026-11-16.md) §7 VW.3. Owned by lane evolve-demo.
@@ -368,7 +368,7 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 
 - **Status:** PENDING
 - **Type:** operator
-- **Issue:** #
+- **Issue:** #384
 - **Depends on:** VW.1, VW.2
 - **Source:** [viewer-vw-steps-2026-11-16.md](../investigations/viewer-vw-steps-2026-11-16.md) §7 "Operator acceptance"; the Flag row moves to VW.3's own acceptance when VW.3 is released.
 
