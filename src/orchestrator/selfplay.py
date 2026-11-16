@@ -249,12 +249,18 @@ def _validate_versions(*versions: str) -> None:
             )
 
 
-def _bot_module_for_version(version: str) -> str:
-    """Return the ``python -m <module>`` string for a bot version.
+#: Repo-relative path of the launcher that installs ``orchestrator.sc2_compat``
+#: before running a version's own ``bots.<version>.__main__`` entry. It lives
+#: in ``scripts/`` because this package must not import ``bots.*``.
+COMPAT_LAUNCHER = Path("scripts") / "compat_launch.py"
 
-    For ``v0`` this is ``bots.v0``; for ``v1`` it would be ``bots.v1``, etc.
+
+def _compat_launcher_path(repo: Path) -> Path:
+    """Return the absolute path of :data:`COMPAT_LAUNCHER` under *repo*.
+
+    Absolute so the launch never depends on the subprocess working directory.
     """
-    return f"bots.{version}"
+    return (repo / COMPAT_LAUNCHER).resolve()
 
 
 def _build_bot_process(
@@ -272,14 +278,17 @@ def _build_bot_process(
     from sc2.player import BotProcess as _BotProcess
 
     repo = _repo_root()
-    module = _bot_module_for_version(version)
 
+    # Every version goes through the compatibility launcher: the frozen trees
+    # (v0-v12) predate the SC2 build 98310 shim and would otherwise crash
+    # about 45 game-seconds in. The launcher then runs ``bots.<version>``
+    # exactly as ``python -m bots.<version>`` would, with the same arguments.
     return _BotProcess(
         path=str(repo),
         launch_list=[
             sys.executable,
-            "-m",
-            module,
+            str(_compat_launcher_path(repo)),
+            version,
             "--role",
             role,
             "--map",

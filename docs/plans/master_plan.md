@@ -120,7 +120,7 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 
 ### Step ES.14: Launch every version through the SC2 compatibility shim in self-play
 
-- **Status:** PENDING
+- **Status:** DONE (2026-11-16)
 - **Problem:** On Windows build 98310, self-play launches each version as `python -m bots.<v>` (`src/orchestrator/selfplay.py:277-293`), so v0–v12 crash about 45 game-seconds in; the Windows champion challenge (ES.5, T1) and the evolve-demo two-bot viewer both need older versions to play there.
 - **Type:** code
 - **Issue:** #370

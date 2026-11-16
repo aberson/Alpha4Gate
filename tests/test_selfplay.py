@@ -453,3 +453,159 @@ class TestWorkerThreadSignalPatch:
         assert prev is not None
         # Restore default so the test leaves no side effects.
         sc2p.signal.signal(sc2p.signal.SIGINT, prev)
+
+
+# ---------------------------------------------------------------------------
+# ES.14: every version launches through the SC2 compatibility launcher
+# ---------------------------------------------------------------------------
+
+_REPO = Path(__file__).resolve().parents[1]
+_LAUNCHER = _REPO / "scripts" / "compat_launch.py"
+
+
+class TestCompatLaunch:
+    """Self-play launches each version as ``[python, compat_launch.py, <v>, ...]``."""
+
+    @pytest.mark.parametrize("game_index", [0, 1])
+    def test_build_match_launches_every_version_through_the_wrapper(
+        self, tmp_path: Path, game_index: int
+    ) -> None:
+        import sys
+
+        from orchestrator.selfplay import _build_match
+
+        with patch("sc2.maps.get", return_value=MagicMock(name="map")):
+            match, seat_swap = _build_match(
+                "v0", "v13", "Simple64", game_index, tmp_path, 3600, None
+            )
+
+        expected = ["v13", "v0"] if seat_swap else ["v0", "v13"]
+        assert seat_swap is (game_index == 1)
+        assert len(match.players) == 2
+        for player, version, role in zip(match.players, expected, ("p1", "p2"), strict=True):
+            launch = player.launch_list
+            assert launch[:3] == [sys.executable, str(_LAUNCHER.resolve()), version]
+            assert Path(launch[1]).is_absolute()
+            assert Path(launch[1]).is_file()
+            assert "-m" not in launch
+            # The original bot arguments follow unchanged.
+            assert launch[3:] == [
+                "--role",
+                role,
+                "--map",
+                "Simple64",
+                "--result-out",
+                str(tmp_path / f"game{game_index}_{role}.json"),
+            ]
+            # The child still starts in the repo root, as the -m launch did.
+            assert Path(player.path) == _REPO
+
+    def test_shim_is_installed_before_bots_v0_entry_runs(self, tmp_path: Path) -> None:
+        """Run the real wrapper on bots.v0 with argparse stubbed so no game starts.
+
+        The stub replaces ``ArgumentParser.parse_args`` (the first thing
+        ``bots.v0.__main__.main`` does), records whether the shim was installed
+        at that moment and which module called it, then exits. The working
+        directory is a temp dir to prove the wrapper does not rely on cwd.
+        """
+        import json as _json
+        import subprocess
+        import sys
+
+        out = tmp_path / "probe.json"
+        probe = f"""
+import argparse, json, runpy, sys
+from sc2.game_data import GameData
+before = bool(getattr(GameData.__init__, "_alpha4gate_sc2_compat", False))
+def _stub(self, args=None, namespace=None):
+    from orchestrator import sc2_compat
+    caller = sys._getframe(1).f_globals
+    spec = caller.get("__spec__")
+    with open({str(out)!r}, "w", encoding="utf-8") as fh:
+        json.dump({{
+            "before": before,
+            "installed": sc2_compat.is_installed(),
+            "caller": spec.name if spec else None,
+            "caller_name": caller.get("__name__"),
+            "args": list(args) if args is not None else None,
+            "argv": sys.argv[1:],
+        }}, fh)
+    raise SystemExit(0)
+argparse.ArgumentParser.parse_args = _stub
+sys.argv = [{str(_LAUNCHER)!r}, "v0", "--role", "p1", "--map", "Simple64"]
+runpy.run_path({str(_LAUNCHER)!r}, run_name="__main__")
+"""
+        done = subprocess.run(
+            [sys.executable, "-c", probe],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert done.returncode == 0, done.stderr
+        seen = _json.loads(out.read_text(encoding="utf-8"))
+        assert seen["before"] is False
+        assert seen["installed"] is True
+        assert seen["caller"] == "bots.v0.__main__"
+        assert seen["caller_name"] == "__main__"
+        assert seen["args"] == ["--role", "p1", "--map", "Simple64"]
+        assert seen["argv"] == ["--role", "p1", "--map", "Simple64"]
+
+    def test_wrapper_runs_bots_v0_help_from_any_cwd(self, tmp_path: Path) -> None:
+        """No-SC2 path: ``--help`` reaches bots.v0's own parser and exits 0."""
+        import subprocess
+        import sys
+
+        done = subprocess.run(
+            [sys.executable, str(_LAUNCHER), "v0", "--help"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert done.returncode == 0, done.stderr
+        assert "--role" in done.stdout
+        assert "--result-out" in done.stdout
+
+    @pytest.mark.parametrize("argv", [[], ["bots.v0"], ["../v0"]])
+    def test_wrapper_rejects_a_missing_or_dotted_version(self, argv: list[str]) -> None:
+        import subprocess
+        import sys
+
+        done = subprocess.run(
+            [sys.executable, str(_LAUNCHER), *argv],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert done.returncode == 2
+        assert "usage" in done.stderr
+
+
+def test_orchestrator_imports_no_bots_package() -> None:
+    """src/orchestrator/ must not import bots.* (MetaPathFinder loop)."""
+    import ast
+
+    offenders: list[str] = []
+    for path in sorted((_REPO / "src" / "orchestrator").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            names: list[str] = []
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                names = [node.module]
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute | ast.Name)
+                and (node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id)
+                in ("import_module", "__import__")
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
+                names = [node.args[0].value]
+            for name in names:
+                if name == "bots" or name.startswith("bots."):
+                    offenders.append(f"{path.relative_to(_REPO)}:{node.lineno}: {name}")
+    assert offenders == []
