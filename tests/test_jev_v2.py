@@ -1378,7 +1378,50 @@ def test_each_strategic_choice_selects_its_graph_branch(
         started = [e for e in _strategy_events(run) if e.facts.get("started_plan")]
         assert started and started[-1].facts["started_plan"]["plan_id"] == plan.plan_id
         return
-    assert plans == ()  # an army posture opens no macro plan, though both were offered
+    if branch.choice == "recover":  # the whole army regroups: not the few-units trigger
+        recovery = [
+            e
+            for e in _strategy_events(run)
+            if e.game_loop >= applied_at and isinstance(e.facts.get("recovery_progress"), dict)
+        ]
+        completed = [e for e in recovery if e.facts["recovery_progress"]["status"] == "completed"]
+        assert completed
+        completion = completed[0]
+        assert completion.facts["source"] == "local_fallback"
+        assert completion.facts["in_force_request_id"] is None
+        before_completion = [e for e in recovery if e.sequence < completion.sequence]
+        assert before_completion
+        assert {e.facts["source"] for e in before_completion} == {"typesafe"}
+        assert {e.facts["in_force_request_id"] for e in before_completion} == {request_id}
+        assert min(e.facts["recovery_progress"]["units_at_home"] for e in recovery) == 0
+        assert completion.facts["recovery_progress"]["units_at_home"] == 8
+
+        moves = [e for e in run.commands("army.recover.move") if e.game_loop >= applied_at]
+        assert moves
+        arrived = [
+            e
+            for e in run.tasks("army.recover.move", "succeeded")
+            if e.sequence < completion.sequence
+        ]
+        assert arrived  # the mocked SC2 world moved the army home before completion
+
+        macro_starts = [
+            e
+            for choice in _V2_BRANCHES
+            if choice.start is not None
+            for e in _node_successes(run, choice.start)
+        ]
+        assert macro_starts and completion.sequence < min(e.sequence for e in macro_starts)
+        (plan,) = plans
+        assert plan.started_game_seconds >= completion.game_seconds
+        assert (plan.kind, plan.decided_by, plan.decision_request_id) == (
+            "tech",
+            "local_fallback",
+            None,
+        )
+        assert _node_successes(run, "army.recover.few") == []
+        return
+    assert plans == ()  # pressure stays in force, so it opens no macro plan
     # The posture holds the macro slot back on the answer's own request id.
     held_back = [
         e
@@ -1386,10 +1429,6 @@ def test_each_strategic_choice_selects_its_graph_branch(
         if e.kind == "node" and e.node_id == "tech.start.chosen" and e.game_loop >= applied_at
     ]
     assert held_back and {e.facts["request_id"] for e in held_back} == {request_id}
-    if branch.choice == "recover":  # the whole army regroups: not the few-units trigger
-        assert [e for e in run.commands("army.recover.move") if e.game_loop >= applied_at]
-        assert _node_successes(run, "army.recover.few") == []
-        return
     # Pressure: the attack's posture switches from the local path to the hosted guard
     # at this request -- the local graph alone would have kept the local path.
     posture = [
