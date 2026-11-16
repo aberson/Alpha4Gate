@@ -10,7 +10,7 @@ Proposal: docs/plan-redline/alpha4gate-proposal.html
 
 ## 2. Current context
 
-Read [CLAUDE.md](../../CLAUDE.md) and project rules before implementation. The 2026-10-14 migration baseline was c0836c3 on the de-facto branch master-plan/phase-ev, whose working tree carries extensive uncommitted work (BL.1). Production `bots/current` points to v13; the last promotion was 2026-05-07. Since SC2 build 98310 (2026-10-14), v0–v12 crash about 45 game-seconds in; the fix fc66956 (#364) on fix/burnysc2-730 is unmerged and v13's shim import exists only in the working tree (Phase ES, ES-A). The goal set on 2026-11-11 is playing strength measured on a fixed external scoreboard ([evolve-for-strength seed](../seeds/evolve-for-strength.md)), not self-improvement as a proof of concept. Jev is closed (§8); its frozen v1 snapshot v1-b53039a693cadf75 must still never be recaptured. Since 2026-11-11 (D16), evolution runs headless on WSL Linux SC2 4.10; since 2026-11-16 (T1) stage scoreboards and champion decisions run on the current Windows build, while evolution's inner loop and the promotion panel stay headless. Live Windows games are for spot checks and demos. Evolve live gates are independently open. Spending remains gated on durable budget, safety and real smoke.
+Read [CLAUDE.md](../../CLAUDE.md) and project rules before implementation. The 2026-10-14 migration baseline was c0836c3 on the de-facto branch master-plan/phase-ev, whose working tree carried extensive uncommitted work; most of it was committed on 2026-11-16, and landing the branch on `master` is still BL.1. Production `bots/current` points to v13; the last promotion was 2026-05-07. Since SC2 build 98310 (2026-10-14), v0–v12 crash about 45 game-seconds in; the fix (#364) landed on this branch on 2026-11-16 as commit 52f1afd: `src/orchestrator/sc2_compat.py` exists and v13 and Jev install it at import, while v0–v12 still need ES.14's launcher to install it (Phase ES, ES-A). The goal set on 2026-11-11 is playing strength measured on a fixed external scoreboard ([evolve-for-strength seed](../seeds/evolve-for-strength.md)), not self-improvement as a proof of concept. Jev is closed (§8); its frozen v1 snapshot v1-b53039a693cadf75 must still never be recaptured. Since 2026-11-11 (D16), evolution runs headless on WSL Linux SC2 4.10; since 2026-11-16 (T1) stage scoreboards and champion decisions run on the current Windows build, while evolution's inner loop and the promotion panel stay headless. Live Windows games are for spot checks and demos. Evolve live gates are independently open. Spending remains gated on durable budget, safety and real smoke.
 
 ## 3. Scope and exclusions
 
@@ -84,7 +84,7 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 - **Type:** code
 - **Issue:** #
 - **Flags:** --reviewers deep --isolation worktree
-- **Files:** new `src/orchestrator/scoreboard.py` (schedule, result rows, resume), new `scripts/scoreboard_worker.py` (one game per subprocess, launched by path, RD1), new `scripts/scoreboard.py` (`run` subcommand), `src/orchestrator/sc2_compat.py` + `tests/test_sc2_compat.py` (landed byte-identical from `fc66956`, #364), new `tests/test_scoreboard.py`
+- **Files:** new `src/orchestrator/scoreboard.py` (schedule, result rows, resume), new `scripts/scoreboard_worker.py` (one game per subprocess, launched by path, RD1), new `scripts/scoreboard.py` (`run` subcommand), `src/orchestrator/sc2_compat.py` + `tests/test_sc2_compat.py` (already in the tree since 52f1afd, #364; the worker imports it, no edit expected), new `tests/test_scoreboard.py`
 - **Produces:** `uv run python scripts/scoreboard.py run --versions <list> --difficulty <1-10> --races zerg,terran,protoss --games-per-race N --maps Simple64,Simple96,Simple128 [--decision-mode rules|neural|hybrid] [--model-path P] [--concurrency K] [--out DIR] [--resume DIR] [--dry-run]`. It expands a sealed schedule (maps and races rotated in a fixed order) and writes one JSONL row per game: version, race, difficulty, map, schedule index, result (`win|loss|tie|crash`), in-game and wall seconds, replay path, decision mode, model path, error. Each game runs in its own subprocess that installs the SC2 compatibility shim, sets an isolated `DATA_DIR` under the run directory, and builds the bot exactly as `bots.<v>.runner._run_single_game` does (`bots/v13/runner.py:307`), adding only `opponent_race` to `bots.<v>.connection.run_bot` (`bots/v13/connection.py:46`). No frozen tree is edited. It runs on Windows (SC2 build 98310) for stage scoreboards and headless in WSL (SC2 4.10) for the promotion panel (T1); every row records the substrate and SC2 base build.
 - **Done when:** (1) `--dry-run` prints the full schedule and plays nothing. (2) A test drives `scripts/scoreboard.py run` with only `run_bot` replaced at the `bots.<v>.connection` boundary and asserts: the row fields, a recorded replay path, that `bots/v13/data/training.db` is untouched, that `--resume` skips completed rows without duplicating any, and that a raising worker produces a `crash` row while the run continues. (3) An equivalence test asserts the worker passes the same bot-construction arguments as `_run_single_game` for v0 and v13, and honors `--decision-mode`/`--model-path` (the runner's `--batch` path ignores both, `bots/v13/runner.py:482-490`). (4) `git diff --stat -- bots/v0 bots/v1 bots/v2 bots/v3 bots/v4 bots/v5 bots/v6 bots/v7 bots/v8 bots/v9 bots/v10 bots/v11 bots/v12` is empty. (5) `uv run mypy scripts/scoreboard.py scripts/scoreboard_worker.py --strict` is clean. (6) A test asserts no module under `src/orchestrator/` imports `bots.*`, per the CLAUDE.md rule (RD1).
 - **Depends on:** none
@@ -128,7 +128,7 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 - **Files:** new `scripts/compat_launch.py`, `src/orchestrator/selfplay.py` (launch list), `tests/test_selfplay.py`
 - **Produces:** self-play launches every version as `[python, scripts/compat_launch.py, <version>, ...]`; the wrapper calls `orchestrator.sc2_compat.install()` and then runs that version's own `bots.<v>.__main__` entry with the original arguments. No frozen tree is edited, and the wrapper lives in `scripts/` because `src/orchestrator/` must not import `bots.*`.
 - **Done when:** a test drives `selfplay._build_match` and asserts every launch list starts with the wrapper and the version; a subprocess test asserts the shim is installed before `bots.v0`'s entry runs; `git diff --stat` over `bots/v0`–`bots/v12` is empty; a test asserts `src/orchestrator/` still imports no `bots.*`.
-- **Depends on:** ES.2 (lands `orchestrator.sc2_compat`)
+- **Depends on:** none outstanding (`orchestrator.sc2_compat` landed in 52f1afd, #364)
 - **Decision (2026-11-16, T1):** Added when the operator moved champion decisions to the Windows build. Owned by lane evolve (it owns `selfplay.py`), built ahead of its RD2 queue because ES.5 needs it.
 
 
@@ -323,43 +323,43 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 
 - **Status:** PENDING
 - **Type:** code
-- **Issue:** not yet assigned
+- **Issue:** #
 - **Files:** new `src/selfplay_viewer/strength/{__init__,__main__,player,telemetry,host}.py`, new `scripts/launch-strength-viewer.ps1`, `frontend/src/main.tsx`, new `frontend/src/components/StrengthViewer.tsx` + `StrengthViewer.test.tsx`, new `tests/test_strength_viewer.py`
 - **Depends on:** none outstanding (the SC2 compatibility shim is in the tree; ES.2 is not required)
 - **Source:** [viewer-vw-steps-2026-11-16.md](../investigations/viewer-vw-steps-2026-11-16.md) §7 VW.1; design decisions there §6. Owned by lane evolve-demo.
 
 - **Problem:** The operator cannot watch a chosen bot version play the built-in AI beside a live panel of its own recorded decisions.
-- **Flags:** --reviewers code --isolation worktree
+- **Flags:** --reviewers code --isolation worktree --ui
 - **Produces:** `powershell -File scripts/launch-strength-viewer.ps1 -Version v13 -Difficulty 3 -Race Terran -Map Simple64 [-Realtime] [-CheckOnly]` opens one 2160×1200 window: native SC2 plus a panel with version, game time, strategic-state timeline, army target and win probability, updating while the game runs. Stop leaves the match normally; the run folder `data/strength_viewer/runs/<run_id>/` holds the manifest, telemetry, replay and that seat's isolated data dir. Telemetry is passive: the player wrapper records `queue_broadcast`, `_resolve_attack_rally` and `winprob_heuristic.score` inputs and returns unchanged, with no frozen-tree edit. The native host is copied and trimmed from `scripts/probes/jev_battle_view.py` (owned by lane repair, not imported or changed).
-- **Done when:** a test runs the production player entry (`python -m selfplay_viewer.strength.player ... --seat solo`) with only the SC2 boundary replaced and shows: the shim is installed before the tree import; the three wrapped seams return exactly the original values; `latest.json` gets strategic state, army target and win probability for v13 and `not recorded` win probability for v1; nothing is written under `bots/<vN>/data`; the loaded build order matches a normal launch. A test drives the host's bridge and ready barrier: the game child does not start until the page reports the exact run id, a wrong or stale run id is refused, Stop before ready starts no game. A vitest renders the page from a status fixture, shows `not recorded` fields and an update age, and hides Stop after the match ends. `-CheckOnly` exits 0 without starting SC2 and fails with a message when SC2 is already running. Gates: `uv run pytest tests/test_strength_viewer.py tests/test_reparent_portable.py`, `uv run ruff check .`, `uv run mypy src bots --strict`, and from `frontend/` `npm run test:run -- src/components/StrengthViewer`, `npm run lint`, `npm run build`.
+- **Done when:** a test runs the production player entry (`python -m selfplay_viewer.strength.player ... --seat solo`) with only the SC2 boundary replaced and shows: the shim is installed before the tree import; the three wrapped seams return exactly the original values; `latest.json` gets strategic state, army target and win probability for v13 and `not recorded` win probability for v1; nothing is written under `bots/<vN>/data`; the loaded build order matches a normal launch. A test drives the host's bridge and ready barrier: the game child does not start until the page reports the exact run id, a wrong or stale run id is refused, Stop before ready starts no game. A vitest renders the page from a status fixture, shows `not recorded` fields and an update age, and hides Stop after the match ends. `-CheckOnly` exits 0 without starting SC2 and fails with a message when SC2 is already running. UI evidence: a Playwright screenshot of the Vite page `http://localhost:3000/?strength=1` with `window.strengthAction` stubbed (init script) to return the single-layout status fixture. Gates: `uv run pytest tests/test_strength_viewer.py tests/test_reparent_portable.py`, `uv run ruff check .`, `uv run mypy src bots --strict`, and from `frontend/` `npm run test:run -- src/components/StrengthViewer`, `npm run lint`, `npm run build`.
 
 
 ### Step VW.2: Watch both bots of one bot-vs-bot match side by side
 
 - **Status:** PENDING
 - **Type:** code
-- **Issue:** not yet assigned
+- **Issue:** #
 - **Files:** `src/selfplay_viewer/strength/{host,telemetry,__main__}.py`, new `src/selfplay_viewer/strength/dual.py`, `scripts/launch-strength-viewer.ps1`, `frontend/src/components/StrengthViewer.tsx` + test, `src/orchestrator/selfplay.py` (opt-in `launch_prefix`), `tests/test_strength_viewer.py`, `tests/test_selfplay.py`
 - **Depends on:** VW.1; lane evolve lands or agrees to the `selfplay.py` `launch_prefix` change (lanes table: evolve owns `selfplay.py` and adds this keyword)
 - **Source:** [viewer-vw-steps-2026-11-16.md](../investigations/viewer-vw-steps-2026-11-16.md) §7 VW.2. Owned by lane evolve-demo.
 
 - **Problem:** The operator cannot watch two bot versions play each other with each side's decisions shown next to that side's own SC2 client.
-- **Flags:** --reviewers code --isolation worktree
+- **Flags:** --reviewers code --isolation worktree --ui
 - **Produces:** `powershell -File scripts/launch-strength-viewer.ps1 -P1 v13 -P2 v0 -Map Simple64` opens one 3440×1360 window: both SC2 clients side by side, each with its own decision panel beneath it, for one match run by `run_batch(games=1, launch_prefix=[...player wrapper...])` in a child process. Closing the window detaches both clients and lets the match finish; no further match starts. `run_batch`'s new keyword-only `launch_prefix: list[str] | None = None` is threaded through `_build_match` to `_build_bot_process`; existing callers (`scripts/selfplay.py`, `scripts/evolve.py`, `src/orchestrator/evolve.py`) omit it.
-- **Done when:** a test calls `run_batch` with `launch_prefix` and asserts each `BotProcess.launch_list` starts with the prefix and still ends with the original bot arguments, and a test asserts `launch_prefix=None` leaves `launch_list` byte-identical to today. A host test feeds two fake seats whose telemetry interleaves and asserts each pane updates only from its own seat, with same-version opponents (v13 vs v13) kept apart by seat. Pane pairing comes from a recorded per-player SC2 identity, and a test fails if it falls back to PID order (if no mechanism is provable, panes are labelled "pairing unverified"). A missing or late SC2 window shows a placeholder without blocking the event pump. Closing the host restores both windows and the child exits after the match. Gates: `uv run pytest tests/test_strength_viewer.py tests/test_selfplay.py tests/test_selfplay_callbacks.py tests/test_reparent_portable.py` (existing `tests/test_selfplay*.py` stay green), `uv run ruff check .`, `uv run mypy src bots --strict`, and the VW.1 frontend gates.
+- **Done when:** a test calls `run_batch` with `launch_prefix` and asserts each `BotProcess.launch_list` starts with the prefix and still ends with the original bot arguments, and a test asserts `launch_prefix=None` leaves `launch_list` byte-identical to today. A host test feeds two fake seats whose telemetry interleaves and asserts each pane updates only from its own seat, with same-version opponents (v13 vs v13) kept apart by seat. Pane pairing comes from a recorded per-player SC2 identity, and a test fails if it falls back to PID order (if no mechanism is provable, panes are labelled "pairing unverified"). A missing or late SC2 window shows a placeholder without blocking the event pump. Closing the host restores both windows and the child exits after the match. UI evidence: a Playwright screenshot of `?strength=1` with `window.strengthAction` stubbed to the dual-layout status fixture, showing two panels. Gates: `uv run pytest tests/test_strength_viewer.py tests/test_selfplay.py tests/test_selfplay_callbacks.py tests/test_reparent_portable.py` (existing `tests/test_selfplay*.py` stay green), `uv run ruff check .`, `uv run mypy src bots --strict`, and the VW.1 frontend gates.
 
 
 ### Step VW.3: Flag a moment from the viewer into ES.10's findings
 
 - **Status:** PARKED — operator 2026-11-16: needs ES.10, which is HELD under T2; revisit when ES.10 is released
 - **Type:** code
-- **Issue:** not yet assigned
+- **Issue:** #
 - **Files:** `src/selfplay_viewer/strength/host.py`, new `src/selfplay_viewer/strength/flags.py`, `frontend/src/components/StrengthViewer.tsx` + test, `tests/test_strength_viewer.py`
 - **Depends on:** VW.1, VW.2, ES.10
 - **Source:** [viewer-vw-steps-2026-11-16.md](../investigations/viewer-vw-steps-2026-11-16.md) §7 VW.3. Owned by lane evolve-demo.
 
 - **Problem:** A behavior the operator sees in the viewer cannot be recorded as a finding the proposer will read.
-- **Flags:** --reviewers code --isolation worktree
+- **Flags:** --reviewers code --isolation worktree --ui
 - **Produces:** a Flag button (and `F` key while the page has focus) on each panel that freezes that seat's version and game time at the press, then takes class and note. Flags wait in the run's `flags-pending.jsonl` until the replay is final, then each is sent once as `uv run python scripts/scoreboard.py flag --version vN --replay PATH --game-time MM:SS --class C --note TEXT`. The panel shows "saved, waiting for replay", then "sent" or the command's error.
 - **Done when:** a test drives the host's flag handler end to end with a temporary run and replay into the real ES.10 `flag` command and then the real `generate_pool` evidence builder (model call stubbed), and finds exactly one finding with the pressed seat's version, game time and replay in the evidence block. A flag pressed mid-match is not sent before the replay exists; a resend after restart sends nothing new for an already-sent flag; a failed command keeps the flag pending with the error shown. No `training.db` or scoreboard result row is written.
 
@@ -368,7 +368,7 @@ Phase ES (ES.1–ES.14; design in §17), PPO.0 and VW.0 come first; they were ad
 
 - **Status:** PENDING
 - **Type:** operator
-- **Issue:** not yet assigned
+- **Issue:** #
 - **Depends on:** VW.1, VW.2
 - **Source:** [viewer-vw-steps-2026-11-16.md](../investigations/viewer-vw-steps-2026-11-16.md) §7 "Operator acceptance"; the Flag row moves to VW.3's own acceptance when VW.3 is released.
 
@@ -2594,7 +2594,7 @@ A phase closes only when its original acceptance gates and actual evidence pass;
 
 ## 13. Quickstart for a fresh session
 
-Read project instructions, this master and the exact source for the selected leaf. Inspect live git status/branch, preserved pending worktrees and issue evidence. Choose an unheld ready leaf, re-anchor producer/consumer paths, execute its normal review workflow. Do not use stale overnight/session goals as new authorization. For operator work read docs/operator guides and docs/operator-gate-runbook.md after applying section5 corrections. Stop/report at actual gate boundaries. Since 2026-11-11, start with §16 and the four seeds ([evolve-for-strength](../seeds/evolve-for-strength.md), [ppo-direction](../seeds/ppo-direction.md), [strength-viewer](../seeds/strength-viewer.md), [jev-harvest](../seeds/jev-harvest.md)). The next ready leaf is ES.0.
+Read project instructions, this master and the exact source for the selected leaf. Inspect live git status/branch, preserved pending worktrees and issue evidence. Choose an unheld ready leaf, re-anchor producer/consumer paths, execute its normal review workflow. Do not use stale overnight/session goals as new authorization. For operator work read docs/operator guides and docs/operator-gate-runbook.md after applying section5 corrections. Stop/report at actual gate boundaries. Since 2026-11-11, start with §16 and the four seeds ([evolve-for-strength](../seeds/evolve-for-strength.md), [ppo-direction](../seeds/ppo-direction.md), [strength-viewer](../seeds/strength-viewer.md), [jev-harvest](../seeds/jev-harvest.md)). ES.0 is complete; the ready leaves are ES.1, ES.2, ES.14, EH.3 and VW.1 (lanes in `docs/lanes/README.md`).
 
 ## 14. Source reconciliation
 
@@ -2657,7 +2657,7 @@ Read project instructions, this master and the exact source for the selected lea
 
 ## 17. Phase ES — evolve for strength (design, 2026-11-11)
 
-Authored by `/plan-feature` from [evolve-for-strength.md](../seeds/evolve-for-strength.md). Build steps are ES.1–ES.13 in §7.
+Authored by `/plan-feature` from [evolve-for-strength.md](../seeds/evolve-for-strength.md). Build steps are ES.1–ES.14 in §7.
 
 ### 17.1 What this phase does
 
@@ -2676,7 +2676,7 @@ It makes "the bot got better" a measured fact. Versions are judged against Blizz
   - The regression rules and rollback path are at `src/orchestrator/gate_stats.py:48-82` and `scripts/evolve.py:4946-5002`.
   - Self-play has no built-in-AI path (`src/orchestrator/selfplay.py:590,296`).
 - **SC2 builds:**
-  - Windows is on build 98310, where v0–v12 crash without `orchestrator.sc2_compat` (`fc66956`, #364; only v13 installs it).
+  - Windows is on build 98310, where v0–v12 crash without `orchestrator.sc2_compat` (#364, landed 2026-11-16 as 52f1afd; v13 and Jev install it at import, v0–v12 need ES.14's launcher).
   - WSL Ubuntu-22.04 has Linux SC2 base build 75689 (4.10), with Simple64/96/128 and 2017–2019 ladder maps under `~/StarCraftII/Maps`, a venv at `~/venv-alpha4gate-linux`, and `uv` and `claude` on PATH. The repo is used from `/mnt/c`. Setup rules: `.claude/rules/wsl-evolve.md`.
 - **Tools and pointer:**
   - `scripts/selfplay.py --p1 --p2 --games --map` alternates seats automatically (`src/orchestrator/selfplay.py:313-318`).
@@ -2709,8 +2709,8 @@ It makes "the bot got better" a measured fact. Versions are judged against Blizz
 
 | File or interface | Change | Reason | Verified evidence |
 |---|---|---|---|
-| `src/orchestrator/sc2_compat.py`, `tests/test_sc2_compat.py` | Land from `fc66956` | Worker installs the shim (no-op on 4.10, needed on Windows) | Branch file identical to working tree; only `bots/v13/bot.py` and `src/jev/bot.py` import it |
-| New `src/orchestrator/scoreboard.py`, `scoreboard_worker.py`, `scripts/scoreboard.py` | New | Scoreboard, report, panel, findings | No existing built-in-AI batch with race control (§17.2) |
+| `src/orchestrator/sc2_compat.py`, `tests/test_sc2_compat.py` | Landed in 52f1afd (#364); no further edit | Worker installs the shim (no-op on 4.10, needed on Windows) | Only `bots/v13/bot.py` and `src/jev/bot.py` import it today |
+| New `src/orchestrator/scoreboard.py`, `scripts/scoreboard_worker.py` (RD1), `scripts/scoreboard.py` | New | Scoreboard, report, panel, findings | No existing built-in-AI batch with race control (§17.2) |
 | `bots/<v>/connection.run_bot`, `bots/<v>/runner._run_single_game` | Read and called only; frozen trees unedited | Score the production artifact | Identical across v0–v13 |
 | `src/orchestrator/evolve.py` `run_fitness_eval`, `generate_pool` | Capture scored files; add an evidence block | ES.7, ES.10 | `:529-681`; parallel path `scripts/evolve_worker.py:455` |
 | `scripts/evolve.py` stack-apply, gauntlet, rollback, CLI | `--promote-scored`, `--ai-panel`, `--panel-gate`, `--viewer` deprecation | ES.6–ES.9 | `:2111,2219,4769,4946,505` |
@@ -2724,7 +2724,7 @@ It makes "the bot got better" a measured fact. Versions are judged against Blizz
 
 - `scripts/scoreboard.py`: the `run`, `report` and `flag` subcommands.
 - `src/orchestrator/scoreboard.py`: schedule, rows, resume, `STAGES`, Wilson intervals, panel cache, findings.
-- `src/orchestrator/scoreboard_worker.py`: one game per subprocess.
+- `scripts/scoreboard_worker.py`: one game per subprocess, launched by path (RD1: `src/orchestrator/` must not import `bots.*`).
 - Run-scoped stores (all gitignored under `/data/`): `data/scoreboard/`, `data/evolve_scored/`, `data/findings.jsonl`.
 
 `STAGES` (pre-registered; changed only by a recorded operator decision):
