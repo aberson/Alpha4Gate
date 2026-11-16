@@ -85,7 +85,7 @@ src = ["src", "bots", "tests"]
 # (e.g. an evolve run might leave an in-progress edit when killed).
 # These dirs are never committed (covered by .gitignore) and have no
 # value to lint against.
-extend-exclude = ["bots/cand_*"]
+extend-exclude = ["bots/cand_*", "docs/plan-reconciliation"]  # one-off 2026-10 migration tooling, archival
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
