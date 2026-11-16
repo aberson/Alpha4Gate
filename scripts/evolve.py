@@ -404,7 +404,8 @@ def build_parser() -> argparse.ArgumentParser:
             "newly-promoted version against data/baselines.json and LOG + "
             "record the result (the per-imp promotion gate is unchanged in "
             "this step). If data/baselines.json is empty/absent, "
-            "'baseline'/'both' behave like 'parent' (no gauntlet)."
+            "'baseline'/'both' behave like 'parent' (no gauntlet) with a "
+            "startup WARNING; --require-baselines makes that an error."
         ),
     )
     parser.add_argument(
@@ -458,10 +459,28 @@ def build_parser() -> argparse.ArgumentParser:
             "regression failure. This is the mandatory drift backstop for "
             "--regression-rule one-sided, whose relaxed bar trades away "
             "regression-catch and so cannot catch slow drift vs frozen "
-            "anchors. INERT (with a startup WARNING) when --fitness-mode=parent "
-            "or no baselines are registered — the floor needs the gauntlet to "
-            "have teeth. Fail-open: a gauntlet crash never blocks an "
+            "anchors. INERT (with a startup WARNING, or a startup error under "
+            "--require-baselines) when --fitness-mode=parent or no baselines "
+            "are registered — the floor needs the gauntlet to have teeth. "
+            "Fail-open: a gauntlet crash never blocks an "
             "already-committed promotion."
+        ),
+    )
+    parser.add_argument(
+        "--require-baselines",
+        action="store_true",
+        help=(
+            "Fail loudly when a requested baseline gauntlet would be inert "
+            "(Phase EH.3). Default OFF is byte-identical: an empty, absent or "
+            "unloadable data/baselines.json under --fitness-mode "
+            "{baseline,both} only WARNS and degrades to 'parent', and an inert "
+            "--panel-floor only WARNS. When ON, either degradation (including "
+            "--panel-floor with --fitness-mode=parent) becomes a non-zero exit "
+            "at startup, BEFORE any game is dispatched, naming the registry "
+            "path and the fix (uv run python scripts/baseline.py add <name> "
+            "<version>). With a populated registry, or with neither "
+            "--fitness-mode {baseline,both} nor --panel-floor requested, the "
+            "run proceeds normally."
         ),
     )
     parser.add_argument(
@@ -3773,6 +3792,68 @@ def _load_lineage_registry_if_engaged(
 # ---------------------------------------------------------------------------
 
 
+_BASELINE_ADD_FIX = (
+    "Register at least one frozen anchor first "
+    "(docs/operator-gate-runbook.md, section 2), e.g.:\n"
+    "  uv run python scripts/baseline.py add <name> <version>\n"
+    '  uv run python scripts/baseline.py add v13 v13 --note "frozen anchor"\n'
+    "  uv run python scripts/baseline.py list"
+)
+
+
+def _require_baselines_failure(
+    *,
+    fitness_mode: str,
+    panel_floor: bool,
+    n_baselines: int,
+    baselines_path: Path | None,
+    load_error: str | None,
+) -> str | None:
+    """Phase EH.3: the ``--require-baselines`` startup verdict.
+
+    Returns ``None`` when every requested gauntlet capability will actually
+    execute (or none was requested), else the loud abort message. Pure: the
+    caller has already loaded the registry and owns logging and the exit.
+
+    * ``--fitness-mode {baseline,both}`` with an absent, empty or unloadable
+      registry fails (the run would silently behave like ``parent``).
+    * ``--panel-floor`` under ``--fitness-mode=parent`` fails (the floor can
+      never fire because no gauntlet runs).
+    * ``--fitness-mode=parent`` without ``--panel-floor`` requests no
+      gauntlet, so there is nothing to require and the run proceeds.
+    """
+    if fitness_mode in ("baseline", "both"):
+        if n_baselines > 0:
+            return None
+        where = str(baselines_path) if baselines_path is not None else "data/baselines.json"
+        if load_error is not None:
+            state = f"could not be loaded ({load_error})"
+        elif baselines_path is not None and baselines_path.is_file():
+            state = "is empty (no baselines registered)"
+        else:
+            state = "is absent"
+        capabilities = "the baseline gauntlet"
+        if panel_floor:
+            capabilities += " and --panel-floor"
+        return (
+            f"evolve: --require-baselines: --fitness-mode={fitness_mode} "
+            f"needs the frozen-baseline registry, but {where} {state}. "
+            f"Without it {capabilities} would silently not run (the run "
+            "would behave like 'parent'). Aborting before any game is "
+            f"dispatched.\n{_BASELINE_ADD_FIX}"
+        )
+    if panel_floor:
+        return (
+            "evolve: --require-baselines: --panel-floor is ARMED but would be "
+            f"INERT because --fitness-mode={fitness_mode} runs no baseline "
+            "gauntlet, so no sweep-loss backstop could fire. Aborting before "
+            "any game is dispatched. Re-run with --fitness-mode baseline or "
+            "--fitness-mode both, with data/baselines.json populated. "
+            f"{_BASELINE_ADD_FIX}"
+        )
+    return None
+
+
 def run_loop(
     args: argparse.Namespace,
     *,
@@ -3918,6 +3999,10 @@ def run_loop(
     # when a non-parent mode is requested.
     fitness_mode = str(getattr(args, "fitness_mode", "parent") or "parent")
     _gauntlet_baselines: list[Baseline] = []
+    # Phase EH.3: what --require-baselines needs to name a degraded registry.
+    # Only populated on the non-parent path; the default path never reads them.
+    _baselines_path: Path | None = None
+    _baselines_load_error: str | None = None
     if fitness_mode in ("baseline", "both"):
         from orchestrator.baselines import (
             default_baselines_path,
@@ -3938,6 +4023,7 @@ def run_loop(
                 exc,
             )
             _gauntlet_baselines = []
+            _baselines_load_error = str(exc)
         if not _gauntlet_baselines:
             _log.warning(
                 "evolve: --fitness-mode=%s but no baselines registered at "
@@ -3965,6 +4051,23 @@ def run_loop(
                 else "no frozen baselines are registered"
             ),
         )
+
+    # Phase EH.3: --require-baselines turns the two warn-and-proceed
+    # degradations above into a fast non-zero exit, BEFORE any game is
+    # dispatched (no pool refresh, fitness, regression or gauntlet has run
+    # yet). Default OFF leaves the warn-and-proceed path byte-identical.
+    if getattr(args, "require_baselines", False):
+        _require_msg = _require_baselines_failure(
+            fitness_mode=fitness_mode,
+            panel_floor=bool(getattr(args, "panel_floor", False)),
+            n_baselines=len(_gauntlet_baselines),
+            baselines_path=_baselines_path,
+            load_error=_baselines_load_error,
+        )
+        if _require_msg is not None:
+            _log.error(_require_msg)
+            print(_require_msg, file=sys.stderr)
+            return 1
 
     # sys.argv[1:] snapshot — what flags this run was launched with.
     # Surfaced on the dashboard so the operator can see at a glance

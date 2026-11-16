@@ -6086,3 +6086,315 @@ def test_main_viewer_maps_system_exit_like_cpython(
     assert _run_main_with_watchdog(cli, ["--viewer"]) == expected_rc
     if expected_stderr:
         assert expected_stderr in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Phase EH.3: --require-baselines fails loudly when the gauntlet is inert
+# ---------------------------------------------------------------------------
+
+
+def _point_baselines_at(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
+    """Redirect run_loop's registry lookup to *path* (never the real data/)."""
+    import orchestrator.baselines as baselines_mod
+
+    monkeypatch.setattr(baselines_mod, "default_baselines_path", lambda: path)
+
+
+def _must_not_run(name: str) -> Callable[..., Any]:
+    """A seam that fails the test if anything game-shaped is dispatched."""
+
+    def _fn(*a: Any, **k: Any) -> Any:
+        raise AssertionError(f"{name} ran; no game may be dispatched")
+
+    return _fn
+
+
+def _refresh_one(*a: Any, **k: Any) -> list[Improvement]:
+    if k.get("skip_mirror"):
+        return []
+    return [_make_imp(title="win", rank=1)]
+
+
+def _write_registry(path: Path, state: str) -> None:
+    if state == "empty-object":
+        path.write_text("{}", encoding="utf-8")
+    elif state == "empty-file":
+        path.write_text("", encoding="utf-8")
+    elif state == "malformed":
+        path.write_text("{not json", encoding="utf-8")
+    else:
+        assert state == "absent"
+
+
+def test_require_baselines_flag_parses_and_defaults_off(
+    cli: ModuleType,
+) -> None:
+    """--require-baselines parses to args.require_baselines; default False."""
+    assert cli.build_parser().parse_args([]).require_baselines is False
+    assert cli.build_parser().parse_args(["--require-baselines"]).require_baselines is True
+    assert "--require-baselines" in cli.build_parser().format_help()
+
+
+@pytest.mark.parametrize(
+    ("registry_state", "expected_state_text"),
+    [
+        ("absent", "is absent"),
+        ("empty-object", "is empty"),
+        ("empty-file", "is empty"),
+        ("malformed", "could not be loaded"),
+    ],
+)
+def test_require_baselines_both_with_empty_registry_exits_before_any_game(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    registry_state: str,
+    expected_state_text: str,
+) -> None:
+    """--fitness-mode both --require-baselines with an absent/empty/unloadable
+    registry exits non-zero BEFORE any game is dispatched, naming the
+    registry path and the scripts/baseline.py add fix."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    registry = tmp_path / "baselines.json"
+    _write_registry(registry, registry_state)
+    _point_baselines_at(monkeypatch, registry)
+
+    args = _build_args(tmp_path, pool_size=1, generations=1, no_commit=True)
+    args.fitness_mode = "both"
+    args.require_baselines = True
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=_must_not_run("generate_pool"),
+        run_fitness_fn=_must_not_run("run_fitness"),
+        stack_apply_fn=_must_not_run("stack_apply"),
+        run_regression_fn=_must_not_run("run_regression"),
+        run_gauntlet_fn=_must_not_run("run_gauntlet"),
+        run_batch_fn=_must_not_run("run_batch"),
+        current_version_fn=lambda: "v0",
+    )
+    assert rc != 0
+
+    err = capsys.readouterr().err
+    assert "--require-baselines" in err
+    assert "scripts/baseline.py add <name> <version>" in err
+    assert "uv run python scripts/baseline.py" in err
+    assert str(registry) in err
+    assert expected_state_text in err
+    # Nothing was started: no run-state, results or pool file was written.
+    assert not args.state_path.exists()
+    assert not args.results_path.exists()
+    assert not args.pool_path.exists()
+
+
+def test_without_require_baselines_empty_registry_warns_and_proceeds(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Paired negative: the SAME invocation without the flag keeps the
+    historical warn-and-proceed default: WARNING, no error, the generation
+    runs and promotes, and no gauntlet runs (behaves like 'parent')."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+    registry = tmp_path / "baselines.json"
+    registry.write_text("{}", encoding="utf-8")
+    _point_baselines_at(monkeypatch, registry)
+
+    args = _build_args(tmp_path, pool_size=1, generations=1, no_commit=True)
+    args.fitness_mode = "both"
+    # NB: args.require_baselines deliberately left UNSET -> getattr default.
+
+    with caplog.at_level(logging.WARNING, logger="evolve"):
+        rc = cli.run_loop(
+            args,
+            generate_pool_fn=_refresh_one,
+            run_fitness_fn=lambda p, imp, **k: _fitness(imp, bucket="pass", parent=p),
+            stack_apply_fn=_ScriptedStackApply([(True, "v1")]),
+            run_regression_fn=_ScriptedRegression([False]),
+            run_gauntlet_fn=_must_not_run("run_gauntlet"),
+            current_version_fn=lambda: "v0",
+        )
+    assert rc == 0
+
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["generations_promoted"] == 1
+    assert state["parent_current"] == "v1"
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("no baselines registered" in m for m in messages), messages
+    assert not any(r.levelno >= logging.ERROR for r in caplog.records)
+    assert "--require-baselines" not in capsys.readouterr().err
+
+
+def test_require_baselines_with_populated_registry_proceeds_normally(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A populated registry satisfies --require-baselines: the run proceeds and
+    the gauntlet actually runs against the registered anchor."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+    _register_one_baseline(monkeypatch)
+
+    args = _build_args(tmp_path, pool_size=1, generations=1, no_commit=True)
+    args.fitness_mode = "both"
+    args.panel_floor = True
+    args.require_baselines = True
+
+    gauntlet_calls: list[str] = []
+    inner = _make_gauntlet({"v1": {"sparring": 0.6}})
+
+    def gauntlet(candidate: str, baselines: list[Any], **k: Any) -> Any:
+        gauntlet_calls.append(candidate)
+        return inner(candidate, baselines, **k)
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=_refresh_one,
+        run_fitness_fn=lambda p, imp, **k: _fitness(imp, bucket="pass", parent=p),
+        stack_apply_fn=_ScriptedStackApply([(True, "v1")]),
+        run_regression_fn=_ScriptedRegression([False]),
+        run_gauntlet_fn=gauntlet,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+    assert gauntlet_calls == ["v1"]
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["generations_promoted"] == 1
+    assert state["parent_current"] == "v1"
+
+
+def test_require_baselines_panel_floor_inert_under_parent_exits(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--panel-floor under --fitness-mode=parent is inert; with
+    --require-baselines that is a loud non-zero exit before any game."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    _point_baselines_at(monkeypatch, tmp_path / "baselines.json")
+
+    args = _build_args(tmp_path, pool_size=1, generations=1, no_commit=True)
+    args.fitness_mode = "parent"
+    args.panel_floor = True
+    args.require_baselines = True
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=_must_not_run("generate_pool"),
+        run_fitness_fn=_must_not_run("run_fitness"),
+        stack_apply_fn=_must_not_run("stack_apply"),
+        run_regression_fn=_must_not_run("run_regression"),
+        run_gauntlet_fn=_must_not_run("run_gauntlet"),
+        current_version_fn=lambda: "v0",
+    )
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "--panel-floor" in err
+    assert "INERT" in err
+    assert "--fitness-mode baseline" in err
+    assert "scripts/baseline.py add <name> <version>" in err
+    assert not args.state_path.exists()
+
+
+def test_require_baselines_panel_floor_with_empty_registry_names_both(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--fitness-mode baseline --panel-floor --require-baselines with an absent
+    registry fails and names BOTH degraded capabilities."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    _point_baselines_at(monkeypatch, tmp_path / "baselines.json")
+
+    args = _build_args(tmp_path, pool_size=1, generations=1, no_commit=True)
+    args.fitness_mode = "baseline"
+    args.panel_floor = True
+    args.require_baselines = True
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=_must_not_run("generate_pool"),
+        run_fitness_fn=_must_not_run("run_fitness"),
+        current_version_fn=lambda: "v0",
+    )
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "the baseline gauntlet and --panel-floor" in err
+    assert "scripts/baseline.py add" in err
+
+
+def test_require_baselines_parent_without_panel_floor_proceeds(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Parent mode with no --panel-floor requests no gauntlet, so
+    --require-baselines has nothing to require: the run proceeds normally
+    even with no registry at all."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+    _point_baselines_at(monkeypatch, tmp_path / "absent.json")
+
+    args = _build_args(tmp_path, pool_size=1, generations=1, no_commit=True)
+    args.fitness_mode = "parent"
+    args.require_baselines = True
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=_refresh_one,
+        run_fitness_fn=lambda p, imp, **k: _fitness(imp, bucket="pass", parent=p),
+        stack_apply_fn=_ScriptedStackApply([(True, "v1")]),
+        run_regression_fn=_ScriptedRegression([False]),
+        run_gauntlet_fn=_must_not_run("run_gauntlet"),
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["generations_promoted"] == 1
+
+
+def test_main_require_baselines_cli_exits_before_any_game(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Production entry point: ``main(argv)`` threads --require-baselines from
+    argparse into run_loop, which exits non-zero before the real pool, fitness
+    or regression seams are reached."""
+    import orchestrator.evolve as evolve_mod
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(cli, "check_git_clean", lambda **k: (True, []))
+    monkeypatch.setattr(cli, "check_no_phantom_promote", lambda **k: (True, "v0", "v0"))
+    for seam in ("generate_pool", "run_fitness_eval", "run_regression_eval"):
+        monkeypatch.setattr(evolve_mod, seam, _must_not_run(seam))
+    _point_baselines_at(monkeypatch, tmp_path / "baselines.json")
+
+    argv = [
+        "--fitness-mode",
+        "both",
+        "--require-baselines",
+        "--generations",
+        "1",
+        "--no-commit",
+        "--results-path",
+        str(tmp_path / "results.jsonl"),
+        "--pool-path",
+        str(tmp_path / "pool.json"),
+        "--state-path",
+        str(tmp_path / "state.json"),
+        "--current-round-path",
+        str(tmp_path / "round.json"),
+        "--crash-log-path",
+        str(tmp_path / "crashes.jsonl"),
+        "--run-log",
+        str(tmp_path / "run.md"),
+    ]
+    assert cli.main(argv) != 0
+    err = capsys.readouterr().err
+    assert "scripts/baseline.py add <name> <version>" in err
+    assert not (tmp_path / "state.json").exists()
