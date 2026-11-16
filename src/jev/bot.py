@@ -107,6 +107,10 @@ from jev.strategy import (
     uses_strategy,
 )
 from jev.telemetry import PersistenceFailed, RunRecorder
+from orchestrator.sc2_compat import install as install_sc2_compat
+
+# SC2 build 98310 renumbered an ability burnysc2 relies on; see orchestrator.sc2_compat.
+install_sc2_compat()
 
 __all__ = [
     "GATEWAY",
