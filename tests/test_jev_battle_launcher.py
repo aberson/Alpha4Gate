@@ -98,9 +98,26 @@ def test_observer_rush_measurement_preserves_speed_and_match_limits(battle, monk
 class BrowserWindows:
     """No render-child API: modern Chromium need not expose a renderer HWND."""
 
-    def __init__(self, windows=None, client=(0, 0, 1000, 800)):
+    def __init__(self, windows=None, client=(0, 0, 1000, 800), iconic=False):
         self.windows = windows or {}
         self.client = client
+        self.iconic = iconic
+        self.restored = []
+
+    def IsIconic(self, hwnd):
+        return self.iconic if hwnd == 42 else False
+
+    def ShowWindow(self, hwnd, command):
+        assert (hwnd, command) == (42, 9)
+        self.restored.append(hwnd)
+        self.iconic = False
+        self.client = (0, 0, 1000, 800)
+
+    def GetParent(self, hwnd):
+        return 7
+
+    def GetWindowRect(self, hwnd):
+        return (0, 0, 160, 28) if self.iconic else (0, 0, 1000, 800)
 
     def EnumWindows(self, callback, data):
         for hwnd in self.windows:
@@ -219,3 +236,30 @@ def test_browser_readiness_retries_are_bounded(battle, monkeypatch):
     with pytest.raises(RuntimeError, match="Browser content geometry"):
         asyncio.run(battle["wait_browser_origin"](BrowserWindows(), page, 42, attempts=3))
     assert page.evaluate.await_count == 3
+
+
+def test_minimised_browser_child_is_restored_before_measuring(battle, monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+    page = SimpleNamespace(evaluate=AsyncMock(return_value={"w": 984, "h": 754}))
+    gui = BrowserWindows(client=(0, 0, 146, 21), iconic=True)
+
+    origin, _ = asyncio.run(battle["wait_browser_origin"](gui, page, 42))
+
+    assert gui.restored == [42]
+    assert origin == (108, 238)
+
+
+def test_browser_geometry_failure_reports_window_state(battle, monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+    page = SimpleNamespace(evaluate=AsyncMock(return_value={"w": 2146, "h": 1163}))
+    gui = BrowserWindows(client=(0, 0, 146, 21))
+
+    with pytest.raises(RuntimeError, match=r"client=\(0, 0, 146, 21\).*iconic=False parent=7"):
+        asyncio.run(battle["wait_browser_origin"](gui, page, 42, attempts=2))
+    assert gui.restored == []

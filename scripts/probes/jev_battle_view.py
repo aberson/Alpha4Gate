@@ -26,6 +26,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 VIEW_WIDTH, VIEW_HEIGHT = 2160, 1200
+SW_RESTORE = 9  # win32con.SW_RESTORE; module code here does not import pywin32
 sys.path.insert(0, str(ROOT))
 
 
@@ -88,6 +89,15 @@ def browser_content_offset(
     return inset, height - h - inset
 
 
+def browser_window_state(gui: Any, browser_hwnd: int) -> str:
+    parent = gui.GetParent(browser_hwnd)
+    return (
+        f"browser iconic={bool(gui.IsIconic(browser_hwnd))} parent={parent}"
+        f" parent_iconic={bool(parent and gui.IsIconic(parent))}"
+        f" rect={gui.GetWindowRect(browser_hwnd)}"
+    )
+
+
 async def wait_browser_origin(
     gui: Any, page: Any, browser_hwnd: int, attempts: int = 30
 ) -> tuple[tuple[int, int], dict[str, int]]:
@@ -96,9 +106,13 @@ async def wait_browser_origin(
         client = gui.GetClientRect(browser_hwnd)
         try:
             offset = browser_content_offset(client, viewport)
-        except RuntimeError:
+        except RuntimeError as error:
             if attempt == attempts - 1:
-                raise
+                raise RuntimeError(f"{error}; {browser_window_state(gui, browser_hwnd)}") from error
+            # A minimised Edge child reports a caption-sized client area (one hosted
+            # run saw 146x21); restoring returns it to its attached placement.
+            if gui.IsIconic(browser_hwnd):
+                gui.ShowWindow(browser_hwnd, SW_RESTORE)
             await asyncio.sleep(0.1)
             continue
         origin = gui.ClientToScreen(browser_hwnd, offset)
