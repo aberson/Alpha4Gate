@@ -2629,7 +2629,7 @@ Read project instructions, this master and the exact source for the selected lea
 | ID | Theme | Steps | Decision | Status after reset |
 |---|---|---|---|---|
 | D1 | Fixed scoreboard | new; R.1, S.3 | Agreed | Phase ES (ES-B, staged ES-C) via ES.0 |
-| D2 | SC2 patch compatibility and landing the working tree | #364; BL.1 | Agreed | ES-A; BL.1 IN PROGRESS (authorized 2026-11-17) |
+| D2 | SC2 patch compatibility and landing the working tree | #364; BL.1 | Agreed | ES-A; BL.1 DONE 2026-11-17 (#385, cd96886) |
 | D3 | Promote the code that was tested | ER.2 | Agreed (confirmed 2026-11-11) | ES-E |
 | D4 | Panel-gated promotion | EJ.7, EJ.8, ER.3, ER.4 | Agreed (confirmed 2026-11-11) | ES-F |
 | D5 | Tactical bugs | T.1–T.12, T.2.1 | Agreed | ES-G |
