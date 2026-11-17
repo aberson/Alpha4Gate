@@ -2116,12 +2116,13 @@ Concurrent workers collide on logs/selfplay_tmp/game{i}_p*.json, but result-out 
 
 ### Step BL.1: Decide and execute branch landing when authorized
 
-- **Status:** PENDING — D2 (2026-11-11)
+- **Status:** IN PROGRESS — authorized 2026-11-17 (operator accepted central's leans on [the landing plan](../plan-redline/bl1-landing-plan-2026-11-17.html)); landing branch `land/phase-ev-2026-11-17`, lane bl1-land
 - **Decision (2026-11-11):** D2: land the working tree before any `EVO_AUTO` run (ES-A). The EV.4 dependency was removed with the viewer reframe (D10).
+- **Decision (2026-11-17):** land now, by pull request, as a merge commit (no squash, no rebase); README hunk 2 keeps master's corrected advisor caption with the `docs/` image path; annotated tag `master-plan/phase-ev/landed` on the merge commit; `master` is the mainline afterwards and `master-plan/phase-ev` is kept, frozen, until its gates close; the scrubbed home paths stay in history (no rewrite); close #303 and #304 as superseded; remote-branch cleanup later, after gates close.
 - **Type:** operator
 - **Issue:** not yet assigned; no issue created by cleanup
 - **Depends on:** none outstanding
-- **Done when:** <TBD — operator fills in>
+- **Done when:** origin/master contains origin/master-plan/phase-ev through a non-squash merge commit made by a pull request whose linux-tests and docker-build checks passed on the merged content. The merge commit's own push-to-master linux-tests run is green. README.md on master keeps master's two corrections (Medium links; the honest advisor caption) with docs/ paths. `uv run ruff check .`, `uv run mypy src bots --strict` and the full `uv run pytest` pass locally on the merged content. `bots/current/current.txt` still reads v13. The merge commit carries the pushed annotated tag `master-plan/phase-ev/landed`. PRs #303 and #304 are closed as superseded. CLAUDE.md and the lanes doc name `master` as the post-landing mainline. The preserved Jev branches and the `worktree_build-step-225-b0cc7700` worktree are unchanged.
 - **Source:** [master_plan.md](../archived-plans/master_plan.md); original BL.1.
 
 onbrand-pilot already contained; no mechanical blocker requiring its separate merge. Decide landing with EV acceptance open versus after EV.4. Recheck branches/CI, prefer PR for Linux/Docker signal; merge commit preserves step history, tag actual merged commit, retain phase branch until gates close. No publication authorized by this cleanup.
@@ -2628,7 +2629,7 @@ Read project instructions, this master and the exact source for the selected lea
 | ID | Theme | Steps | Decision | Status after reset |
 |---|---|---|---|---|
 | D1 | Fixed scoreboard | new; R.1, S.3 | Agreed | Phase ES (ES-B, staged ES-C) via ES.0 |
-| D2 | SC2 patch compatibility and landing the working tree | #364; BL.1 | Agreed | ES-A; BL.1 PENDING |
+| D2 | SC2 patch compatibility and landing the working tree | #364; BL.1 | Agreed | ES-A; BL.1 IN PROGRESS (authorized 2026-11-17) |
 | D3 | Promote the code that was tested | ER.2 | Agreed (confirmed 2026-11-11) | ES-E |
 | D4 | Panel-gated promotion | EJ.7, EJ.8, ER.3, ER.4 | Agreed (confirmed 2026-11-11) | ES-F |
 | D5 | Tactical bugs | T.1–T.12, T.2.1 | Agreed | ES-G |

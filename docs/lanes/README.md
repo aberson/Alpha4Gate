@@ -14,6 +14,7 @@ A lane is a named, lasting slice of this project's work, worked by one window at
 Coordinator: central
 Shipper: central
 Operator relay: central
+Mainline: `master` (since BL.1, 2026-11-17). Branch new work from `master`; `master-plan/phase-ev` is frozen until its gates close.
 
 Parked lanes keep their row: their cards are `done`, their resume docs live in `docs/lanes/parked/`, and `central` reopens them with `lane-open` under the same id when their blocker clears.
 
