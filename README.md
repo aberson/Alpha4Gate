@@ -9,8 +9,8 @@ An AI lab that started with a simple goal: beat a friend at StarCraft II.
 Alpha4Gate plays games, diagnoses failures, proposes code changes, and tests
 candidates against opponents. A live React dashboard makes those experiments
 visible. Alongside the evolving rule-based/PPO bot, **Jev** explores a different
-approach: a hosted Typesafe model makes choices during the match, and a local
-decision graph carries them out.
+approach: a local decision graph issues every command, and a hosted Typesafe model
+chooses among the graph's own branches at a few decision points during the match.
 
 **Two complementary learning loops:**
 
@@ -36,7 +36,7 @@ evolution (`evolve --viewer`) is being deprecated.
 <tr>
 <td width="25%" valign="top" align="center">
 <a href="docs/images/advisor-completed.png"><img src="docs/images/advisor-completed.png" alt="Advisor Control Panel showing a completed autonomous improvement run" width="100%"></a>
-<br/><sub><b>Self-improvement loop</b><br/>6 fixes proposed, validated, committed</sub>
+<br/><sub><b>Self-improvement loop</b><br/>Training-mode run: 6 reward-rule changes committed; the win-rate shift shown is game variance</sub>
 </td>
 <td width="25%" valign="top" align="center">
 <a href="docs/images/evolution-running.png"><img src="docs/images/evolution-running.png" alt="Evolution tab showing a live improve-bot-evolve run with fitness pool, stack apply, and import check" width="100%"></a>
@@ -63,6 +63,11 @@ evolution (`evolve --viewer`) is being deprecated.
 > report recorded **68/82 wins (83%)** at difficulty 4 over the preceding week.
 > An eight-hour headless Linux evolve run promoted **v4 → v7**. The versioned
 > lineage later reached **v13**. [Advised report](docs/soak-test-runs/advised-2026-04-17.md) · [Evolve report](docs/soak-test-runs/evolve-2026-04-30T20-15-20+00-00.md)
+
+**Writing about this project** (Medium, October 2026):
+
+- [What My StarCraft II Bot Taught Me About Contract Drift](https://medium.com/@aberobison/what-my-starcraft-ii-bot-taught-me-about-contract-drift-9e3b368152cf) — a postmortem. The trained network won an evaluation game against the built-in Easy AI, and the bot's own evaluator logged it as a crash. The bug lived in the handoff between two correct components (a game-ID shape change); the lesson is to test the round trip end to end.
+- [A StarCraft II bot, now with more Jev](https://medium.com/@aberobison/my-starcraft-ii-bot-now-with-more-jev-5581c1ff03d2) — a proof of concept. Typesafe's hosted Jev model answered in a median of about 0.53 s, against about 6.2 s for the April 2026 Claude advisor run as a CLI subprocess: fast enough for strategic calls in a live real-time game, while the local decision graph (about 300 nodes in nine lanes) chooses every command.
 
 ## What makes this different
 
@@ -247,18 +252,18 @@ assistant to issue every unit command.
 - **Bringing in a coach -** Claude whispers strategy tips mid-match alongside human commands.
 - **The observation deck -** A live dashboard showing every decision, reward, and training run.
 - **The robot that trains itself -** A daemon that plays, scores, promotes winners, and rolls back duds overnight.
-- **The first soak test -** Left it alone — 17 things broke. Fixed them all.
+- **The first soak test -** Left it alone — it surfaced 17 findings, triaged into fixes and a backlog.
 - **Claude as personal trainer -** Claude watches games, diagnoses problems, and writes the fixes itself.
-- **The breakthrough -** Self-improvement took win rate from 0% to 75% at difficulty 3.
+- **The breakthrough -** In one afternoon run with code edits allowed (two games per check), the bot went from zero wins in its last ten difficulty-3 games to two of two.
 - **Reality check -** Harder opponents exposed that training scores lie — need honest exams.
 - **The big merge -** Three plans became one: every future bot is a snapshot that must beat its ancestors.
-- **Memory matters -** Added memory (LSTM) and a gentler training recipe — 19/20 wins at difficulty 3.
+- **Memory matters -** An experimental stack (LSTM memory, a gentler training recipe, imitation start) won 19/20 at difficulty 3 in hybrid mode; it is not the shipped default.
 - **The arena -** Bot versions fight each other in sandboxed self-play. Elo ladder + promotion gate decides who ships.
-- **Overnight run, zero promotions -** Three compound 60% filters made the math impossible, dropped the redundant composition check.
+- **Ten hours, zero net promotions -** With three gates stacked, a 10-hour run promoted two versions and rolled both back; dropped the redundant composition check.
 - **The arena produces winners -** 7 hours, v0 → v1 → v2 — the self-play loop ships its first two auto-promotions.
-- **Headless training substrate -** Moved the heavy training off Windows onto a headless Linux runtime (massive speed increase)
-- **Three promotions in one night, on Linux -** First end-to-end successful headless evolve. v4 → v5 → v6 → v7 in one 8-hour unattended soak 
-- **Parallelizing the arena -** Evolve now runs four candidates in parallel per generation (concurrency window + worker-slot recycling). Steps 1-7 plus iter-3 hardening shipped 2026-04-30; subsequent generations took the lineage to **v10**.
+- **Headless training substrate -** Moved the heavy training off Windows onto a headless Linux runtime under WSL.
+- **Three promotions in one day, on Linux -** First end-to-end successful headless evolve. v4 → v5 → v6 → v7 in one 8-hour daytime run (about 1:15 to 9:12 pm), with one more promotion rolled back.
+- **Parallelizing the arena -** Evolve can now test candidates in parallel per generation (concurrency window + worker-slot recycling). Steps 1-7 plus iter-3 hardening shipped 2026-04-30; the overnight run that followed took the lineage from v7 to **v10**, with two automatic rollbacks.
 - **A second player -** A four-Gateway Zealot rush became Jev v1, then a hosted Typesafe integration and an adaptive v2 graph with scouting, expansion and mixed armies.
 - **Making decisions visible -** Branch cards grew into compact and radial layouts, then 3D views with a starting hub, branch labels and inspectable paths.
 - **A seat at the match -** Battle View combines SC2, the graph, a camera observer, recording and a local Archon Auto Caster. The real hosted demo is linked above.
