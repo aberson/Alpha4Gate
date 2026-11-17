@@ -9,8 +9,10 @@ Per generation the script:
 2. **Stack-apply + promote** — if ≥1 fitness-pass imp, snapshot the parent
    into a fresh ``vN+1`` directory, apply every fitness-pass imp in rank
    order, run a ``python -c "import bots.vN+1.bot"`` gate, and (on pass)
-   commit the promotion as one ``[evo-auto]`` commit. Import-check failures
-   roll back the snapshot and skip regression.
+   commit the promotion as one ``[evo-auto]`` commit, path-scoped to
+   ``bots/vN+1/`` + ``current.txt`` (other staged work stays staged and
+   uncommitted). Import-check failures roll back the snapshot and skip
+   regression.
 3. **Regression phase** — if anything was promoted, play the new parent
    vs the prior parent. On rollback, ``git revert`` the promote commit
    (also under ``EVO_AUTO=1``) and restore the pointer.
@@ -1553,6 +1555,90 @@ def _git_env_evo_auto() -> dict[str, str]:
     return env
 
 
+_CURRENT_POINTER_PATH = "bots/current/current.txt"
+
+
+def _promote_pathspecs(new_version: str) -> list[str]:
+    """The ONLY paths an ``[evo-auto]`` promote commit may contain.
+
+    ``bots/<new_version>/`` (the fresh snapshot, untracked until the
+    ``git add``) plus the ``current.txt`` pointer. Shared by the add, the
+    partial commit and the failure-path reset so the three can never drift.
+    """
+    return [f"bots/{new_version}/", _CURRENT_POINTER_PATH]
+
+
+def _path_in_scope(path: str, pathspecs: list[str]) -> bool:
+    """True when *path* is covered by *pathspecs*.
+
+    A pathspec ending in ``/`` is a directory prefix; anything else must
+    match exactly (the revert's pathspecs are exact file paths read from
+    the promote commit).
+    """
+    for spec in pathspecs:
+        if spec.endswith("/"):
+            if path.startswith(spec):
+                return True
+        elif path == spec:
+            return True
+    return False
+
+
+def _split_nul(stdout: str | None) -> list[str]:
+    """Split ``-z`` git output into paths, dropping empty fields."""
+    return [p for p in (stdout or "").split("\0") if p]
+
+
+def _log_foreign_staged(
+    pathspecs: list[str],
+    *,
+    context: str,
+    env: dict[str, str],
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> list[str]:
+    """Log an ERROR naming every staged path outside *pathspecs*.
+
+    Phase EH Step EH.8: an operator's unrelated staged work used to ride
+    into the next bare ``[evo-auto]`` commit. The commit is now partial
+    (``--only -- <pathspecs>``), so foreign staged paths are left staged
+    and uncommitted — this only makes them visible in the run log.
+
+    LOG, NEVER ABORT: refusing to commit would silently drop a promotion
+    (or a rollback) on every generation of an unattended soak while the
+    operator's file stays staged. Never raises; returns the foreign paths.
+    """
+    try:
+        result = run(
+            ["git", "diff", "--cached", "--name-only", "-z"],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=str(_REPO_ROOT),
+            env=env,
+        )
+    except (FileNotFoundError, OSError) as exc:
+        _log.warning("git diff --cached (%s) failed: %s", context, exc)
+        return []
+    if result.returncode != 0:
+        _log.warning(
+            "git diff --cached (%s) returned %d: %s",
+            context,
+            result.returncode,
+            result.stderr,
+        )
+        return []
+    foreign = [path for path in _split_nul(result.stdout) if not _path_in_scope(path, pathspecs)]
+    if foreign:
+        _log.error(
+            "evolve: %s: %d staged path(s) outside the [evo-auto] commit "
+            "scope are NOT committed and stay staged: %s",
+            context,
+            len(foreign),
+            ", ".join(foreign),
+        )
+    return foreign
+
+
 def git_commit_evo_auto(
     new_version: str,
     generation: int,
@@ -1560,27 +1646,32 @@ def git_commit_evo_auto(
     *,
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> tuple[bool, str | None]:
-    """Stage ``bots/<new_version>/`` + ``current.txt`` and commit.
+    """Stage ``bots/<new_version>/`` + ``current.txt`` and commit ONLY those.
 
-    Returns ``(success, sha)``. On failure, logs WARNING and returns
-    ``(False, None)`` — the caller continues the loop and the operator
-    reconciles out-of-band.
+    The commit is partial (``git commit --only -- <paths>``), so anything
+    else an operator had staged is neither committed nor unstaged; it is
+    named in an ERROR log line and left exactly as it was (Phase EH Step
+    EH.8 — before it, the bare ``git commit -m`` swept the whole index).
+
+    Returns ``(success, sha)``. On failure, logs WARNING, unstages only the
+    promotion paths, and returns ``(False, None)`` — the caller continues
+    the loop and the operator reconciles out-of-band.
     """
     env = _git_env_evo_auto()
+    pathspecs = _promote_pathspecs(new_version)
 
-    header = (
-        f"evolve: generation {generation} promoted "
-        f"stack ({len(stacked_titles)} imps)"
-    )
+    header = f"evolve: generation {generation} promoted stack ({len(stacked_titles)} imps)"
     body_lines = [header, ""]
     for title in stacked_titles:
         body_lines.append(f"- {title}")
     body_lines.extend(["", "[evo-auto]", ""])
     msg = "\n".join(body_lines)
 
+    # The add stays: a fresh bots/<vN>/ is untracked, so this is what makes
+    # its files committable at all.
     try:
         add_result = run(
-            ["git", "add", f"bots/{new_version}/", "bots/current/current.txt"],
+            ["git", "add", *pathspecs],
             capture_output=True,
             text=True,
             check=False,
@@ -1589,7 +1680,7 @@ def git_commit_evo_auto(
         )
     except (FileNotFoundError, OSError) as exc:
         _log.warning("git add failed for %s: %s", new_version, exc)
-        _reset_staged_promote(run=run)
+        _reset_staged_promote(pathspecs, run=run)
         return False, None
     if add_result.returncode != 0:
         _log.warning(
@@ -1598,17 +1689,32 @@ def git_commit_evo_auto(
             new_version,
             add_result.stderr,
         )
-        _reset_staged_promote(run=run)
+        _reset_staged_promote(pathspecs, run=run)
         return False, None
 
-    # --no-verify: EVO_AUTO already restricts staged paths to bots/<vN>/*
-    # via check_sandbox.py, so the pre-commit hook is duplicate enforcement.
-    # On WSL the hook can't run (Git-for-Windows generated /bin/sh shebang
-    # over bash-array syntax + Windows-only INSTALL_PYTHON path), and
-    # without skipping it every WSL evolve commit fails.
+    _log_foreign_staged(
+        pathspecs,
+        context=f"generation {generation} promote ({new_version})",
+        env=env,
+        run=run,
+    )
+
+    # Path scope: ``--only -- <pathspecs>`` commits those paths and nothing
+    # else from the index. Gotcha: a partial commit takes the WORKING-TREE
+    # state of the named paths; that equals the staged state here only
+    # because the ``git add`` above immediately precedes it.
+    #
+    # --no-verify skips the pre-commit hook entirely, including
+    # scripts/check_sandbox.py. That hook was never the path guard: it
+    # blocks invalid paths but doesn't enforce ONLY these paths
+    # (.claude/rules/evolve.md), so the scope is enforced by the pathspec
+    # above, not by the hook. --no-verify itself stays because on WSL the
+    # hook can't run (Git-for-Windows generated /bin/sh shebang over
+    # bash-array syntax + Windows-only INSTALL_PYTHON path), and without
+    # skipping it every WSL evolve commit fails.
     try:
         commit_result = run(
-            ["git", "commit", "--no-verify", "-m", msg],
+            ["git", "commit", "--no-verify", "--only", "-m", msg, "--", *pathspecs],
             capture_output=True,
             text=True,
             check=False,
@@ -1617,7 +1723,7 @@ def git_commit_evo_auto(
         )
     except (FileNotFoundError, OSError) as exc:
         _log.warning("git commit failed for %s: %s", new_version, exc)
-        _reset_staged_promote(run=run)
+        _reset_staged_promote(pathspecs, run=run)
         return False, None
     if commit_result.returncode != 0:
         _log.warning(
@@ -1626,7 +1732,7 @@ def git_commit_evo_auto(
             generation,
             commit_result.stderr,
         )
-        _reset_staged_promote(run=run)
+        _reset_staged_promote(pathspecs, run=run)
         return False, None
 
     # Capture the promote commit SHA so a subsequent regression rollback
@@ -1654,26 +1760,23 @@ def git_commit_evo_auto(
     return True, sha
 
 
-def _reset_staged_promote(
+def _reset_index_paths(
+    pathspecs: list[str],
     *,
-    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    what: str,
+    run: Callable[..., subprocess.CompletedProcess[str]],
 ) -> None:
-    """Clear any staged changes left behind by a failed promote commit.
+    """``git reset HEAD -- <pathspecs>``; index only, never raises.
 
-    ``git_commit_evo_auto`` stages ``bots/<vN>/`` + ``current.txt`` before
-    ``git commit``; if the commit returns non-zero or raises, the staged
-    diff lingers and the next generation's bare ``git commit -m`` would
-    pick it up. Run ``git reset HEAD -- .`` to clean the index without
-    touching the working tree. Never raises — best-effort.
-
-    Today's WSL pre-commit hook regression was the obvious trigger but
-    the same leak hits any commit-fail path (disk full, hook regression,
-    transient git error). Always cleaning up matches the revert primitive's
-    contract — own the mess you stage.
+    An empty *pathspecs* is a no-op: ``git reset HEAD --`` with no paths
+    would unstage the WHOLE index, which is exactly the operator-work
+    damage these scoped cleanups exist to avoid.
     """
+    if not pathspecs:
+        return
     try:
         run(
-            ["git", "reset", "HEAD", "--", "."],
+            ["git", "reset", "HEAD", "--", *pathspecs],
             capture_output=True,
             text=True,
             check=False,
@@ -1681,40 +1784,99 @@ def _reset_staged_promote(
         )
     except (FileNotFoundError, OSError) as exc:
         _log.warning(
-            "git reset (post-failed-promote cleanup) failed: %s; "
-            "index may still carry staged promote diff",
+            "git reset (post-failed-%s cleanup) failed: %s; index may still carry staged %s diff",
+            what,
             exc,
+            what,
         )
+
+
+def _reset_staged_promote(
+    pathspecs: list[str],
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> None:
+    """Unstage the promotion paths left behind by a failed promote commit.
+
+    ``git_commit_evo_auto`` stages ``bots/<vN>/`` + ``current.txt`` before
+    ``git commit``; if the commit returns non-zero or raises, that staged
+    diff lingers. Run ``git reset HEAD -- <pathspecs>`` — scoped to the
+    same paths as the commit (Phase EH Step EH.8), so an operator's
+    unrelated staged work is left staged instead of being swept out of the
+    index too. The working tree is untouched. Never raises — best-effort.
+
+    The WSL pre-commit hook regression was the original trigger but the
+    same leak hits any commit-fail path (disk full, hook regression,
+    transient git error). Always cleaning up matches the revert
+    primitive's contract — own the mess you stage, and only that.
+    """
+    _reset_index_paths(pathspecs, what="promote", run=run)
 
 
 def _reset_staged_revert(
+    pathspecs: list[str],
     *,
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> None:
-    """Clear any staged changes left behind by a failed revert commit.
+    """Unstage the reverse diff left behind by a failed revert commit.
 
     ``git revert --no-commit`` stages the reverse diff in the index; if
-    the follow-up ``git commit`` then fails, the staged diff lingers and
-    will leak into the NEXT generation's commit (``git_commit_evo_auto``
-    does a plain ``git commit -m`` with no pathspec and no ``-a``, which
-    commits everything currently staged). Run ``git reset HEAD -- .`` so
-    the revert primitive cleans up its own mess on the failure path.
-    Never raises — this is best-effort.
+    the follow-up ``git commit`` then fails, that staged diff lingers. Run
+    ``git reset HEAD -- <pathspecs>`` over the promote commit's own paths
+    — the same paths the revert commit names (Phase EH Step EH.8) — so the
+    revert primitive cleans up its own mess and leaves an operator's
+    unrelated staged work alone. Never raises — this is best-effort.
+    """
+    _reset_index_paths(pathspecs, what="revert", run=run)
+
+
+def _promote_commit_paths(
+    promote_sha: str,
+    *,
+    env: dict[str, str],
+    run: Callable[..., subprocess.CompletedProcess[str]],
+) -> list[str] | None:
+    """Every path the commit at *promote_sha* touched, or None on failure.
+
+    Read from the commit itself rather than rebuilt from the version name:
+    a pre-EH.8 promote commit may have swept foreign paths, and a revert
+    reverses all of them, so its scoped commit must name all of them.
+    ``--no-renames`` lists both sides of a rename (a revert touches both);
+    ``-z`` keeps unusual file names unquoted.
     """
     try:
-        run(
-            ["git", "reset", "HEAD", "--", "."],
+        result = run(
+            [
+                "git",
+                "show",
+                "--no-renames",
+                "--name-only",
+                "--pretty=format:",
+                "-z",
+                promote_sha,
+            ],
             capture_output=True,
             text=True,
             check=False,
             cwd=str(_REPO_ROOT),
+            env=env,
         )
     except (FileNotFoundError, OSError) as exc:
+        _log.warning("git show failed for %s: %s", promote_sha, exc)
+        return None
+    if result.returncode != 0:
         _log.warning(
-            "git reset (post-failed-revert cleanup) failed: %s; "
-            "index may still carry staged revert diff",
-            exc,
+            "git show returned %d for %s: %s",
+            result.returncode,
+            promote_sha,
+            result.stderr,
         )
+        return None
+    paths = _split_nul(result.stdout)
+    if not paths:
+        _log.warning("git show listed no paths for %s", promote_sha)
+        return None
+    return paths
 
 
 def git_revert_evo_auto(
@@ -1727,13 +1889,25 @@ def git_revert_evo_auto(
     """Revert the promote commit at *promote_sha* under EVO_AUTO=1.
 
     Uses ``git revert --no-commit`` so we can provide our own commit
-    message containing the ``[evo-auto]`` marker. Returns True on success;
-    a failure logs WARNING and returns False (operator reconciles). On
-    any failure path after ``git revert --no-commit`` has staged its
-    reverse diff, ``_reset_staged_revert`` is called to drop the staged
-    changes so they do not leak into the next generation's commit.
+    message containing the ``[evo-auto]`` marker, then commits ONLY the
+    promote commit's own paths (``git commit --only -- <paths>``, Phase EH
+    Step EH.8), so unrelated staged work stays staged and uncommitted.
+    The path set comes from ``git show`` of *promote_sha*. Before the
+    commit, ``git revert --quit`` drops the sequencer state
+    (``REVERT_HEAD``) while keeping the staged reverse diff, so the partial
+    commit is never refused as "partial commit during a revert" on any git
+    version.
+
+    Returns True on success; a failure logs WARNING and returns False
+    (operator reconciles). On any failure path after ``git revert
+    --no-commit`` has staged its reverse diff, ``_reset_staged_revert``
+    unstages those paths so they do not leak into a later commit.
     """
     env = _git_env_evo_auto()
+
+    pathspecs = _promote_commit_paths(promote_sha, env=env, run=run)
+    if pathspecs is None:
+        return False
 
     try:
         revert_result = run(
@@ -1756,6 +1930,35 @@ def git_revert_evo_auto(
         )
         return False
 
+    # Best-effort: the commit below supplies its own message, so nothing
+    # needs REVERT_HEAD. If --quit fails, still try the commit — current
+    # git accepts a partial commit during a revert anyway.
+    try:
+        quit_result = run(
+            ["git", "revert", "--quit"],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=str(_REPO_ROOT),
+            env=env,
+        )
+        if quit_result.returncode != 0:
+            _log.warning(
+                "git revert --quit returned %d for %s: %s",
+                quit_result.returncode,
+                promote_sha,
+                quit_result.stderr,
+            )
+    except (FileNotFoundError, OSError) as exc:
+        _log.warning("git revert --quit failed for %s: %s", promote_sha, exc)
+
+    _log_foreign_staged(
+        pathspecs,
+        context=f"generation {generation} rollback of {promote_sha[:12]}",
+        env=env,
+        run=run,
+    )
+
     msg = (
         f"evolve: generation {generation} regression rollback\n"
         "\n"
@@ -1763,10 +1966,10 @@ def git_revert_evo_auto(
         "\n"
         "[evo-auto]\n"
     )
-    # --no-verify: same rationale as git_commit_evo_auto above.
+    # --only / --no-verify: same rationale as git_commit_evo_auto above.
     try:
         commit_result = run(
-            ["git", "commit", "--no-verify", "-m", msg],
+            ["git", "commit", "--no-verify", "--only", "-m", msg, "--", *pathspecs],
             capture_output=True,
             text=True,
             check=False,
@@ -1775,7 +1978,7 @@ def git_revert_evo_auto(
         )
     except (FileNotFoundError, OSError) as exc:
         _log.warning("git commit (revert) failed for %s: %s", promote_sha, exc)
-        _reset_staged_revert(run=run)
+        _reset_staged_revert(pathspecs, run=run)
         return False
     if commit_result.returncode != 0:
         _log.warning(
@@ -1784,7 +1987,7 @@ def git_revert_evo_auto(
             generation,
             commit_result.stderr,
         )
-        _reset_staged_revert(run=run)
+        _reset_staged_revert(pathspecs, run=run)
         return False
     _log.info(
         "evolve: reverted promotion %s (generation %d regression rollback)",
