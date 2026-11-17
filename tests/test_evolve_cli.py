@@ -1288,6 +1288,10 @@ def test_priors_exclude_promoted_off_omits_exclude_titles(
 # 10. Commit helper shape
 # ---------------------------------------------------------------------------
 
+# What a faked ``git show --name-only -z <promote_sha>`` reports (EH.8).
+_FAKE_SHOW_PATHS = ["bots/current/current.txt", "bots/v5/bot.py"]
+_FAKE_SHOW_STDOUT = "".join(f"{p}\0" for p in _FAKE_SHOW_PATHS)
+
 
 def test_git_commit_evo_auto_builds_stack_body(
     cli: ModuleType, monkeypatch: pytest.MonkeyPatch
@@ -1299,6 +1303,7 @@ def test_git_commit_evo_auto_builds_stack_body(
         if argv[:2] == ["git", "commit"]:
             captured["msg"] = argv[argv.index("-m") + 1]
             captured["env"] = kwargs.get("env")
+            captured["argv"] = list(argv)
         if argv[:2] == ["git", "rev-parse"]:
             return subprocess.CompletedProcess(argv, 0, stdout="abc123\n", stderr="")
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
@@ -1320,6 +1325,10 @@ def test_git_commit_evo_auto_builds_stack_body(
     # EVO_AUTO=1 must be set in the commit env; ADVISED_AUTO must be absent.
     assert captured["env"]["EVO_AUTO"] == "1"
     assert "ADVISED_AUTO" not in captured["env"]
+    # EH.8: the commit is partial, scoped to the promotion paths only.
+    argv = captured["argv"]
+    assert "--only" in argv
+    assert argv[argv.index("--") + 1 :] == ["bots/v1/", "bots/current/current.txt"]
 
 
 def test_git_revert_evo_auto_uses_two_stage_revert(
@@ -1332,6 +1341,8 @@ def test_git_revert_evo_auto_uses_two_stage_revert(
     def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         commands.append(list(argv))
         envs.append(dict(kwargs.get("env") or {}))
+        if argv[:2] == ["git", "show"]:
+            return subprocess.CompletedProcess(argv, 0, stdout=_FAKE_SHOW_STDOUT, stderr="")
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
     ok = cli.git_revert_evo_auto(
@@ -1341,11 +1352,17 @@ def test_git_revert_evo_auto_uses_two_stage_revert(
         run=fake_run,
     )
     assert ok is True
-    # First command: git revert --no-commit <sha>. Second: git commit -m.
-    assert commands[0][:3] == ["git", "revert", "--no-commit"]
-    assert commands[0][3] == "abc123"
-    assert commands[1][:2] == ["git", "commit"]
-    revert_msg = commands[1][commands[1].index("-m") + 1]
+    # EH.8 sequence: read the promote commit's paths, revert --no-commit,
+    # drop sequencer state, check for foreign staged paths, partial commit.
+    assert commands[0][:2] == ["git", "show"]
+    assert commands[0][-1] == "abc123"
+    assert commands[1] == ["git", "revert", "--no-commit", "abc123"]
+    assert commands[2] == ["git", "revert", "--quit"]
+    assert commands[3][:3] == ["git", "diff", "--cached"]
+    assert commands[4][:2] == ["git", "commit"]
+    assert "--only" in commands[4]
+    assert commands[4][commands[4].index("--") + 1 :] == _FAKE_SHOW_PATHS
+    revert_msg = commands[4][commands[4].index("-m") + 1]
     assert "regression rollback" in revert_msg
     assert "[evo-auto]" in revert_msg
     # EVO_AUTO=1 in both subprocess envs.
@@ -1361,21 +1378,18 @@ def test_git_commit_evo_auto_resets_index_when_commit_fails(
     the commit primitive must drop the staged content itself.
 
     Without this cleanup the staged paths leak into the NEXT generation's
-    commit (``git_commit_evo_auto`` does a plain ``git commit -m msg``
-    with no pathspec and no ``-a``, which commits everything currently
-    staged). The commit function owns the mess it staged, so it owns
-    cleaning up on the failure path. Mirrors the revert path's contract.
+    commit. The commit function owns the mess it staged, so it owns
+    cleaning up on the failure path, and since EH.8 ONLY that mess: the
+    reset is scoped to the promotion paths, never ``-- .``.
     """
     commands: list[list[str]] = []
 
     def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         commands.append(list(argv))
-        if argv[:2] == ["git", "add"]:
+        if argv[:2] in (["git", "add"], ["git", "diff"]):
             return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
         if argv[:2] == ["git", "commit"]:
-            return subprocess.CompletedProcess(
-                argv, 1, stdout="", stderr="hook blocked commit"
-            )
+            return subprocess.CompletedProcess(argv, 1, stdout="", stderr="hook blocked commit")
         if argv[:2] == ["git", "reset"]:
             return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
         raise AssertionError(f"unexpected argv: {argv!r}")
@@ -1388,13 +1402,21 @@ def test_git_commit_evo_auto_resets_index_when_commit_fails(
     )
     assert ok is False
     assert sha is None
-    # Sequence: git add, git commit (fails), git reset HEAD -- .
+    # Sequence: git add, foreign-path check, git commit (fails), scoped reset.
     assert [c[:2] for c in commands] == [
         ["git", "add"],
+        ["git", "diff"],
         ["git", "commit"],
         ["git", "reset"],
     ]
-    assert commands[2] == ["git", "reset", "HEAD", "--", "."]
+    assert commands[3] == [
+        "git",
+        "reset",
+        "HEAD",
+        "--",
+        "bots/v1/",
+        "bots/current/current.txt",
+    ]
 
 
 def test_git_revert_evo_auto_resets_index_when_commit_fails(
@@ -1403,11 +1425,9 @@ def test_git_revert_evo_auto_resets_index_when_commit_fails(
     """If ``git commit`` fails after ``git revert --no-commit`` staged the
     reverse diff, the revert primitive must drop the staged changes itself.
 
-    Without this cleanup the staged reverse diff leaks into the NEXT
-    generation's commit (``git_commit_evo_auto`` does a plain
-    ``git commit -m msg`` with no pathspec and no ``-a``, which commits
-    everything currently staged). The revert function owns the mess it
-    created, so it owns cleaning it up on the failure path.
+    The revert function owns the mess it created, so it owns cleaning it
+    up on the failure path, and since EH.8 ONLY that mess: the reset is
+    scoped to the promote commit's own paths, never ``-- .``.
     """
     commands: list[list[str]] = []
 
@@ -1415,12 +1435,12 @@ def test_git_revert_evo_auto_resets_index_when_commit_fails(
         commands.append(list(argv))
         # revert succeeds (stages the reverse diff), commit fails, reset
         # must then happen to drop the staged diff.
-        if argv[:2] == ["git", "revert"]:
+        if argv[:2] == ["git", "show"]:
+            return subprocess.CompletedProcess(argv, 0, stdout=_FAKE_SHOW_STDOUT, stderr="")
+        if argv[:2] in (["git", "revert"], ["git", "diff"]):
             return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
         if argv[:2] == ["git", "commit"]:
-            return subprocess.CompletedProcess(
-                argv, 1, stdout="", stderr="hook blocked commit"
-            )
+            return subprocess.CompletedProcess(argv, 1, stdout="", stderr="hook blocked commit")
         if argv[:2] == ["git", "reset"]:
             return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
         raise AssertionError(f"unexpected argv: {argv!r}")
@@ -1432,17 +1452,240 @@ def test_git_revert_evo_auto_resets_index_when_commit_fails(
         run=fake_run,
     )
     assert ok is False
-    # Verify the sequence: revert, commit (fails), reset HEAD -- .
+    # Verify the sequence: show, revert, quit, diff, commit (fails), reset.
     assert [c[:2] for c in commands] == [
+        ["git", "show"],
         ["git", "revert"],
+        ["git", "revert"],
+        ["git", "diff"],
         ["git", "commit"],
         ["git", "reset"],
     ]
-    # The reset must target HEAD and the whole tree (``.``) — scoped to
-    # index so the working tree is unchanged, so subsequent pointer
-    # fallbacks still see their own writes.
-    reset_cmd = commands[2]
-    assert reset_cmd == ["git", "reset", "HEAD", "--", "."]
+    # The reset targets HEAD (index only, so the working tree is unchanged
+    # and subsequent pointer fallbacks still see their own writes) and ONLY
+    # the promote commit's paths, so unrelated staged work stays staged.
+    assert commands[5] == ["git", "reset", "HEAD", "--", *_FAKE_SHOW_PATHS]
+
+
+def test_reset_staged_helpers_never_reset_whole_index_on_empty_paths(
+    cli: ModuleType,
+) -> None:
+    """An empty path list must be a no-op: ``git reset HEAD --`` with no
+    paths would unstage the operator's whole index (EH.8)."""
+    commands: list[list[str]] = []
+
+    def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    cli._reset_staged_promote([], run=fake_run)
+    cli._reset_staged_revert([], run=fake_run)
+    assert commands == []
+
+
+def test_git_revert_evo_auto_aborts_before_revert_when_paths_unreadable(
+    cli: ModuleType,
+) -> None:
+    """If the promote commit's paths can't be read, nothing is reverted or
+    staged: the scoped commit would have no path set to name."""
+    commands: list[list[str]] = []
+
+    def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(list(argv))
+        if argv[:2] == ["git", "show"]:
+            return subprocess.CompletedProcess(argv, 128, stdout="", stderr="bad")
+        raise AssertionError(f"unexpected argv: {argv!r}")
+
+    assert cli.git_revert_evo_auto("deadbeef", 2, "r", run=fake_run) is False
+    assert [c[:2] for c in commands] == [["git", "show"]]
+
+
+# ---------------------------------------------------------------------------
+# 10b. Path-scoped [evo-auto] commits in a real throwaway git repo (EH.8)
+# ---------------------------------------------------------------------------
+
+
+def _git(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout
+
+
+def _staged(repo: Path) -> set[str]:
+    return set(_git(repo, "diff", "--cached", "--name-only").split())
+
+
+def _commit_paths(repo: Path, rev: str = "HEAD") -> set[str]:
+    out = _git(repo, "show", "--no-renames", "--name-only", "--pretty=format:", rev)
+    return set(out.split())
+
+
+@pytest.fixture
+def evo_repo(cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A throwaway repo with ``bots/v0/`` + ``bots/current/current.txt``.
+
+    ``cli._REPO_ROOT`` points at it, so the production helpers run their
+    real git commands here and never against this repository.
+    """
+    for var in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE"):
+        monkeypatch.delenv(var, raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    hooks = tmp_path / "no-hooks"
+    hooks.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.name", "EH8 Test")
+    _git(repo, "config", "user.email", "eh8@example.invalid")
+    _git(repo, "config", "commit.gpgsign", "false")
+    _git(repo, "config", "core.autocrlf", "false")
+    _git(repo, "config", "core.hooksPath", str(hooks))
+    (repo / "bots" / "v0").mkdir(parents=True)
+    (repo / "bots" / "v0" / "bot.py").write_text("V = 0\n", encoding="utf-8")
+    (repo / "bots" / "current").mkdir()
+    (repo / "bots" / "current" / "current.txt").write_text("v0\n", encoding="utf-8")
+    (repo / "notes.txt").write_text("operator notes\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "init")
+    monkeypatch.setattr(cli, "_REPO_ROOT", repo)
+    return repo
+
+
+def _write_promotion(repo: Path, version: str = "v1") -> None:
+    (repo / "bots" / version).mkdir(parents=True)
+    (repo / "bots" / version / "bot.py").write_text("V = 1\n", encoding="utf-8")
+    (repo / "bots" / "current" / "current.txt").write_text(f"{version}\n", encoding="utf-8")
+
+
+def _stage_operator_work(repo: Path) -> set[str]:
+    """Stage unrelated operator work: one new file, one modified file."""
+    (repo / "operator_wip.py").write_text("WIP = True\n", encoding="utf-8")
+    (repo / "notes.txt").write_text("operator notes, edited\n", encoding="utf-8")
+    _git(repo, "add", "operator_wip.py", "notes.txt")
+    return {"operator_wip.py", "notes.txt"}
+
+
+_PROMOTE_PATHS = {"bots/v1/bot.py", "bots/current/current.txt"}
+
+
+def _failing_commit_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    """Real git for everything except ``git commit``, which fails."""
+    if argv[:2] == ["git", "commit"]:
+        return subprocess.CompletedProcess(argv, 1, stdout="", stderr="forced")
+    return cast(subprocess.CompletedProcess[str], subprocess.run(argv, **kwargs))
+
+
+def test_promote_commit_contains_only_promotion_paths(
+    cli: ModuleType, evo_repo: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Done-when (2)+(3): staged operator work is neither committed nor
+    unstaged by the [evo-auto] promote commit, and is named in an ERROR."""
+    foreign = _stage_operator_work(evo_repo)
+    _write_promotion(evo_repo)
+    head_before = _git(evo_repo, "rev-parse", "HEAD").strip()
+
+    with caplog.at_level(logging.ERROR):
+        ok, sha = cli.git_commit_evo_auto("v1", 3, ["imp-a"])
+
+    assert ok is True
+    assert sha == _git(evo_repo, "rev-parse", "HEAD").strip()
+    assert sha != head_before
+    assert _commit_paths(evo_repo) == _PROMOTE_PATHS
+    assert "[evo-auto]" in _git(evo_repo, "log", "-1", "--pretty=%B")
+    # Operator work: still staged, still uncommitted.
+    assert _staged(evo_repo) == foreign
+    assert _git(evo_repo, "ls-tree", "--name-only", "HEAD", "operator_wip.py") == ""
+    assert _git(evo_repo, "show", "HEAD:notes.txt") == "operator notes\n"
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1
+    assert "operator_wip.py" in errors[0].getMessage()
+    assert "notes.txt" in errors[0].getMessage()
+
+
+def test_promote_commit_with_clean_index_logs_no_error(
+    cli: ModuleType, evo_repo: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    _write_promotion(evo_repo)
+    with caplog.at_level(logging.ERROR):
+        ok, _sha = cli.git_commit_evo_auto("v1", 1, ["imp-a"])
+    assert ok is True
+    assert _commit_paths(evo_repo) == _PROMOTE_PATHS
+    assert _staged(evo_repo) == set()
+    assert not [r for r in caplog.records if r.levelno == logging.ERROR]
+
+
+def test_revert_commit_contains_only_promote_paths(cli: ModuleType, evo_repo: Path) -> None:
+    """Done-when (4): an unrelated staged file survives the rollback commit
+    still staged, and the rollback names only the promote commit's paths."""
+    _write_promotion(evo_repo)
+    ok, sha = cli.git_commit_evo_auto("v1", 1, ["imp-a"])
+    assert ok is True and sha is not None
+    foreign = _stage_operator_work(evo_repo)
+
+    assert cli.git_revert_evo_auto(sha, 1, "regression rollback: test") is True
+
+    assert _git(evo_repo, "rev-parse", "HEAD~1").strip() == sha
+    assert _commit_paths(evo_repo) == _PROMOTE_PATHS
+    assert "[evo-auto]" in _git(evo_repo, "log", "-1", "--pretty=%B")
+    assert _git(evo_repo, "show", "HEAD:bots/current/current.txt") == "v0\n"
+    assert _git(evo_repo, "ls-tree", "-r", "--name-only", "HEAD", "bots/v1") == ""
+    assert _staged(evo_repo) == foreign
+    assert _git(evo_repo, "ls-tree", "--name-only", "HEAD", "operator_wip.py") == ""
+    # No sequencer state left behind for the next generation to trip on.
+    assert not (evo_repo / ".git" / "REVERT_HEAD").exists()
+    assert not (evo_repo / ".git" / "sequencer").exists()
+
+
+def test_revert_of_pre_eh8_sweeping_promote_reverts_every_path(
+    cli: ModuleType, evo_repo: Path
+) -> None:
+    """A pre-EH.8 promote commit may have swept a foreign path; the revert's
+    path set comes from that commit, so the swept path is reverted too."""
+    _write_promotion(evo_repo)
+    (evo_repo / "swept.txt").write_text("swept\n", encoding="utf-8")
+    _git(evo_repo, "add", "-A")
+    _git(evo_repo, "commit", "-q", "-m", "old sweeping promote [evo-auto]")
+    sha = _git(evo_repo, "rev-parse", "HEAD").strip()
+    foreign = _stage_operator_work(evo_repo)
+
+    assert cli.git_revert_evo_auto(sha, 1, "rollback") is True
+
+    assert _commit_paths(evo_repo) == _PROMOTE_PATHS | {"swept.txt"}
+    assert _git(evo_repo, "ls-tree", "--name-only", "HEAD", "swept.txt") == ""
+    assert _staged(evo_repo) == foreign
+
+
+def test_promote_commit_failure_keeps_operator_work_staged(cli: ModuleType, evo_repo: Path) -> None:
+    """Done-when (5), promote side: the failure-path reset unstages only the
+    promotion paths, never ``git reset HEAD -- .``."""
+    foreign = _stage_operator_work(evo_repo)
+    _write_promotion(evo_repo)
+    head_before = _git(evo_repo, "rev-parse", "HEAD").strip()
+
+    ok, sha = cli.git_commit_evo_auto("v1", 1, ["imp-a"], run=_failing_commit_run)
+
+    assert ok is False and sha is None
+    assert _git(evo_repo, "rev-parse", "HEAD").strip() == head_before
+    assert _staged(evo_repo) == foreign
+
+
+def test_revert_commit_failure_keeps_operator_work_staged(cli: ModuleType, evo_repo: Path) -> None:
+    """Done-when (5), revert side."""
+    _write_promotion(evo_repo)
+    ok, sha = cli.git_commit_evo_auto("v1", 1, ["imp-a"])
+    assert ok is True and sha is not None
+    foreign = _stage_operator_work(evo_repo)
+
+    ok = cli.git_revert_evo_auto(sha, 1, "rollback", run=_failing_commit_run)
+
+    assert ok is False
+    assert _git(evo_repo, "rev-parse", "HEAD").strip() == sha
+    assert _staged(evo_repo) == foreign
+    assert not (evo_repo / ".git" / "REVERT_HEAD").exists()
 
 
 # ---------------------------------------------------------------------------
