@@ -386,7 +386,6 @@ uv run python -m bots.v0.runner --map Simple64
 
 ### Run the Jev player
 
-
 **Combined Observer Rush preview (Windows):** watch hosted Typesafe Jev with the live 3D graph,
 decision text and event log in one window. Run
 `powershell -File scripts/launch-jev-battle.ps1`; add `-AutoRecord` for automatic
