@@ -80,7 +80,7 @@ The project combines automated improvement with an inspectable playing experienc
 
 SC2 supplies concrete outcomes and a demanding test of planning, execution and observation. The improvement-loop pattern may transfer elsewhere; this implementation remains SC2-specific.
 
-**Deep dives:** [Wiki](docs/wiki/index.md) · [Active plan](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/docs/plans/master_plan.md)
+**Deep dives:** [Wiki](docs/wiki/index.md) · [Active plan](https://github.com/aberson/Alpha4Gate/blob/master/docs/plans/master_plan.md)
 
 ---
 
@@ -156,7 +156,7 @@ made the conflict diagnosable. The proof of concept closed on 2026-11-11 with th
 recovery repair and the v2 gameplay acceptance runs unfinished. A richer graph and a
 working API connection do not, by themselves, establish a stronger player.
 
-**Explore:** [Jev code](https://github.com/aberson/Alpha4Gate/tree/master-plan/phase-ev/src/jev) · [v2 policy](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/bots/jev/v2/policy.json) · [Recovery investigation](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/docs/investigations/jev-recovery-stall-2026-10-11.md)
+**Explore:** [Jev code](https://github.com/aberson/Alpha4Gate/tree/master/src/jev) · [v2 policy](https://github.com/aberson/Alpha4Gate/blob/master/bots/jev/v2/policy.json) · [Recovery investigation](https://github.com/aberson/Alpha4Gate/blob/master/docs/investigations/jev-recovery-stall-2026-10-11.md)
 
 ## Watching Jev play: Observer Rush and Archon Auto Caster
 
@@ -186,10 +186,9 @@ but the default **450 paid Typesafe requests** still applies. Once exhausted,
 the graph continues with local fallback decisions. The local caster has no paid
 API calls; the hosted player uses Typesafe credits.
 
-**Try the preview:** Jev and Battle View currently live on
-[`master-plan/phase-ev`](https://github.com/aberson/Alpha4Gate/tree/master-plan/phase-ev),
-not in the default branch's runtime. Use that checkout and follow the
-[Battle View setup guide](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/docs/operator/jev-battle-view.md), then run:
+**Try the preview:** Jev and Battle View are on the default branch, `master`.
+Follow the
+[Battle View setup guide](https://github.com/aberson/Alpha4Gate/blob/master/docs/operator/jev-battle-view.md), then run:
 
 ```powershell
 powershell -File scripts/launch-jev-battle.ps1 -AutoRecord
@@ -269,7 +268,7 @@ assistant to issue every unit command.
 - **A seat at the match -** Battle View combines SC2, the graph, a camera observer, recording and a local Archon Auto Caster. The real hosted demo is linked above.
 - **Jev wraps up (2026-11-11) -** Jev closes as a completed proof of concept. Its decision-graph, evaluation and viewer lessons carry into the main bot.
 - **Now (2026-11-11) -** The focus is playing strength. The lineage is at v13, but nothing yet shows it beating v0 against a fixed opponent, and an SC2 update currently breaks the older versions.
-- **Next -** Fix SC2 compatibility, then measure v0 through v13 on a fixed scoreboard (built-in AI at rising difficulty, all three races). Promote only versions that also hold up there, explore what PPO should control, and refresh the viewer in Jev's style for spot-checking candidates. [Current plan](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/docs/plans/master_plan.md).
+- **Next -** Fix SC2 compatibility, then measure v0 through v13 on a fixed scoreboard (built-in AI at rising difficulty, all three races). Promote only versions that also hold up there, explore what PPO should control, and refresh the viewer in Jev's style for spot-checking candidates. [Current plan](https://github.com/aberson/Alpha4Gate/blob/master/docs/plans/master_plan.md).
 
 ---
 
@@ -312,8 +311,7 @@ assistant to issue every unit command.
 
 ### Install
 
-For the Jev features described here, first check out `master-plan/phase-ev`; the
-default branch does not yet include that runtime. See the linked operator guides
+The Jev features described here are on the default branch, `master`. See the linked operator guides
 for Typesafe credentials and Battle View prerequisites.
 
 1. Install Python dependencies:
@@ -388,13 +386,12 @@ uv run python -m bots.v0.runner --map Simple64
 
 ### Run the Jev player
 
-Use the `master-plan/phase-ev` checkout for these commands.
 
 **Combined Observer Rush preview (Windows):** watch hosted Typesafe Jev with the live 3D graph,
 decision text and event log in one window. Run
 `powershell -File scripts/launch-jev-battle.ps1`; add `-AutoRecord` for automatic
 2160×1200 recording with game audio only. Desktop shortcuts are installed on the
-development workstation. [Try it yourself](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/docs/operator/jev-battle-view.md).
+development workstation. [Try it yourself](https://github.com/aberson/Alpha4Gate/blob/master/docs/operator/jev-battle-view.md).
 This preview uses your saved Typesafe key and credits, requires the isolated portable OBS
 setup, and does not complete the v2 gameplay acceptance gates.
 
@@ -429,7 +426,7 @@ For actual Typesafe gameplay, configure `TYPESAFE_API_KEY` in terminal 3 and run
 uv run python -m bots.jev.v2 --decision-provider typesafe --decision-model jev-1.13.0 --decision-max-requests 450 --realtime
 ```
 
-The dashboard's **Army decision** panel identifies Typesafe decisions and scripted fallback, actual returned model, latency and token usage; for v2 the **Plans and decisions** panel and the graph's node sources show which request, fallback or local decision drove each plan and node. Missing credentials fail before SC2 starts. Setup and the separate live integration gate: [Typesafe validation](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/docs/operator/jev-validation.md#13-typesafe-jev-integration-phase-ji).
+The dashboard's **Army decision** panel identifies Typesafe decisions and scripted fallback, actual returned model, latency and token usage; for v2 the **Plans and decisions** panel and the graph's node sources show which request, fallback or local decision drove each plan and node. Missing credentials fail before SC2 starts. Setup and the separate live integration gate: [Typesafe validation](https://github.com/aberson/Alpha4Gate/blob/master/docs/operator/jev-validation.md#13-typesafe-jev-integration-phase-ji).
 
 For an attended test, use the dashboard-first launcher. It starts or reuses the dashboard, opens the Jev tab on the exact run (`/?tab=jev&launch=<session_id>`), and starts SC2 only after that page has rendered the run and acknowledged it:
 
@@ -437,9 +434,9 @@ For an attended test, use the dashboard-first launcher. It starts or reuses the 
 powershell -File scripts/launch-jev.ps1 -Version v2 -DecisionProvider scripted -Difficulty 1 -Seed 1
 ```
 
-Its defaults are `-Version v2 -DecisionProvider typesafe -Difficulty 3 -Seed 11`: with no arguments it plays `bots.jev.v2` as a paid hosted match (`-Version v1` plays v1). The v2 player, its lanes, plans and questions, the live graph and the Step 222 prerequisites are in section 13 of the [Jev v2 validation guide](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/docs/operator/jev-v2-validation.md#13-the-v2-player-and-the-live-graph-steps-214-221). The launcher and the reproducible benchmark are documented in the [Jev v2 validation guide](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/docs/operator/jev-v2-validation.md); for example, `uv run python scripts/benchmark_jev.py --panel baseline --dry-run` resolves the exact plan with no service call, SC2 launch or file write.
+Its defaults are `-Version v2 -DecisionProvider typesafe -Difficulty 3 -Seed 11`: with no arguments it plays `bots.jev.v2` as a paid hosted match (`-Version v1` plays v1). The v2 player, its lanes, plans and questions, the live graph and the Step 222 prerequisites are in section 13 of the [Jev v2 validation guide](https://github.com/aberson/Alpha4Gate/blob/master/docs/operator/jev-v2-validation.md#13-the-v2-player-and-the-live-graph-steps-214-221). The launcher and the reproducible benchmark are documented in the [Jev v2 validation guide](https://github.com/aberson/Alpha4Gate/blob/master/docs/operator/jev-v2-validation.md); for example, `uv run python scripts/benchmark_jev.py --panel baseline --dry-run` resolves the exact plan with no service call, SC2 launch or file write.
 
-Stop a match with Ctrl+C once in its own terminal (the bot leaves cleanly; never kill SC2 processes wholesale). Full smoke and acceptance procedure: [docs/operator/jev-validation.md](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/docs/operator/jev-validation.md).
+Stop a match with Ctrl+C once in its own terminal (the bot leaves cleanly; never kill SC2 processes wholesale). Full smoke and acceptance procedure: [docs/operator/jev-validation.md](https://github.com/aberson/Alpha4Gate/blob/master/docs/operator/jev-validation.md).
 
 ### Running without Claude
 
@@ -568,7 +565,7 @@ The bot follows a build order during the opening, then transitions to dynamic de
 ---
 
 **Wiki:** [docs/wiki/index.md](docs/wiki/index.md) — system diagram + page map
-**Active plan:** [docs/plans/master_plan.md](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/docs/plans/master_plan.md)
+**Active plan:** [docs/plans/master_plan.md](https://github.com/aberson/Alpha4Gate/blob/master/docs/plans/master_plan.md)
 
 ---
 
