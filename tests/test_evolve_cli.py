@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import hashlib
 import importlib.util
 import json
 import logging
@@ -20,7 +21,7 @@ import subprocess
 import sys
 import threading
 import tomllib
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from importlib.machinery import ModuleSpec
 from pathlib import Path
 from types import ModuleType
@@ -65,6 +66,49 @@ def _load_cli_module() -> ModuleType:
 @pytest.fixture
 def cli() -> ModuleType:
     return _load_cli_module()
+
+
+# ---------------------------------------------------------------------------
+# Repo-state isolation
+# ---------------------------------------------------------------------------
+
+_REAL_LINEAGE_JSON = _REPO_ROOT / "data" / "lineage.json"
+
+
+def _file_sha256(path: Path) -> str | None:
+    """Return the sha256 of ``path``'s bytes, or ``None`` when it does not exist."""
+    if not path.is_file():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.fixture(autouse=True)
+def _no_post_promotion_hooks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never run the real post-promotion hooks from this file.
+
+    ``run_loop``'s promotion path calls
+    ``bots.v0.learning.post_promotion_hooks.run_post_promotion_hooks``, which
+    runs the real ``scripts/build_lineage.py`` and writes the repo-root
+    ``data/lineage.json``. A test that needs to observe the hooks still
+    installs its own stub with ``monkeypatch.setattr``, which replaces this one.
+    """
+    monkeypatch.setattr(
+        "bots.v0.learning.post_promotion_hooks.run_post_promotion_hooks",
+        lambda _v: None,
+    )
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _real_lineage_json_untouched() -> Iterator[None]:
+    """Fail at module teardown if these tests created or changed the real ``data/lineage.json``."""
+    before = _file_sha256(_REAL_LINEAGE_JSON)
+    yield
+    after = _file_sha256(_REAL_LINEAGE_JSON)
+    assert after == before, (
+        f"tests/test_evolve_cli.py changed the real {_REAL_LINEAGE_JSON} "
+        f"(sha256 before={before}, after={after}); a promotion path ran the "
+        "real post-promotion hooks"
+    )
 
 
 # ---------------------------------------------------------------------------
