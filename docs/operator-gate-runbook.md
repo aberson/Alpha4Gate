@@ -91,6 +91,12 @@ uv run python scripts/baseline.py add v13 v13 --note "frozen anchor"
 uv run python scripts/baseline.py list
 ```
 
+**Make the degradation fatal (EH.3).** Add `--require-baselines` to any gate run that depends on the
+gauntlet. With it, `--fitness-mode baseline|both` against a missing, empty or unloadable registry,
+or `--panel-floor` under `--fitness-mode parent`, exits 1 in seconds, before any game or run-state
+write, and prints the `scripts/baseline.py add` command above. Without the flag the old
+warn-and-proceed behaviour is unchanged, so commands that omit it behave exactly as before.
+
 EJ.7's plan text names this precondition. EL.7's does not, even though `--fitness-mode both` is
 in its command line. Do it once and both gates benefit.
 
@@ -263,10 +269,10 @@ proceeding. Skipping this makes gates 1 and 4 measure nothing.
 Plan: `docs/archived-plans/evolve-judging-plan.md:294-301`.
 
 **Flags-on run** (~45 min). Verbatim from the plan, with `--generations 0` appended per the
-pre-flight decision:
+pre-flight decision and `--require-baselines` appended so a missing registry stops the run at once:
 
 ```powershell
-uv run python scripts/evolve.py --pool-size 3 --games-per-eval 3 --hours 0.75 --generations 0 --priors-exclude-promoted --screen-null-diff --regression-rule one-sided --panel-floor --refresh-dedup --budget-fit --fitness-mode both
+uv run python scripts/evolve.py --pool-size 3 --games-per-eval 3 --hours 0.75 --generations 0 --priors-exclude-promoted --screen-null-diff --regression-rule one-sided --panel-floor --refresh-dedup --budget-fit --fitness-mode both --require-baselines
 ```
 
 **Defaults-off control** (15 min). Run this second, separately, and compare:
@@ -277,7 +283,7 @@ uv run python scripts/evolve.py --pool-size 3 --games-per-eval 3 --hours 0.25 --
 
 | Check | Expected |
 |---|---|
-| Startup WARNING about the panel floor | **Absent.** If it appears, your baselines did not register and this run proves nothing. Stop and fix gate 0. |
+| Startup WARNING about the panel floor | **Absent.** With `--require-baselines` an unregistered gauntlet exits 1 within seconds instead; if it does, fix gate 0 and rerun. Without the flag, a WARNING here means this run proves nothing. |
 | `--screen-null-diff` catches | At least one candidate evicted before games, or a logged zero-catch with a reason |
 | `--regression-rule one-sided` | Rollback decisions cite P(worse) and a decided-game count, not a raw majority |
 | Orphan candidate dirs | No `bots/cand_*` **beyond the pre-existing `cand_d18ed8ce`** left behind |
