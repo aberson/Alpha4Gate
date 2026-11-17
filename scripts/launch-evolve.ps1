@@ -25,8 +25,13 @@
   HOW TO STOP THE RUN: close the evolve CONSOLE window this script opens.
   That is the only stop gesture. Two things that look like one are not:
     * Closing the themed viewer container only DETACHES the display -- the run
-      keeps going headless to its --hours budget. That is deliberate, so an
-      operator who dismisses the window does not lose hours of evolution.
+      keeps going headless until one of evolve.py's own stop conditions fires:
+      the --hours budget, the --generations cap, or an empty pool. This
+      launcher passes --generations (default 0 = no generation cap), so by
+      default the --hours budget or an empty pool ends the run. (evolve.py's
+      own --generations default is 1, which would stop after ONE generation;
+      that is why the launcher always forwards it.) Detaching is deliberate,
+      so an operator who dismisses the window does not lose hours of evolution.
     * The dashboard's Stop button is NOT wired to this runner yet. It writes
       data/evolve_run_control.json, but nothing in scripts/evolve.py or
       src/orchestrator/ reads that file, so the run ignores it. See
@@ -42,7 +47,11 @@
 [CmdletBinding()]
 param(
     # Wall-clock budget forwarded to evolve.py --hours.
-    [double]$Hours = 4
+    [double]$Hours = 4,
+    # Generation cap forwarded to evolve.py --generations. 0 = no cap, so the
+    # run lasts the -Hours budget. evolve.py's own default is 1 generation
+    # (~20 min), which would silently cut an N-hour soak short.
+    [int]$Generations = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -69,9 +78,9 @@ if ($evolveRunning) {
     Write-Host "Evolution run ALREADY ACTIVE (python PID $evolvePid) -- not starting a second one." -ForegroundColor Yellow
     Write-Host "Opening the dashboard on the Evolution tab only." -ForegroundColor Yellow
 } else {
-    $evolveCmd = "Set-Location '$root'; uv run --extra viewer python scripts/evolve.py --hours $Hours --viewer"
+    $evolveCmd = "Set-Location '$root'; uv run --extra viewer python scripts/evolve.py --hours $Hours --generations $Generations --viewer"
     Start-Process powershell -ArgumentList '-NoExit', '-Command', $evolveCmd | Out-Null
-    Write-Host "Evolution run started (--hours $Hours) in its own window." -ForegroundColor Green
+    Write-Host "Evolution run started (--hours $Hours --generations $Generations) in its own window." -ForegroundColor Green
 }
 
 # 2. Dashboard up (reusing already-running servers) + open the Evolution tab.

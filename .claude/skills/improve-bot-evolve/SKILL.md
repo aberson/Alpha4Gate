@@ -36,6 +36,7 @@ The outer phase shape (pre-flight → seed → loop → decision → report) is 
 | `--pool-size` | int | `10` | Number of improvements Claude generates (and tops up to between generations) |
 | `--games-per-eval` | int | `5` | Games in each phase evaluation (fitness / regression). Pass threshold = strict majority of this count. |
 | `--hours` | float | `4.0` | Wall-clock budget. `0` disables the check (test-only). |
+| `--generations` | int | `0` | Generation cap. `0` = no cap, so the `--hours` budget (or an empty pool) ends the run; this skill always passes it. `scripts/evolve.py`'s own default is `1`, which stops after ONE generation (~20 min, `stop_reason` `"generations-reached"`) no matter what `--hours` says; `--hours > 0` with the flag omitted logs a startup WARNING. |
 | `--concurrency` | int | `1` | Number of fitness-eval workers run in parallel by `scripts/evolve.py`. `1` is byte-identical to the historical serial path (Decision D-1 in `docs/completed/evolve-parallelization-plan.md`). `>1` fans the fitness phase out across N worker subprocesses; stack-apply + regression remain serial. **`--viewer` requires this to be `1`** — the two coexist fine at `1`; only `--viewer` with `> 1` is rejected, exiting immediately with guidance (see the Viewer note). |
 | `--lineages` | int | `1` | Number of parallel lineages to round-robin across. `1` with no `data/lineages.json` is byte-identical to the historical single-lineage path. `>1` (or a non-empty `data/lineages.json`) flips `bots/current/current.txt` to each lineage's head before its generation, so the loop interleaves divergent branches (Phase EL). A bare `/improve-bot-evolve` invocation stays single-lineage. |
 | `--map` | str | `Simple64` | SC2 map name |
@@ -217,6 +218,7 @@ uv run python scripts/evolve.py \
     --pool-size 10 \
     --games-per-eval 5 \
     --hours 4 \
+    --generations 0 \
     --concurrency "$CONCURRENCY" \
     --map Simple64 \
     2>&1 | tee -a "$LOGFILE"

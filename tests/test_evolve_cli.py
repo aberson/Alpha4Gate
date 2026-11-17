@@ -466,6 +466,77 @@ def test_default_flags(cli: ModuleType) -> None:
     assert args.viewer is False
 
 
+def _generations_cap_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """WARNING messages from the EH.6 hours-vs-default-generations guard."""
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.WARNING
+        and "--hours" in r.getMessage()
+        and "--generations" in r.getMessage()
+    ]
+
+
+def test_main_warns_when_hours_set_and_generations_left_at_default(
+    cli: ModuleType,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """EH.6: ``--hours 4`` with ``--generations`` omitted runs ONE generation.
+
+    The flags contradict each other (the default cap of 1 stops the loop with
+    ``generations-reached`` ~20 min in), so ``main()`` must say so at startup,
+    naming both flags -- and still run (non-fatal) with the default intact.
+    """
+    seen: dict[str, Any] = {}
+
+    def _fake_run_loop(args: argparse.Namespace, **kwargs: Any) -> int:
+        seen["generations"] = args.generations
+        seen["hours"] = args.hours
+        return 0
+
+    monkeypatch.setattr(cli, "run_loop", _fake_run_loop)
+
+    with caplog.at_level(logging.WARNING, logger="evolve"):
+        assert cli.main(["--hours", "4.0"]) == 0
+
+    # Non-fatal, and the omitted flag still resolves to the documented default.
+    assert seen == {"generations": 1, "hours": 4.0}
+    warnings = _generations_cap_warnings(caplog)
+    assert len(warnings) == 1, [r.getMessage() for r in caplog.records]
+    assert "default of 1" in warnings[0]
+    assert "--generations 0" in warnings[0]
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--hours", "0.75", "--generations", "1"],
+        ["--hours", "0.75", "--generations=1"],
+        ["--generations", "1", "--hours", "0.75"],
+        ["--hours", "4", "--generations", "0"],
+        [],  # --hours 0 (unlimited): one generation is exactly what was asked
+    ],
+)
+def test_main_no_generations_warning_when_explicit_or_hours_unset(
+    cli: ModuleType,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    argv: list[str],
+) -> None:
+    """EH.6 negative pair: an explicit ``--generations`` (even 1) is never noise.
+
+    Without this the guard could regress into firing on every ``--hours`` run
+    and train operators to ignore it.
+    """
+    monkeypatch.setattr(cli, "run_loop", lambda args, **k: 0)
+
+    with caplog.at_level(logging.WARNING, logger="evolve"):
+        assert cli.main(argv) == 0
+
+    assert _generations_cap_warnings(caplog) == []
+
+
 # ---------------------------------------------------------------------------
 # 2. Pre-flight guards
 # ---------------------------------------------------------------------------
@@ -5433,6 +5504,19 @@ def test_launch_evolve_ps1_pins_the_viewer_spawn_contract() -> None:
     # (b) --viewer is still passed. Dropping it has ZERO dev-facing symptom
     # while silently reverting the whole Phase EV deliverable.
     assert "--viewer" in spawn, f"launcher no longer passes --viewer: {spawn}"
+    # (b2) EH.6: --generations is forwarded. evolve.py defaults it to 1, so a
+    # spawn line without it promises an N-hour soak and delivers ONE
+    # generation (~20 min), then exits cleanly with nothing saying so.
+    assert "--generations $Generations" in spawn, (
+        f"launcher no longer forwards --generations: {spawn}"
+    )
+    # (b3) ...and the forwarded value defaults to 0 (no generation cap), so a
+    # bare `launch-evolve.ps1 -Hours N` (the observatory button) runs N hours.
+    param_match = re.search(r"\bparam\((.*?)\n\)", text, flags=re.DOTALL)
+    assert param_match is not None, "no param() block in launch-evolve.ps1"
+    assert re.search(r"\[int\]\$Generations\s*=\s*0\b", param_match.group(1)), (
+        f"param block does not declare [int]$Generations = 0: {param_match.group(1)}"
+    )
     # (c) The double-run guard's WMI CommandLine token must still match the
     # string actually spawned. Low probability, high consequence: a miss means
     # two concurrent evolve runs both auto-committing [evo-auto] to master.

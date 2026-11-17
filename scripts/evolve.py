@@ -221,7 +221,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Stop after N completed generations (default: 1). "
             "0 disables the generation cap (use --hours for soaks). "
             "The loop also stops when the active pool empties or "
-            "--hours is exceeded, whichever fires first."
+            "--hours is exceeded, whichever fires first. "
+            "--hours > 0 with this flag omitted logs a startup WARNING."
         ),
     )
     parser.add_argument(
@@ -5831,6 +5832,50 @@ def run_loop(
     return 0
 
 
+def _generations_left_at_default(argv: list[str] | None) -> bool:
+    """True when ``--generations`` was NOT given on the command line.
+
+    ``args.generations == 1`` cannot tell an omitted flag from an explicit
+    ``--generations 1``, and scanning ``argv`` for the literal token misses
+    the ``--generations=1`` and abbreviated (``--gen 1``) forms argparse
+    accepts. So re-parse the same argv with a probe parser whose
+    ``--generations`` default is ``None``: only an omitted flag leaves it
+    ``None``. The real parser's default stays 1 (``build_parser`` is
+    untouched), so ``args.generations == 1`` still holds when omitted.
+    """
+    probe = build_parser()
+    probe.set_defaults(generations=None)
+    return probe.parse_args(argv).generations is None
+
+
+def _warn_if_default_generations_caps_hours(
+    args: argparse.Namespace, argv: list[str] | None
+) -> None:
+    """EH.6: warn (non-fatal) when an ``--hours`` soak is cut to one generation.
+
+    ``--generations`` defaults to 1 and the loop stops with
+    ``stop_reason = "generations-reached"`` as soon as the cap is met, so
+    ``--hours 4`` alone runs ONE generation (~20 min) and exits cleanly. The
+    flags contradict each other; say so at startup instead of letting the run
+    end hours early in silence. An explicit ``--generations`` (any value,
+    including 1) is the operator's choice and is never warned about.
+    """
+    hours = float(getattr(args, "hours", 0.0) or 0.0)
+    if hours <= 0 or int(getattr(args, "generations", 0) or 0) != 1:
+        return
+    if not _generations_left_at_default(argv):
+        return
+    _log.warning(
+        "evolve: --hours %g was given but --generations was left at its "
+        "default of 1, so this run stops after ONE generation "
+        "(stop_reason=generations-reached), long before the --hours budget. "
+        "Pass --generations 0 for an hours-bounded soak, or pass "
+        "--generations 1 explicitly to keep the one-generation cap and "
+        "silence this warning.",
+        hours,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     logging.basicConfig(
@@ -5840,6 +5885,8 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    _warn_if_default_generations_caps_hours(args, argv)
 
     # Decision D13: the --viewer/--concurrency mutual exclusion lives HERE,
     # not in build_parser(), so build_parser() stays a pure flag declaration

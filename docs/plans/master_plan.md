@@ -420,7 +420,7 @@ powershell -File scripts/launch-strength-viewer.ps1 -P1 v13 -P2 v0 -Map Simple64
 
 ### Step EH.6: Launcher `--generations` passthrough
 
-- **Status:** PENDING
+- **Status:** DONE (2026-11-17)
 - **Decision (2026-11-11):** Kept by D6 (2026-11-11): run safety before unattended Phase ES runs. ES.6 then moves the launcher's spawn into WSL (D16).
 - **Type:** code
 - **Issue:** #311
