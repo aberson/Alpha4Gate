@@ -1,0 +1,331 @@
+{
+  "kind": "offline_mock_http_fault_injection_not_live",
+  "source": "00bc515",
+  "run_id": "dcd67be496f048dcbc5e9ad219422e4f",
+  "injected": {
+    "loop": 112,
+    "tasks": [
+      "dcd67be496f048dcbc5e9ad219422e4f:10",
+      "dcd67be496f048dcbc5e9ad219422e4f:11",
+      "dcd67be496f048dcbc5e9ad219422e4f:12",
+      "dcd67be496f048dcbc5e9ad219422e4f:13",
+      "dcd67be496f048dcbc5e9ad219422e4f:14",
+      "dcd67be496f048dcbc5e9ad219422e4f:15",
+      "dcd67be496f048dcbc5e9ad219422e4f:16",
+      "dcd67be496f048dcbc5e9ad219422e4f:17"
+    ]
+  },
+  "after_adapter": {
+    "tasks": [],
+    "orders": {
+      "6000": [
+        [
+          "AbilityId.ATTACK",
+          [
+            120.5,
+            120.5
+          ],
+          0.0
+        ]
+      ],
+      "6001": [
+        [
+          "AbilityId.ATTACK",
+          [
+            120.5,
+            120.5
+          ],
+          0.0
+        ]
+      ],
+      "6002": [
+        [
+          "AbilityId.ATTACK",
+          [
+            120.5,
+            120.5
+          ],
+          0.0
+        ]
+      ],
+      "6003": [
+        [
+          "AbilityId.ATTACK",
+          [
+            120.5,
+            120.5
+          ],
+          0.0
+        ]
+      ],
+      "6004": [
+        [
+          "AbilityId.ATTACK",
+          [
+            120.5,
+            120.5
+          ],
+          0.0
+        ]
+      ],
+      "6005": [
+        [
+          "AbilityId.ATTACK",
+          [
+            120.5,
+            120.5
+          ],
+          0.0
+        ]
+      ],
+      "6006": [
+        [
+          "AbilityId.ATTACK",
+          [
+            120.5,
+            120.5
+          ],
+          0.0
+        ]
+      ],
+      "6007": [
+        [
+          "AbilityId.ATTACK",
+          [
+            120.5,
+            120.5
+          ],
+          0.0
+        ]
+      ]
+    }
+  },
+  "events": [
+    {
+      "seq": 1649,
+      "loop": 112,
+      "kind": "task",
+      "node": "army.recover.move",
+      "task": "dcd67be496f048dcbc5e9ad219422e4f:10",
+      "status": "running",
+      "reason": "acknowledged by observation"
+    },
+    {
+      "seq": 1650,
+      "loop": 112,
+      "kind": "task",
+      "node": "army.recover.move",
+      "task": "dcd67be496f048dcbc5e9ad219422e4f:10",
+      "status": "succeeded",
+      "reason": "arrived; the location is clear"
+    },
+    {
+      "seq": 1651,
+      "loop": 112,
+      "kind": "task",
+      "node": "army.recover.move",
+      "task": "dcd67be496f048dcbc5e9ad219422e4f:11",
+      "status": "running",
+      "reason": "acknowledged by observation"
+    },
+    {
+      "seq": 1652,
+      "loop": 112,
+      "kind": "task",
+      "node": "army.recover.move",
+      "task": "dcd67be496f048dcbc5e9ad219422e4f:11",
+      "status": "succeeded",
+      "reason": "arrived; the location is clear"
+    },
+    {
+      "seq": 1653,
+      "loop": 112,
+      "kind": "task",
+      "node": "army.recover.move",
+      "task": "dcd67be496f048dcbc5e9ad219422e4f:12",
+      "status": "running",
+      "reason": "acknowledged by observation"
+    },
+    {
+      "seq": 1654,
+      "loop": 112,
+      "kind": "task",
+      "node": "army.recover.move",
+      "task": "dcd67be496f048dcbc5e9ad219422e4f:12",
+      "status": "succeeded",
+      "reason": "arrived; the location is clear"
+    },
+    {
+      "seq": 1655,
+      "loop": 112,
+      "kind": "task",
+      "node": "army.recover.move",
+      "task": "dcd67be496f048dcbc5e9ad219422e4f:13",
+      "status": "running",
+      "reason": "acknowledged by observation"
+    },
+    {
+      "seq": 1656,
+      "loop": 112,
+      "kind": "task",
+      "node": "army.recover.move",
+      "task": "dcd67be496f048dcbc5e9ad219422e4f:13",
+      "status": "succeeded",
+      "reason": "arrived; the location is clear"
+    },
+    {
+      "seq": 1657,
+      "loop": 112,
+      "kind": "task",
+      "node": "army.recover.move",
+      "task": "dcd67be496f048dcbc5e9ad219422e4f:14",
+      "status": "running",
+      "reason": "acknowledged by observation"
+    },
+    {
+      "seq": 1658,
+      "loop": 112,
+      "kind": "task",
+      "node": "army.recover.move",
+      "task": "dcd67be496f048dcbc5e9ad219422e4f:14",
+      "status": "succeeded",
+      "reason": "arrived; the location is clear"
+    },
+    {
+      "seq": 1659,
+      "loop": 112,
+      "kind": "task",
+      "node": "army.recover.move",
+      "task": "dcd67be496f048dcbc5e9ad219422e4f:15",
+      "status": "running",
+      "reason": "acknowledged by observation"
+    },
+    {
+      "seq": 1660,
+      "loop": 112,
+      "kind": "task",
+      "node": "army.recover.move",
+      "task": "dcd67be496f048dcbc5e9ad219422e4f:15",
+      "status": "succeeded",
+      "reason": "arrived; the location is clear"
+    },
+    {
+      "seq": 1661,
+      "loop": 112,
+      "kind": "task",
+      "node": "army.recover.move",
+      "task": "dcd67be496f048dcbc5e9ad219422e4f:16",
+      "status": "running",
+      "reason": "acknowledged by observation"
+    },
+    {
+      "seq": 1662,
+      "loop": 112,
+      "kind": "task",
+      "node": "army.recover.move",
+      "task": "dcd67be496f048dcbc5e9ad219422e4f:16",
+      "status": "succeeded",
+      "reason": "arrived; the location is clear"
+    },
+    {
+      "seq": 1663,
+      "loop": 112,
+      "kind": "task",
+      "node": "army.recover.move",
+      "task": "dcd67be496f048dcbc5e9ad219422e4f:17",
+      "status": "running",
+      "reason": "acknowledged by observation"
+    },
+    {
+      "seq": 1664,
+      "loop": 112,
+      "kind": "task",
+      "node": "army.recover.move",
+      "task": "dcd67be496f048dcbc5e9ad219422e4f:17",
+      "status": "succeeded",
+      "reason": "arrived; the location is clear"
+    },
+    {
+      "seq": 1747,
+      "loop": 112,
+      "kind": "node",
+      "node": "army.defend.mode",
+      "task": null,
+      "status": "failure",
+      "reason": "army mode scripted; effective recover; branch defend"
+    },
+    {
+      "seq": 1748,
+      "loop": 112,
+      "kind": "node",
+      "node": "army.defend",
+      "task": null,
+      "status": "failure",
+      "reason": "child army.defend.mode returned failure"
+    },
+    {
+      "seq": 1749,
+      "loop": 112,
+      "kind": "node",
+      "node": "army.recover.launched",
+      "task": null,
+      "status": "success",
+      "reason": "latch attack_launched is set"
+    },
+    {
+      "seq": 1750,
+      "loop": 112,
+      "kind": "node",
+      "node": "army.recover.chosen",
+      "task": null,
+      "status": "success",
+      "reason": "hosted strategy recover (request 3) selects branch recover"
+    },
+    {
+      "seq": 1751,
+      "loop": 112,
+      "kind": "node",
+      "node": "army.recover.when",
+      "task": null,
+      "status": "success",
+      "reason": "child army.recover.chosen returned success"
+    },
+    {
+      "seq": 1752,
+      "loop": 112,
+      "kind": "node",
+      "node": "army.recover.point",
+      "task": null,
+      "status": "success",
+      "reason": "point 36.16,36.16"
+    },
+    {
+      "seq": 1753,
+      "loop": 112,
+      "kind": "node",
+      "node": "army.recover.units",
+      "task": null,
+      "status": "success",
+      "reason": "selected 8 from own_units"
+    },
+    {
+      "seq": 1754,
+      "loop": 112,
+      "kind": "node",
+      "node": "army.recover.move",
+      "task": null,
+      "status": "success",
+      "reason": "8 actor(s) already in the intended state"
+    },
+    {
+      "seq": 1755,
+      "loop": 112,
+      "kind": "node",
+      "node": "army.recover",
+      "task": null,
+      "status": "success",
+      "reason": "all children succeeded"
+    }
+  ],
+  "commands_on_tick": 0
+}

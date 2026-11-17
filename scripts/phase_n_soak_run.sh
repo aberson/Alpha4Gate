@@ -33,7 +33,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-cd /mnt/c/Users/abero/dev/Alpha4Gate
+cd "$(dirname "$(readlink -f "$0")")/.." || { echo "FATAL: cannot locate the Alpha4Gate repo root from $0" >&2; exit 1; }
 
 # Sanity: env vars must be visible (login shell required).
 if [ "${SC2_WSL_DETECT:-}" != "0" ]; then

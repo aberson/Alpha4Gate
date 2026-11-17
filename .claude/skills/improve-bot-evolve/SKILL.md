@@ -2,7 +2,7 @@
 name: improve-bot-evolve
 description: Autonomous generation-phase improvement loop. Generates a pool of Claude-proposed improvements, fitness-tests each vs the current parent, stacks the winners onto a new snapshot (with an import-check gate), and regression-checks against the prior parent — repeating for hours until the pool or wall-clock budget is exhausted. Designed for overnight unattended runs.
 user-invocable: true
-argument: Optional flags only — no free-text suggestion needed. Flags: `--pool-size N` (default 10), `--games-per-eval N` (default 5), `--hours N` (default 4), `--concurrency N` (default 1), `--lineages N` (default 1; bare invocation stays single-lineage), `--map NAME` (default Simple64), `--no-commit` (dev/test only), `--results-path PATH`, `--pool-path PATH`, `--state-path PATH`, `--run-log PATH`, `--resume`, `--post-training-cycles N`.
+argument: Optional flags only — no free-text suggestion needed. Flags: `--pool-size N` (default 10), `--games-per-eval N` (default 5), `--hours N` (default 4), `--concurrency N` (default 1), `--lineages N` (default 1; bare invocation stays single-lineage), `--map NAME` (default Simple64), `--no-commit` (dev/test only), `--results-path PATH`, `--pool-path PATH`, `--state-path PATH`, `--run-log PATH`, `--resume`, `--post-training-cycles N`, `--viewer` (default off; Windows + the optional `[viewer]` extra only; requires `--concurrency 1`).
 required-env: SC2 installed at `C:/Program Files (x86)/StarCraft II/`, `claude` CLI on PATH and authenticated (OAuth subscription token OR `ANTHROPIC_API_KEY` — whichever the CLI is set up with).
 ---
 
@@ -15,7 +15,7 @@ Autonomous generation-phase improvement loop. Every generation:
 3. **Regression** — if anything was promoted, new parent plays prior parent for `--games-per-eval` games. On rollback, `git revert` the promote commit (also under `EVO_AUTO=1`) and restore the pointer.
 4. **Pool refresh** — close-loss and benched-pass imps go back to active (retry cap enforced; cap=3 total evals before eviction). Claude tops up the active pool back to `--pool-size` with fresh orthogonal imps targeting the new parent.
 
-**Gate-reduction note (2026-04-23):** The legacy third gate — a 5-game composition batch testing the stacked candidate against the parent before promotion — was removed per [evolve-gate-reduction-plan.md](../../../documentation/plans/evolve-gate-reduction-plan.md). Regression already catches bad-interaction stacks as "new parent loses to prior parent", and the extra Bernoulli filter dominated promotion rate without adding unique detection capability. The import-check gate that used to live inside composition migrated into the stack-apply step.
+**Gate-reduction note (2026-04-23):** The legacy third gate — a 5-game composition batch testing the stacked candidate against the parent before promotion — was removed per [evolve-gate-reduction-plan.md](../../../docs/completed/evolve-gate-reduction-plan.md). Regression already catches bad-interaction stacks as "new parent loses to prior parent", and the extra Bernoulli filter dominated promotion rate without adding unique detection capability. The import-check gate that used to live inside composition migrated into the stack-apply step.
 
 **Design goal:** `/improve-bot-evolve` in a fresh context window with no additional input should produce a measurably stronger parent version after a few hours, with every promotion recorded as an `[evo-auto]` commit and every regression recorded as an `[evo-auto]` revert.
 
@@ -36,7 +36,8 @@ The outer phase shape (pre-flight → seed → loop → decision → report) is 
 | `--pool-size` | int | `10` | Number of improvements Claude generates (and tops up to between generations) |
 | `--games-per-eval` | int | `5` | Games in each phase evaluation (fitness / regression). Pass threshold = strict majority of this count. |
 | `--hours` | float | `4.0` | Wall-clock budget. `0` disables the check (test-only). |
-| `--concurrency` | int | `1` | Number of fitness-eval workers run in parallel by `scripts/evolve.py`. `1` is byte-identical to the historical serial path (Decision D-1 in `documentation/plans/evolve-parallelization-plan.md`). `>1` fans the fitness phase out across N worker subprocesses; stack-apply + regression remain serial. |
+| `--generations` | int | `0` | Generation cap. `0` = no cap, so the `--hours` budget (or an empty pool) ends the run; this skill always passes it. `scripts/evolve.py`'s own default is `1`, which stops after ONE generation (~20 min, `stop_reason` `"generations-reached"`) no matter what `--hours` says; `--hours > 0` with the flag omitted logs a startup WARNING. |
+| `--concurrency` | int | `1` | Number of fitness-eval workers run in parallel by `scripts/evolve.py`. `1` is byte-identical to the historical serial path (Decision D-1 in `docs/completed/evolve-parallelization-plan.md`). `>1` fans the fitness phase out across N worker subprocesses; stack-apply + regression remain serial. **`--viewer` requires this to be `1`** — the two coexist fine at `1`; only `--viewer` with `> 1` is rejected, exiting immediately with guidance (see the Viewer note). |
 | `--lineages` | int | `1` | Number of parallel lineages to round-robin across. `1` with no `data/lineages.json` is byte-identical to the historical single-lineage path. `>1` (or a non-empty `data/lineages.json`) flips `bots/current/current.txt` to each lineage's head before its generation, so the loop interleaves divergent branches (Phase EL). A bare `/improve-bot-evolve` invocation stays single-lineage. |
 | `--map` | str | `Simple64` | SC2 map name |
 | `--game-time-limit` | int | `1800` | SC2 in-game time limit per game, in seconds |
@@ -50,6 +51,17 @@ The outer phase shape (pre-flight → seed → loop → decision → report) is 
 | `--run-log` | path | auto | Human-readable markdown run log |
 | `--resume` | flag | off | Reload pool + per-item statuses from `--pool-path` instead of generating fresh. |
 | `--post-training-cycles` | int | `0` | On promoted runs, start the training daemon for exactly N cycles after the loop exits. |
+| `--viewer` | flag | off | Render this run's SC2 games inside the themed self-play viewer container (`src/selfplay_viewer/`, Phase EV) instead of raw SC2 windows. Windows + the optional `[viewer]` extra only; requires `--concurrency 1`. Read the **Viewer note** below before using it — it carries the stop-gesture and Ctrl+C safety rules. |
+
+**Viewer note (`--viewer`):** Default OFF, so an unflagged run is byte-identical to a pre-EV run. Five things to know before enabling it:
+
+1. **Availability.** Windows plus the optional `[viewer]` extra only — invoke as `uv run --extra viewer python scripts/evolve.py ... --viewer`. On any other platform, or without pygame importable, the flag degrades to a startup WARNING and the run continues headless. It never crashes the run.
+2. **Concurrency.** Requires `--concurrency 1`; `--viewer --concurrency 2` exits immediately with guidance (see the `--concurrency` row).
+3. **Closing the viewer container DETACHES; it does not stop the run.** The run continues headless to its `--hours` budget. This is deliberate (Decision D-1) so a dismissed window does not cost hours of evolution.
+4. **To STOP a run, close the console window it is running in.** That is the only working stop gesture.
+5. **Never press Ctrl+C on a `--viewer` run.** The evolution loop runs off the main thread, so burnysc2's SIGINT kill-switch is never armed and Ctrl+C can leave orphaned SC2 processes — which [`bot-runtime.md`](../../rules/bot-runtime.md) forbids cleaning up by killing SC2 by hand.
+
+**The dashboard's Stop button does not stop a run** (viewer or headless). `bots/v0/api.py` writes `data/evolve_run_control.json`, but nothing in `scripts/evolve.py` or `src/orchestrator/` reads it, so the runner never sees the request — see "Stop conditions" and the control-file section below, which record this as a future enhancement. Do not offer it to an operator as a way to stop a run.
 
 ### Phase-EJ noise-floor flags
 
@@ -148,8 +160,8 @@ if state.get('status') == 'running':
 LOOP_START=$(date +%s)
 RUN_TS=$(date -d @$LOOP_START +%Y%m%d-%H%M)
 
-LOGFILE="documentation/soak-test-runs/evolve-$(date +%F).md"
-i=0; while [ -e "$LOGFILE" ]; do i=$((i+1)); suf=$(printf "\\x$(printf '%x' $((96+i)))"); LOGFILE="documentation/soak-test-runs/evolve-$(date +%F)-$suf.md"; done
+LOGFILE="docs/soak-test-runs/evolve-$(date +%F).md"
+i=0; while [ -e "$LOGFILE" ]; do i=$((i+1)); suf=$(printf "\\x$(printf '%x' $((96+i)))"); LOGFILE="docs/soak-test-runs/evolve-$(date +%F)-$suf.md"; done
 ```
 
 Capture baseline: current parent, recent win rate, Elo, git SHA. Write run header to `$LOGFILE`.
@@ -206,6 +218,7 @@ uv run python scripts/evolve.py \
     --pool-size 10 \
     --games-per-eval 5 \
     --hours 4 \
+    --generations 0 \
     --concurrency "$CONCURRENCY" \
     --map Simple64 \
     2>&1 | tee -a "$LOGFILE"
@@ -341,9 +354,11 @@ The loop exits when ANY of:
 
 1. **Wall-clock budget exceeded** — `elapsed_seconds >= hours * 3600`. Disabled when `--hours 0`.
 2. **Pool exhausted** — fewer than 1 item with `status: "active"` remains AND pool refresh also produced none.
-3. **Dashboard stop request** — control-file flag (not yet enforced mid-generation; future enhancement).
+3. **Generation cap reached** — `--generations N` exhausted.
 
-`stop_reason` in the final run log: `"wall-clock"`, `"pool-exhausted"`, or `"dashboard-stop"`.
+`stop_reason` in the final run log: `"wall-clock"`, `"pool-exhausted"`, or `"generations-reached"`.
+
+There is **no dashboard stop request** in this list, and that is not an omission: `bots/v0/api.py` writes `data/evolve_run_control.json`, but no reader exists in `scripts/evolve.py` or `src/orchestrator/`, so the runner never observes it and `"dashboard-stop"` is never emitted. Wiring it up is a future enhancement. The only way to stop a run today is to close the console window it is running in.
 
 ---
 
@@ -446,7 +461,7 @@ One line per phase outcome. Each row's `phase` field is one of `fitness`, `stack
 }
 ```
 
-(Dashboard mid-generation stop is a future enhancement — today the stop signal takes effect at the next generation boundary.)
+(**Nothing reads this file.** The API writes it, but `scripts/evolve.py` and `src/orchestrator/` contain no reader — not at a generation boundary, not mid-generation — so setting `stop_run` has no effect on a running evolve. Honouring it is a future enhancement; the natural home is the generation-boundary check in `scripts/evolve.py`'s loop, alongside the wall-clock and generation-cap tests. Until then, stop a run by closing its console window.)
 
 ---
 
@@ -582,6 +597,6 @@ git push origin master --force-with-lease
 
 - **`/improve-bot-advised`** — sibling. Linear. Mutually exclusive with evolve.
 - **`/improve-bot`** — building block used inside advised's dev path. Not called by evolve.
-- **`/improve-bot-triage`** — post-run helper; can read `documentation/soak-test-runs/evolve-*.md`.
+- **`/improve-bot-triage`** — post-run helper; can read `docs/soak-test-runs/evolve-*.md`.
 - **`/a4g-dashboard-check`** — pre-flight (Phase 0.6) and post-run validation.
 - **`/repo-update`** — end-of-cycle docs + README sync after a productive run.

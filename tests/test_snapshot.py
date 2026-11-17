@@ -111,7 +111,7 @@ class TestSnapshotCurrent:
         Used by :func:`orchestrator.evolve.run_fitness_eval` (and other
         parallel-evolve primitives) to produce ephemeral scratch
         snapshots that must never become the active version. See
-        ``documentation/plans/evolve-parallelization-plan.md`` decision
+        ``docs/completed/evolve-parallelization-plan.md`` decision
         D-2.
 
         Asserts both content AND mtime_ns are unchanged across the call.

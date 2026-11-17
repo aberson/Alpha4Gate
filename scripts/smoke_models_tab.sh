@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/smoke_models_tab.sh — Models-tab end-to-end smoke gate.
 #
-# Plan: documentation/plans/models-tab-plan.md §7 Step 11.
+# Plan: docs/completed/models-tab-plan.md §7 Step 11.
 #
 # Operator-facing 60-second gate that exercises every Models-tab
 # endpoint against a REAL backend + REAL data dir (not mocks). This
@@ -50,7 +50,7 @@ BACKEND_URL="${BACKEND_URL:-http://localhost:8765}"
 SMOKE_VERSION="${SMOKE_VERSION:-v3}"
 REPO_ROOT="${SMOKE_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 PYTHON="${PYTHON:-python}"
-REPORT_DIR="${REPO_ROOT}/documentation/soak-test-runs"
+REPORT_DIR="${REPO_ROOT}/docs/soak-test-runs"
 TIMESTAMP="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
 REPORT="${REPORT_DIR}/models-tab-smoke-${TIMESTAMP}.md"
 START_EPOCH=$(date +%s)
@@ -444,7 +444,7 @@ fi
   cat <<HEADER
 # Models tab smoke gate — ${TIMESTAMP}
 
-Plan: documentation/plans/models-tab-plan.md §7 Step 11.
+Plan: docs/completed/models-tab-plan.md §7 Step 11.
 
 - Backend: ${BACKEND_URL}
 - Repo root (data dir source): ${REPO_ROOT}

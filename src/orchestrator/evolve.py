@@ -1,9 +1,9 @@
 """Individual-vs-parent fitness + regression primitives.
 
 Replaces the older (1+λ)-ES sibling-tournament round. Design rationale is
-captured in ``documentation/investigations/evolve-algorithm-redesign-investigation.md``
+captured in ``docs/investigations/evolve-algorithm-redesign-investigation.md``
 and the 2026-04-23 gate-reduction plan
-(``documentation/plans/evolve-gate-reduction-plan.md``); the short version:
+(``docs/completed/evolve-gate-reduction-plan.md``); the short version:
 
 - One imp at a time vs the parent (fitness phase, default 5 games).
 - ``>=3/5`` → winner candidate; ``2/5`` → close-loss (resurrection-eligible,
@@ -37,7 +37,7 @@ Design notes
   ``update_pointer=False`` so the scratch ``cand_*`` snapshot does NOT
   flip the process-global pointer — the candidate is identified by its
   explicit ``bots.cand_<uuid>`` import path passed to ``run_batch``.
-  See ``documentation/plans/evolve-parallelization-plan.md`` decision
+  See ``docs/completed/evolve-parallelization-plan.md`` decision
   D-2; this is the prerequisite for safe parallel fitness eval.
   :func:`run_regression_eval` already does not touch the pointer (the
   caller's ``git revert`` carries the pointer back via its reverse diff).
@@ -1831,7 +1831,7 @@ def generate_pool(
     source_tree = _list_source_tree(repo_root / "bots", parent)
 
     principles_path = (
-        repo_root / "documentation" / "sc2" / "protoss" / "guiding-principles.md"
+        repo_root / "docs" / "sc2" / "protoss" / "guiding-principles.md"
     )
     try:
         principles = principles_path.read_text(encoding="utf-8")

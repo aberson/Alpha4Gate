@@ -410,7 +410,7 @@ class TrainingOrchestrator:
         wiring, the dashboard was blind to trainer activity because
         those producers only lived in ``connection.run_bot`` and
         ``batch_runner.save_stats`` — neither of which the trainer
-        called. See Phase 4.6 fix plan and ``documentation/soak-*``
+        called. See Phase 4.6 fix plan and ``docs/soak-*``
         for the full soak findings.
 
         NOTE: ``reward_calc.open_game_log`` is no longer called here.

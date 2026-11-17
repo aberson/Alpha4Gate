@@ -1508,7 +1508,7 @@ export function EvolutionTab() {
             running-rounds endpoint is inactive (no parallel run, or
             the per-worker files haven't been written yet), we also
             fall back to the legacy current-round path. Decision: see
-            documentation/plans/evolve-parallelization-plan.md §7
+            docs/completed/evolve-parallelization-plan.md §7
             Step 6.
           */}
           {runningRounds.data?.active &&

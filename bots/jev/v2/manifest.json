@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "family": "jev",
+  "version": 2,
+  "entrypoint": "bots.jev.v2",
+  "policy_file": "policy.json"
+}

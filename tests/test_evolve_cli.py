@@ -12,11 +12,17 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import hashlib
 import importlib.util
 import json
 import logging
+import re
 import subprocess
 import sys
+import threading
+import tomllib
+from collections.abc import Callable, Iterator
+from importlib.machinery import ModuleSpec
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
@@ -60,6 +66,49 @@ def _load_cli_module() -> ModuleType:
 @pytest.fixture
 def cli() -> ModuleType:
     return _load_cli_module()
+
+
+# ---------------------------------------------------------------------------
+# Repo-state isolation
+# ---------------------------------------------------------------------------
+
+_REAL_LINEAGE_JSON = _REPO_ROOT / "data" / "lineage.json"
+
+
+def _file_sha256(path: Path) -> str | None:
+    """Return the sha256 of ``path``'s bytes, or ``None`` when it does not exist."""
+    if not path.is_file():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.fixture(autouse=True)
+def _no_post_promotion_hooks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never run the real post-promotion hooks from this file.
+
+    ``run_loop``'s promotion path calls
+    ``bots.v0.learning.post_promotion_hooks.run_post_promotion_hooks``, which
+    runs the real ``scripts/build_lineage.py`` and writes the repo-root
+    ``data/lineage.json``. A test that needs to observe the hooks still
+    installs its own stub with ``monkeypatch.setattr``, which replaces this one.
+    """
+    monkeypatch.setattr(
+        "bots.v0.learning.post_promotion_hooks.run_post_promotion_hooks",
+        lambda _v: None,
+    )
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _real_lineage_json_untouched() -> Iterator[None]:
+    """Fail at module teardown if these tests created or changed the real ``data/lineage.json``."""
+    before = _file_sha256(_REAL_LINEAGE_JSON)
+    yield
+    after = _file_sha256(_REAL_LINEAGE_JSON)
+    assert after == before, (
+        f"tests/test_evolve_cli.py changed the real {_REAL_LINEAGE_JSON} "
+        f"(sha256 before={before}, after={after}); a promotion path ran the "
+        "real post-promotion hooks"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -436,6 +485,7 @@ def test_help_exits_zero(cli: ModuleType, capsys: pytest.CaptureFixture[str]) ->
     assert "--pool-size" in out
     assert "--games-per-eval" in out
     assert "--hours" in out
+    assert "--viewer" in out
     # Removed flags must not re-appear.
     assert "--ab-games" not in out
     assert "--gate-games" not in out
@@ -457,6 +507,78 @@ def test_default_flags(cli: ModuleType) -> None:
     assert args.backend_url == "http://localhost:8765"
     assert args.lineages == 1
     assert args.regression_rule == "majority"
+    assert args.viewer is False
+
+
+def _generations_cap_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """WARNING messages from the EH.6 hours-vs-default-generations guard."""
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.WARNING
+        and "--hours" in r.getMessage()
+        and "--generations" in r.getMessage()
+    ]
+
+
+def test_main_warns_when_hours_set_and_generations_left_at_default(
+    cli: ModuleType,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """EH.6: ``--hours 4`` with ``--generations`` omitted runs ONE generation.
+
+    The flags contradict each other (the default cap of 1 stops the loop with
+    ``generations-reached`` ~20 min in), so ``main()`` must say so at startup,
+    naming both flags -- and still run (non-fatal) with the default intact.
+    """
+    seen: dict[str, Any] = {}
+
+    def _fake_run_loop(args: argparse.Namespace, **kwargs: Any) -> int:
+        seen["generations"] = args.generations
+        seen["hours"] = args.hours
+        return 0
+
+    monkeypatch.setattr(cli, "run_loop", _fake_run_loop)
+
+    with caplog.at_level(logging.WARNING, logger="evolve"):
+        assert cli.main(["--hours", "4.0"]) == 0
+
+    # Non-fatal, and the omitted flag still resolves to the documented default.
+    assert seen == {"generations": 1, "hours": 4.0}
+    warnings = _generations_cap_warnings(caplog)
+    assert len(warnings) == 1, [r.getMessage() for r in caplog.records]
+    assert "default of 1" in warnings[0]
+    assert "--generations 0" in warnings[0]
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--hours", "0.75", "--generations", "1"],
+        ["--hours", "0.75", "--generations=1"],
+        ["--generations", "1", "--hours", "0.75"],
+        ["--hours", "4", "--generations", "0"],
+        [],  # --hours 0 (unlimited): one generation is exactly what was asked
+    ],
+)
+def test_main_no_generations_warning_when_explicit_or_hours_unset(
+    cli: ModuleType,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    argv: list[str],
+) -> None:
+    """EH.6 negative pair: an explicit ``--generations`` (even 1) is never noise.
+
+    Without this the guard could regress into firing on every ``--hours`` run
+    and train operators to ignore it.
+    """
+    monkeypatch.setattr(cli, "run_loop", lambda args, **k: 0)
+
+    with caplog.at_level(logging.WARNING, logger="evolve"):
+        assert cli.main(argv) == 0
+
+    assert _generations_cap_warnings(caplog) == []
 
 
 # ---------------------------------------------------------------------------
@@ -1281,6 +1403,10 @@ def test_priors_exclude_promoted_off_omits_exclude_titles(
 # 10. Commit helper shape
 # ---------------------------------------------------------------------------
 
+# What a faked ``git show --name-only -z <promote_sha>`` reports (EH.8).
+_FAKE_SHOW_PATHS = ["bots/current/current.txt", "bots/v5/bot.py"]
+_FAKE_SHOW_STDOUT = "".join(f"{p}\0" for p in _FAKE_SHOW_PATHS)
+
 
 def test_git_commit_evo_auto_builds_stack_body(
     cli: ModuleType, monkeypatch: pytest.MonkeyPatch
@@ -1292,6 +1418,7 @@ def test_git_commit_evo_auto_builds_stack_body(
         if argv[:2] == ["git", "commit"]:
             captured["msg"] = argv[argv.index("-m") + 1]
             captured["env"] = kwargs.get("env")
+            captured["argv"] = list(argv)
         if argv[:2] == ["git", "rev-parse"]:
             return subprocess.CompletedProcess(argv, 0, stdout="abc123\n", stderr="")
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
@@ -1313,6 +1440,10 @@ def test_git_commit_evo_auto_builds_stack_body(
     # EVO_AUTO=1 must be set in the commit env; ADVISED_AUTO must be absent.
     assert captured["env"]["EVO_AUTO"] == "1"
     assert "ADVISED_AUTO" not in captured["env"]
+    # EH.8: the commit is partial, scoped to the promotion paths only.
+    argv = captured["argv"]
+    assert "--only" in argv
+    assert argv[argv.index("--") + 1 :] == ["bots/v1/", "bots/current/current.txt"]
 
 
 def test_git_revert_evo_auto_uses_two_stage_revert(
@@ -1325,6 +1456,8 @@ def test_git_revert_evo_auto_uses_two_stage_revert(
     def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         commands.append(list(argv))
         envs.append(dict(kwargs.get("env") or {}))
+        if argv[:2] == ["git", "show"]:
+            return subprocess.CompletedProcess(argv, 0, stdout=_FAKE_SHOW_STDOUT, stderr="")
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
     ok = cli.git_revert_evo_auto(
@@ -1334,11 +1467,17 @@ def test_git_revert_evo_auto_uses_two_stage_revert(
         run=fake_run,
     )
     assert ok is True
-    # First command: git revert --no-commit <sha>. Second: git commit -m.
-    assert commands[0][:3] == ["git", "revert", "--no-commit"]
-    assert commands[0][3] == "abc123"
-    assert commands[1][:2] == ["git", "commit"]
-    revert_msg = commands[1][commands[1].index("-m") + 1]
+    # EH.8 sequence: read the promote commit's paths, revert --no-commit,
+    # drop sequencer state, check for foreign staged paths, partial commit.
+    assert commands[0][:2] == ["git", "show"]
+    assert commands[0][-1] == "abc123"
+    assert commands[1] == ["git", "revert", "--no-commit", "abc123"]
+    assert commands[2] == ["git", "revert", "--quit"]
+    assert commands[3][:3] == ["git", "diff", "--cached"]
+    assert commands[4][:2] == ["git", "commit"]
+    assert "--only" in commands[4]
+    assert commands[4][commands[4].index("--") + 1 :] == _FAKE_SHOW_PATHS
+    revert_msg = commands[4][commands[4].index("-m") + 1]
     assert "regression rollback" in revert_msg
     assert "[evo-auto]" in revert_msg
     # EVO_AUTO=1 in both subprocess envs.
@@ -1354,21 +1493,18 @@ def test_git_commit_evo_auto_resets_index_when_commit_fails(
     the commit primitive must drop the staged content itself.
 
     Without this cleanup the staged paths leak into the NEXT generation's
-    commit (``git_commit_evo_auto`` does a plain ``git commit -m msg``
-    with no pathspec and no ``-a``, which commits everything currently
-    staged). The commit function owns the mess it staged, so it owns
-    cleaning up on the failure path. Mirrors the revert path's contract.
+    commit. The commit function owns the mess it staged, so it owns
+    cleaning up on the failure path, and since EH.8 ONLY that mess: the
+    reset is scoped to the promotion paths, never ``-- .``.
     """
     commands: list[list[str]] = []
 
     def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         commands.append(list(argv))
-        if argv[:2] == ["git", "add"]:
+        if argv[:2] in (["git", "add"], ["git", "diff"]):
             return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
         if argv[:2] == ["git", "commit"]:
-            return subprocess.CompletedProcess(
-                argv, 1, stdout="", stderr="hook blocked commit"
-            )
+            return subprocess.CompletedProcess(argv, 1, stdout="", stderr="hook blocked commit")
         if argv[:2] == ["git", "reset"]:
             return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
         raise AssertionError(f"unexpected argv: {argv!r}")
@@ -1381,13 +1517,21 @@ def test_git_commit_evo_auto_resets_index_when_commit_fails(
     )
     assert ok is False
     assert sha is None
-    # Sequence: git add, git commit (fails), git reset HEAD -- .
+    # Sequence: git add, foreign-path check, git commit (fails), scoped reset.
     assert [c[:2] for c in commands] == [
         ["git", "add"],
+        ["git", "diff"],
         ["git", "commit"],
         ["git", "reset"],
     ]
-    assert commands[2] == ["git", "reset", "HEAD", "--", "."]
+    assert commands[3] == [
+        "git",
+        "reset",
+        "HEAD",
+        "--",
+        "bots/v1/",
+        "bots/current/current.txt",
+    ]
 
 
 def test_git_revert_evo_auto_resets_index_when_commit_fails(
@@ -1396,11 +1540,9 @@ def test_git_revert_evo_auto_resets_index_when_commit_fails(
     """If ``git commit`` fails after ``git revert --no-commit`` staged the
     reverse diff, the revert primitive must drop the staged changes itself.
 
-    Without this cleanup the staged reverse diff leaks into the NEXT
-    generation's commit (``git_commit_evo_auto`` does a plain
-    ``git commit -m msg`` with no pathspec and no ``-a``, which commits
-    everything currently staged). The revert function owns the mess it
-    created, so it owns cleaning it up on the failure path.
+    The revert function owns the mess it created, so it owns cleaning it
+    up on the failure path, and since EH.8 ONLY that mess: the reset is
+    scoped to the promote commit's own paths, never ``-- .``.
     """
     commands: list[list[str]] = []
 
@@ -1408,12 +1550,12 @@ def test_git_revert_evo_auto_resets_index_when_commit_fails(
         commands.append(list(argv))
         # revert succeeds (stages the reverse diff), commit fails, reset
         # must then happen to drop the staged diff.
-        if argv[:2] == ["git", "revert"]:
+        if argv[:2] == ["git", "show"]:
+            return subprocess.CompletedProcess(argv, 0, stdout=_FAKE_SHOW_STDOUT, stderr="")
+        if argv[:2] in (["git", "revert"], ["git", "diff"]):
             return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
         if argv[:2] == ["git", "commit"]:
-            return subprocess.CompletedProcess(
-                argv, 1, stdout="", stderr="hook blocked commit"
-            )
+            return subprocess.CompletedProcess(argv, 1, stdout="", stderr="hook blocked commit")
         if argv[:2] == ["git", "reset"]:
             return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
         raise AssertionError(f"unexpected argv: {argv!r}")
@@ -1425,17 +1567,240 @@ def test_git_revert_evo_auto_resets_index_when_commit_fails(
         run=fake_run,
     )
     assert ok is False
-    # Verify the sequence: revert, commit (fails), reset HEAD -- .
+    # Verify the sequence: show, revert, quit, diff, commit (fails), reset.
     assert [c[:2] for c in commands] == [
+        ["git", "show"],
         ["git", "revert"],
+        ["git", "revert"],
+        ["git", "diff"],
         ["git", "commit"],
         ["git", "reset"],
     ]
-    # The reset must target HEAD and the whole tree (``.``) — scoped to
-    # index so the working tree is unchanged, so subsequent pointer
-    # fallbacks still see their own writes.
-    reset_cmd = commands[2]
-    assert reset_cmd == ["git", "reset", "HEAD", "--", "."]
+    # The reset targets HEAD (index only, so the working tree is unchanged
+    # and subsequent pointer fallbacks still see their own writes) and ONLY
+    # the promote commit's paths, so unrelated staged work stays staged.
+    assert commands[5] == ["git", "reset", "HEAD", "--", *_FAKE_SHOW_PATHS]
+
+
+def test_reset_staged_helpers_never_reset_whole_index_on_empty_paths(
+    cli: ModuleType,
+) -> None:
+    """An empty path list must be a no-op: ``git reset HEAD --`` with no
+    paths would unstage the operator's whole index (EH.8)."""
+    commands: list[list[str]] = []
+
+    def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    cli._reset_staged_promote([], run=fake_run)
+    cli._reset_staged_revert([], run=fake_run)
+    assert commands == []
+
+
+def test_git_revert_evo_auto_aborts_before_revert_when_paths_unreadable(
+    cli: ModuleType,
+) -> None:
+    """If the promote commit's paths can't be read, nothing is reverted or
+    staged: the scoped commit would have no path set to name."""
+    commands: list[list[str]] = []
+
+    def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(list(argv))
+        if argv[:2] == ["git", "show"]:
+            return subprocess.CompletedProcess(argv, 128, stdout="", stderr="bad")
+        raise AssertionError(f"unexpected argv: {argv!r}")
+
+    assert cli.git_revert_evo_auto("deadbeef", 2, "r", run=fake_run) is False
+    assert [c[:2] for c in commands] == [["git", "show"]]
+
+
+# ---------------------------------------------------------------------------
+# 10b. Path-scoped [evo-auto] commits in a real throwaway git repo (EH.8)
+# ---------------------------------------------------------------------------
+
+
+def _git(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout
+
+
+def _staged(repo: Path) -> set[str]:
+    return set(_git(repo, "diff", "--cached", "--name-only").split())
+
+
+def _commit_paths(repo: Path, rev: str = "HEAD") -> set[str]:
+    out = _git(repo, "show", "--no-renames", "--name-only", "--pretty=format:", rev)
+    return set(out.split())
+
+
+@pytest.fixture
+def evo_repo(cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A throwaway repo with ``bots/v0/`` + ``bots/current/current.txt``.
+
+    ``cli._REPO_ROOT`` points at it, so the production helpers run their
+    real git commands here and never against this repository.
+    """
+    for var in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE"):
+        monkeypatch.delenv(var, raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    hooks = tmp_path / "no-hooks"
+    hooks.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.name", "EH8 Test")
+    _git(repo, "config", "user.email", "eh8@example.invalid")
+    _git(repo, "config", "commit.gpgsign", "false")
+    _git(repo, "config", "core.autocrlf", "false")
+    _git(repo, "config", "core.hooksPath", str(hooks))
+    (repo / "bots" / "v0").mkdir(parents=True)
+    (repo / "bots" / "v0" / "bot.py").write_text("V = 0\n", encoding="utf-8")
+    (repo / "bots" / "current").mkdir()
+    (repo / "bots" / "current" / "current.txt").write_text("v0\n", encoding="utf-8")
+    (repo / "notes.txt").write_text("operator notes\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "init")
+    monkeypatch.setattr(cli, "_REPO_ROOT", repo)
+    return repo
+
+
+def _write_promotion(repo: Path, version: str = "v1") -> None:
+    (repo / "bots" / version).mkdir(parents=True)
+    (repo / "bots" / version / "bot.py").write_text("V = 1\n", encoding="utf-8")
+    (repo / "bots" / "current" / "current.txt").write_text(f"{version}\n", encoding="utf-8")
+
+
+def _stage_operator_work(repo: Path) -> set[str]:
+    """Stage unrelated operator work: one new file, one modified file."""
+    (repo / "operator_wip.py").write_text("WIP = True\n", encoding="utf-8")
+    (repo / "notes.txt").write_text("operator notes, edited\n", encoding="utf-8")
+    _git(repo, "add", "operator_wip.py", "notes.txt")
+    return {"operator_wip.py", "notes.txt"}
+
+
+_PROMOTE_PATHS = {"bots/v1/bot.py", "bots/current/current.txt"}
+
+
+def _failing_commit_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    """Real git for everything except ``git commit``, which fails."""
+    if argv[:2] == ["git", "commit"]:
+        return subprocess.CompletedProcess(argv, 1, stdout="", stderr="forced")
+    return cast(subprocess.CompletedProcess[str], subprocess.run(argv, **kwargs))
+
+
+def test_promote_commit_contains_only_promotion_paths(
+    cli: ModuleType, evo_repo: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Done-when (2)+(3): staged operator work is neither committed nor
+    unstaged by the [evo-auto] promote commit, and is named in an ERROR."""
+    foreign = _stage_operator_work(evo_repo)
+    _write_promotion(evo_repo)
+    head_before = _git(evo_repo, "rev-parse", "HEAD").strip()
+
+    with caplog.at_level(logging.ERROR):
+        ok, sha = cli.git_commit_evo_auto("v1", 3, ["imp-a"])
+
+    assert ok is True
+    assert sha == _git(evo_repo, "rev-parse", "HEAD").strip()
+    assert sha != head_before
+    assert _commit_paths(evo_repo) == _PROMOTE_PATHS
+    assert "[evo-auto]" in _git(evo_repo, "log", "-1", "--pretty=%B")
+    # Operator work: still staged, still uncommitted.
+    assert _staged(evo_repo) == foreign
+    assert _git(evo_repo, "ls-tree", "--name-only", "HEAD", "operator_wip.py") == ""
+    assert _git(evo_repo, "show", "HEAD:notes.txt") == "operator notes\n"
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1
+    assert "operator_wip.py" in errors[0].getMessage()
+    assert "notes.txt" in errors[0].getMessage()
+
+
+def test_promote_commit_with_clean_index_logs_no_error(
+    cli: ModuleType, evo_repo: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    _write_promotion(evo_repo)
+    with caplog.at_level(logging.ERROR):
+        ok, _sha = cli.git_commit_evo_auto("v1", 1, ["imp-a"])
+    assert ok is True
+    assert _commit_paths(evo_repo) == _PROMOTE_PATHS
+    assert _staged(evo_repo) == set()
+    assert not [r for r in caplog.records if r.levelno == logging.ERROR]
+
+
+def test_revert_commit_contains_only_promote_paths(cli: ModuleType, evo_repo: Path) -> None:
+    """Done-when (4): an unrelated staged file survives the rollback commit
+    still staged, and the rollback names only the promote commit's paths."""
+    _write_promotion(evo_repo)
+    ok, sha = cli.git_commit_evo_auto("v1", 1, ["imp-a"])
+    assert ok is True and sha is not None
+    foreign = _stage_operator_work(evo_repo)
+
+    assert cli.git_revert_evo_auto(sha, 1, "regression rollback: test") is True
+
+    assert _git(evo_repo, "rev-parse", "HEAD~1").strip() == sha
+    assert _commit_paths(evo_repo) == _PROMOTE_PATHS
+    assert "[evo-auto]" in _git(evo_repo, "log", "-1", "--pretty=%B")
+    assert _git(evo_repo, "show", "HEAD:bots/current/current.txt") == "v0\n"
+    assert _git(evo_repo, "ls-tree", "-r", "--name-only", "HEAD", "bots/v1") == ""
+    assert _staged(evo_repo) == foreign
+    assert _git(evo_repo, "ls-tree", "--name-only", "HEAD", "operator_wip.py") == ""
+    # No sequencer state left behind for the next generation to trip on.
+    assert not (evo_repo / ".git" / "REVERT_HEAD").exists()
+    assert not (evo_repo / ".git" / "sequencer").exists()
+
+
+def test_revert_of_pre_eh8_sweeping_promote_reverts_every_path(
+    cli: ModuleType, evo_repo: Path
+) -> None:
+    """A pre-EH.8 promote commit may have swept a foreign path; the revert's
+    path set comes from that commit, so the swept path is reverted too."""
+    _write_promotion(evo_repo)
+    (evo_repo / "swept.txt").write_text("swept\n", encoding="utf-8")
+    _git(evo_repo, "add", "-A")
+    _git(evo_repo, "commit", "-q", "-m", "old sweeping promote [evo-auto]")
+    sha = _git(evo_repo, "rev-parse", "HEAD").strip()
+    foreign = _stage_operator_work(evo_repo)
+
+    assert cli.git_revert_evo_auto(sha, 1, "rollback") is True
+
+    assert _commit_paths(evo_repo) == _PROMOTE_PATHS | {"swept.txt"}
+    assert _git(evo_repo, "ls-tree", "--name-only", "HEAD", "swept.txt") == ""
+    assert _staged(evo_repo) == foreign
+
+
+def test_promote_commit_failure_keeps_operator_work_staged(cli: ModuleType, evo_repo: Path) -> None:
+    """Done-when (5), promote side: the failure-path reset unstages only the
+    promotion paths, never ``git reset HEAD -- .``."""
+    foreign = _stage_operator_work(evo_repo)
+    _write_promotion(evo_repo)
+    head_before = _git(evo_repo, "rev-parse", "HEAD").strip()
+
+    ok, sha = cli.git_commit_evo_auto("v1", 1, ["imp-a"], run=_failing_commit_run)
+
+    assert ok is False and sha is None
+    assert _git(evo_repo, "rev-parse", "HEAD").strip() == head_before
+    assert _staged(evo_repo) == foreign
+
+
+def test_revert_commit_failure_keeps_operator_work_staged(cli: ModuleType, evo_repo: Path) -> None:
+    """Done-when (5), revert side."""
+    _write_promotion(evo_repo)
+    ok, sha = cli.git_commit_evo_auto("v1", 1, ["imp-a"])
+    assert ok is True and sha is not None
+    foreign = _stage_operator_work(evo_repo)
+
+    ok = cli.git_revert_evo_auto(sha, 1, "rollback", run=_failing_commit_run)
+
+    assert ok is False
+    assert _git(evo_repo, "rev-parse", "HEAD").strip() == sha
+    assert _staged(evo_repo) == foreign
+    assert not (evo_repo / ".git" / "REVERT_HEAD").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -2649,6 +3014,811 @@ def test_population_cap_real_decide_extinctions_through_gauntlet(
     assert ext["head_version"] == "v100"
     assert ext["dominated_by"] == "main"
     assert ext["outcome"] == "extinction"
+
+
+# ---------------------------------------------------------------------------
+# Phase EH Step EH.2: generation-boundary lineage write-back
+# ---------------------------------------------------------------------------
+
+_EH2_SEED_CREATED_AT = "2026-01-02T03:04:05+00:00"
+
+
+def test_lineage_write_back_persists_advanced_head_and_logs(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """EH.2 clauses (1), (2), (8): heads reach disk, fields survive, one INFO.
+
+    Integration through the production entry point (``run_loop``): a real
+    2-lineage on-disk registry, two generations, and a real promotion on
+    ``main``'s turn. Afterwards the registry is re-read **from the file**
+    via ``load_lineages``:
+
+    - clause (1) ``persisted["main"].head_version != "v0"`` — the
+      load-bearing inequality. It fails at HEAD, where ``run_loop``
+      advances the head into a local dict and nothing flushes it.
+    - clause (2) ``persisted["main"].created_at`` still equals the seed
+      value, proving the hop merged with ``dataclasses.replace`` rather
+      than reconstructing the record (``pool_path`` / ``parent_chain`` are
+      asserted alongside it for the same reason).
+    - clause (8) exactly one INFO record per generation boundary, each
+      naming the generation index and every persisted lineage id with its
+      advanced ``head_version``.
+
+    Schedule (``write_lineages`` uses ``sort_keys=True``, so the loaded key
+    order — and therefore the round-robin — is ALPHABETICAL, not insertion
+    order):
+      gen 1: line-2 @ v9 -> both imps "close", no promotion
+      gen 2: main   @ v0 -> rank-1 passes -> promote v0 -> v1
+    """
+    import orchestrator.lineages as lineages_mod
+    from orchestrator.lineages import Lineage, load_lineages, write_lineages
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+    # The promotion path runs post-promotion hooks; stub so the real bot
+    # code is not invoked under the tmp registry.
+    monkeypatch.setattr(
+        "bots.v0.learning.post_promotion_hooks.run_post_promotion_hooks",
+        lambda _v: None,
+    )
+
+    registry_path = tmp_path / "data" / "lineages.json"
+    registry = {
+        "main": Lineage(
+            lineage_id="main",
+            head_version="v0",
+            pool_path="data/evolve_pool_main.json",
+            parent_chain=["v0"],
+            created_at=_EH2_SEED_CREATED_AT,
+        ),
+        "line-2": Lineage(
+            lineage_id="line-2",
+            head_version="v9",
+            pool_path="data/evolve_pool_line-2.json",
+            parent_chain=["v0", "v9"],
+            created_at=_EH2_SEED_CREATED_AT,
+        ),
+    }
+    write_lineages(registry_path, registry)
+
+    args = _build_args(tmp_path, pool_size=2, generations=2)
+    args.lineages = 2
+    pool = _make_pool(2)
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    def scripted_fitness(parent: str, imp: Improvement, **k: Any) -> Any:
+        # Pass the rank-1 imp ONLY on main's turn (parent v0) so main's
+        # head advances v0 -> v1; everything else stays active via "close".
+        if parent == "v0" and imp.rank == 1:
+            return _fitness(imp, bucket="pass", parent=parent)
+        return _fitness(imp, bucket="close", parent=parent)
+
+    stack_apply = _ScriptedStackApply([(True, "v1")])
+    regression = _ScriptedRegression([False])  # no rollback -> promotion sticks
+
+    with caplog.at_level(logging.INFO, logger="evolve"):
+        rc = cli.run_loop(
+            args,
+            generate_pool_fn=refresh,
+            run_fitness_fn=scripted_fitness,
+            stack_apply_fn=stack_apply,
+            run_regression_fn=regression,
+            current_version_fn=lambda: "v0",
+        )
+    assert rc == 0
+    assert len(stack_apply.calls) == 1
+    assert stack_apply.calls[0]["parent"] == "v0"
+
+    # --- clause (1): assert ON THE FILE, via the production reader. ---
+    assert registry_path.exists()
+    persisted = load_lineages(registry_path)
+    assert set(persisted) == {"main", "line-2"}, sorted(persisted)
+    assert persisted["main"].head_version != "v0"
+    assert persisted["main"].head_version == "v1"
+    # line-2 never promoted, so its head is unchanged — and still present:
+    # the writer is a whole-file replace, so a key missing from the payload
+    # would have been deleted from disk.
+    assert persisted["line-2"].head_version == "v9"
+
+    # --- clause (2): operator-authored fields survived the merge. ---
+    assert persisted["main"].created_at == _EH2_SEED_CREATED_AT
+    assert persisted["main"].pool_path == "data/evolve_pool_main.json"
+    assert persisted["main"].parent_chain == ["v0"]
+    assert persisted["main"].status == "active"
+    assert persisted["line-2"].created_at == _EH2_SEED_CREATED_AT
+    assert persisted["line-2"].parent_chain == ["v0", "v9"]
+
+    # --- clause (8): exactly one INFO record per generation boundary. ---
+    persist_logs = [
+        rec.getMessage()
+        for rec in caplog.records
+        if rec.levelno == logging.INFO
+        and "persisted lineage registry" in rec.getMessage()
+    ]
+    assert len(persist_logs) == 2, persist_logs
+    # Each line names its generation index and every persisted lineage id
+    # paired with the head that was actually written.
+    assert "gen 1 boundary" in persist_logs[0], persist_logs[0]
+    assert "main@v0" in persist_logs[0], persist_logs[0]
+    assert "line-2@v9" in persist_logs[0], persist_logs[0]
+    assert "gen 2 boundary" in persist_logs[1], persist_logs[1]
+    assert "main@v1" in persist_logs[1], persist_logs[1]
+    assert "line-2@v9" in persist_logs[1], persist_logs[1]
+
+
+def test_lineage_write_back_single_lineage_creates_no_file(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """EH.2 clause (3): the default ``--lineages 1`` run stays byte-identical.
+
+    With ``args.lineages = 1`` and no registry on disk the scheduler never
+    engages, so the generation-boundary write-back must not fire and
+    ``data/lineages.json`` must not be created — the back-compat invariant
+    a bare ``python scripts/evolve.py`` depends on.
+    """
+    import orchestrator.lineages as lineages_mod
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+
+    flips: list[str] = []
+    monkeypatch.setattr(
+        cli, "_primitive_restore_pointer", lambda v: flips.append(v)
+    )
+
+    registry_path = tmp_path / "data" / "lineages.json"
+    assert not registry_path.exists()
+
+    args = _build_args(tmp_path, pool_size=2, generations=2)
+    args.lineages = 1
+    pool = _make_pool(2)
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=lambda parent, imp, **k: _fitness(
+            imp, bucket="close", parent=parent
+        ),
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError()
+        ),
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+    assert not registry_path.exists()
+    assert flips == []  # scheduler never engaged
+
+
+def test_lineage_write_back_persists_extinction_as_status(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """EH.2 clause (4): a culled lineage persists as ``status="extinct"``.
+
+    Integration through ``run_loop`` with ``--population-cap`` engaged and
+    the extinction seam scripted to cull ``line-2``. The culled record must
+    survive to disk (the write-back is a whole-file replace, so dropping it
+    from the payload would DELETE it) carrying the cull decision's
+    ``head_version`` — not the registry's seed head, which would contradict
+    the extinction row written to the results file — and a subsequent
+    ``next_lineage`` over the persisted registry must never schedule it.
+    """
+    import orchestrator.lineages as lineages_mod
+    from orchestrator.lineages import (
+        Lineage,
+        load_lineages,
+        next_lineage,
+        write_lineages,
+    )
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+
+    registry_path = tmp_path / "data" / "lineages.json"
+    # sort_keys=True load order -> line-2 (v8), line-3 (v9), main (v0).
+    registry = {
+        "main": Lineage(
+            lineage_id="main",
+            head_version="v0",
+            created_at=_EH2_SEED_CREATED_AT,
+        ),
+        "line-2": Lineage(
+            lineage_id="line-2",
+            head_version="v8",
+            pool_path="data/evolve_pool_line-2.json",
+            created_at=_EH2_SEED_CREATED_AT,
+        ),
+        "line-3": Lineage(
+            lineage_id="line-3",
+            head_version="v9",
+            created_at=_EH2_SEED_CREATED_AT,
+        ),
+    }
+    write_lineages(registry_path, registry)
+
+    args = _build_args(tmp_path, pool_size=2, generations=4)
+    args.lineages = 3
+    args.population_cap = 2
+    args.diversity_threshold = 0.15
+    pool = _make_pool(2)
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    fitness_parents: list[str] = []
+
+    def recording_fitness(parent: str, imp: Improvement, **k: Any) -> Any:
+        fitness_parents.append(parent)
+        return _fitness(imp, bucket="close", parent=parent)
+
+    def scripted_decide(
+        lineages: dict[str, Any],
+        fingerprints: dict[str, Any],
+        fitnesses: dict[str, float],
+        *,
+        cap: int,
+        diversity_threshold: float,
+    ) -> Any:
+        from orchestrator.population import CullDecision, PopulationVerdict
+
+        if "line-2" in lineages:
+            return PopulationVerdict(
+                kept=[lid for lid in lineages if lid != "line-2"],
+                culled=[
+                    CullDecision(
+                        lineage_id="line-2",
+                        head_version=lineages["line-2"].head_version,
+                        dominated_by="line-3",
+                        reason="extinction: line-2 dominated by line-3 (test)",
+                    )
+                ],
+            )
+        return PopulationVerdict(kept=list(lineages.keys()), culled=[])
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=refresh,
+        run_fitness_fn=recording_fitness,
+        stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
+        run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError()
+        ),
+        decide_extinctions_fn=scripted_decide,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+
+    persisted = load_lineages(registry_path)
+    # The culled record was RETAINED, not dropped.
+    assert set(persisted) == {"main", "line-2", "line-3"}, sorted(persisted)
+    assert persisted["line-2"].status == "extinct"
+    # The cull decision's head, and the operator-authored fields, survived.
+    assert persisted["line-2"].head_version == "v8"
+    assert persisted["line-2"].pool_path == "data/evolve_pool_line-2.json"
+    assert persisted["line-2"].created_at == _EH2_SEED_CREATED_AT
+    # Survivors stay active.
+    assert persisted["main"].status == "active"
+    assert persisted["line-3"].status == "active"
+
+    # A subsequent run's scheduler never returns the extinct lineage —
+    # sweep the whole ring (plus two wraps) from every possible start.
+    for start in (None, "main", "line-2", "line-3"):
+        last: str | None = start
+        for _ in range(len(persisted) + 2):
+            last = next_lineage(persisted, last)
+            assert last != "line-2", (start, last)
+
+    # And in-run scheduling stayed byte-identical: line-2 (head v8) is
+    # culled at gen 1's boundary, after its own first turn, so no LATER
+    # generation ran against it (2 imps in that one generation).
+    assert fitness_parents.count("v8") == 2, fitness_parents
+
+
+def test_lineage_write_back_absent_registry_creates_no_file(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """EH.2 clause (6)(a): ``--lineages 3`` + no registry creates no file.
+
+    The data-loss trap. With ``--lineages > 1`` and an absent registry the
+    loader synthesizes an implicit single ``main``, which makes a bare
+    ``if _lineage_heads:`` guard truthy — so a hop gated on that alone
+    would CREATE ``data/lineages.json``, permanently engaging multi-lineage
+    scheduling for every later bare invocation (``--lineages`` has no
+    off-switch once a non-empty registry exists on disk). The real gate is
+    "the registry was loaded from disk".
+    """
+    import orchestrator.lineages as lineages_mod
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+
+    registry_path = tmp_path / "data" / "lineages.json"
+    assert not registry_path.exists()
+
+    args = _build_args(tmp_path, pool_size=2, generations=1)
+    args.lineages = 3
+    pool = _make_pool(2)
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    with caplog.at_level(logging.INFO, logger="evolve"):
+        rc = cli.run_loop(
+            args,
+            generate_pool_fn=refresh,
+            run_fitness_fn=lambda parent, imp, **k: _fitness(
+                imp, bucket="close", parent=parent
+            ),
+            stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError()
+            ),
+            run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError()
+            ),
+            current_version_fn=lambda: "v0",
+        )
+    assert rc == 0
+    assert not registry_path.exists()
+    assert not [
+        rec
+        for rec in caplog.records
+        if "persisted lineage registry" in rec.getMessage()
+    ]
+
+
+def test_lineage_write_back_malformed_registry_bytes_unchanged(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """EH.2 clause (6)(b): ``--lineages 3`` + a malformed registry is untouched.
+
+    The loader swallows the parse error into ``{}`` and synthesizes the
+    implicit ``main``, so a hop gated on ``_lineage_heads`` alone would
+    OVERWRITE the operator's file — destroying the hand-authored registry
+    the operator-gate runbook documents as today's only workaround.
+    Byte-equality is the assertion; "the run completes" alone is not
+    enough.
+    """
+    import orchestrator.lineages as lineages_mod
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+
+    registry_path = tmp_path / "data" / "lineages.json"
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+    registry_path.write_bytes(b"{not json")
+    before = registry_path.read_bytes()
+
+    args = _build_args(tmp_path, pool_size=2, generations=1)
+    args.lineages = 3
+    pool = _make_pool(2)
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    with caplog.at_level(logging.INFO, logger="evolve"):
+        rc = cli.run_loop(
+            args,
+            generate_pool_fn=refresh,
+            run_fitness_fn=lambda parent, imp, **k: _fitness(
+                imp, bucket="close", parent=parent
+            ),
+            stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError()
+            ),
+            run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError()
+            ),
+            current_version_fn=lambda: "v0",
+        )
+    assert rc == 0
+    assert registry_path.read_bytes() == before == b"{not json"
+    assert not [
+        rec
+        for rec in caplog.records
+        if "persisted lineage registry" in rec.getMessage()
+    ]
+
+
+def test_persisted_extinct_record_excluded_from_population_cap(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """EH.2 non-resurrection: a disk-persisted extinct record is NOT population.
+
+    The producer -> consumer round trip EH.2's own tests left open. EH.2
+    made ``run_loop`` the PRODUCER of persisted ``status="extinct"``
+    records; this drives the CONSUMER side — a restart over a registry
+    that already holds one — through the production entry point. A unit
+    test of the active filter cannot close it: the drift lives in the
+    relationship between the write-back and the startup seeding.
+
+    Registry on disk: ``main`` active @ v0, ``dead`` extinct @ v9, run
+    under ``--population-cap 1``. The spy hands the REAL
+    ``decide_extinctions`` the fitness + fingerprint vectors the EL.2
+    gauntlet would supply from live SC2 games, rigged so ``dead``
+    strictly out-fitnesses ``main`` on an identical (distance ``0.0`` ->
+    redundant) baseline vector. So the moment ``dead`` is admitted to the
+    population the real decision function culls ``main``:
+
+    - unfixed, the loop seeds ``_lineage_heads`` from EVERY loaded record
+      and rebuilds ``_live_lineages`` as fresh ``Lineage`` objects (whose
+      ``status`` defaults to ``"active"``), so the spy sees
+      ``{"dead", "main"}``, ``len(2) > cap(1)``, and the LIVE lineage is
+      made extinct by a dead one — ``persisted["main"].status`` comes
+      back ``"extinct"`` and gen 1 even runs against v9;
+    - fixed, the population is ``{"main"}``, ``len(1) <= cap(1)`` keeps
+      all, and ``main`` survives active.
+
+    Asserting only "main survives" would pass unfixed too whenever no
+    gauntlet has run (an unassessable lineage is never cull-eligible), so
+    the population handed to the decision function is asserted directly.
+    """
+    import orchestrator.lineages as lineages_mod
+    from orchestrator.lineages import Lineage, load_lineages, write_lineages
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+
+    registry_path = tmp_path / "data" / "lineages.json"
+    write_lineages(
+        registry_path,
+        {
+            "main": Lineage(
+                lineage_id="main",
+                head_version="v0",
+                created_at=_EH2_SEED_CREATED_AT,
+            ),
+            # sort_keys=True, so this one would be scheduled FIRST.
+            "dead": Lineage(
+                lineage_id="dead",
+                head_version="v9",
+                pool_path="data/evolve_pool_dead.json",
+                parent_chain=["v0", "v9"],
+                created_at=_EH2_SEED_CREATED_AT,
+                status="extinct",
+            ),
+        },
+    )
+
+    args = _build_args(tmp_path, pool_size=2, generations=2)
+    args.lineages = 2
+    args.population_cap = 1
+    args.diversity_threshold = 0.15
+    pool = _make_pool(2)
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    fitness_parents: list[str] = []
+
+    def recording_fitness(parent: str, imp: Improvement, **k: Any) -> Any:
+        fitness_parents.append(parent)
+        return _fitness(imp, bucket="close", parent=parent)
+
+    populations: list[set[str]] = []
+
+    def spy_decide(
+        lineages: dict[str, Any],
+        fingerprints: dict[str, Any],
+        fitnesses: dict[str, float],
+        *,
+        cap: int,
+        diversity_threshold: float,
+    ) -> Any:
+        from orchestrator.fingerprint import Fingerprint
+        from orchestrator.population import decide_extinctions
+
+        populations.append(set(lineages))
+        # The signals the EL.2 gauntlet writes from real SC2 games:
+        # identical vectors (distance 0.0 < threshold -> redundant) with
+        # the EXTINCT head strictly fitter, so the real decision function
+        # culls "main" as soon as "dead" is in the population.
+        return decide_extinctions(
+            lineages,
+            {
+                "v0": Fingerprint(version="v0", per_baseline={"b1": 0.10}),
+                "v9": Fingerprint(version="v9", per_baseline={"b1": 0.10}),
+            },
+            {"v0": 0.10, "v9": 0.90},
+            cap=cap,
+            diversity_threshold=diversity_threshold,
+        )
+
+    with caplog.at_level(logging.INFO, logger="evolve"):
+        rc = cli.run_loop(
+            args,
+            generate_pool_fn=refresh,
+            run_fitness_fn=recording_fitness,
+            stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError()
+            ),
+            run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError()
+            ),
+            decide_extinctions_fn=spy_decide,
+            current_version_fn=lambda: "v0",
+        )
+    assert rc == 0
+
+    # --- the drift itself: the extinct record never enters the population.
+    assert populations == [{"main"}, {"main"}], populations
+
+    # --- the consequence: the live lineage was NOT culled by a dead one.
+    persisted = load_lineages(registry_path)
+    assert set(persisted) == {"main", "dead"}, sorted(persisted)
+    assert persisted["main"].status == "active"
+    assert persisted["main"].head_version == "v0"
+    # The extinct record is preserved verbatim — neither revived nor
+    # deleted by the whole-file replace.
+    assert persisted["dead"].status == "extinct"
+    assert persisted["dead"].head_version == "v9"
+    assert persisted["dead"].pool_path == "data/evolve_pool_dead.json"
+    assert persisted["dead"].parent_chain == ["v0", "v9"]
+    assert persisted["dead"].created_at == _EH2_SEED_CREATED_AT
+
+    # --- and it was never SCHEDULED: no generation ran against its head.
+    assert set(fitness_parents) == {"v0"}, fitness_parents
+
+    # --- the startup log counts only the active lineage as engaged.
+    engaged = [
+        rec.getMessage()
+        for rec in caplog.records
+        if "multi-lineage scheduling engaged" in rec.getMessage()
+    ]
+    assert len(engaged) == 1, engaged
+    assert "across 1 lineage(s)" in engaged[0], engaged[0]
+    assert "main@v0" in engaged[0], engaged[0]
+    assert "dead" not in engaged[0], engaged[0]
+
+
+def test_all_extinct_registry_runs_single_lineage_and_warns(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """EH.2 non-resurrection, degenerate case: an all-extinct registry.
+
+    Nothing is schedulable, so the loop must take the single-lineage path
+    (no pointer flip, no round-robin) rather than resurrect the ring — and
+    must still PRESERVE the records, because the write-back is a
+    whole-file replace. A WARNING names them so the operator is not left
+    inferring a missing file from the absent "engaged" INFO line.
+    """
+    import orchestrator.lineages as lineages_mod
+    from orchestrator.lineages import Lineage, load_lineages, write_lineages
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+
+    flips: list[str] = []
+    monkeypatch.setattr(
+        cli, "_primitive_restore_pointer", lambda v: flips.append(v)
+    )
+
+    registry_path = tmp_path / "data" / "lineages.json"
+    write_lineages(
+        registry_path,
+        {
+            "line-2": Lineage(
+                lineage_id="line-2",
+                head_version="v8",
+                created_at=_EH2_SEED_CREATED_AT,
+                status="extinct",
+            ),
+            "line-3": Lineage(
+                lineage_id="line-3",
+                head_version="v9",
+                created_at=_EH2_SEED_CREATED_AT,
+                status="extinct",
+            ),
+        },
+    )
+
+    args = _build_args(tmp_path, pool_size=2, generations=1)
+    args.lineages = 2
+    args.population_cap = 1
+    pool = _make_pool(2)
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    fitness_parents: list[str] = []
+
+    def recording_fitness(parent: str, imp: Improvement, **k: Any) -> Any:
+        fitness_parents.append(parent)
+        return _fitness(imp, bucket="close", parent=parent)
+
+    # RECORD rather than raise: the extinction block wraps the decision
+    # call in ``except Exception`` and logs-and-continues, so a throwing
+    # stub here would be swallowed and assert nothing.
+    decide_calls: list[set[str]] = []
+
+    def recording_decide(lineages: dict[str, Any], *a: Any, **k: Any) -> Any:
+        from orchestrator.population import PopulationVerdict
+
+        decide_calls.append(set(lineages))
+        return PopulationVerdict(kept=list(lineages), culled=[])
+
+    with caplog.at_level(logging.INFO, logger="evolve"):
+        rc = cli.run_loop(
+            args,
+            generate_pool_fn=refresh,
+            run_fitness_fn=recording_fitness,
+            stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError()
+            ),
+            run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError()
+            ),
+            decide_extinctions_fn=recording_decide,
+            current_version_fn=lambda: "v0",
+        )
+    assert rc == 0
+    # No ring: the single-lineage path never flips the pointer, never
+    # measures a population against the cap, and the generation ran
+    # against the real current version rather than an extinct head.
+    assert flips == [], flips
+    assert decide_calls == [], decide_calls
+    assert set(fitness_parents) == {"v0"}, fitness_parents
+    assert not [
+        rec
+        for rec in caplog.records
+        if "multi-lineage scheduling engaged" in rec.getMessage()
+    ]
+    # The operator-facing warning names each id with its status.
+    warned = [
+        rec.getMessage()
+        for rec in caplog.records
+        if "holds no active record" in rec.getMessage()
+    ]
+    assert len(warned) == 1, warned
+    assert "line-2='extinct'" in warned[0], warned[0]
+    assert "line-3='extinct'" in warned[0], warned[0]
+    # Preserved on disk, unrevived.
+    persisted = load_lineages(registry_path)
+    assert set(persisted) == {"line-2", "line-3"}, sorted(persisted)
+    assert [lin.status for lin in persisted.values()] == [
+        "extinct",
+        "extinct",
+    ]
+    assert persisted["line-2"].head_version == "v8"
+    assert persisted["line-3"].head_version == "v9"
+
+
+def test_lineage_write_back_persist_failure_never_aborts_run(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """EH.2: a ``write_lineages`` failure is fail-soft — soak lives, no INFO.
+
+    The hop's stated guarantee. A disk failure at a generation boundary
+    (full volume, a file locked by ``--serve``, a permission change
+    mid-soak) must not abort a multi-hour run, must leave the file as it
+    was, and must emit NO success INFO line — that INFO is the operator's
+    only "it reached disk" evidence, so logging it for a write that never
+    landed is a false green.
+    """
+    import orchestrator.lineages as lineages_mod
+    from orchestrator.lineages import Lineage, write_lineages
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(lineages_mod, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+
+    registry_path = tmp_path / "data" / "lineages.json"
+    write_lineages(
+        registry_path,
+        {
+            "main": Lineage(
+                lineage_id="main",
+                head_version="v0",
+                created_at=_EH2_SEED_CREATED_AT,
+            )
+        },
+    )
+    before = registry_path.read_bytes()
+
+    # Break the write only AFTER the seed exists. The hop imports
+    # ``write_lineages`` from the module inside its own try block, so the
+    # module attribute is what production code resolves at call time.
+    calls: list[int] = []
+
+    def exploding_write(*a: Any, **k: Any) -> None:
+        calls.append(1)
+        raise OSError("disk full (injected)")
+
+    monkeypatch.setattr(lineages_mod, "write_lineages", exploding_write)
+
+    args = _build_args(tmp_path, pool_size=2, generations=2)
+    # Engaged purely by the non-empty on-disk registry, not by the flag.
+    args.lineages = 1
+    pool = _make_pool(2)
+
+    def refresh(*a: Any, **k: Any) -> list[Improvement]:
+        if k.get("skip_mirror"):
+            return []
+        return pool
+
+    fitness_parents: list[str] = []
+
+    def recording_fitness(parent: str, imp: Improvement, **k: Any) -> Any:
+        fitness_parents.append(parent)
+        return _fitness(imp, bucket="close", parent=parent)
+
+    with caplog.at_level(logging.INFO, logger="evolve"):
+        rc = cli.run_loop(
+            args,
+            generate_pool_fn=refresh,
+            run_fitness_fn=recording_fitness,
+            stack_apply_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError()
+            ),
+            run_regression_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError()
+            ),
+            current_version_fn=lambda: "v0",
+        )
+
+    # The run completed through BOTH generation boundaries: the failure
+    # neither aborted the soak nor stopped the hop retrying next time.
+    assert rc == 0
+    assert len(calls) == 2, calls
+    assert set(fitness_parents) == {"v0"}, fitness_parents
+    # No success INFO for a write that never landed.
+    assert not [
+        rec
+        for rec in caplog.records
+        if "persisted lineage registry" in rec.getMessage()
+    ]
+    # The failure WAS surfaced, at ERROR, with a traceback.
+    failures = [
+        rec
+        for rec in caplog.records
+        if "failed to persist lineage registry" in rec.getMessage()
+    ]
+    assert len(failures) == 2, [rec.getMessage() for rec in failures]
+    assert all(rec.levelno == logging.ERROR for rec in failures), failures
+    assert all(rec.exc_info is not None for rec in failures), failures
+    # And the file on disk is untouched by the failed write.
+    assert registry_path.read_bytes() == before
 
 
 # ---------------------------------------------------------------------------
@@ -4274,3 +5444,1791 @@ def test_skill_md_documents_all_six_ej_flags() -> None:
     # duplicated) and no longer defers the table to a future step.
     assert skill_md.count("Pairing warning (EJ.3 + EJ.4)") == 1
     assert "The full flags table lands in EJ.6" not in skill_md
+
+
+def test_skill_md_documents_the_viewer_flag() -> None:
+    """The improve-bot-evolve SKILL.md documents `--viewer` (Phase EV.3).
+
+    Same contract as the EJ flags above: a new evolve flag is not shipped
+    until the skill an operator actually invokes describes it. The extra
+    load-bearing facts here are the safety ones -- `--concurrency 1` is
+    mandatory, closing the container detaches rather than stops, and Ctrl+C
+    can orphan SC2 processes.
+    """
+    skill_md = (_REPO_ROOT / ".claude" / "skills" / "improve-bot-evolve" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    lines = skill_md.splitlines()
+    # (a) The frontmatter flag summary names it, so a reader who never scrolls
+    # to the table still knows the flag exists.
+    argument_lines = [line for line in lines if line.startswith("argument:")]
+    assert len(argument_lines) == 1, "expected exactly one frontmatter argument: line"
+    assert "--viewer" in argument_lines[0], "--viewer missing from the flag summary"
+    # (b) Exactly one `--viewer` row in the flags table -- the same exact-count
+    # guard the EJ test uses against a duplicated row -- and its DEFAULT CELL
+    # says off. Assert the split cell, never `"off" in row`: the word "off"
+    # also appears in ordinary row prose ("runs off the main thread"), so a
+    # substring check stays GREEN with the documented default flipped to ON.
+    viewer_rows = [line for line in lines if line.startswith("| `--viewer` |")]
+    assert len(viewer_rows) == 1, f"expected 1 --viewer table row, got {len(viewer_rows)}"
+    cells = [cell.strip() for cell in viewer_rows[0].split("|")]
+    assert cells[3].lower() == "off", f"--viewer default cell is {cells[3]!r}, expected 'off'"
+    # (c) The safety detail lives in a named prose block under the table --
+    # the file's established pattern for detail too long for a cell (cf.
+    # "Pairing warning (EJ.3 + EJ.4)"). Pin the facts there, not in the row.
+    assert skill_md.count("**Viewer note (`--viewer`):**") == 1
+    note = skill_md.split("**Viewer note (`--viewer`):**", 1)[1].split("\n### ", 1)[0]
+    for fragment in (
+        "Windows",  # platform restriction
+        "[viewer]",  # optional extra
+        "--concurrency 1",  # mutual-exclusion requirement
+        # "DETACHES", not "headless": "headless" occurs twice in the note, so
+        # deleting the whole detach-vs-stop sentence would leave this green.
+        "DETACHES",
+        "close the console window",  # the ONE gesture that actually stops a run
+        "Ctrl+C",  # orphaned-SC2 warning
+        "orphaned SC2",
+    ):
+        assert fragment in note, f"{fragment!r} missing from the Viewer note"
+    # (d) The mutual exclusion is ALSO named on the `--concurrency` row, so an
+    # operator reaching for `--concurrency 4` learns it there.
+    concurrency_rows = [line for line in lines if line.startswith("| `--concurrency` |")]
+    assert len(concurrency_rows) == 1, "expected exactly one --concurrency table row"
+    assert "--viewer" in concurrency_rows[0], (
+        "--concurrency row does not name the --viewer mutual exclusion"
+    )
+    # (e) EV.3 H-1: every stop_reason the skill advertises must be one the
+    # runner can actually emit. SKILL.md used to list `"dashboard-stop"`,
+    # which `scripts/evolve.py` never produces -- `bots/v0/api.py` writes
+    # data/evolve_run_control.json but nothing reads it -- so an operator was
+    # told about a stop path that does not exist. Producer/consumer check, not
+    # a keyword ban: prose ABOUT the gap is fine, an advertised value is not.
+    prefix = "`stop_reason` in the final run log:"
+    reason_lines = [line for line in lines if line.startswith(prefix)]
+    assert len(reason_lines) == 1, f"expected 1 stop_reason summary line, got {len(reason_lines)}"
+    documented = set(re.findall(r'`"([a-z-]+)"`', reason_lines[0]))
+    assert documented, f"no stop_reason values parsed from: {reason_lines[0]}"
+    evolve_src = (_REPO_ROOT / "scripts" / "evolve.py").read_text(encoding="utf-8")
+    for reason in sorted(documented):
+        assert f'"{reason}"' in evolve_src, (
+            f"SKILL.md documents stop_reason {reason!r}, which scripts/evolve.py never emits"
+        )
+
+
+def test_launch_evolve_ps1_pins_the_viewer_spawn_contract() -> None:
+    """`scripts/launch-evolve.ps1` is a deployment seam pytest cannot reach.
+
+    The plan's risk table notes a malformed spawn line "would surface at the
+    start of EV.5's four-hour window". These are machine-consumed CLI tokens,
+    not prose, so pinning them is contract rather than wording.
+    """
+    raw = (_REPO_ROOT / "scripts" / "launch-evolve.ps1").read_bytes()
+    # ASCII-only + no BOM. windows-shell.md: PowerShell 5.1 decodes a no-BOM
+    # .ps1 as cp1252, so ONE non-ASCII byte can corrupt string/brace parsing
+    # with no parse error -- a silent false green. Currently correct; pin it.
+    assert raw[:3] != b"\xef\xbb\xbf", "launch-evolve.ps1 gained a UTF-8 BOM"
+    assert max(raw) < 128, "launch-evolve.ps1 gained a non-ASCII byte"
+    text = raw.decode("ascii")
+    spawn_lines = [line for line in text.splitlines() if "$evolveCmd =" in line]
+    assert len(spawn_lines) == 1, f"expected 1 $evolveCmd assignment, got {len(spawn_lines)}"
+    spawn = spawn_lines[0]
+    # (a) The `--extra <name>` the launcher asks uv for must be a real key in
+    # pyproject's [project.optional-dependencies] -- a cross-file coupling
+    # with no other mechanical link. A rename there fails the launcher only at
+    # run time, in front of the operator.
+    extra_match = re.search(r"--extra (\S+)", spawn)
+    assert extra_match is not None, f"no --extra in the spawn line: {spawn}"
+    with (_REPO_ROOT / "pyproject.toml").open("rb") as handle:
+        pyproject = tomllib.load(handle)
+    declared = pyproject["project"]["optional-dependencies"]
+    assert extra_match.group(1) in declared, (
+        f"launcher asks for --extra {extra_match.group(1)!r}, "
+        f"which is not in [project.optional-dependencies] ({sorted(declared)})"
+    )
+    # (b) --viewer is still passed. Dropping it has ZERO dev-facing symptom
+    # while silently reverting the whole Phase EV deliverable.
+    assert "--viewer" in spawn, f"launcher no longer passes --viewer: {spawn}"
+    # (b2) EH.6: --generations is forwarded. evolve.py defaults it to 1, so a
+    # spawn line without it promises an N-hour soak and delivers ONE
+    # generation (~20 min), then exits cleanly with nothing saying so.
+    assert "--generations $Generations" in spawn, (
+        f"launcher no longer forwards --generations: {spawn}"
+    )
+    # (b3) ...and the forwarded value defaults to 0 (no generation cap), so a
+    # bare `launch-evolve.ps1 -Hours N` (the observatory button) runs N hours.
+    param_match = re.search(r"\bparam\((.*?)\n\)", text, flags=re.DOTALL)
+    assert param_match is not None, "no param() block in launch-evolve.ps1"
+    assert re.search(r"\[int\]\$Generations\s*=\s*0\b", param_match.group(1)), (
+        f"param block does not declare [int]$Generations = 0: {param_match.group(1)}"
+    )
+    # (c) The double-run guard's WMI CommandLine token must still match the
+    # string actually spawned. Low probability, high consequence: a miss means
+    # two concurrent evolve runs both auto-committing [evo-auto] to master.
+    guard_lines = [line for line in text.splitlines() if "CommandLine LIKE" in line]
+    assert len(guard_lines) == 1, f"expected 1 CommandLine guard, got {len(guard_lines)}"
+    token_match = re.search(r"CommandLine LIKE '%([^%]+)%'", guard_lines[0])
+    assert token_match is not None, f"unparseable guard filter: {guard_lines[0]}"
+    assert token_match.group(1) in spawn, (
+        f"guard probes for {token_match.group(1)!r}, absent from the spawn line: {spawn}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase EV.1 — `--viewer` flag surface + graceful-degradation gate
+# ---------------------------------------------------------------------------
+#
+# Every probe here manipulates the REAL import machinery (``sys.meta_path`` /
+# ``sys.modules``) rather than stubbing ``importlib.util.find_spec``, so the
+# tests exercise the same code path a real missing/broken ``[viewer]`` extra
+# takes. They are also deterministic on a box that DOES have pygame installed.
+
+
+class _PygameFinder:
+    """``sys.meta_path`` finder that scripts the answer for ``pygame``.
+
+    ``outcome`` is either an exception instance to raise or the spec object
+    (possibly ``None``) to return. Every other module name returns ``None``
+    so the real finders behind us keep working.
+    """
+
+    outcome: object = None
+
+    @classmethod
+    def find_spec(cls, name: str, *args: object, **kwargs: object) -> Any:
+        if name != "pygame" and not name.startswith("pygame."):
+            return None
+        if isinstance(cls.outcome, BaseException):
+            raise cls.outcome
+        return cls.outcome
+
+
+def _install_pygame_finder(monkeypatch: pytest.MonkeyPatch, outcome: object) -> None:
+    """Front-load a ``_PygameFinder`` subclass scripted with ``outcome``."""
+    finder = type("_ScriptedPygameFinder", (_PygameFinder,), {"outcome": outcome})
+    monkeypatch.delitem(sys.modules, "pygame", raising=False)
+    monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
+
+
+def _arrange_import_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A finder that refuses the name — broken or shadowed install."""
+    _install_pygame_finder(monkeypatch, ImportError("simulated missing extra"))
+
+
+def _arrange_value_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``pygame`` cached in ``sys.modules`` with ``__spec__`` set to ``None``.
+
+    ``importlib.util.find_spec`` raises ``ValueError`` for this — real
+    behaviour of this interpreter, not a stub.
+    """
+    monkeypatch.setitem(sys.modules, "pygame", ModuleType("pygame"))
+
+
+def _arrange_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No finder can resolve the name at all — ``find_spec`` returns None."""
+    monkeypatch.delitem(sys.modules, "pygame", raising=False)
+    monkeypatch.setattr(sys, "meta_path", [_PygameFinder])
+
+
+def _arrange_namespace_package(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A bare ``pygame/`` directory resolving as a namespace package.
+
+    ``find_spec`` succeeds but the spec carries ``loader is None``: "found"
+    yet not importable. Treating that as available would hand EV.2 a pygame
+    it cannot import.
+    """
+    _install_pygame_finder(monkeypatch, ModuleSpec("pygame", None))
+
+
+def _arrange_unexpected_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A finder raising OUTSIDE the import-exception hierarchy.
+
+    ``sys.meta_path`` is open to third parties (this venv already carries
+    setuptools' ``DistutilsMetaFinder`` and six's ``_Finder``) and none of
+    them are bound to any exception contract. The gate is total: it must
+    still degrade, not propagate.
+    """
+    _install_pygame_finder(monkeypatch, RuntimeError("hostile third-party finder"))
+
+
+def _arrange_raising_loader_attr(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A spec object whose ``loader`` attribute itself raises.
+
+    Pins that the spec INSPECTION is inside the same guard as the probe
+    call — reading ``.loader`` outside the ``try`` reopens the same hole.
+    """
+
+    class _HostileSpec:
+        name = "pygame"
+
+        @property
+        def loader(self) -> Any:
+            raise AttributeError("exotic spec has no usable loader")
+
+    _install_pygame_finder(monkeypatch, _HostileSpec())
+
+
+def _arrange_pygame_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pretend a real, importable pygame is installed (loader-bearing spec)."""
+    _install_pygame_finder(monkeypatch, ModuleSpec("pygame", object(), origin="stub"))
+
+
+def test_viewer_flag_parses_when_passed(cli: ModuleType) -> None:
+    """--viewer parses to args.viewer.
+
+    The default-off half lives in ``test_default_flags``, this file's
+    declared owner of flag defaults.
+    """
+    assert cli.build_parser().parse_args(["--viewer"]).viewer is True
+
+
+def test_viewer_enabled_false_and_silent_by_default(
+    cli: ModuleType, caplog: pytest.LogCaptureFixture
+) -> None:
+    """No --viewer: False, and SILENT (the default path warns about nothing)."""
+    args = cli.build_parser().parse_args([])
+    with caplog.at_level(logging.DEBUG, logger="evolve"):
+        assert cli._viewer_enabled(args) is False
+    assert [r.getMessage() for r in caplog.records] == []
+
+
+def test_viewer_enabled_false_with_warning_on_non_win32(
+    cli: ModuleType,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-Windows: False plus a WARNING naming the platform as the reason."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    args = cli.build_parser().parse_args(["--viewer"])
+
+    with caplog.at_level(logging.WARNING, logger="evolve"):
+        assert cli._viewer_enabled(args) is False
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("Windows-only" in m for m in warnings), warnings
+    assert any("headless" in m for m in warnings), warnings
+
+
+@pytest.mark.parametrize(
+    "arrange",
+    [
+        pytest.param(_arrange_import_error, id="find_spec-raises-ImportError"),
+        pytest.param(_arrange_value_error, id="find_spec-raises-ValueError"),
+        pytest.param(_arrange_not_found, id="find_spec-returns-None"),
+        pytest.param(_arrange_namespace_package, id="spec-has-no-loader"),
+        pytest.param(_arrange_unexpected_exception, id="find_spec-raises-RuntimeError"),
+        pytest.param(_arrange_raising_loader_attr, id="spec-loader-attr-raises"),
+    ],
+)
+def test_viewer_enabled_degrades_when_pygame_not_importable(
+    cli: ModuleType,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    arrange: Callable[[pytest.MonkeyPatch], None],
+) -> None:
+    """``_viewer_enabled`` is TOTAL: no probe failure may propagate.
+
+    The gate's contract is *degrade and keep running*, so every way the
+    import machinery can misbehave — a raised ImportError, ValueError, or
+    anything else a third-party ``sys.meta_path`` finder invents, a missing
+    spec, an unloadable spec, or a spec that raises on inspection — must
+    come back as False + a WARNING. A traceback out of here would kill a
+    multi-hour evolve at second zero.
+    """
+    monkeypatch.setattr(sys, "platform", "win32")
+    arrange(monkeypatch)
+    args = cli.build_parser().parse_args(["--viewer"])
+
+    with caplog.at_level(logging.WARNING, logger="evolve"):
+        assert cli._viewer_enabled(args) is False
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("pygame is not importable" in m for m in warnings), warnings
+    assert any("headless" in m for m in warnings), warnings
+
+
+def test_viewer_enabled_true_on_win32_with_pygame(
+    cli: ModuleType,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows + an importable pygame: True, and nothing is warned about."""
+    monkeypatch.setattr(sys, "platform", "win32")
+    _arrange_pygame_available(monkeypatch)
+    args = cli.build_parser().parse_args(["--viewer"])
+
+    with caplog.at_level(logging.WARNING, logger="evolve"):
+        assert cli._viewer_enabled(args) is True
+
+    assert [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING] == []
+
+
+def test_main_viewer_with_concurrency_gt_1_exits_with_guidance(
+    cli: ModuleType,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """main(["--viewer", "--concurrency", "2"]) exits before any run_loop work."""
+
+    def _explode(*a: Any, **k: Any) -> int:
+        raise AssertionError("run_loop must not be reached")
+
+    monkeypatch.setattr(cli, "run_loop", _explode)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["--viewer", "--concurrency", "2"])
+
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "--viewer requires --concurrency 1" in err
+    assert "evolve_worker.py" in err
+
+
+def test_main_viewer_with_degraded_gate_falls_through_to_headless(
+    cli: ModuleType,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--concurrency 1 passes the guard, and a FALSE gate runs plain headless.
+
+    The interesting case: ``--viewer`` IS set but ``_viewer_enabled``
+    returns False (no Windows / no pygame). ``main()`` must gate the whole
+    EV.2 inversion on the *gate*, not on the flag — no viewer object, no
+    batch thread, and above all no ``run_batch_fn`` seam injected, so the
+    ``elif concurrency_int > 1`` mirror-dispatcher branch stays reachable.
+    Weakening the guard to ``if args.viewer:`` turns this red.
+    """
+    monkeypatch.setattr(sys, "platform", "linux")  # forces headless degrade
+
+    seen: dict[str, Any] = {}
+
+    def _fake_run_loop(args: argparse.Namespace, **kwargs: Any) -> int:
+        seen["kwargs"] = kwargs
+        return 0
+
+    monkeypatch.setattr(cli, "run_loop", _fake_run_loop)
+
+    with caplog.at_level(logging.WARNING, logger="evolve"):
+        assert cli.main(["--viewer", "--concurrency", "1"]) == 0
+
+    assert seen["kwargs"] == {}
+    # No viewer means no viewer-safety noise on stderr either: the Ctrl+C
+    # warning is scoped to runs that actually open a window. Assert the whole
+    # banner rather than one phrase of it -- strictly stronger, and immune to
+    # the rewording EV.3 did (the old sentinel "CLOSE THE VIEWER WINDOW" no
+    # longer appears in the banner at all, so it would now pass vacuously).
+    assert cli._VIEWER_CTRL_C_WARNING not in capsys.readouterr().err
+    # ...and the gate DID explain itself, so this is headless-by-gate, not
+    # headless-because-nothing-ran.
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("Windows-only" in m for m in messages), messages
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected_concurrency"),
+    [
+        pytest.param([], 1, id="default"),
+        pytest.param(["--concurrency", "2"], 2, id="parallel"),
+    ],
+)
+def test_main_without_viewer_reaches_run_loop_unchanged(
+    cli: ModuleType,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    argv: list[str],
+    expected_concurrency: int,
+) -> None:
+    """Every no-``--viewer`` path is byte-identical to pre-EV, in three senses.
+
+    * **Call shape** — ``run_loop`` is reached with NO injected seams
+      (``kwargs == {}``), so its own ``run_batch_fn=None`` default stands
+      and the ``elif concurrency_int > 1`` mirror-dispatcher branch stays
+      reachable.
+    * **Return value** — ``main()`` returns what ``run_loop`` returned,
+      pinned with a distinctive non-zero code. Asserting ``== 0`` against a
+      fake that returns 0 cannot tell a passthrough from a hardcoded
+      constant, and EV.2's declared job is to wrap this exact call and map
+      ``SystemExit`` into the return code.
+    * **Observable log stream** — a plain headless run gains no EV-era
+      warning; "byte-identical" is a promise about what the operator sees.
+
+    The ``parallel`` case additionally pins that the EV.1 mutual-exclusion
+    guard does NOT fire on the pre-existing ``--concurrency N>1`` path: drop
+    the ``args.viewer and`` conjunct and every production parallel evolve
+    run dies at startup.
+    """
+    seen: dict[str, Any] = {}
+
+    def _fake_run_loop(args: argparse.Namespace, **kwargs: Any) -> int:
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return 7
+
+    monkeypatch.setattr(cli, "run_loop", _fake_run_loop)
+
+    with caplog.at_level(logging.WARNING, logger="evolve"):
+        assert cli.main(argv) == 7
+
+    assert seen["kwargs"] == {}
+    assert seen["args"].viewer is False
+    assert seen["args"].concurrency == expected_concurrency
+    messages = [r.getMessage() for r in caplog.records]
+    assert not any("--viewer" in m for m in messages), messages
+
+
+# ---------------------------------------------------------------------------
+# Phase EV.2 — viewer inversion in `main()`
+# ---------------------------------------------------------------------------
+#
+# The viewer is faked, never constructed: a real ``SelfPlayViewer`` would
+# demand pygame plus a Windows message pump, and neither exists on CI. The
+# fakes stand in at the exact production seam ``main()`` reaches for
+# (``selfplay_viewer.SelfPlayViewer``), so the wiring under test is real even
+# though the window is not.
+
+
+class _RecordingViewer:
+    """Base fake: records the two enqueue-only callbacks the wrapper chains.
+
+    Subclasses supply ``run_with_batch``, which is the only axis that
+    matters at ``main()`` level (inline / threaded / detaching / failing).
+    The real ``on_game_start`` call shape is contract-tested against the
+    actual ``SelfPlayViewer`` in
+    ``tests/test_evolve_parallel.py::test_viewer_session_feeds_the_real_viewer_event_queue``.
+    """
+
+    instances: list[Any] = []
+
+    def __init__(self) -> None:
+        self.starts: list[tuple[Any, ...]] = []
+        self.ends: list[Any] = []
+        self.stop_event_arg: Any = "<never called>"
+        type(self).instances.append(self)
+
+    def on_game_start(
+        self,
+        game_index: int,
+        total: int,
+        p1_pid: int,
+        p2_pid: int,
+        p1_label: str,
+        p2_label: str,
+    ) -> None:
+        self.starts.append((game_index, total, p1_pid, p2_pid, p1_label, p2_label))
+
+    def on_game_end(self, result: Any) -> None:
+        self.ends.append(result)
+
+
+class _FakeInlineViewer(_RecordingViewer):
+    """``run_with_batch`` runs the batch inline, then returns.
+
+    Models the happy path: the operator leaves the window open until the
+    evolve run finishes on its own.
+    """
+
+    instances: list[Any] = []
+
+    def run_with_batch(self, batch_fn: Callable[[], Any], *, stop_event: Any = None) -> Any:
+        self.stop_event_arg = stop_event
+        return batch_fn()
+
+
+class _FakeThreadedViewer(_RecordingViewer):
+    """``run_with_batch`` runs the batch on a worker thread and joins it.
+
+    Same completion semantics as ``_FakeInlineViewer``, but ``run_loop``
+    genuinely executes OFF the main thread — which is what production does,
+    and the only way to see failures that would otherwise be swallowed by
+    the batch thread instead of reaching ``main()``.
+    """
+
+    instances: list[Any] = []
+
+    def run_with_batch(self, batch_fn: Callable[[], Any], *, stop_event: Any = None) -> Any:
+        self.stop_event_arg = stop_event
+        thread = threading.Thread(target=batch_fn, daemon=True)
+        thread.start()
+        thread.join(10.0)
+        return None
+
+
+class _FakePostStartFailureViewer(_RecordingViewer):
+    """``run_with_batch`` starts the batch and THEN dies.
+
+    The window that matters most in production and the one every other fake
+    misses: ``container.run_with_batch`` runs its entire pygame frame loop
+    *after* ``batch_thread.start()``, so a viewer can fail with a live,
+    multi-hour ``run_loop`` still enqueueing behind it. Only
+    ``finally: session.close()`` latches the session on this path — without
+    it, ``_event_queue`` grows unbounded with nobody draining it.
+    """
+
+    instances: list[Any] = []
+
+    def run_with_batch(self, batch_fn: Callable[[], Any], *, stop_event: Any = None) -> Any:
+        self.stop_event_arg = stop_event
+        thread = threading.Thread(target=batch_fn, daemon=True)
+        thread.start()
+        thread.join(10.0)
+        raise RuntimeError("pygame frame loop died after the batch started")
+
+
+def _arrange_viewer_available(
+    cli: ModuleType, monkeypatch: pytest.MonkeyPatch, viewer_cls: type
+) -> None:
+    """Make ``_viewer_enabled`` True and hand ``main()`` a fake viewer class.
+
+    Also shrinks the detached-tail heartbeat. Every viewer-path test blocks
+    on ``done.wait(_VIEWER_DETACHED_HEARTBEAT_S)`` in ``main()``, so at the
+    production 60s a regression that leaves ``done`` unset would park the
+    whole suite instead of failing — which is precisely how the
+    "run_with_batch raised before the batch thread started" hang stayed
+    invisible. A tiny interval also makes the heartbeat body observable at
+    all, and is the reason the constant exists.
+    """
+    import selfplay_viewer
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    _arrange_pygame_available(monkeypatch)
+    monkeypatch.setattr(selfplay_viewer, "SelfPlayViewer", viewer_cls)
+    monkeypatch.setattr(cli, "_VIEWER_DETACHED_HEARTBEAT_S", 0.01)
+    if hasattr(viewer_cls, "instances"):
+        monkeypatch.setattr(viewer_cls, "instances", [])
+
+
+def _run_main_with_watchdog(cli: ModuleType, argv: list[str], *, timeout_s: float = 15.0) -> int:
+    """Call ``cli.main(argv)`` on a worker thread, failing if it never returns.
+
+    ``main()``'s viewer path can only fail two ways: an assertion, or an
+    infinite park in the heartbeat loop. Tests that could hit the second
+    must not hang the suite — the hang IS the regression, so it has to
+    surface as a red assertion.
+    """
+    box: dict[str, Any] = {}
+
+    def _call() -> None:
+        try:
+            box["rc"] = cli.main(argv)
+        except BaseException as exc:  # surfaced on the calling thread below
+            box["exc"] = exc
+
+    thread = threading.Thread(target=_call, daemon=True)
+    thread.start()
+    thread.join(timeout_s)
+    assert not thread.is_alive(), (
+        f"main({argv}) never returned within {timeout_s}s — it hung instead of "
+        "falling back to a headless run"
+    )
+    if "exc" in box:
+        raise box["exc"]
+    return cast(int, box["rc"])
+
+
+def test_main_viewer_reaches_viewer_callbacks_end_to_end(
+    cli: ModuleType,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Integration through the production caller: ``main(["--viewer"])``.
+
+    Drives the whole EV.2 chain — gate -> viewer construction -> session ->
+    ``run_loop(run_batch_fn=...)`` -> ``selfplay.run_batch`` -> the viewer's
+    own ``on_game_start`` / ``on_game_end``. Unit tests of
+    ``_EvolveViewerSession`` alone cannot see a silent wiring failure (e.g.
+    ``main()`` forgetting to pass ``run_batch_fn``); this test can.
+    """
+    _arrange_viewer_available(cli, monkeypatch, _FakeInlineViewer)
+
+    record = _rec("cand_x", "v13", "cand_x")
+    seen: dict[str, Any] = {}
+
+    from orchestrator import selfplay
+
+    def fake_run_batch(
+        p1: str, p2: str, games: int, map_name: str = "Simple64", **kwargs: Any
+    ) -> list[SelfPlayRecord]:
+        seen["batch_kwargs"] = kwargs
+        kwargs["on_game_start"](1, games, 111, 222, p1, p2)
+        kwargs["on_game_end"](record)
+        return [record]
+
+    monkeypatch.setattr(selfplay, "run_batch", fake_run_batch)
+
+    caller_ends: list[Any] = []
+    caller_stop = threading.Event()
+
+    def _fake_run_loop(args: argparse.Namespace, **kwargs: Any) -> int:
+        # Stand in for run_fitness_eval: bring your own on_game_end tally
+        # and your own early-stop event, exactly as the real callee does.
+        run_batch_fn = kwargs["run_batch_fn"]
+        run_batch_fn(
+            "cand_x",
+            "v13",
+            5,
+            "Simple64",
+            on_game_end=caller_ends.append,
+            stop_event=caller_stop,
+        )
+        return 7
+
+    monkeypatch.setattr(cli, "run_loop", _fake_run_loop)
+
+    assert _run_main_with_watchdog(cli, ["--viewer"]) == 7
+
+    assert len(_FakeInlineViewer.instances) == 1
+    viewer = _FakeInlineViewer.instances[0]
+    # The viewer really was reached, through the production entry point.
+    assert viewer.starts == [(1, 5, 111, 222, "cand_x", "v13")]
+    assert viewer.ends == [record]
+    # ...without displacing the callee's own tally or early-stop.
+    assert caller_ends == [record]
+    assert seen["batch_kwargs"]["stop_event"] is caller_stop
+    # D-1: the run's stop_event is NEVER handed to the viewer's teardown.
+    assert viewer.stop_event_arg is None
+    # A run that finished with the window still open must not print the
+    # detach counter-message.
+    assert "CONTINUES headless" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "viewer_cls",
+    [
+        pytest.param(_FakeInlineViewer, id="viewer-completes-normally"),
+        pytest.param(_FakePostStartFailureViewer, id="viewer-dies-after-batch-start"),
+    ],
+)
+def test_main_closes_the_viewer_session_through_the_production_caller(
+    cli: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    viewer_cls: type,
+) -> None:
+    """The production ``finally: session.close()`` must be observable.
+
+    Done-when #4's unit test closes the session itself, so deleting the
+    production call changed nothing anywhere — textbook silent wiring
+    (``.claude/rules/code-quality.md``). Here the latch is only ever closed
+    by ``main()``: the test grabs the exact ``run_batch_fn`` ``main()``
+    injected, and re-drives it AFTER ``main()`` returned. A live session
+    would still chain (adding an ``on_game_start`` key and enqueueing onto
+    a queue nobody drains); a closed one is a byte-identical passthrough.
+
+    Both parameters matter, and the second is the one that pins ``finally``
+    specifically: a viewer that dies AFTER starting the batch is the real
+    production shape (``container.run_with_batch``'s whole pygame frame loop
+    runs post-start), and it is the only path where moving ``close()`` onto
+    the success path inside the ``try`` would silently leak.
+    """
+    _arrange_viewer_available(cli, monkeypatch, viewer_cls)
+
+    record = _rec("cand_x", "v13", "cand_x")
+    seen: dict[str, Any] = {}
+
+    from orchestrator import selfplay
+
+    def fake_run_batch(
+        p1: str, p2: str, games: int, map_name: str = "Simple64", **kwargs: Any
+    ) -> list[SelfPlayRecord]:
+        seen["batch_kwargs"] = kwargs
+        start_cb = kwargs.get("on_game_start")
+        if start_cb is not None:
+            start_cb(1, games, 111, 222, p1, p2)
+        kwargs["on_game_end"](record)
+        return [record]
+
+    monkeypatch.setattr(selfplay, "run_batch", fake_run_batch)
+
+    injected: dict[str, Any] = {}
+
+    def _fake_run_loop(args: argparse.Namespace, **kwargs: Any) -> int:
+        injected["run_batch_fn"] = kwargs["run_batch_fn"]
+        return 7
+
+    monkeypatch.setattr(cli, "run_loop", _fake_run_loop)
+
+    # A viewer that dies after the batch started must not take the run with
+    # it: main() still returns run_loop's real code either way (D-5).
+    assert _run_main_with_watchdog(cli, ["--viewer"]) == 7
+
+    viewer = viewer_cls.instances[0]  # type: ignore[attr-defined]
+    assert viewer.starts == [] and viewer.ends == []  # nothing yet
+
+    def caller_on_end(result: Any) -> None:
+        return None
+
+    # Post-run: drive the wrapper main() built, exactly as a still-running
+    # evolve loop would after the operator closed the window.
+    injected["run_batch_fn"]("cand_x", "v13", 1, "Simple64", on_game_end=caller_on_end)
+
+    assert "on_game_start" not in seen["batch_kwargs"]
+    assert seen["batch_kwargs"]["on_game_end"] is caller_on_end
+    assert viewer.starts == []
+    assert viewer.ends == []
+
+
+def test_main_viewer_warns_about_ctrl_c_on_stderr_before_the_window_opens(
+    cli: ModuleType,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Ctrl+C / orphaned-SC2 hazard needs an operator-facing surface.
+
+    Under ``--viewer`` the evolution loop runs off the main thread, where
+    burnysc2's ``signal.signal(SIGINT, KillSwitch.kill_all)`` is never armed
+    (``src/orchestrator/selfplay.py`` installs a process-global proxy that
+    returns ``None`` off-main-thread), and D-1's ``stop_event=None`` makes
+    Ctrl+C the operator's only stop gesture. So Ctrl+C is exactly the wrong
+    reflex, and ``.claude/rules/bot-runtime.md`` forbids cleaning up the
+    orphans by hand.
+
+    The warning must reach **stderr** (same stream as the container's own
+    messages, immune to log routing) and must land BEFORE ``run_with_batch``
+    takes over the console — which is what the mid-run capture pins.
+    """
+    seen_before: dict[str, str] = {}
+
+    class _CaptureThenRunViewer(_RecordingViewer):
+        instances: list[Any] = []
+
+        def run_with_batch(self, batch_fn: Callable[[], Any], *, stop_event: Any = None) -> Any:
+            # Everything on stderr so far was printed BEFORE the window.
+            seen_before["err"] = capsys.readouterr().err
+            return batch_fn()
+
+    _arrange_viewer_available(cli, monkeypatch, _CaptureThenRunViewer)
+    monkeypatch.setattr(cli, "run_loop", lambda args, **k: 0)
+
+    assert _run_main_with_watchdog(cli, ["--viewer"]) == 0
+
+    err = seen_before["err"]
+    # The whole banner, verbatim -- stronger than the previous single-phrase
+    # sentinel and independent of its wording.
+    assert cli._VIEWER_CTRL_C_WARNING in err, err
+    # The load-bearing facts, pinned separately so a future reword cannot drop
+    # one silently. EV.3: the banner must NOT present closing the viewer as a
+    # way to stop the run -- that only detaches -- so the stop gesture named
+    # here is the console window.
+    assert "Ctrl+C" in err, err
+    assert "orphaned SC2" in err, err
+    assert "DETACHES" in err, err
+    assert "close this console window" in err, err
+
+
+def test_main_viewer_close_detaches_and_run_continues_headless(
+    cli: ModuleType,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Closing the window detaches; ``main()`` waits for the real run.
+
+    ``run_loop`` executes on the viewer's DAEMON batch thread, so a
+    ``main()`` that returned when ``run_with_batch`` returned would kill a
+    multi-hour evolution the instant the operator hit Escape. The ordering
+    assertion pins the sequence: viewer returns first, the loop finishes
+    later, and ``main()`` still hands back ``run_loop``'s real return code
+    (a hardcoded 0 or a lost ``rc_box`` would return 1 here).
+
+    Interleaving is signal-driven, never timed: the fake viewer returns only
+    once the batch is provably inside ``run_loop``, and the batch returns
+    only once it has seen a heartbeat log record — which also proves the
+    heartbeat body actually executes on a detached tail, and that the
+    counter-message reached **stderr**, the same stream as ``container.py``'s
+    misleading orphaned-SC2 warning.
+    """
+    order: list[str] = []
+    entered = threading.Event()
+    heartbeat_seen = threading.Event()
+
+    class _HeartbeatWatcher(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            if "still running headless" in record.getMessage():
+                heartbeat_seen.set()
+
+    class _FakeDetachingViewer(_RecordingViewer):
+        instances: list[Any] = []
+
+        def run_with_batch(self, batch_fn: Callable[[], Any], *, stop_event: Any = None) -> Any:
+            self.stop_event_arg = stop_event
+            thread = threading.Thread(target=batch_fn, daemon=True)
+            thread.start()
+            entered.wait(10.0)  # the batch is provably in run_loop
+            order.append("viewer-returned")
+            return None
+
+    _arrange_viewer_available(cli, monkeypatch, _FakeDetachingViewer)
+
+    saw: dict[str, bool] = {}
+
+    def _fake_run_loop(args: argparse.Namespace, **kwargs: Any) -> int:
+        entered.set()
+        # Return only once main() has reached its detached-tail heartbeat,
+        # i.e. well past the point where a broken main() could have returned.
+        saw["heartbeat"] = heartbeat_seen.wait(10.0)
+        order.append("loop-finished")
+        return 7
+
+    monkeypatch.setattr(cli, "run_loop", _fake_run_loop)
+
+    evolve_logger = logging.getLogger("evolve")
+    watcher = _HeartbeatWatcher()
+    evolve_logger.addHandler(watcher)
+    try:
+        with caplog.at_level(logging.INFO, logger="evolve"):
+            rc = _run_main_with_watchdog(cli, ["--viewer"])
+    finally:
+        evolve_logger.removeHandler(watcher)
+
+    assert rc == 7
+    assert order == ["viewer-returned", "loop-finished"]
+    assert saw["heartbeat"] is True, "main() never logged a detached-tail heartbeat"
+    err = capsys.readouterr().err
+    assert "CONTINUES headless" in err
+    assert "orphaned-SC2 warning does not apply" in err
+
+
+def test_main_viewer_construction_failure_falls_back_to_headless(
+    cli: ModuleType,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D-5: a viewer exception ends the viewer, never the run."""
+
+    class _ExplodingViewer:
+        def __init__(self) -> None:
+            raise RuntimeError("no display available")
+
+    _arrange_viewer_available(cli, monkeypatch, _ExplodingViewer)
+
+    seen: dict[str, Any] = {}
+
+    def _fake_run_loop(args: argparse.Namespace, **kwargs: Any) -> int:
+        seen["kwargs"] = kwargs
+        return 7
+
+    monkeypatch.setattr(cli, "run_loop", _fake_run_loop)
+
+    with caplog.at_level(logging.WARNING, logger="evolve"):
+        assert _run_main_with_watchdog(cli, ["--viewer"]) == 7
+
+    assert seen["kwargs"] == {}  # headless, byte-identical call shape
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("headless" in m for m in warnings), warnings
+
+
+@pytest.mark.parametrize(
+    "arrange_failure",
+    [
+        pytest.param("raise", id="run_with_batch-raises-pre-start"),
+        pytest.param("return", id="run_with_batch-returns-without-starting"),
+    ],
+)
+def test_main_viewer_that_never_starts_the_batch_really_runs_headless(
+    cli: ModuleType,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    arrange_failure: str,
+) -> None:
+    """``run_with_batch`` dying before ``batch_thread.start()`` must not hang.
+
+    ``container.run_with_batch`` has a real pre-start exception window —
+    ``import pygame``, ``_resolve_background_path`` (KeyError),
+    ``pygame.init()``, ``display.set_mode()`` (pygame.error),
+    ``_load_background`` — all of which run BEFORE the batch thread starts
+    and none of which ``_viewer_enabled``'s ``find_spec`` probe can predict
+    (a headless/RDP desktop hits them for real).
+
+    Logging "continues headless" is not continuing headless: with no batch
+    thread, ``done`` is never set, and ``main()`` parks in the heartbeat
+    loop forever — printing "the evolution run CONTINUES headless" and then
+    a reassuring heartbeat every interval while running ZERO generations.
+    The watchdog turns that hang into a red assertion.
+    """
+
+    class _NeverStartsViewer(_RecordingViewer):
+        instances: list[Any] = []
+
+        def run_with_batch(self, batch_fn: Callable[[], Any], *, stop_event: Any = None) -> Any:
+            self.stop_event_arg = stop_event
+            if arrange_failure == "raise":
+                raise RuntimeError("pygame.display.set_mode failed")
+            return None  # returned without ever invoking batch_fn
+
+    _arrange_viewer_available(cli, monkeypatch, _NeverStartsViewer)
+
+    calls: list[dict[str, Any]] = []
+
+    def _fake_run_loop(args: argparse.Namespace, **kwargs: Any) -> int:
+        calls.append(kwargs)
+        return 7
+
+    monkeypatch.setattr(cli, "run_loop", _fake_run_loop)
+
+    with caplog.at_level(logging.WARNING, logger="evolve"):
+        rc = _run_main_with_watchdog(cli, ["--viewer"])
+
+    assert rc == 7
+    # Exactly ONE run_loop execution, and a plain headless one (no seam).
+    assert calls == [{}]
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("headless" in m for m in warnings), warnings
+
+
+def test_main_viewer_reraises_run_loop_exception_on_the_main_thread(
+    cli: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A crashed evolve must still crash — traceback and all.
+
+    Headless, a ``run_loop`` exception propagates out of ``main()``. Under
+    the viewer it is caught on the batch thread, so ``main()`` has to
+    re-raise it; dropping that turns an overnight crash into a silent
+    ``return 1`` with the cause swallowed.
+    """
+    _arrange_viewer_available(cli, monkeypatch, _FakeInlineViewer)
+
+    def _boom(args: argparse.Namespace, **kwargs: Any) -> int:
+        raise RuntimeError("evolve exploded mid-generation")
+
+    monkeypatch.setattr(cli, "run_loop", _boom)
+
+    with pytest.raises(RuntimeError, match="evolve exploded mid-generation"):
+        _run_main_with_watchdog(cli, ["--viewer"])
+
+
+def test_main_viewer_reraises_base_exception_from_the_batch_thread(
+    cli: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-``Exception`` ``BaseException``s must not vanish on the batch thread.
+
+    ``run_loop`` runs on the viewer's thread, so anything outside the
+    ``SystemExit`` / ``Exception`` pair would escape into the container's
+    own capture — which nobody reads on the detach path — and ``main()``
+    would report a bland ``rc=1`` with no cause. The threaded fake is
+    load-bearing: with an inline viewer the exception would propagate by
+    accident and hide the defect.
+    """
+
+    class _Detonation(BaseException):
+        pass
+
+    _arrange_viewer_available(cli, monkeypatch, _FakeThreadedViewer)
+
+    def _boom(args: argparse.Namespace, **kwargs: Any) -> int:
+        raise _Detonation("hard stop")
+
+    monkeypatch.setattr(cli, "run_loop", _boom)
+
+    with pytest.raises(_Detonation):
+        _run_main_with_watchdog(cli, ["--viewer"])
+
+
+@pytest.mark.parametrize(
+    ("code", "expected_rc", "expected_stderr"),
+    [
+        pytest.param(None, 0, "", id="bare-sys-exit-is-a-clean-stop"),
+        pytest.param(3, 3, "", id="int-code-passes-through"),
+        pytest.param("fatal: pool empty", 1, "fatal: pool empty", id="message-code"),
+    ],
+)
+def test_main_viewer_maps_system_exit_like_cpython(
+    cli: ModuleType,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    code: Any,
+    expected_rc: int,
+    expected_stderr: str,
+) -> None:
+    """``SystemExit`` off the batch thread must exit like it does headless.
+
+    Headless, ``sys.exit(main())`` hands the ``SystemExit`` to CPython,
+    which maps ``None`` -> 0, ``int`` -> itself, and anything else -> print
+    to stderr + 1. Collapsing all three to 1 would turn a clean stop into a
+    false failure and silently eat the operator's message.
+    """
+    _arrange_viewer_available(cli, monkeypatch, _FakeInlineViewer)
+
+    def _exiting(args: argparse.Namespace, **kwargs: Any) -> int:
+        raise SystemExit(code)
+
+    monkeypatch.setattr(cli, "run_loop", _exiting)
+
+    assert _run_main_with_watchdog(cli, ["--viewer"]) == expected_rc
+    if expected_stderr:
+        assert expected_stderr in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Phase EH.3: --require-baselines fails loudly when the gauntlet is inert
+# ---------------------------------------------------------------------------
+
+
+def _point_baselines_at(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
+    """Redirect run_loop's registry lookup to *path* (never the real data/)."""
+    import orchestrator.baselines as baselines_mod
+
+    monkeypatch.setattr(baselines_mod, "default_baselines_path", lambda: path)
+
+
+def _must_not_run(name: str) -> Callable[..., Any]:
+    """A seam that fails the test if anything game-shaped is dispatched."""
+
+    def _fn(*a: Any, **k: Any) -> Any:
+        raise AssertionError(f"{name} ran; no game may be dispatched")
+
+    return _fn
+
+
+def _refresh_one(*a: Any, **k: Any) -> list[Improvement]:
+    if k.get("skip_mirror"):
+        return []
+    return [_make_imp(title="win", rank=1)]
+
+
+def _write_registry(path: Path, state: str) -> None:
+    if state == "empty-object":
+        path.write_text("{}", encoding="utf-8")
+    elif state == "empty-file":
+        path.write_text("", encoding="utf-8")
+    elif state == "malformed":
+        path.write_text("{not json", encoding="utf-8")
+    else:
+        assert state == "absent"
+
+
+def test_require_baselines_flag_parses_and_defaults_off(
+    cli: ModuleType,
+) -> None:
+    """--require-baselines parses to args.require_baselines; default False."""
+    assert cli.build_parser().parse_args([]).require_baselines is False
+    assert cli.build_parser().parse_args(["--require-baselines"]).require_baselines is True
+    assert "--require-baselines" in cli.build_parser().format_help()
+
+
+@pytest.mark.parametrize(
+    ("registry_state", "expected_state_text"),
+    [
+        ("absent", "is absent"),
+        ("empty-object", "is empty"),
+        ("empty-file", "is empty"),
+        ("malformed", "could not be loaded"),
+    ],
+)
+def test_require_baselines_both_with_empty_registry_exits_before_any_game(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    registry_state: str,
+    expected_state_text: str,
+) -> None:
+    """--fitness-mode both --require-baselines with an absent/empty/unloadable
+    registry exits non-zero BEFORE any game is dispatched, naming the
+    registry path and the scripts/baseline.py add fix."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    registry = tmp_path / "baselines.json"
+    _write_registry(registry, registry_state)
+    _point_baselines_at(monkeypatch, registry)
+
+    args = _build_args(tmp_path, pool_size=1, generations=1, no_commit=True)
+    args.fitness_mode = "both"
+    args.require_baselines = True
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=_must_not_run("generate_pool"),
+        run_fitness_fn=_must_not_run("run_fitness"),
+        stack_apply_fn=_must_not_run("stack_apply"),
+        run_regression_fn=_must_not_run("run_regression"),
+        run_gauntlet_fn=_must_not_run("run_gauntlet"),
+        run_batch_fn=_must_not_run("run_batch"),
+        current_version_fn=lambda: "v0",
+    )
+    assert rc != 0
+
+    err = capsys.readouterr().err
+    assert "--require-baselines" in err
+    assert "scripts/baseline.py add <name> <version>" in err
+    assert "uv run python scripts/baseline.py" in err
+    assert str(registry) in err
+    assert expected_state_text in err
+    # Nothing was started: no run-state, results or pool file was written.
+    assert not args.state_path.exists()
+    assert not args.results_path.exists()
+    assert not args.pool_path.exists()
+
+
+def test_without_require_baselines_empty_registry_warns_and_proceeds(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Paired negative: the SAME invocation without the flag keeps the
+    historical warn-and-proceed default: WARNING, no error, the generation
+    runs and promotes, and no gauntlet runs (behaves like 'parent')."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+    registry = tmp_path / "baselines.json"
+    registry.write_text("{}", encoding="utf-8")
+    _point_baselines_at(monkeypatch, registry)
+
+    args = _build_args(tmp_path, pool_size=1, generations=1, no_commit=True)
+    args.fitness_mode = "both"
+    # NB: args.require_baselines deliberately left UNSET -> getattr default.
+
+    with caplog.at_level(logging.WARNING, logger="evolve"):
+        rc = cli.run_loop(
+            args,
+            generate_pool_fn=_refresh_one,
+            run_fitness_fn=lambda p, imp, **k: _fitness(imp, bucket="pass", parent=p),
+            stack_apply_fn=_ScriptedStackApply([(True, "v1")]),
+            run_regression_fn=_ScriptedRegression([False]),
+            run_gauntlet_fn=_must_not_run("run_gauntlet"),
+            current_version_fn=lambda: "v0",
+        )
+    assert rc == 0
+
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["generations_promoted"] == 1
+    assert state["parent_current"] == "v1"
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("no baselines registered" in m for m in messages), messages
+    assert not any(r.levelno >= logging.ERROR for r in caplog.records)
+    assert "--require-baselines" not in capsys.readouterr().err
+
+
+def test_require_baselines_with_populated_registry_proceeds_normally(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A populated registry satisfies --require-baselines: the run proceeds and
+    the gauntlet actually runs against the registered anchor."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+    _register_one_baseline(monkeypatch)
+
+    args = _build_args(tmp_path, pool_size=1, generations=1, no_commit=True)
+    args.fitness_mode = "both"
+    args.panel_floor = True
+    args.require_baselines = True
+
+    gauntlet_calls: list[str] = []
+    inner = _make_gauntlet({"v1": {"sparring": 0.6}})
+
+    def gauntlet(candidate: str, baselines: list[Any], **k: Any) -> Any:
+        gauntlet_calls.append(candidate)
+        return inner(candidate, baselines, **k)
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=_refresh_one,
+        run_fitness_fn=lambda p, imp, **k: _fitness(imp, bucket="pass", parent=p),
+        stack_apply_fn=_ScriptedStackApply([(True, "v1")]),
+        run_regression_fn=_ScriptedRegression([False]),
+        run_gauntlet_fn=gauntlet,
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+    assert gauntlet_calls == ["v1"]
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["generations_promoted"] == 1
+    assert state["parent_current"] == "v1"
+
+
+def test_require_baselines_panel_floor_inert_under_parent_exits(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--panel-floor under --fitness-mode=parent is inert; with
+    --require-baselines that is a loud non-zero exit before any game."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    _point_baselines_at(monkeypatch, tmp_path / "baselines.json")
+
+    args = _build_args(tmp_path, pool_size=1, generations=1, no_commit=True)
+    args.fitness_mode = "parent"
+    args.panel_floor = True
+    args.require_baselines = True
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=_must_not_run("generate_pool"),
+        run_fitness_fn=_must_not_run("run_fitness"),
+        stack_apply_fn=_must_not_run("stack_apply"),
+        run_regression_fn=_must_not_run("run_regression"),
+        run_gauntlet_fn=_must_not_run("run_gauntlet"),
+        current_version_fn=lambda: "v0",
+    )
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "--panel-floor" in err
+    assert "INERT" in err
+    assert "--fitness-mode baseline" in err
+    assert "scripts/baseline.py add <name> <version>" in err
+    assert not args.state_path.exists()
+
+
+def test_require_baselines_panel_floor_with_empty_registry_names_both(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--fitness-mode baseline --panel-floor --require-baselines with an absent
+    registry fails and names BOTH degraded capabilities."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    _point_baselines_at(monkeypatch, tmp_path / "baselines.json")
+
+    args = _build_args(tmp_path, pool_size=1, generations=1, no_commit=True)
+    args.fitness_mode = "baseline"
+    args.panel_floor = True
+    args.require_baselines = True
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=_must_not_run("generate_pool"),
+        run_fitness_fn=_must_not_run("run_fitness"),
+        current_version_fn=lambda: "v0",
+    )
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "the baseline gauntlet and --panel-floor" in err
+    assert "scripts/baseline.py add" in err
+
+
+def test_require_baselines_parent_without_panel_floor_proceeds(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Parent mode with no --panel-floor requests no gauntlet, so
+    --require-baselines has nothing to require: the run proceeds normally
+    even with no registry at all."""
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(cli, "_primitive_restore_pointer", lambda _v: None)
+    _point_baselines_at(monkeypatch, tmp_path / "absent.json")
+
+    args = _build_args(tmp_path, pool_size=1, generations=1, no_commit=True)
+    args.fitness_mode = "parent"
+    args.require_baselines = True
+
+    rc = cli.run_loop(
+        args,
+        generate_pool_fn=_refresh_one,
+        run_fitness_fn=lambda p, imp, **k: _fitness(imp, bucket="pass", parent=p),
+        stack_apply_fn=_ScriptedStackApply([(True, "v1")]),
+        run_regression_fn=_ScriptedRegression([False]),
+        run_gauntlet_fn=_must_not_run("run_gauntlet"),
+        current_version_fn=lambda: "v0",
+    )
+    assert rc == 0
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["generations_promoted"] == 1
+
+
+def test_main_require_baselines_cli_exits_before_any_game(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Production entry point: ``main(argv)`` threads --require-baselines from
+    argparse into run_loop, which exits non-zero before the real pool, fitness
+    or regression seams are reached."""
+    import orchestrator.evolve as evolve_mod
+
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(cli, "check_git_clean", lambda **k: (True, []))
+    monkeypatch.setattr(cli, "check_no_phantom_promote", lambda **k: (True, "v0", "v0"))
+    for seam in ("generate_pool", "run_fitness_eval", "run_regression_eval"):
+        monkeypatch.setattr(evolve_mod, seam, _must_not_run(seam))
+    _point_baselines_at(monkeypatch, tmp_path / "baselines.json")
+
+    argv = [
+        "--fitness-mode",
+        "both",
+        "--require-baselines",
+        "--generations",
+        "1",
+        "--no-commit",
+        "--results-path",
+        str(tmp_path / "results.jsonl"),
+        "--pool-path",
+        str(tmp_path / "pool.json"),
+        "--state-path",
+        str(tmp_path / "state.json"),
+        "--current-round-path",
+        str(tmp_path / "round.json"),
+        "--crash-log-path",
+        str(tmp_path / "crashes.jsonl"),
+        "--run-log",
+        str(tmp_path / "run.md"),
+    ]
+    assert cli.main(argv) != 0
+    err = capsys.readouterr().err
+    assert "scripts/baseline.py add <name> <version>" in err
+    assert not (tmp_path / "state.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Phase EH.7: single-run lock + stale run-state reconciliation
+# ---------------------------------------------------------------------------
+
+_EH7_RESULTS_EVIDENCE = b'{"phase": "fitness", "imp_title": "live soak evidence"}\r\n'
+
+
+def _eh7_stub_preflight(cli: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(cli, "check_git_clean", lambda **k: (True, []))
+    monkeypatch.setattr(cli, "check_no_phantom_promote", lambda **k: (True, "v0", "v0"))
+
+
+def _eh7_seed(tmp_path: Path, record: dict[str, Any]) -> tuple[argparse.Namespace, bytes]:
+    """Seed a prior run-state record + a non-empty results file (the evidence
+    a second run must not truncate). Returns (args, state-file bytes)."""
+    args = _build_args(tmp_path, pool_size=1)
+    args.results_path.write_bytes(_EH7_RESULTS_EVIDENCE)
+    state_bytes = json.dumps(record).encode("utf-8")
+    args.state_path.write_bytes(state_bytes)
+    return args, state_bytes
+
+
+def _eh7_live_record(cli: ModuleType, **overrides: Any) -> dict[str, Any]:
+    import os
+    import time
+
+    record: dict[str, Any] = {
+        "status": "running",
+        "parent_start": "v0",
+        "parent_current": "v0",
+        "started_at": "2026-11-16T00:00:00+00:00",
+        "run_id": "live1234",
+        "pid": os.getpid(),
+        # After this (pytest) process was created, so the pid is NOT recycled.
+        "pid_started_at": time.time(),
+        "platform": cli._current_platform(),
+    }
+    record.update(overrides)
+    return record
+
+
+def _eh7_run_refusing(cli: ModuleType, args: argparse.Namespace) -> int:
+    """run_loop with every seam armed to fail: a refusal must reach none."""
+    return int(
+        cli.run_loop(
+            args,
+            generate_pool_fn=_must_not_run("generate_pool"),
+            run_fitness_fn=_must_not_run("run_fitness"),
+            stack_apply_fn=_must_not_run("stack_apply"),
+            run_regression_fn=_must_not_run("run_regression"),
+            current_version_fn=lambda: "v0",
+        )
+    )
+
+
+def _eh7_run_to_completion(cli: ModuleType, args: argparse.Namespace) -> int:
+    """A one-imp run whose imp fails fitness; the loop exits pool-exhausted."""
+    pool = _make_pool(1)
+
+    def gen(*a: Any, **k: Any) -> list[Improvement]:
+        return [] if k.get("skip_mirror") else pool
+
+    return int(
+        cli.run_loop(
+            args,
+            generate_pool_fn=gen,
+            run_fitness_fn=_ScriptedFitness(["fail"]),
+            stack_apply_fn=_must_not_run("stack_apply"),
+            run_regression_fn=_must_not_run("run_regression"),
+            current_version_fn=lambda: "v0",
+        )
+    )
+
+
+def _eh7_dead_pid() -> int:
+    """The pid of a child that has already exited on its own (nothing is
+    signalled). Skips in the vanishingly rare case the OS reused it at once."""
+    import psutil
+
+    with subprocess.Popen([sys.executable, "-c", "pass"]) as child:
+        child.wait()
+        pid = child.pid
+    if psutil.pid_exists(pid):
+        pytest.skip(f"pid {pid} was reused immediately; cannot stage a dead pid")
+    return pid
+
+
+def test_eh7_live_own_pid_refuses_and_leaves_evidence_untouched(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A `running` record naming THIS (live) process: the second run_loop
+    refuses non-zero, names the pid, truncates nothing, writes nothing, and
+    the probed process (this pytest process) is still alive afterwards."""
+    import os
+
+    import psutil
+
+    _eh7_stub_preflight(cli, monkeypatch)
+    args, state_bytes = _eh7_seed(tmp_path, _eh7_live_record(cli))
+
+    rc = _eh7_run_refusing(cli, args)
+
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert f"pid={os.getpid()}" in err
+    assert "--force" in err
+    assert args.results_path.read_bytes() == _EH7_RESULTS_EVIDENCE
+    assert args.state_path.read_bytes() == state_bytes
+    assert not args.pool_path.exists()
+    assert not args.current_round_path.exists()
+    # The probe never signalled the target: the probing process lives on.
+    assert psutil.pid_exists(os.getpid())
+    assert psutil.Process(os.getpid()).is_running()
+
+
+def test_eh7_force_overrides_live_refusal(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--force on the exact refusal case above: the run proceeds (rc 0) and
+    replaces the record with its own stamp."""
+    import os
+
+    _eh7_stub_preflight(cli, monkeypatch)
+    args, _ = _eh7_seed(tmp_path, _eh7_live_record(cli))
+    args.force = True
+
+    rc = _eh7_run_to_completion(cli, args)
+
+    assert rc == 0
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["status"] == "completed"
+    assert state["run_id"] != "live1234"
+    assert state["pid"] == os.getpid()
+
+
+def test_eh7_dead_pid_record_is_reaped_and_run_proceeds(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import os
+
+    _eh7_stub_preflight(cli, monkeypatch)
+    dead = _eh7_dead_pid()
+    args, _ = _eh7_seed(tmp_path, _eh7_live_record(cli, pid=dead, run_id="dead5678"))
+    caplog.set_level(logging.INFO, logger="evolve")
+
+    rc = _eh7_run_to_completion(cli, args)
+
+    assert rc == 0
+    reaped = [r.getMessage() for r in caplog.records if "reaped stale" in r.getMessage()]
+    assert len(reaped) == 1
+    assert "run_id=dead5678" in reaped[0]
+    assert f"pid {dead} is not running" in reaped[0]
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["run_id"] != "dead5678"
+    assert state["pid"] == os.getpid()
+
+
+@pytest.mark.parametrize(
+    "pid_field",
+    [pytest.param({}, id="no-pid-key"), pytest.param({"pid": "not-an-int"}, id="non-int-pid")],
+)
+def test_eh7_pre_eh7_record_shape_is_reaped_not_refused(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    pid_field: dict[str, Any],
+) -> None:
+    """The real pre-EH.7 record (exactly what write_run_state produced before
+    this step: status running, a past started_at, NO pid key) must not lock
+    anyone out: liveness cannot be established, so it is reaped (INFO line
+    naming run_id + started_at) and the run proceeds with rc 0."""
+    _eh7_stub_preflight(cli, monkeypatch)
+    legacy_path = tmp_path / "legacy_state.json"
+    cli.write_run_state(
+        legacy_path,
+        status="running",
+        parent_start="v0",
+        parent_current="v0",
+        started_at="2026-10-01T03:04:05+00:00",
+        wall_budget_hours=4.0,
+        generations_completed=0,
+        generations_promoted=0,
+        evictions=0,
+        resurrections_remaining=0,
+        pool_remaining_count=0,
+        last_result=None,
+        run_id="legacy99",
+    )
+    record = json.loads(legacy_path.read_text(encoding="utf-8"))
+    # Strip the EH.7 stamp keys so the shape is byte-for-byte pre-EH.7.
+    for key in ("pid", "pid_started_at", "platform"):
+        record.pop(key)
+    record.update(pid_field)
+    args, _ = _eh7_seed(tmp_path, record)
+    caplog.set_level(logging.INFO, logger="evolve")
+
+    rc = _eh7_run_to_completion(cli, args)
+
+    assert rc == 0
+    reaped = [r for r in caplog.records if "reaped stale" in r.getMessage()]
+    assert len(reaped) == 1
+    assert reaped[0].levelno == logging.INFO
+    assert "run_id=legacy99" in reaped[0].getMessage()
+    assert "started_at=2026-10-01T03:04:05+00:00" in reaped[0].getMessage()
+
+
+def test_eh7_recycled_pid_is_reaped(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A live pid whose create_time() is NEWER than the stamped start: the
+    pid was recycled by an unrelated process, so the record is stale."""
+    import os
+
+    import psutil
+
+    _eh7_stub_preflight(cli, monkeypatch)
+    stamp = psutil.Process(os.getpid()).create_time() - 3600.0
+    args, _ = _eh7_seed(tmp_path, _eh7_live_record(cli, pid_started_at=stamp, run_id="recyc001"))
+    caplog.set_level(logging.INFO, logger="evolve")
+
+    rc = _eh7_run_to_completion(cli, args)
+
+    assert rc == 0
+    reaped = [r.getMessage() for r in caplog.records if "reaped stale" in r.getMessage()]
+    assert len(reaped) == 1
+    assert "run_id=recyc001" in reaped[0]
+    assert "recycled" in reaped[0]
+
+
+def test_eh7_probe_raising_is_reaped(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Refusal requires a POSITIVELY confirmed live pid: a probe that raises
+    (AccessDenied and friends) cannot confirm one, so the record is reaped."""
+    import psutil
+
+    _eh7_stub_preflight(cli, monkeypatch)
+
+    def _raise(pid: int) -> bool:
+        raise psutil.AccessDenied(pid)
+
+    monkeypatch.setattr(cli.psutil, "pid_exists", _raise)
+    args, _ = _eh7_seed(tmp_path, _eh7_live_record(cli, run_id="probe001"))
+    caplog.set_level(logging.INFO, logger="evolve")
+
+    verdict = cli._assess_prior_run_state(args.state_path)
+    assert verdict.action == "reap"
+    assert "raised" in verdict.reason
+
+
+def test_eh7_fresh_checkout_without_state_file_is_unaffected(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import os
+
+    _eh7_stub_preflight(cli, monkeypatch)
+    args = _build_args(tmp_path, pool_size=1)
+    assert not args.state_path.exists()
+    caplog.set_level(logging.INFO, logger="evolve")
+
+    rc = _eh7_run_to_completion(cli, args)
+
+    assert rc == 0
+    assert not [r for r in caplog.records if "reaped stale" in r.getMessage()]
+    assert not [r for r in caplog.records if "refusing to start" in r.getMessage()]
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["status"] == "completed"
+    # The run stamps the lock fields for the NEXT run's startup check.
+    assert state["pid"] == os.getpid()
+    assert state["platform"] == cli._current_platform()
+    assert isinstance(state["pid_started_at"], float)
+
+
+def test_eh7_terminal_record_with_live_pid_proceeds_without_reap(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Only a `running` record locks: a completed run's record (whose pid may
+    well still be alive, e.g. a dashboard) is not a lock and is not reaped."""
+    _eh7_stub_preflight(cli, monkeypatch)
+    args, _ = _eh7_seed(tmp_path, _eh7_live_record(cli, status="completed"))
+    caplog.set_level(logging.INFO, logger="evolve")
+
+    rc = _eh7_run_to_completion(cli, args)
+
+    assert rc == 0
+    assert not [r for r in caplog.records if "reaped stale" in r.getMessage()]
+
+
+@pytest.mark.parametrize(
+    ("stamped", "here"),
+    [
+        pytest.param("win32", "linux", id="windows-record-read-on-linux"),
+        pytest.param("linux", "win32", id="linux-record-read-on-win32"),
+    ],
+)
+def test_eh7_cross_platform_record_refuses_naming_platform_and_force(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    stamped: str,
+    here: str,
+) -> None:
+    """D16: a well-formed `running` record stamped by the OTHER platform
+    cannot be probed from here (a psutil lookup of a foreign pid is
+    meaningless). It REFUSES rather than reaps, so a Windows run can never
+    truncate a live WSL soak (and vice versa); --force is the way past. The
+    probe must not even be consulted."""
+    _eh7_stub_preflight(cli, monkeypatch)
+    monkeypatch.setattr(cli, "_current_platform", lambda: here)
+    monkeypatch.setattr(cli.psutil, "pid_exists", _must_not_run("psutil.pid_exists"))
+    # A pid that means nothing on this platform; it is never probed.
+    args, state_bytes = _eh7_seed(tmp_path, _eh7_live_record(cli, pid=424242, platform=stamped))
+
+    rc = _eh7_run_refusing(cli, args)
+
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "pid=424242" in err
+    assert f"platform={stamped}" in err
+    assert repr(here) in err
+    assert "--force" in err
+    assert args.results_path.read_bytes() == _EH7_RESULTS_EVIDENCE
+    assert args.state_path.read_bytes() == state_bytes
+
+
+def test_eh7_cross_platform_record_force_proceeds(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _eh7_stub_preflight(cli, monkeypatch)
+    monkeypatch.setattr(cli, "_current_platform", lambda: "linux")
+    args, _ = _eh7_seed(tmp_path, _eh7_live_record(cli, pid=424242, platform="win32"))
+    args.force = True
+
+    rc = _eh7_run_to_completion(cli, args)
+
+    assert rc == 0
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["platform"] == "linux"
+
+
+def test_eh7_write_run_state_defaults_lock_fields_to_none(cli: ModuleType, tmp_path: Path) -> None:
+    state_path = tmp_path / "evolve_run_state.json"
+    cli.write_run_state(state_path, **_state_kwargs())
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    assert payload["pid"] is None
+    assert payload["pid_started_at"] is None
+    assert payload["platform"] is None
+
+
+def test_eh7_main_threads_force_flag_from_argparse(cli: ModuleType) -> None:
+    parser = cli.build_parser()
+    assert parser.parse_args([]).force is False
+    assert parser.parse_args(["--force"]).force is True
+
+
+def test_eh7_main_refuses_on_live_record(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Production entry point: main(argv) reaches the lock before any seam."""
+    import os
+
+    import orchestrator.evolve as evolve_mod
+
+    _eh7_stub_preflight(cli, monkeypatch)
+    for seam in ("generate_pool", "run_fitness_eval", "run_regression_eval"):
+        monkeypatch.setattr(evolve_mod, seam, _must_not_run(seam))
+    state_path = tmp_path / "state.json"
+    results_path = tmp_path / "results.jsonl"
+    state_path.write_text(json.dumps(_eh7_live_record(cli)), encoding="utf-8")
+    results_path.write_bytes(_EH7_RESULTS_EVIDENCE)
+    argv = [
+        "--generations",
+        "1",
+        "--no-commit",
+        "--results-path",
+        str(results_path),
+        "--pool-path",
+        str(tmp_path / "pool.json"),
+        "--state-path",
+        str(state_path),
+        "--current-round-path",
+        str(tmp_path / "round.json"),
+        "--crash-log-path",
+        str(tmp_path / "crashes.jsonl"),
+        "--run-log",
+        str(tmp_path / "run.md"),
+    ]
+    assert cli.main(argv) != 0
+    assert f"pid={os.getpid()}" in capsys.readouterr().err
+    assert results_path.read_bytes() == _EH7_RESULTS_EVIDENCE
+
+
+def test_eh7_lock_source_never_signals_and_imports_psutil_eagerly(
+    cli: ModuleType,
+) -> None:
+    """Source-level pin (mirrors the cross-file pins above): the lock code
+    probes liveness with psutil ONLY. A signal-0 probe would, on Windows,
+    TerminateProcess the target. psutil must be a plain module-scope import
+    (no try/except ImportError degrade path: a lock that fails open is not a
+    lock)."""
+    import ast
+    import inspect
+
+    import psutil
+
+    lock_fns = (
+        cli._current_platform,
+        cli._record_start_epoch,
+        cli._assess_prior_run_state,
+        cli._enforce_single_run_lock,
+    )
+    for fn in lock_fns:
+        src = inspect.getsource(fn)
+        assert "os.kill" not in src, f"{fn.__name__} uses os.kill"
+        assert not re.search(r"\bsignal\.", src), f"{fn.__name__} uses the signal module"
+    assert "psutil.pid_exists" in inspect.getsource(cli._assess_prior_run_state)
+    assert "create_time()" in inspect.getsource(cli._assess_prior_run_state)
+    assert cli.psutil is psutil
+
+    tree = ast.parse((_REPO_ROOT / "scripts" / "evolve.py").read_text(encoding="utf-8"))
+    top_level_psutil = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Import) and any(a.name == "psutil" for a in node.names)
+    ]
+    assert len(top_level_psutil) == 1, "psutil must be imported once at module scope"
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Try):
+            for handler in node.handlers:
+                for inner in ast.walk(handler):
+                    if isinstance(inner, ast.Import):
+                        assert all(a.name != "psutil" for a in inner.names)
+            for inner in node.body:
+                if isinstance(inner, ast.Import):
+                    assert all(a.name != "psutil" for a in inner.names), (
+                        "psutil import wrapped in try: degrade path forbidden"
+                    )

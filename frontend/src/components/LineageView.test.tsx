@@ -8,10 +8,10 @@ import {
 } from "@testing-library/react";
 import {
   LineageView,
-  computeTreeLayout,
   type ImprovementsResponse,
   type UnifiedImprovement,
 } from "./LineageView";
+import { computeTreeLayout } from "./lineageLayout";
 import type { LineageDAG } from "../types/lineage";
 
 /**

@@ -1,0 +1,12 @@
+# Plan-review
+
+Mode: standard. Verdict: READY WITH GAPS for reconciliation; held product work is not dispatch-ready.
+
+Blockers to documentation consolidation: none. Significant unresolved product matters are E0, J2.0, EI0, ER1, BL1, JON225 and JDI232; historical SV/UI partial acceptance retained. Minor: archived source-relative links and line numbers remain historical, and installed-version behavior must be re-anchored before building. No new external issue state asserted.
+
+27-check review: 1 objective retained; 2 current state dated; 3 full scope boundaries; 4 actual module ownership; 5 shared Toolkit status authority; 6 explicit source identities; 7 duplication map; 8 completed-vs-live acceptance separated; 9 hold propagation via dependencies; 10 no invented product choice; 11 prerequisites/serialization; 12 shape/producer-consumer contracts; 13 schema rollback limitations; 14 default-preservation; 15 meaningful integration tests; 16 real smoke separated; 17 timed observation separate from labor; 18 operator gates not automated away; 19 partial/invalid measurements honest; 20 credential and cumulative-budget boundaries; 21 actual model attribution unknown; 22 per-leaf ranges and confidence; 23 rollback/teardown; 24 source SHA provenance; 25 supported unit grammar; 26 append-only decisions; 27 deep routing retained for trust/persistence boundaries, never downgraded because of stale freeze prose.
+
+Code verification is limited to present documentation-resource consumers, browser-fixture closure evidence, snapshot command shape and shared-viewer residual seams. This pass does not recertify every historical file:line claim or run live games. See validation.json for actual migration checks/test outcomes; original test counts remain historical.
+
+
+Final migration validation: [validation.json](validation.json) records 176 passing targeted tests, 46 byte-identical archived/completed originals, all 131 outstanding leaves covered by estimates, 104 edited Python files parsed, and 796 checked live relative Markdown targets across Alpha4Gate and Void Furnace with none missing. [resource-loads.json](resource-loads.json) records all-version document loading; [frozen-reference-check.json](frozen-reference-check.json) confirms 83 frozen Python files have no AST changes beyond documentation path strings. Historic unavailable target paths remain explicit in prose; immutable archives retain original bytes. No live game/provider/browser acceptance was performed.

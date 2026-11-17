@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { readCache, writeCache } from "../lib/idbCache";
 
 /**
  * Offline-first data-fetching hook for API endpoints.
  *
  * Part of Phase 1a of the offline-first dashboard work (see
- * `documentation/improvements/offline-first.md`). Replaces the existing
+ * `docs/improvements/offline-first.md`). Replaces the existing
  * per-tab `fetch` + `useEffect` + polling pattern with a single shared
  * hook that:
  *
@@ -129,9 +129,14 @@ export function useApi<T>(endpoint: string, options: UseApiOptions = {}): UseApi
   const mountedRef = useRef<boolean>(true);
   // Track the latest endpoint so in-flight fetches for a previous
   // endpoint don't overwrite state for the new one (rare but possible
-  // if a parent re-renders with a different URL).
+  // if a parent re-renders with a different URL). Synced in a layout
+  // effect (not during render): it runs during commit, before every
+  // passive effect — including the mount/fetch effect below — so
+  // ``doFetch`` always reads the committed endpoint.
   const endpointRef = useRef<string>(endpoint);
-  endpointRef.current = endpoint;
+  useLayoutEffect(() => {
+    endpointRef.current = endpoint;
+  }, [endpoint]);
 
   const doFetch = useCallback(async () => {
     const url = endpointRef.current;

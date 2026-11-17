@@ -1,0 +1,41 @@
+.battle-view { position: fixed; inset: 0; padding: 12px; box-sizing: border-box; display: grid;
+  grid-template-columns: 1fr 1fr; grid-template-rows: 48px minmax(0, 1fr) 160px 105px; gap: 12px;
+  background: #14171f; color: #cdd5e4; font-size: 14px; }
+.battle-header { grid-column: 1 / -1; display: flex; align-items: center; gap: 18px; }
+.battle-header strong { font-size: 22px; color: #eff3ff; }
+.battle-native-status { flex: 1; text-align: right; color: #8bb7d6; }
+.battle-view section { min-width: 0; min-height: 0; border: 1px solid #303747; border-radius: 8px; overflow: hidden; background: #1b202c; }
+.battle-game { display: grid; place-items: center; }
+.battle-graph { grid-column: 2; grid-row: 2 / 5; padding: 8px; display: flex; flex-direction: column; }
+.battle-graph .jev-graph { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.battle-graph .jev-graph-viewport { height: auto; flex: 1; min-height: 0; }
+.battle-graph details, .battle-graph .jev-graph-follow, .battle-graph .jev-graph-follow-status { display: none; }
+.battle-graph button { font-size: 12px; }
+.battle-inspection { flex: 0 0 125px; margin: 8px 0 0; overflow: auto; border-top: 1px solid #303747; padding-top: 8px; line-height: 1.4; }
+.battle-inspection ol { list-style: none; padding: 0; margin: 0; }
+.battle-inspection li { margin-bottom: 6px; overflow-wrap: anywhere; }
+.battle-inspection strong { color: #8bb7d6; }
+.battle-log, .battle-decisions { padding: 10px; }
+.battle-summary { grid-column: 1; display: grid; grid-template-columns: 55% 1fr; gap: 10px; min-height: 0; }
+.battle-summary h3 { margin: 0 0 6px; font-size: 14px; }
+.battle-caster { grid-column: 1; padding: 10px 14px; border-color: #7761a8 !important; }
+.battle-caster h3 { margin: 0; color: #d6b5ff; font-size: 16px; }
+.battle-caster h3 small { margin-left: 12px; font-weight: normal; }
+.battle-caster p { margin: 6px 0; line-height: 1.3; }
+.battle-caster small { font-size: 11px; color: #aab3c8; }
+.battle-view .battle-log, .battle-view .battle-decisions { overflow: auto; }
+.battle-log p { margin: 4px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.battle-log time { color: #83bddd; display: inline-block; width: 60px; }
+.battle-log small { display: block; color: #98a2b8; margin-top: 10px; }
+.battle-decisions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-content: start; overflow-wrap: anywhere; }
+.battle-decisions h3 { grid-column: 1 / -1; margin: 0; }
+.battle-decisions p { margin: 0; line-height: 1.2; }
+.battle-decisions span, .battle-decisions small { display: block; }
+.battle-decisions small { color: #98a2b8; font-size: 11px; }
+.battle-recording { color: #ff788a; border-color: #ff788a; }
+.battle-header button[aria-pressed="true"] { color: #8ce6b7; border-color: #58b68a; background: #183b30; }
+
+.battle-caster-heading { display: flex; align-items: center; gap: 8px; }
+.battle-caster-heading h3 { flex: 1; }
+.battle-caster-heading button { font-size: 11px; white-space: nowrap; }
+.battle-caster-heading button[aria-pressed="true"] { color: #e1b5ff; border-color: #9674bd; }

@@ -5,7 +5,7 @@
  * ``bots/vN/manifest.json``, joins the row against
  * ``data/improvement_log.json`` (advised) and ``data/evolve_results.jsonl``
  * (evolve), and writes ``data/lineage.json`` with the schema documented
- * in ``documentation/plans/models-tab-plan.md``.
+ * in ``docs/completed/models-tab-plan.md``.
  *
  * Edges carry the improvement title that promoted ``to`` from ``from``.
  * Per build_lineage rules:

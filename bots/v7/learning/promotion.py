@@ -335,7 +335,7 @@ def compute_action_distribution_shift(
 
 
 # Default paths (relative to project root; overridable in constructor)
-_DEFAULT_WIKI_PATH = Path("documentation/wiki/promotions.md")
+_DEFAULT_WIKI_PATH = Path("docs/wiki/promotions.md")
 
 
 def _default_history_path() -> Path:

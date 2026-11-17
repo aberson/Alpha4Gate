@@ -9,8 +9,10 @@ Per generation the script:
 2. **Stack-apply + promote** — if ≥1 fitness-pass imp, snapshot the parent
    into a fresh ``vN+1`` directory, apply every fitness-pass imp in rank
    order, run a ``python -c "import bots.vN+1.bot"`` gate, and (on pass)
-   commit the promotion as one ``[evo-auto]`` commit. Import-check failures
-   roll back the snapshot and skip regression.
+   commit the promotion as one ``[evo-auto]`` commit, path-scoped to
+   ``bots/vN+1/`` + ``current.txt`` (other staged work stays staged and
+   uncommitted). Import-check failures roll back the snapshot and skip
+   regression.
 3. **Regression phase** — if anything was promoted, play the new parent
    vs the prior parent. On rollback, ``git revert`` the promote commit
    (also under ``EVO_AUTO=1``) and restore the pointer.
@@ -21,7 +23,7 @@ Per generation the script:
 
 The composition phase (a third Bernoulli filter that tested the stacked
 candidate against the parent before promotion) was removed 2026-04-23;
-see ``documentation/plans/evolve-gate-reduction-plan.md``. Regression
+see ``docs/completed/evolve-gate-reduction-plan.md``. Regression
 already catches bad-interaction stacks, so the composition gate added
 cost without adding unique detection capability.
 
@@ -43,6 +45,7 @@ import argparse
 import dataclasses
 import difflib
 import functools
+import importlib.util
 import json
 import logging
 import os
@@ -50,6 +53,7 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 import traceback
 import uuid
@@ -59,6 +63,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
+
+import psutil  # type: ignore[import-untyped]
 
 if TYPE_CHECKING:
     from orchestrator.baselines import Baseline
@@ -107,8 +113,8 @@ _log = logging.getLogger("evolve")
 
 
 # Per-imp status vocabulary (also used by the dashboard). See
-# documentation/investigations/evolve-algorithm-redesign-investigation.md
-# and documentation/plans/evolve-gate-reduction-plan.md for the post-
+# docs/investigations/evolve-algorithm-redesign-investigation.md
+# and docs/completed/evolve-gate-reduction-plan.md for the post-
 # gate-reduction vocabulary — the two legacy promotion statuses were
 # collapsed into a single ``promoted`` status.
 PoolItemStatus = str
@@ -135,6 +141,37 @@ _NULL_DIFF_EVICT_THRESHOLD = 2
 # source of truth — the helper AND its tests read this constant, never a
 # duplicated literal.
 _REFRESH_DEDUP_THRESHOLD = 0.85
+
+# Phase EV.2 SAFETY: printed to stderr the moment a viewer run starts. Under
+# --viewer the evolution loop runs on the viewer's batch thread, where
+# burnysc2's SIGINT handler (sc2/sc2process.py -> KillSwitch.kill_all) is
+# never armed — src/orchestrator/selfplay.py's process-global signal proxy
+# returns None off the main thread instead of registering. Combined with
+# D-1's stop_event=None, that makes Ctrl+C the one stop gesture that can
+# ORPHAN SC2 children, while .claude/rules/bot-runtime.md forbids killing
+# them by hand. So the operator is told the safe gestures BEFORE the window
+# opens. EV.3: the two gestures are DIFFERENT and must not be conflated —
+# closing the viewer window only DETACHES the display (Decision D-1: the run
+# survives it deliberately), so the only gesture that STOPS the run is closing
+# the console window this process is attached to. The earlier wording ("to
+# stop this run, CLOSE THE VIEWER WINDOW ... the run detaches and continues
+# headless") told the operator to stop the run with a gesture that does not
+# stop it. Keep this string in agreement with scripts/launch-evolve.ps1's
+# header and the --viewer argparse help below.
+_VIEWER_CTRL_C_WARNING = (
+    "[evolve] WARNING: do NOT press Ctrl+C — under --viewer the evolution "
+    "loop runs off the main thread, where burnysc2's SIGINT kill-switch is "
+    "never armed, so Ctrl+C can leave orphaned SC2 processes. Closing the "
+    "viewer window only DETACHES the display; the run continues headless. "
+    "To STOP the run, close this console window."
+)
+
+# Phase EV.2: how long main() sleeps between "still running headless"
+# heartbeats after the operator closed the viewer window. Kept as a module
+# constant (not a literal) so tests can shrink it without a 60s wall-clock
+# wait — a detached tail can run for hours and a silent console is
+# indistinguishable from a hung one.
+_VIEWER_DETACHED_HEARTBEAT_S = 60.0
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +223,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Stop after N completed generations (default: 1). "
             "0 disables the generation cap (use --hours for soaks). "
             "The loop also stops when the active pool empties or "
-            "--hours is exceeded, whichever fires first."
+            "--hours is exceeded, whichever fires first. "
+            "--hours > 0 with this flag omitted logs a startup WARNING."
         ),
     )
     parser.add_argument(
@@ -261,7 +299,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Human-readable markdown run log "
-            "(default: documentation/soak-test-runs/evolve-<ts>.md)"
+            "(default: docs/soak-test-runs/evolve-<ts>.md)"
         ),
     )
     parser.add_argument(
@@ -371,7 +409,8 @@ def build_parser() -> argparse.ArgumentParser:
             "newly-promoted version against data/baselines.json and LOG + "
             "record the result (the per-imp promotion gate is unchanged in "
             "this step). If data/baselines.json is empty/absent, "
-            "'baseline'/'both' behave like 'parent' (no gauntlet)."
+            "'baseline'/'both' behave like 'parent' (no gauntlet) with a "
+            "startup WARNING; --require-baselines makes that an error."
         ),
     )
     parser.add_argument(
@@ -425,10 +464,42 @@ def build_parser() -> argparse.ArgumentParser:
             "regression failure. This is the mandatory drift backstop for "
             "--regression-rule one-sided, whose relaxed bar trades away "
             "regression-catch and so cannot catch slow drift vs frozen "
-            "anchors. INERT (with a startup WARNING) when --fitness-mode=parent "
-            "or no baselines are registered — the floor needs the gauntlet to "
-            "have teeth. Fail-open: a gauntlet crash never blocks an "
+            "anchors. INERT (with a startup WARNING, or a startup error under "
+            "--require-baselines) when --fitness-mode=parent or no baselines "
+            "are registered — the floor needs the gauntlet to have teeth. "
+            "Fail-open: a gauntlet crash never blocks an "
             "already-committed promotion."
+        ),
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Phase EH.7 single-run lock override. evolve refuses to start "
+            "while --state-path records a `running` run whose pid is "
+            "positively confirmed alive (same platform, pid not recycled), or "
+            "a `running` run stamped by a DIFFERENT platform (a Windows run "
+            "cannot probe a WSL/Linux pid, and vice versa). Pass --force ONLY "
+            "for the genuine recovery case where you have confirmed that run "
+            "is gone: a fresh run truncates evolve_results.jsonl and rewrites "
+            "the run state."
+        ),
+    )
+    parser.add_argument(
+        "--require-baselines",
+        action="store_true",
+        help=(
+            "Fail loudly when a requested baseline gauntlet would be inert "
+            "(Phase EH.3). Default OFF is byte-identical: an empty, absent or "
+            "unloadable data/baselines.json under --fitness-mode "
+            "{baseline,both} only WARNS and degrades to 'parent', and an inert "
+            "--panel-floor only WARNS. When ON, either degradation (including "
+            "--panel-floor with --fitness-mode=parent) becomes a non-zero exit "
+            "at startup, BEFORE any game is dispatched, naming the registry "
+            "path and the fix (uv run python scripts/baseline.py add <name> "
+            "<version>). With a populated registry, or with neither "
+            "--fitness-mode {baseline,both} nor --panel-floor requested, the "
+            "run proceeds normally."
         ),
     )
     parser.add_argument(
@@ -469,7 +540,196 @@ def build_parser() -> argparse.ArgumentParser:
             "trims below 1 imp; each trim writes an auditable 'budget_fit' row."
         ),
     )
+    parser.add_argument(
+        "--viewer",
+        action="store_true",
+        help=(
+            "Render this run's SC2 games inside the themed self-play viewer "
+            "container (Phase EV). Windows-only and requires the optional "
+            "[viewer] extra (uv run --extra viewer ...); on any other "
+            "platform, or without pygame installed, the flag degrades to a "
+            "WARNING and the run continues headless. Requires "
+            "--concurrency 1. Closing the viewer window only DETACHES the "
+            "display and the run continues headless; to STOP the run, close "
+            "the console window. Do NOT press Ctrl+C under --viewer: it can "
+            "orphan SC2 processes, because the evolution loop runs off the "
+            "main thread where burnysc2's SIGINT kill-switch cannot arm. "
+            "Default OFF (headless, byte-identical to a pre-EV run)."
+        ),
+    )
     return parser
+
+
+def _viewer_enabled(args: argparse.Namespace) -> bool:
+    """Return True iff the themed self-play viewer should be driven.
+
+    Graceful-degradation gate modeled on ``scripts/selfplay.py``'s
+    ``_viewer_enabled``. Returns False *silently* when ``--viewer`` was not
+    passed (the default path — nothing to warn about), and False with a
+    WARNING naming the reason when the platform or the optional ``[viewer]``
+    extra cannot support it.
+
+    The availability probe targets ``pygame``, **not** ``selfplay_viewer``:
+    ``src/selfplay_viewer/container.py`` imports pygame lazily inside its
+    methods precisely so ``import selfplay_viewer`` succeeds without the
+    extra, which makes it a useless probe.
+
+    **This function is total: no input, environment, or third-party
+    ``sys.meta_path`` finder may make it raise.** Its whole contract is
+    *degrade and keep running*, so a probe failure may never abort a
+    multi-hour evolve run with a traceback at second zero. That is why the
+    entire probe — the ``find_spec`` call AND the spec/loader inspection —
+    sits inside one ``except Exception``: anything that goes wrong means
+    "pygame is not usable", which is exactly the headless answer.
+    ``KeyboardInterrupt`` and ``SystemExit`` derive from ``BaseException``
+    and still propagate. Shapes seen in the wild, all folded into that one
+    branch:
+
+    * ``find_spec`` raising ``ImportError`` — a broken/shadowed install, or a
+      finder that refuses the name;
+    * ``find_spec`` raising ``ValueError`` — ``pygame`` already in
+      ``sys.modules`` with ``__spec__`` set to ``None``;
+    * ``find_spec`` raising anything else — this venv already carries
+      third-party finders (setuptools' ``DistutilsMetaFinder``, six's
+      ``_Finder``) and they are not bound to any exception contract;
+    * a ``None`` spec — nothing found;
+    * a spec whose ``loader`` is ``None`` (a bare ``pygame/`` directory
+      resolving as a namespace package: "found" but not importable) or whose
+      ``loader`` attribute itself raises.
+    """
+    if not getattr(args, "viewer", False):
+        return False
+    if sys.platform != "win32":
+        _log.warning(
+            "evolve: --viewer ignored: the themed viewer is Windows-only "
+            "(sys.platform=%s); running headless.",
+            sys.platform,
+        )
+        return False
+    try:
+        spec = importlib.util.find_spec("pygame")
+        importable = spec is not None and spec.loader is not None
+    except Exception:
+        importable = False
+    if not importable:
+        _log.warning(
+            "evolve: --viewer ignored: pygame is not importable (the optional "
+            "[viewer] extra). Re-run with: uv run --extra viewer python "
+            "scripts/evolve.py ... ; running headless."
+        )
+        return False
+    return True
+
+
+class _EvolveViewerSession:
+    """Phase EV.2: owns the ``run_batch_fn`` wrapper and the close latch.
+
+    :meth:`run_batch_fn` is the callable injected into
+    ``run_loop(run_batch_fn=...)``. It matches
+    :func:`orchestrator.selfplay.run_batch`'s signature and forwards to it,
+    adding exactly one thing: the viewer's ``on_game_start`` /
+    ``on_game_end`` shims, **chained after** whatever callbacks the caller
+    already supplied.
+
+    Chaining rather than replacing is load-bearing, not stylistic.
+    ``run_fitness_eval`` and ``run_regression_eval``
+    (``src/orchestrator/evolve.py``) build their OWN ``on_game_end`` (the
+    live win tally) and ``stop_event`` (the ``games // 2 + 1`` early-stop
+    that saves 2-3 games per evaluation) and pass both in ``batch_kwargs``.
+    A wrapper that overwrote either kwarg would silently destroy the tally
+    or the early-stop. Hence:
+
+    * the caller's callback runs FIRST, then the viewer's;
+    * each invocation sits in its own ``try/except`` so neither side can
+      break the other or abort the batch (Decision D-4);
+    * ``stop_event`` is never read, written, or synthesized here — the
+      caller's event passes through by identity, untouched.
+
+    The close latch exists because ``on_game_start``/``on_game_end`` are
+    enqueue-only shims onto ``SelfPlayViewer._event_queue``, and nobody
+    drains that queue once the pygame loop has exited. Without the latch a
+    multi-hour post-close run would accumulate one ``SelfPlayRecord`` per
+    game in a queue that is never read. After :meth:`close`, the wrapper is
+    a byte-identical passthrough to ``selfplay.run_batch``.
+    """
+
+    def __init__(self, viewer: Any) -> None:
+        self._viewer = viewer
+        # Plain bool, not an Event: it is set once on the main thread
+        # immediately after run_with_batch returns, and only ever read from
+        # the batch thread. A stale read costs one extra enqueue, never
+        # correctness.
+        self._closed = False
+
+    def close(self) -> None:
+        """Latch the session closed (called once, on the main thread)."""
+        self._closed = True
+
+    def _chain_on_game_start(self, caller_cb: Callable[..., None] | None) -> Callable[..., None]:
+        """Return an ``on_game_start`` that calls *caller_cb* then the viewer."""
+
+        def _wrapped(
+            game_index: int,
+            total: int,
+            p1_pid: int,
+            p2_pid: int,
+            p1_label: str,
+            p2_label: str,
+        ) -> None:
+            if caller_cb is not None:
+                try:
+                    caller_cb(game_index, total, p1_pid, p2_pid, p1_label, p2_label)
+                except Exception:
+                    _log.warning("evolve: on_game_start callback failed", exc_info=True)
+            if self._closed:
+                return
+            try:
+                self._viewer.on_game_start(game_index, total, p1_pid, p2_pid, p1_label, p2_label)
+            except Exception:
+                _log.warning("evolve: viewer on_game_start failed", exc_info=True)
+
+        return _wrapped
+
+    def _chain_on_game_end(self, caller_cb: Callable[..., None] | None) -> Callable[..., None]:
+        """Return an ``on_game_end`` that calls *caller_cb* then the viewer."""
+
+        def _wrapped(record: SelfPlayRecord) -> None:
+            if caller_cb is not None:
+                try:
+                    caller_cb(record)
+                except Exception:
+                    _log.warning("evolve: on_game_end callback failed", exc_info=True)
+            if self._closed:
+                return
+            try:
+                self._viewer.on_game_end(record)
+            except Exception:
+                _log.warning("evolve: viewer on_game_end failed", exc_info=True)
+
+        return _wrapped
+
+    def run_batch_fn(
+        self,
+        p1: str,
+        p2: str,
+        games: int,
+        map_name: str = "Simple64",
+        **kwargs: Any,
+    ) -> list[SelfPlayRecord]:
+        """``run_batch`` with the viewer's callbacks chained in."""
+        # Deferred import — mirrors _make_parallel_run_batch_fn so non-evolve
+        # importers of this module don't pay selfplay's burnysc2 cost.
+        from orchestrator import selfplay
+
+        if self._closed:
+            return selfplay.run_batch(p1, p2, games, map_name, **kwargs)
+
+        chained = dict(kwargs)
+        chained["on_game_start"] = self._chain_on_game_start(kwargs.get("on_game_start"))
+        chained["on_game_end"] = self._chain_on_game_end(kwargs.get("on_game_end"))
+        # NOTE: `stop_event` is deliberately absent from this dict. Whatever
+        # the caller passed (or didn't) rides along in `chained` untouched.
+        return selfplay.run_batch(p1, p2, games, map_name, **chained)
 
 
 # ---------------------------------------------------------------------------
@@ -1207,6 +1467,9 @@ def write_run_state(
     cli_argv: list[str] | None = None,
     gen_durations_seconds: list[float] | None = None,
     generations_target: int | None = None,
+    pid: int | None = None,
+    pid_started_at: float | None = None,
+    platform: str | None = None,
 ) -> None:
     """Write ``evolve_run_state.json`` — dashboard run state.
 
@@ -1223,6 +1486,12 @@ def write_run_state(
     generation cap. All default to ``None`` so legacy callers keep
     byte-identical output (the keys are still emitted with ``None`` /
     ``[]`` values for shape stability).
+
+    ``pid`` / ``pid_started_at`` / ``platform`` are the Phase EH.7
+    single-run lock stamp: the writing process's pid, the wall-clock epoch
+    (``time.time()``) at which its run started, and the platform
+    (``sys.platform``) that wrote the record. :func:`_assess_prior_run_state`
+    reads them at the next run's startup. Same null-default contract.
     """
     payload: dict[str, Any] = {
         "status": status,
@@ -1246,8 +1515,212 @@ def write_run_state(
             else None
         ),
         "generations_target": generations_target,
+        "pid": pid,
+        "pid_started_at": pid_started_at,
+        "platform": platform,
     }
     _atomic_write_json(state_path, payload)
+
+
+# ---------------------------------------------------------------------------
+# Phase EH.7: single-run lock + stale run-state reconciliation
+# ---------------------------------------------------------------------------
+#
+# "One evolve run at a time, machine-wide" used to be convention only. A
+# second run starting mid-soak truncated the first run's evolve_results.jsonl
+# (``_clear_fresh_run_state``) and both runs flipped bots/current/current.txt.
+# The lock lives in the EXISTING ``evolve_run_state.json``: every run-state
+# write stamps ``pid`` / ``pid_started_at`` / ``platform``, and ``run_loop``
+# reads the previous record STRICTLY BEFORE its own run-start write (a
+# whole-file atomic replace that would otherwise clobber the very record being
+# checked) and before ``_clear_fresh_run_state``.
+#
+# Liveness is ``psutil.pid_exists`` + ``psutil.Process(pid).create_time()``
+# ONLY. Never a signal-0 probe: on Windows that API maps to TerminateProcess
+# and kills the target. psutil is imported unconditionally at module scope:
+# a lock that silently degrades when its probe is missing is not a lock.
+#
+# Policy (the one rule every branch follows): refusal needs POSITIVE evidence
+# that another run may be live. A ``running`` record whose liveness cannot be
+# established on this platform (pid absent, which is the only shape on every
+# pre-EH.7 machine; pid not an integer; no platform stamp; no usable start
+# stamp; the probe raising; the pid dead; or the pid recycled) is stale: it
+# is reaped (INFO line naming its run_id and started_at) and the run proceeds.
+#
+# The ONE exception is a well-formed EH.7 record stamped by a DIFFERENT
+# platform (D16: evolve runs headless in WSL, the dashboard and spot checks on
+# Windows, and both can share the checkout's data/ directory). Such a record
+# is not "unestablishable because malformed": it carries a valid pid and a
+# platform stamp that positively say a run started on the other side, and
+# this process simply has no meaningful probe for it (a Windows psutil lookup
+# of a Linux pid answers a question about an unrelated Windows process).
+# Reaping it would let a Windows run truncate a live WSL soak's evidence, the
+# exact failure this lock exists to prevent, so it REFUSES, naming the other
+# platform and ``--force``. If that run really died, the operator confirms it
+# on its own platform and re-runs with ``--force``.
+
+# create_time() vs the stamp tolerance (seconds). The stamp is taken at run
+# start, strictly after the process was created, so a create_time newer than
+# the stamp means the pid was recycled. Linux create_time is boot_time (whole
+# seconds) + jiffies, and the ``started_at`` fallback is second-resolution, so
+# allow 2s of slack before calling a pid recycled.
+_PID_CREATE_TIME_TOLERANCE_S = 2.0
+
+
+def _current_platform() -> str:
+    """The platform stamped into, and compared against, the run-state lock.
+
+    One seam so tests can flip it (Windows-stamped record read on linux, and
+    the reverse) without touching ``sys.platform`` for the whole process.
+    """
+    return sys.platform
+
+
+@dataclass(frozen=True)
+class PriorRunVerdict:
+    """Phase EH.7 startup verdict on the previous ``evolve_run_state.json``.
+
+    ``action`` is ``"proceed"`` (no record, or a terminal one), ``"reap"``
+    (a stale ``running`` record: delete it and proceed) or ``"refuse"``
+    (another run may be live: exit non-zero unless ``--force``). ``reason``
+    is the human-readable why; ``run_id`` / ``started_at`` / ``pid`` /
+    ``platform`` echo the record for log lines.
+    """
+
+    action: Literal["proceed", "reap", "refuse"]
+    reason: str
+    run_id: Any = None
+    started_at: Any = None
+    pid: Any = None
+    platform: Any = None
+
+
+def _record_start_epoch(payload: dict[str, Any]) -> float | None:
+    """The record's run-start wall-clock epoch, or None when unusable.
+
+    Prefers the EH.7 ``pid_started_at`` float; falls back to parsing the
+    second-resolution ``started_at`` ISO string.
+    """
+    stamp = payload.get("pid_started_at")
+    if isinstance(stamp, (int, float)) and not isinstance(stamp, bool):
+        return float(stamp)
+    started_at = payload.get("started_at")
+    if isinstance(started_at, str):
+        try:
+            parsed = datetime.fromisoformat(started_at)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.timestamp()
+    return None
+
+
+def _assess_prior_run_state(state_path: Path) -> PriorRunVerdict:
+    """Read the previous run-state record and decide proceed / reap / refuse.
+
+    Pure apart from the read and the psutil probe: it never writes, deletes
+    or signals anything. See the policy comment above.
+    """
+    try:
+        raw = state_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return PriorRunVerdict("proceed", "no prior run-state record")
+    except OSError as exc:
+        return PriorRunVerdict("proceed", f"prior run-state unreadable ({exc})")
+    try:
+        payload = json.loads(raw)
+    except ValueError as exc:
+        return PriorRunVerdict("proceed", f"prior run-state unparseable ({exc})")
+    if not isinstance(payload, dict):
+        return PriorRunVerdict("proceed", "prior run-state is not a JSON object")
+    status = payload.get("status")
+    run_id = payload.get("run_id")
+    started_at = payload.get("started_at")
+    pid = payload.get("pid")
+    platform = payload.get("platform")
+
+    def _verdict(action: Literal["proceed", "reap", "refuse"], reason: str) -> PriorRunVerdict:
+        return PriorRunVerdict(
+            action,
+            reason,
+            run_id=run_id,
+            started_at=started_at,
+            pid=pid,
+            platform=platform,
+        )
+
+    if status != "running":
+        return _verdict("proceed", f"prior run status is {status!r}")
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return _verdict("reap", f"record has no usable pid ({pid!r})")
+    if not isinstance(platform, str) or not platform:
+        return _verdict("reap", "record has no platform stamp")
+    here = _current_platform()
+    if platform != here:
+        return _verdict(
+            "refuse",
+            f"record was stamped on platform {platform!r} and this process "
+            f"runs on {here!r}, so pid {pid} cannot be probed from here",
+        )
+    stamp = _record_start_epoch(payload)
+    if stamp is None:
+        return _verdict("reap", "record has no usable start timestamp")
+    try:
+        if not psutil.pid_exists(pid):
+            return _verdict("reap", f"pid {pid} is not running")
+        create_time = float(psutil.Process(pid).create_time())
+    except Exception as exc:  # psutil.Error, OverflowError, OSError, ...
+        return _verdict("reap", f"liveness probe of pid {pid} raised {exc!r}")
+    if create_time > stamp + _PID_CREATE_TIME_TOLERANCE_S:
+        return _verdict(
+            "reap",
+            f"pid {pid} was recycled (process created {create_time:.0f}, "
+            f"after the run's start stamp {stamp:.0f})",
+        )
+    return _verdict("refuse", f"pid {pid} is alive")
+
+
+def _enforce_single_run_lock(state_path: Path, *, force: bool) -> str | None:
+    """Apply the EH.7 verdict. Returns a refusal message, or None to proceed.
+
+    Must run before the run-start state write and before
+    ``_clear_fresh_run_state``. On ``reap`` the stale record is deleted (so an
+    early exit before the run-start write leaves no phantom ``running`` record
+    for the dashboard) and an INFO line names its run_id and started_at.
+    """
+    verdict = _assess_prior_run_state(state_path)
+    if verdict.action == "proceed":
+        return None
+    if verdict.action == "reap":
+        _log.info(
+            "evolve: reaped stale run-state record run_id=%s started_at=%s (%s) from %s",
+            verdict.run_id,
+            verdict.started_at,
+            verdict.reason,
+            state_path,
+        )
+        try:
+            state_path.unlink(missing_ok=True)
+        except OSError as exc:
+            _log.warning(
+                "evolve: could not delete stale %s (%s); the run-start write will replace it",
+                state_path,
+                exc,
+            )
+        return None
+    msg = (
+        f"evolve: refusing to start: {state_path} records a running evolve "
+        f"run (run_id={verdict.run_id}, pid={verdict.pid}, "
+        f"platform={verdict.platform}, started_at={verdict.started_at}): "
+        f"{verdict.reason}. One evolve run at a time: a fresh run would "
+        "truncate that run's evolve_results.jsonl. If you have confirmed "
+        "that run is gone, re-run with --force."
+    )
+    if force:
+        _log.warning("%s [--force: overriding and proceeding]", msg)
+        return None
+    return msg
 
 
 def write_run_log(
@@ -1312,6 +1785,90 @@ def _git_env_evo_auto() -> dict[str, str]:
     return env
 
 
+_CURRENT_POINTER_PATH = "bots/current/current.txt"
+
+
+def _promote_pathspecs(new_version: str) -> list[str]:
+    """The ONLY paths an ``[evo-auto]`` promote commit may contain.
+
+    ``bots/<new_version>/`` (the fresh snapshot, untracked until the
+    ``git add``) plus the ``current.txt`` pointer. Shared by the add, the
+    partial commit and the failure-path reset so the three can never drift.
+    """
+    return [f"bots/{new_version}/", _CURRENT_POINTER_PATH]
+
+
+def _path_in_scope(path: str, pathspecs: list[str]) -> bool:
+    """True when *path* is covered by *pathspecs*.
+
+    A pathspec ending in ``/`` is a directory prefix; anything else must
+    match exactly (the revert's pathspecs are exact file paths read from
+    the promote commit).
+    """
+    for spec in pathspecs:
+        if spec.endswith("/"):
+            if path.startswith(spec):
+                return True
+        elif path == spec:
+            return True
+    return False
+
+
+def _split_nul(stdout: str | None) -> list[str]:
+    """Split ``-z`` git output into paths, dropping empty fields."""
+    return [p for p in (stdout or "").split("\0") if p]
+
+
+def _log_foreign_staged(
+    pathspecs: list[str],
+    *,
+    context: str,
+    env: dict[str, str],
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> list[str]:
+    """Log an ERROR naming every staged path outside *pathspecs*.
+
+    Phase EH Step EH.8: an operator's unrelated staged work used to ride
+    into the next bare ``[evo-auto]`` commit. The commit is now partial
+    (``--only -- <pathspecs>``), so foreign staged paths are left staged
+    and uncommitted — this only makes them visible in the run log.
+
+    LOG, NEVER ABORT: refusing to commit would silently drop a promotion
+    (or a rollback) on every generation of an unattended soak while the
+    operator's file stays staged. Never raises; returns the foreign paths.
+    """
+    try:
+        result = run(
+            ["git", "diff", "--cached", "--name-only", "-z"],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=str(_REPO_ROOT),
+            env=env,
+        )
+    except (FileNotFoundError, OSError) as exc:
+        _log.warning("git diff --cached (%s) failed: %s", context, exc)
+        return []
+    if result.returncode != 0:
+        _log.warning(
+            "git diff --cached (%s) returned %d: %s",
+            context,
+            result.returncode,
+            result.stderr,
+        )
+        return []
+    foreign = [path for path in _split_nul(result.stdout) if not _path_in_scope(path, pathspecs)]
+    if foreign:
+        _log.error(
+            "evolve: %s: %d staged path(s) outside the [evo-auto] commit "
+            "scope are NOT committed and stay staged: %s",
+            context,
+            len(foreign),
+            ", ".join(foreign),
+        )
+    return foreign
+
+
 def git_commit_evo_auto(
     new_version: str,
     generation: int,
@@ -1319,27 +1876,32 @@ def git_commit_evo_auto(
     *,
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> tuple[bool, str | None]:
-    """Stage ``bots/<new_version>/`` + ``current.txt`` and commit.
+    """Stage ``bots/<new_version>/`` + ``current.txt`` and commit ONLY those.
 
-    Returns ``(success, sha)``. On failure, logs WARNING and returns
-    ``(False, None)`` — the caller continues the loop and the operator
-    reconciles out-of-band.
+    The commit is partial (``git commit --only -- <paths>``), so anything
+    else an operator had staged is neither committed nor unstaged; it is
+    named in an ERROR log line and left exactly as it was (Phase EH Step
+    EH.8 — before it, the bare ``git commit -m`` swept the whole index).
+
+    Returns ``(success, sha)``. On failure, logs WARNING, unstages only the
+    promotion paths, and returns ``(False, None)`` — the caller continues
+    the loop and the operator reconciles out-of-band.
     """
     env = _git_env_evo_auto()
+    pathspecs = _promote_pathspecs(new_version)
 
-    header = (
-        f"evolve: generation {generation} promoted "
-        f"stack ({len(stacked_titles)} imps)"
-    )
+    header = f"evolve: generation {generation} promoted stack ({len(stacked_titles)} imps)"
     body_lines = [header, ""]
     for title in stacked_titles:
         body_lines.append(f"- {title}")
     body_lines.extend(["", "[evo-auto]", ""])
     msg = "\n".join(body_lines)
 
+    # The add stays: a fresh bots/<vN>/ is untracked, so this is what makes
+    # its files committable at all.
     try:
         add_result = run(
-            ["git", "add", f"bots/{new_version}/", "bots/current/current.txt"],
+            ["git", "add", *pathspecs],
             capture_output=True,
             text=True,
             check=False,
@@ -1348,7 +1910,7 @@ def git_commit_evo_auto(
         )
     except (FileNotFoundError, OSError) as exc:
         _log.warning("git add failed for %s: %s", new_version, exc)
-        _reset_staged_promote(run=run)
+        _reset_staged_promote(pathspecs, run=run)
         return False, None
     if add_result.returncode != 0:
         _log.warning(
@@ -1357,17 +1919,32 @@ def git_commit_evo_auto(
             new_version,
             add_result.stderr,
         )
-        _reset_staged_promote(run=run)
+        _reset_staged_promote(pathspecs, run=run)
         return False, None
 
-    # --no-verify: EVO_AUTO already restricts staged paths to bots/<vN>/*
-    # via check_sandbox.py, so the pre-commit hook is duplicate enforcement.
-    # On WSL the hook can't run (Git-for-Windows generated /bin/sh shebang
-    # over bash-array syntax + Windows-only INSTALL_PYTHON path), and
-    # without skipping it every WSL evolve commit fails.
+    _log_foreign_staged(
+        pathspecs,
+        context=f"generation {generation} promote ({new_version})",
+        env=env,
+        run=run,
+    )
+
+    # Path scope: ``--only -- <pathspecs>`` commits those paths and nothing
+    # else from the index. Gotcha: a partial commit takes the WORKING-TREE
+    # state of the named paths; that equals the staged state here only
+    # because the ``git add`` above immediately precedes it.
+    #
+    # --no-verify skips the pre-commit hook entirely, including
+    # scripts/check_sandbox.py. That hook was never the path guard: it
+    # blocks invalid paths but doesn't enforce ONLY these paths
+    # (.claude/rules/evolve.md), so the scope is enforced by the pathspec
+    # above, not by the hook. --no-verify itself stays because on WSL the
+    # hook can't run (Git-for-Windows generated /bin/sh shebang over
+    # bash-array syntax + Windows-only INSTALL_PYTHON path), and without
+    # skipping it every WSL evolve commit fails.
     try:
         commit_result = run(
-            ["git", "commit", "--no-verify", "-m", msg],
+            ["git", "commit", "--no-verify", "--only", "-m", msg, "--", *pathspecs],
             capture_output=True,
             text=True,
             check=False,
@@ -1376,7 +1953,7 @@ def git_commit_evo_auto(
         )
     except (FileNotFoundError, OSError) as exc:
         _log.warning("git commit failed for %s: %s", new_version, exc)
-        _reset_staged_promote(run=run)
+        _reset_staged_promote(pathspecs, run=run)
         return False, None
     if commit_result.returncode != 0:
         _log.warning(
@@ -1385,7 +1962,7 @@ def git_commit_evo_auto(
             generation,
             commit_result.stderr,
         )
-        _reset_staged_promote(run=run)
+        _reset_staged_promote(pathspecs, run=run)
         return False, None
 
     # Capture the promote commit SHA so a subsequent regression rollback
@@ -1413,26 +1990,23 @@ def git_commit_evo_auto(
     return True, sha
 
 
-def _reset_staged_promote(
+def _reset_index_paths(
+    pathspecs: list[str],
     *,
-    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    what: str,
+    run: Callable[..., subprocess.CompletedProcess[str]],
 ) -> None:
-    """Clear any staged changes left behind by a failed promote commit.
+    """``git reset HEAD -- <pathspecs>``; index only, never raises.
 
-    ``git_commit_evo_auto`` stages ``bots/<vN>/`` + ``current.txt`` before
-    ``git commit``; if the commit returns non-zero or raises, the staged
-    diff lingers and the next generation's bare ``git commit -m`` would
-    pick it up. Run ``git reset HEAD -- .`` to clean the index without
-    touching the working tree. Never raises — best-effort.
-
-    Today's WSL pre-commit hook regression was the obvious trigger but
-    the same leak hits any commit-fail path (disk full, hook regression,
-    transient git error). Always cleaning up matches the revert primitive's
-    contract — own the mess you stage.
+    An empty *pathspecs* is a no-op: ``git reset HEAD --`` with no paths
+    would unstage the WHOLE index, which is exactly the operator-work
+    damage these scoped cleanups exist to avoid.
     """
+    if not pathspecs:
+        return
     try:
         run(
-            ["git", "reset", "HEAD", "--", "."],
+            ["git", "reset", "HEAD", "--", *pathspecs],
             capture_output=True,
             text=True,
             check=False,
@@ -1440,40 +2014,99 @@ def _reset_staged_promote(
         )
     except (FileNotFoundError, OSError) as exc:
         _log.warning(
-            "git reset (post-failed-promote cleanup) failed: %s; "
-            "index may still carry staged promote diff",
+            "git reset (post-failed-%s cleanup) failed: %s; index may still carry staged %s diff",
+            what,
             exc,
+            what,
         )
+
+
+def _reset_staged_promote(
+    pathspecs: list[str],
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> None:
+    """Unstage the promotion paths left behind by a failed promote commit.
+
+    ``git_commit_evo_auto`` stages ``bots/<vN>/`` + ``current.txt`` before
+    ``git commit``; if the commit returns non-zero or raises, that staged
+    diff lingers. Run ``git reset HEAD -- <pathspecs>`` — scoped to the
+    same paths as the commit (Phase EH Step EH.8), so an operator's
+    unrelated staged work is left staged instead of being swept out of the
+    index too. The working tree is untouched. Never raises — best-effort.
+
+    The WSL pre-commit hook regression was the original trigger but the
+    same leak hits any commit-fail path (disk full, hook regression,
+    transient git error). Always cleaning up matches the revert
+    primitive's contract — own the mess you stage, and only that.
+    """
+    _reset_index_paths(pathspecs, what="promote", run=run)
 
 
 def _reset_staged_revert(
+    pathspecs: list[str],
     *,
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> None:
-    """Clear any staged changes left behind by a failed revert commit.
+    """Unstage the reverse diff left behind by a failed revert commit.
 
     ``git revert --no-commit`` stages the reverse diff in the index; if
-    the follow-up ``git commit`` then fails, the staged diff lingers and
-    will leak into the NEXT generation's commit (``git_commit_evo_auto``
-    does a plain ``git commit -m`` with no pathspec and no ``-a``, which
-    commits everything currently staged). Run ``git reset HEAD -- .`` so
-    the revert primitive cleans up its own mess on the failure path.
-    Never raises — this is best-effort.
+    the follow-up ``git commit`` then fails, that staged diff lingers. Run
+    ``git reset HEAD -- <pathspecs>`` over the promote commit's own paths
+    — the same paths the revert commit names (Phase EH Step EH.8) — so the
+    revert primitive cleans up its own mess and leaves an operator's
+    unrelated staged work alone. Never raises — this is best-effort.
+    """
+    _reset_index_paths(pathspecs, what="revert", run=run)
+
+
+def _promote_commit_paths(
+    promote_sha: str,
+    *,
+    env: dict[str, str],
+    run: Callable[..., subprocess.CompletedProcess[str]],
+) -> list[str] | None:
+    """Every path the commit at *promote_sha* touched, or None on failure.
+
+    Read from the commit itself rather than rebuilt from the version name:
+    a pre-EH.8 promote commit may have swept foreign paths, and a revert
+    reverses all of them, so its scoped commit must name all of them.
+    ``--no-renames`` lists both sides of a rename (a revert touches both);
+    ``-z`` keeps unusual file names unquoted.
     """
     try:
-        run(
-            ["git", "reset", "HEAD", "--", "."],
+        result = run(
+            [
+                "git",
+                "show",
+                "--no-renames",
+                "--name-only",
+                "--pretty=format:",
+                "-z",
+                promote_sha,
+            ],
             capture_output=True,
             text=True,
             check=False,
             cwd=str(_REPO_ROOT),
+            env=env,
         )
     except (FileNotFoundError, OSError) as exc:
+        _log.warning("git show failed for %s: %s", promote_sha, exc)
+        return None
+    if result.returncode != 0:
         _log.warning(
-            "git reset (post-failed-revert cleanup) failed: %s; "
-            "index may still carry staged revert diff",
-            exc,
+            "git show returned %d for %s: %s",
+            result.returncode,
+            promote_sha,
+            result.stderr,
         )
+        return None
+    paths = _split_nul(result.stdout)
+    if not paths:
+        _log.warning("git show listed no paths for %s", promote_sha)
+        return None
+    return paths
 
 
 def git_revert_evo_auto(
@@ -1486,13 +2119,25 @@ def git_revert_evo_auto(
     """Revert the promote commit at *promote_sha* under EVO_AUTO=1.
 
     Uses ``git revert --no-commit`` so we can provide our own commit
-    message containing the ``[evo-auto]`` marker. Returns True on success;
-    a failure logs WARNING and returns False (operator reconciles). On
-    any failure path after ``git revert --no-commit`` has staged its
-    reverse diff, ``_reset_staged_revert`` is called to drop the staged
-    changes so they do not leak into the next generation's commit.
+    message containing the ``[evo-auto]`` marker, then commits ONLY the
+    promote commit's own paths (``git commit --only -- <paths>``, Phase EH
+    Step EH.8), so unrelated staged work stays staged and uncommitted.
+    The path set comes from ``git show`` of *promote_sha*. Before the
+    commit, ``git revert --quit`` drops the sequencer state
+    (``REVERT_HEAD``) while keeping the staged reverse diff, so the partial
+    commit is never refused as "partial commit during a revert" on any git
+    version.
+
+    Returns True on success; a failure logs WARNING and returns False
+    (operator reconciles). On any failure path after ``git revert
+    --no-commit`` has staged its reverse diff, ``_reset_staged_revert``
+    unstages those paths so they do not leak into a later commit.
     """
     env = _git_env_evo_auto()
+
+    pathspecs = _promote_commit_paths(promote_sha, env=env, run=run)
+    if pathspecs is None:
+        return False
 
     try:
         revert_result = run(
@@ -1515,6 +2160,35 @@ def git_revert_evo_auto(
         )
         return False
 
+    # Best-effort: the commit below supplies its own message, so nothing
+    # needs REVERT_HEAD. If --quit fails, still try the commit — current
+    # git accepts a partial commit during a revert anyway.
+    try:
+        quit_result = run(
+            ["git", "revert", "--quit"],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=str(_REPO_ROOT),
+            env=env,
+        )
+        if quit_result.returncode != 0:
+            _log.warning(
+                "git revert --quit returned %d for %s: %s",
+                quit_result.returncode,
+                promote_sha,
+                quit_result.stderr,
+            )
+    except (FileNotFoundError, OSError) as exc:
+        _log.warning("git revert --quit failed for %s: %s", promote_sha, exc)
+
+    _log_foreign_staged(
+        pathspecs,
+        context=f"generation {generation} rollback of {promote_sha[:12]}",
+        env=env,
+        run=run,
+    )
+
     msg = (
         f"evolve: generation {generation} regression rollback\n"
         "\n"
@@ -1522,10 +2196,10 @@ def git_revert_evo_auto(
         "\n"
         "[evo-auto]\n"
     )
-    # --no-verify: same rationale as git_commit_evo_auto above.
+    # --only / --no-verify: same rationale as git_commit_evo_auto above.
     try:
         commit_result = run(
-            ["git", "commit", "--no-verify", "-m", msg],
+            ["git", "commit", "--no-verify", "--only", "-m", msg, "--", *pathspecs],
             capture_output=True,
             text=True,
             check=False,
@@ -1534,7 +2208,7 @@ def git_revert_evo_auto(
         )
     except (FileNotFoundError, OSError) as exc:
         _log.warning("git commit (revert) failed for %s: %s", promote_sha, exc)
-        _reset_staged_revert(run=run)
+        _reset_staged_revert(pathspecs, run=run)
         return False
     if commit_result.returncode != 0:
         _log.warning(
@@ -1543,7 +2217,7 @@ def git_revert_evo_auto(
             generation,
             commit_result.stderr,
         )
-        _reset_staged_revert(run=run)
+        _reset_staged_revert(pathspecs, run=run)
         return False
     _log.info(
         "evolve: reverted promotion %s (generation %d regression rollback)",
@@ -1861,7 +2535,7 @@ def _default_import_check(
 
     Migrated from the deleted ``orchestrator.evolve._default_import_check``
     when the composition phase was removed 2026-04-23; see
-    ``documentation/plans/evolve-gate-reduction-plan.md``. The gate now
+    ``docs/completed/evolve-gate-reduction-plan.md``. The gate now
     runs AFTER the snapshot + apply + promote-to-``vN+1`` step, so a
     failure here rolls back the snapshot and skips regression.
     """
@@ -3474,8 +4148,8 @@ def _record_parallel_failure(
 
 def _load_lineage_registry_if_engaged(
     lineages_arg: int,
-) -> dict[str, Lineage]:
-    """Return the lineage registry IFF multi-lineage scheduling is engaged.
+) -> tuple[dict[str, Lineage], bool]:
+    """Return ``(registry, from_disk)`` IFF multi-lineage scheduling is on.
 
     Engaged when ``--lineages > 1`` OR a non-empty ``data/lineages.json``
     exists. In that case the effective registry (implicit ``main`` when the
@@ -3489,6 +4163,19 @@ def _load_lineage_registry_if_engaged(
     implicit ``main`` lineage built inline (see below) — deliberately NOT
     re-reading via ``load_or_default_lineages``, which would raise again on
     the same malformed file.
+
+    The second tuple element is ``True`` only when a non-empty registry was
+    actually **read from disk** — it is captured from the load result
+    before the registry can be mutated anywhere downstream (the cull site
+    in ``run_loop`` pops culled ids out of it). It exists because the
+    returned dict alone cannot distinguish an on-disk registry from the
+    implicit ``main`` synthesized below, and the generation-boundary
+    write-back (Phase EH Step EH.2) **must not fire** for a synthesized
+    one: doing so would CREATE or OVERWRITE ``data/lineages.json`` for a
+    ``--lineages > 1`` run whose registry is absent or malformed,
+    destroying a hand-authored file and permanently engaging multi-lineage
+    scheduling for every later bare invocation. See
+    ``docs/archived-plans/evolve-operational-hardening-plan.md`` §6 D-2.
     """
     from orchestrator.lineages import (
         DEFAULT_LINEAGE_ID,
@@ -3510,12 +4197,16 @@ def _load_lineage_registry_if_engaged(
         )
         on_disk = {}
 
+    # Capture the from-disk fact HERE, off the raw load result and before
+    # anything can mutate the registry (EH.2 gate; see the docstring).
+    from_disk = bool(on_disk)
+
     if lineages_arg <= 1 and not on_disk:
         # Default path: --lineages 1 and no registry → single-lineage.
-        return {}
+        return {}, from_disk
 
     if on_disk:
-        return on_disk
+        return on_disk, from_disk
     # --lineages > 1 but no (or malformed) registry → implicit single
     # ``main`` lineage. Build it inline rather than re-reading the file:
     # ``load_or_default_lineages`` would call ``load_lineages`` a second
@@ -3526,12 +4217,74 @@ def _load_lineage_registry_if_engaged(
             lineage_id=DEFAULT_LINEAGE_ID,
             head_version=head,
         )
-    }
+    }, from_disk
 
 
 # ---------------------------------------------------------------------------
 # Orchestration loop
 # ---------------------------------------------------------------------------
+
+
+_BASELINE_ADD_FIX = (
+    "Register at least one frozen anchor first "
+    "(docs/operator-gate-runbook.md, section 2), e.g.:\n"
+    "  uv run python scripts/baseline.py add <name> <version>\n"
+    '  uv run python scripts/baseline.py add v13 v13 --note "frozen anchor"\n'
+    "  uv run python scripts/baseline.py list"
+)
+
+
+def _require_baselines_failure(
+    *,
+    fitness_mode: str,
+    panel_floor: bool,
+    n_baselines: int,
+    baselines_path: Path | None,
+    load_error: str | None,
+) -> str | None:
+    """Phase EH.3: the ``--require-baselines`` startup verdict.
+
+    Returns ``None`` when every requested gauntlet capability will actually
+    execute (or none was requested), else the loud abort message. Pure: the
+    caller has already loaded the registry and owns logging and the exit.
+
+    * ``--fitness-mode {baseline,both}`` with an absent, empty or unloadable
+      registry fails (the run would silently behave like ``parent``).
+    * ``--panel-floor`` under ``--fitness-mode=parent`` fails (the floor can
+      never fire because no gauntlet runs).
+    * ``--fitness-mode=parent`` without ``--panel-floor`` requests no
+      gauntlet, so there is nothing to require and the run proceeds.
+    """
+    if fitness_mode in ("baseline", "both"):
+        if n_baselines > 0:
+            return None
+        where = str(baselines_path) if baselines_path is not None else "data/baselines.json"
+        if load_error is not None:
+            state = f"could not be loaded ({load_error})"
+        elif baselines_path is not None and baselines_path.is_file():
+            state = "is empty (no baselines registered)"
+        else:
+            state = "is absent"
+        capabilities = "the baseline gauntlet"
+        if panel_floor:
+            capabilities += " and --panel-floor"
+        return (
+            f"evolve: --require-baselines: --fitness-mode={fitness_mode} "
+            f"needs the frozen-baseline registry, but {where} {state}. "
+            f"Without it {capabilities} would silently not run (the run "
+            "would behave like 'parent'). Aborting before any game is "
+            f"dispatched.\n{_BASELINE_ADD_FIX}"
+        )
+    if panel_floor:
+        return (
+            "evolve: --require-baselines: --panel-floor is ARMED but would be "
+            f"INERT because --fitness-mode={fitness_mode} runs no baseline "
+            "gauntlet, so no sweep-loss backstop could fire. Aborting before "
+            "any game is dispatched. Re-run with --fitness-mode baseline or "
+            "--fitness-mode both, with data/baselines.json populated. "
+            f"{_BASELINE_ADD_FIX}"
+        )
+    return None
 
 
 def run_loop(
@@ -3636,9 +4389,27 @@ def run_loop(
         print(msg, file=sys.stderr)
         return 1
 
+    # Phase EH.7: single-run lock. Reads the previous evolve_run_state.json
+    # STRICTLY BEFORE this run's first state write (a whole-file atomic
+    # replace) and before both _clear_fresh_run_state (truncates
+    # evolve_results.jsonl) and the per-worker round-file cleanup below, so a
+    # refusal leaves every file of a live run byte-unchanged.
+    _lock_refusal = _enforce_single_run_lock(
+        args.state_path, force=bool(getattr(args, "force", False))
+    )
+    if _lock_refusal is not None:
+        _log.error(_lock_refusal)
+        print(_lock_refusal, file=sys.stderr)
+        return 1
+
     parent_start = current_version_fn()
     parent_current = parent_start
     started_at_iso = _now_iso()
+    # EH.7 lock stamp: wall-clock epoch (sub-second) of this run's start,
+    # compared against psutil create_time() by the next run's startup.
+    started_at_epoch = time.time()
+    own_pid = os.getpid()
+    own_platform = _current_platform()
     start_monotonic = time_fn()
 
     # Decision D-6: per-run uuid epoch + stale-file cleanup. Generated
@@ -3679,6 +4450,10 @@ def run_loop(
     # when a non-parent mode is requested.
     fitness_mode = str(getattr(args, "fitness_mode", "parent") or "parent")
     _gauntlet_baselines: list[Baseline] = []
+    # Phase EH.3: what --require-baselines needs to name a degraded registry.
+    # Only populated on the non-parent path; the default path never reads them.
+    _baselines_path: Path | None = None
+    _baselines_load_error: str | None = None
     if fitness_mode in ("baseline", "both"):
         from orchestrator.baselines import (
             default_baselines_path,
@@ -3699,6 +4474,7 @@ def run_loop(
                 exc,
             )
             _gauntlet_baselines = []
+            _baselines_load_error = str(exc)
         if not _gauntlet_baselines:
             _log.warning(
                 "evolve: --fitness-mode=%s but no baselines registered at "
@@ -3726,6 +4502,23 @@ def run_loop(
                 else "no frozen baselines are registered"
             ),
         )
+
+    # Phase EH.3: --require-baselines turns the two warn-and-proceed
+    # degradations above into a fast non-zero exit, BEFORE any game is
+    # dispatched (no pool refresh, fitness, regression or gauntlet has run
+    # yet). Default OFF leaves the warn-and-proceed path byte-identical.
+    if getattr(args, "require_baselines", False):
+        _require_msg = _require_baselines_failure(
+            fitness_mode=fitness_mode,
+            panel_floor=bool(getattr(args, "panel_floor", False)),
+            n_baselines=len(_gauntlet_baselines),
+            baselines_path=_baselines_path,
+            load_error=_baselines_load_error,
+        )
+        if _require_msg is not None:
+            _log.error(_require_msg)
+            print(_require_msg, file=sys.stderr)
+            return 1
 
     # sys.argv[1:] snapshot — what flags this run was launched with.
     # Surfaced on the dashboard so the operator can see at a glance
@@ -3777,6 +4570,9 @@ def run_loop(
             cli_argv=cli_argv_snapshot,
             gen_durations_seconds=gen_durations_seconds,
             generations_target=generations_target_int,
+            pid=own_pid,
+            pid_started_at=started_at_epoch,
+            platform=own_platform,
         )
 
     # Write an initial "running" state so a watchdog can see us mid-startup.
@@ -3949,9 +4745,37 @@ def run_loop(
     # single-lineage code path. Multi-lineage scheduling engages ONLY when
     # --lineages > 1 OR a non-empty registry exists on disk.
     _lineage_heads: dict[str, str] = {}
+    # The persist bucket for every NON-ACTIVE record (EH.2): the ones
+    # culled at this run's cull site, plus the ones already carrying a
+    # non-active status when the registry was read from disk (partitioned
+    # out just below). Declared OUTSIDE the generation loop so it
+    # accumulates across generations: ``write_lineages`` is a whole-file
+    # replace, so a record dropped from the payload is deleted from disk.
+    _extinct_lineages: dict[str, Lineage] = {}
     _last_lineage_id: str | None = None
     _lineages_arg = int(getattr(args, "lineages", 1) or 1)
-    _lineages_registry = _load_lineage_registry_if_engaged(_lineages_arg)
+    # ``_registry_from_disk`` gates the generation-boundary write-back: a
+    # synthesized implicit ``main`` must never be written to disk (EH.2).
+    _lineages_registry, _registry_from_disk = (
+        _load_lineage_registry_if_engaged(_lineages_arg)
+    )
+    # Partition the loaded registry by status ONCE, right here, so every
+    # downstream consumer sees a uniformly-ACTIVE ``_lineages_registry`` /
+    # ``_lineage_heads`` pair and no consumer has to re-derive the filter:
+    # ``next_lineage`` scheduling, the ``--population-cap`` live set, and
+    # the generation-boundary write-back payload. EH.2 made this loop the
+    # PRODUCER of persisted ``status="extinct"`` records, so a restart
+    # reads them back; seeding the head map from every record would
+    # round-robin them again AND count them toward ``--population-cap``
+    # (``decide_extinctions`` is status-agnostic — it culls from whatever
+    # population it is handed), letting a genuinely live lineage be culled
+    # in a dead one's place. Non-active records are MOVED into
+    # ``_extinct_lineages``, never dropped: the write-back is a whole-file
+    # replace, so a record missing from the payload is deleted from disk.
+    for _stale_lid in [
+        lid for lid, lin in _lineages_registry.items() if lin.status != "active"
+    ]:
+        _extinct_lineages[_stale_lid] = _lineages_registry.pop(_stale_lid)
     if _lineages_registry:
         _lineage_heads = {
             lid: lin.head_version for lid, lin in _lineages_registry.items()
@@ -3962,6 +4786,22 @@ def run_loop(
             len(_lineage_heads),
             ", ".join(
                 f"{lid}@{head}" for lid, head in _lineage_heads.items()
+            ),
+        )
+    elif _extinct_lineages:
+        # Registry present but holding no active record: there is nothing
+        # to round-robin, so the loop takes the single-lineage path and the
+        # write-back below still preserves the non-active records. Say so
+        # at WARNING — otherwise a registry on disk silently stops
+        # scheduling and the operator reads the absence of the "engaged"
+        # INFO line as a missing file.
+        _log.warning(
+            "evolve: lineage registry holds no active record (%s); running "
+            "single-lineage and leaving the record(s) on disk untouched "
+            "apart from their heads",
+            ", ".join(
+                f"{lid}={lin.status!r}"
+                for lid, lin in sorted(_extinct_lineages.items())
             ),
         )
 
@@ -4345,7 +5185,7 @@ def run_loop(
         # but BEFORE regression; import failure rolls back the snapshot
         # and skips regression. Pre-2026-04-23 this was a full
         # composition phase with its own 5-game Bernoulli gate — removed
-        # per documentation/plans/evolve-gate-reduction-plan.md.
+        # per docs/completed/evolve-gate-reduction-plan.md.
         prior_parent = parent_current
         stack_outcome_label: str = "none"
         promote_sha: str | None = None
@@ -4953,11 +5793,23 @@ def run_loop(
             # in-memory heads. fitnesses / fingerprints are keyed by VERSION;
             # a lineage head never gauntleted yet is simply absent, so
             # decide_extinctions treats it as unassessable (never culled).
-            from orchestrator.lineages import Lineage as _Lineage
-
+            #
+            # Derived from the REGISTRY record via ``dataclasses.replace``,
+            # NEVER a fresh ``Lineage(lineage_id=..., head_version=...)``:
+            # ``Lineage.status`` defaults to ``"active"``, so a fabricated
+            # object relabels whatever it was built from and would undo the
+            # load-time status partition even if the head map were clean.
+            # ``_lineages_registry`` is active-only (partitioned before the
+            # loop; culled ids popped from both dicts in step), so this set
+            # is exactly the live population ``cap`` is measured against —
+            # ``decide_extinctions`` is status-agnostic and counts every
+            # key it is handed.
             _live_lineages = {
-                lid: _Lineage(lineage_id=lid, head_version=head)
+                lid: dataclasses.replace(
+                    _lineages_registry[lid], head_version=head
+                )
                 for lid, head in _lineage_heads.items()
+                if lid in _lineages_registry
             }
             try:
                 _verdict = _decide_fn(
@@ -4975,6 +5827,23 @@ def run_loop(
                 )
             else:
                 for _cull in _verdict.culled:
+                    # Snapshot the culled record BEFORE the pops below:
+                    # ``:_lineages_registry.pop`` removes it, so the
+                    # generation-boundary write-back could not otherwise see
+                    # it and the whole-file replace would delete it from
+                    # disk. ``_cull.head_version`` (not the registry's seed
+                    # head) because ``_lineages_registry`` is loaded once
+                    # and never advanced — a seed head here would
+                    # contradict the extinction row written just below.
+                    _culled_record = _lineages_registry.get(_cull.lineage_id)
+                    if _culled_record is not None:
+                        _extinct_lineages[_cull.lineage_id] = (
+                            dataclasses.replace(
+                                _culled_record,
+                                head_version=_cull.head_version,
+                                status="extinct",
+                            )
+                        )
                     # Drop the culled lineage from the in-memory schedule so
                     # it stops being round-robined; the registry copy used by
                     # next_lineage is the live driver.
@@ -5006,6 +5875,81 @@ def run_loop(
         gen_durations_seconds.append(
             max(0.0, time_fn() - gen_start_monotonic)
         )
+
+        # --- Lineage registry write-back (Phase EH Step EH.2) ---
+        # The ONE persist hop for lineage state. Placed AFTER the duration
+        # append on purpose: ahead of it, the registry write's disk I/O
+        # would be charged to the reported generation duration the
+        # dashboard uses for its time-remaining range (see the
+        # ``write_run_state`` docstring).
+        #
+        # Gated on ``_registry_from_disk``, NOT merely on
+        # ``_lineage_heads`` being non-empty: with ``--lineages > 1`` and
+        # an absent or malformed registry the loader synthesizes an
+        # implicit ``main``, which makes a bare ``if _lineage_heads:``
+        # truthy and would CREATE or OVERWRITE ``data/lineages.json`` —
+        # destroying a hand-authored file, permanently engaging
+        # multi-lineage scheduling for every later bare invocation
+        # (``--lineages`` has no off-switch once a non-empty registry
+        # exists), and leaving the end-of-run pointer flip to a stale
+        # recorded head. A default ``--lineages 1`` run therefore stays
+        # byte-identical and creates no file.
+        #
+        # The payload MERGES the live heads onto the loaded records via
+        # ``dataclasses.replace`` — never a naive ``_lineages_registry``
+        # write, which would persist the stale seed ``head_version`` and
+        # fix nothing — so operator-authored ``pool_path`` /
+        # ``parent_chain`` / ``created_at`` survive. It is the UNION of the
+        # live records and ``_extinct_lineages``, because
+        # ``write_lineages`` is a whole-file replace: any key missing from
+        # the payload is deleted from disk.
+        #
+        # ``write_lineages`` rebuilds the entire file and
+        # ``_lineages_registry`` is loaded once before the loop and never
+        # re-read, so this is last-writer-wins: a ``scripts/lineage.py
+        # add/remove`` run mid-soak is reverted at the next generation
+        # boundary. Mutate the registry only while no evolve run is active.
+        if (_lineage_heads or _extinct_lineages) and _registry_from_disk:
+            try:
+                from orchestrator.lineages import (
+                    default_lineages_path,
+                    write_lineages,
+                )
+
+                _persist_payload: dict[str, Lineage] = {
+                    lid: dataclasses.replace(
+                        _lineages_registry[lid], head_version=head
+                    )
+                    for lid, head in _lineage_heads.items()
+                    if lid in _lineages_registry
+                }
+                _persist_payload.update(_extinct_lineages)
+                write_lineages(default_lineages_path(), _persist_payload)
+            # A disk failure must never abort a soak; the in-memory dicts
+            # stay authoritative.
+            except Exception:  # noqa: BLE001
+                _log.exception(
+                    "evolve: failed to persist lineage registry at the gen "
+                    "%d boundary; in-memory heads still drive scheduling",
+                    generation_index,
+                )
+            else:
+                # Exactly one INFO line per successful persist. Without it
+                # the hop leaves no per-boundary trace at all (the writer
+                # is a whole-file replace, so a post-hoc artifact shows
+                # only the final payload and one mtime).
+                _log.info(
+                    "evolve: persisted lineage registry at gen %d boundary "
+                    "— %s",
+                    generation_index,
+                    ", ".join(
+                        f"{lid}@{lin.head_version}"
+                        + ("" if lin.status == "active" else f" [{lin.status}]")
+                        for lid, lin in _persist_payload.items()
+                    )
+                    or "(empty)",
+                )
+
         generations_completed += 1
 
         # Summarise the generation for the run-log markdown. A panel-floor
@@ -5092,7 +6036,7 @@ def run_loop(
         safe_ts = started_at_iso.replace(":", "-")
         run_log_path = (
             _REPO_ROOT
-            / "documentation"
+            / "docs"
             / "soak-test-runs"
             / f"evolve-{safe_ts}.md"
         )
@@ -5138,6 +6082,50 @@ def run_loop(
     return 0
 
 
+def _generations_left_at_default(argv: list[str] | None) -> bool:
+    """True when ``--generations`` was NOT given on the command line.
+
+    ``args.generations == 1`` cannot tell an omitted flag from an explicit
+    ``--generations 1``, and scanning ``argv`` for the literal token misses
+    the ``--generations=1`` and abbreviated (``--gen 1``) forms argparse
+    accepts. So re-parse the same argv with a probe parser whose
+    ``--generations`` default is ``None``: only an omitted flag leaves it
+    ``None``. The real parser's default stays 1 (``build_parser`` is
+    untouched), so ``args.generations == 1`` still holds when omitted.
+    """
+    probe = build_parser()
+    probe.set_defaults(generations=None)
+    return probe.parse_args(argv).generations is None
+
+
+def _warn_if_default_generations_caps_hours(
+    args: argparse.Namespace, argv: list[str] | None
+) -> None:
+    """EH.6: warn (non-fatal) when an ``--hours`` soak is cut to one generation.
+
+    ``--generations`` defaults to 1 and the loop stops with
+    ``stop_reason = "generations-reached"`` as soon as the cap is met, so
+    ``--hours 4`` alone runs ONE generation (~20 min) and exits cleanly. The
+    flags contradict each other; say so at startup instead of letting the run
+    end hours early in silence. An explicit ``--generations`` (any value,
+    including 1) is the operator's choice and is never warned about.
+    """
+    hours = float(getattr(args, "hours", 0.0) or 0.0)
+    if hours <= 0 or int(getattr(args, "generations", 0) or 0) != 1:
+        return
+    if not _generations_left_at_default(argv):
+        return
+    _log.warning(
+        "evolve: --hours %g was given but --generations was left at its "
+        "default of 1, so this run stops after ONE generation "
+        "(stop_reason=generations-reached), long before the --hours budget. "
+        "Pass --generations 0 for an hours-bounded soak, or pass "
+        "--generations 1 explicitly to keep the one-generation cap and "
+        "silence this warning.",
+        hours,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     logging.basicConfig(
@@ -5148,7 +6136,182 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    return run_loop(args)
+    _warn_if_default_generations_caps_hours(args, argv)
+
+    # Decision D13: the --viewer/--concurrency mutual exclusion lives HERE,
+    # not in build_parser(), so build_parser() stays a pure flag declaration
+    # (callers that only want the flag surface do not inherit the rule).
+    if args.viewer and int(getattr(args, "concurrency", 1) or 1) > 1:
+        parser.error(
+            "--viewer requires --concurrency 1. At --concurrency > 1 the "
+            "fitness phase dispatches games to scripts/evolve_worker.py "
+            "subprocesses, whose games this process's viewer callbacks can "
+            "never render, and injecting a viewer wrapper would silently "
+            "disable the parallel mirror dispatcher. Re-run with "
+            "--concurrency 1, or drop --viewer."
+        )
+
+    if not _viewer_enabled(args):
+        return run_loop(args)
+
+    return _run_loop_with_viewer(args)
+
+
+def _run_loop_with_viewer(args: argparse.Namespace) -> int:
+    """Phase EV.2: run the evolve loop with the themed viewer attached.
+
+    Control is inverted relative to the headless path: ``SelfPlayViewer``
+    owns the MAIN thread (Win32 HWND manipulation is not thread-safe, and
+    ``container._ensure_main_thread`` enforces it), so ``run_loop`` runs on
+    the viewer's daemon batch thread.
+
+    Closing the window DETACHES; it does not cancel the run (Decision D-1) —
+    an operator glancing at an overnight evolve and hitting Escape should
+    lose the window, not four hours of evolution. Two things implement that:
+    ``run_with_batch`` is given ``stop_event=None``, and this function then
+    blocks the main thread on ``done`` until ``run_loop`` returns. The latter
+    is not optional: the batch thread is a daemon, so it would die the
+    instant main() returned.
+
+    Any viewer failure — construction, or a main loop that dies before it
+    ever starts the batch — logs a WARNING and REALLY falls through to a
+    headless ``run_loop(args)``. A viewer exception ends the viewer, never
+    the run (Decision D-5). A single atomic claim guarantees ``run_loop``
+    executes exactly once across the two paths.
+    """
+    try:
+        from selfplay_viewer import SelfPlayViewer
+
+        viewer = SelfPlayViewer()  # D-6: stock defaults, no new flags
+    except Exception:
+        _log.warning("evolve: viewer unavailable; continuing headless", exc_info=True)
+        return run_loop(args)
+
+    session = _EvolveViewerSession(viewer)
+    done = threading.Event()
+    started = threading.Event()
+    rc_box: list[int] = []
+    exc_box: list[BaseException] = []
+    claim_lock = threading.Lock()
+    claimed = False
+
+    def _claim_run_loop() -> bool:
+        """Award the ONE permitted ``run_loop`` execution to one thread.
+
+        Both the batch thread and the headless fall-through below want to
+        run the loop, and exactly one of them may. Reading a plain flag
+        would race (the viewer can raise microseconds after starting the
+        thread); the lock makes the hand-off atomic, so ``run_loop`` runs
+        exactly once no matter how the two interleave.
+        """
+        nonlocal claimed
+        with claim_lock:
+            if claimed:
+                return False
+            claimed = True
+            return True
+
+    def _batch() -> None:
+        started.set()
+        if not _claim_run_loop():
+            return  # the main thread already fell back to headless
+        try:
+            rc_box.append(run_loop(args, run_batch_fn=session.run_batch_fn))
+        except SystemExit as exc:
+            # Handled separately from Exception on purpose: a bare
+            # `except BaseException` would swallow SystemExit here and
+            # re-raise it on the main thread after the wait, changing both
+            # the exit code and the traceback shape versus the headless
+            # `return run_loop(args)`. The mapping below reproduces
+            # CPython's own sys.exit semantics so the exit code matches
+            # headless for every shape: None -> 0 (a bare sys.exit() is a
+            # CLEAN stop, not a failure), int -> itself, anything else ->
+            # printed to stderr and 1.
+            code = exc.code
+            if code is None:
+                rc_box.append(0)
+            elif isinstance(code, int):
+                rc_box.append(code)
+            else:
+                print(code, file=sys.stderr, flush=True)
+                rc_box.append(1)
+        except Exception as exc:  # re-raised on the main thread below
+            exc_box.append(exc)
+        except BaseException as exc:  # re-raised on the main thread below
+            # Anything left (KeyboardInterrupt, a bare BaseException from a
+            # library) must NOT be left to the container's own capture: on
+            # the detach path run_with_batch has already returned and its
+            # exception box is never read, so the failure would vanish and
+            # main() would report a bland rc=1. Route it through exc_box
+            # like every other failure.
+            exc_box.append(exc)
+        finally:
+            done.set()
+
+    # SAFETY (see _VIEWER_CTRL_C_WARNING): the operator gets told, on stderr,
+    # how to stop this run without orphaning SC2 — before the window opens and
+    # swallows the console. Documentation alone is not a control
+    # (.claude/rules/security.md); this is the closest thing to one that fits
+    # inside D-3's read-only boundary, since arming the real kill-switch would
+    # mean editing src/orchestrator/selfplay.py.
+    print(_VIEWER_CTRL_C_WARNING, file=sys.stderr, flush=True)
+
+    try:
+        # HAZARD, mechanism (out of scope for EV.2 — a fix means editing
+        # files D-3 marks read-only): running run_loop off the main thread
+        # leaves burnysc2's SC2 kill-switch unarmed. sc2/sc2process.py does
+        # signal.signal(SIGINT, KillSwitch.kill_all) at process start, and
+        # src/orchestrator/selfplay.py installs a process-global proxy over
+        # sc2process.signal that returns None instead of registering when
+        # called off the main thread. With stop_event=None (D-1) Ctrl+C is
+        # the operator's only stop channel, so under --viewer a Ctrl+C can
+        # ORPHAN SC2 children that a headless run would have reaped — and
+        # .claude/rules/bot-runtime.md forbids killing them by hand.
+        viewer.run_with_batch(_batch, stop_event=None)
+    except Exception:
+        _log.warning("evolve: viewer failed; evolve continues headless", exc_info=True)
+    finally:
+        session.close()
+
+    if not started.is_set() and _claim_run_loop():
+        # The viewer never got as far as running the batch: run_with_batch
+        # can raise BEFORE it starts the batch thread (import pygame,
+        # _resolve_background_path, pygame.init, display.set_mode,
+        # _load_background all precede batch_thread.start(), and none of
+        # them are predictable from _viewer_enabled's find_spec probe). The
+        # WARNING above says "continues headless" — this is the line that
+        # makes that true. Without it `done` is never set and the heartbeat
+        # loop below spins forever, reassuring the operator while running
+        # zero generations.
+        _log.warning("evolve: viewer never started the batch; running headless.")
+        return run_loop(args)
+
+    if not done.is_set():
+        # STDERR, not the logger: container.py prints its misleading
+        # "orphaned SC2 processes may remain" warning to stderr on the
+        # stop_event=None join path, so the correction must land on the SAME
+        # stream — log routing or level filters could otherwise show the
+        # scare and hide the fix. Acting on that scare means killing SC2,
+        # which .claude/rules/bot-runtime.md forbids.
+        print(
+            "[evolve] viewer closed; the evolution run CONTINUES headless. "
+            "Any preceding [selfplay_viewer] orphaned-SC2 warning does not apply.",
+            file=sys.stderr,
+            flush=True,
+        )
+    # Heartbeat rather than a bare done.wait(): a detached tail can run for
+    # hours, and a silent console is indistinguishable from a hung one. The
+    # periodic wake also keeps KeyboardInterrupt promptly deliverable on the
+    # main thread.
+    wait_started = time.monotonic()
+    while not done.wait(_VIEWER_DETACHED_HEARTBEAT_S):
+        _log.info(
+            "evolve: still running headless (viewer closed); %.0f min elapsed",
+            (time.monotonic() - wait_started) / 60.0,
+        )
+    if exc_box:
+        raise exc_box[0]
+    return rc_box[0] if rc_box else 1
 
 
 if __name__ == "__main__":

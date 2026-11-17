@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Alpha4Gate — proposal</title>
+<style>
+/* Layout: one reading column (~68ch) with a full-width difficulty ladder; sections separated by space, not boxes. */
+:root {
+  --bg: #f4f6f9;          /* blue-biased paper */
+  --surface: #ffffff;
+  --ink: #17212c;
+  --muted: #566476;
+  --rule: #d8dee7;
+  --gold: #a76a12;        /* khaydarin amber: agent defaults, emphasis */
+  --gold-wash: #f6ead6;
+  --psi: #1f5f9e;         /* psionic blue: operator picks */
+  --psi-wash: #e2ecf7;
+  --warn: #9b3b2a;
+  --warn-wash: #f6e3de;
+  --code-bg: #eaeef4;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-body: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f151c; --surface: #16202a; --ink: #e4eaf1; --muted: #9aa8b8; --rule: #2a3644;
+    --gold: #e3ad4c; --gold-wash: #2b2416; --psi: #7fb4ea; --psi-wash: #16283b;
+    --warn: #ef917c; --warn-wash: #33201b; --code-bg: #1d2834;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f151c; --surface: #16202a; --ink: #e4eaf1; --muted: #9aa8b8; --rule: #2a3644;
+  --gold: #e3ad4c; --gold-wash: #2b2416; --psi: #7fb4ea; --psi-wash: #16283b;
+  --warn: #ef917c; --warn-wash: #33201b; --code-bg: #1d2834;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.6 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 64px;
+}
+main { max-width: 68rem; margin: 0 auto; display: grid; gap: 56px; }
+.col { max-width: 46rem; }
+h1, h2, h3 { font-family: var(--font-display); line-height: 1.2; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(1.9rem, 4.2vw, 2.7rem); font-weight: 650; letter-spacing: -0.01em; }
+h2 { font-size: 1.45rem; font-weight: 640; }
+h3 { font-size: 1.05rem; font-weight: 640; }
+p { margin: 0; }
+section { display: grid; gap: 18px; min-width: 0; }
+.eyebrow { font: 600 0.74rem/1.3 var(--font-body); letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold); }
+.lede { color: var(--muted); font-size: 1.06rem; max-width: 46rem; }
+code { font-family: var(--font-mono); font-size: 0.86em; background: var(--code-bg); padding: 0.08em 0.35em; border-radius: 4px; overflow-wrap: anywhere; }
+a { color: var(--psi); }
+a:focus-visible, summary:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+header { display: grid; gap: 14px; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 20px; color: var(--muted); font-size: 0.9rem; }
+.meta b { color: var(--ink); font-weight: 600; }
+
+/* asks -> deliverables */
+.asks { display: grid; gap: 0; border-top: 1px solid var(--rule); }
+.ask { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 8px 28px; padding: 14px 0; border-bottom: 1px solid var(--rule); }
+.ask .q { font-style: italic; color: var(--muted); }
+.ask .d { min-width: 0; }
+@media (max-width: 640px) { .ask { grid-template-columns: 1fr; } }
+
+/* difficulty ladder */
+.ladder-wrap { overflow-x: auto; }
+.ladder { display: grid; grid-template-columns: repeat(10, minmax(64px, 1fr)); gap: 4px; min-width: 640px; }
+.rung { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 10px 8px 12px; display: grid; gap: 4px; align-content: start; min-height: 112px; }
+.rung .n { font: 600 0.78rem var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.rung .name { font: 600 0.86rem/1.25 var(--font-display); }
+.rung .tag { font-size: 0.74rem; line-height: 1.3; color: var(--muted); }
+.rung.stage { border-color: var(--gold); background: var(--gold-wash); }
+.rung.stage .tag { color: var(--ink); }
+.rung.now { box-shadow: inset 0 -3px 0 var(--psi); }
+.ladder-note { font-size: 0.88rem; color: var(--muted); }
+
+/* timeline */
+.phases { display: grid; gap: 0; counter-reset: ph; }
+.phase { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr); gap: 4px 16px; padding: 16px 0; border-bottom: 1px solid var(--rule); }
+.phase .num { font: 650 1.1rem var(--font-mono); color: var(--gold); font-variant-numeric: tabular-nums; }
+.phase .body { display: grid; gap: 6px; min-width: 0; }
+.phase .steps { font: 0.8rem var(--font-mono); color: var(--muted); }
+.after { display: flex; gap: 8px; align-items: baseline; font-size: 0.94rem; }
+.after .arw { color: var(--gold); }
+.parallel { background: var(--psi-wash); border-radius: 8px; padding: 14px 16px; display: grid; gap: 6px; }
+
+/* decision rows */
+.decs { display: grid; gap: 0; border-top: 1px solid var(--rule); }
+.dec { display: grid; grid-template-columns: 4.2rem minmax(0, 1fr); gap: 4px 14px; padding: 14px 0; border-bottom: 1px solid var(--rule); }
+.id { font: 700 0.82rem var(--font-mono); padding: 3px 7px; border-radius: 5px; justify-self: start; align-self: start; letter-spacing: 0.02em; }
+.id.p { color: var(--psi); background: var(--psi-wash); }
+.id.d { color: var(--gold); background: var(--gold-wash); }
+.dec .txt { display: grid; gap: 4px; min-width: 0; }
+.dec .why { color: var(--muted); font-size: 0.94rem; }
+.tweak { font-size: 0.94rem; }
+.tweak em { font-style: normal; font-weight: 650; color: var(--gold); }
+.flag { display: inline-block; font: 650 0.7rem/1.6 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--warn); background: var(--warn-wash); border-radius: 4px; padding: 0 6px; margin-right: 6px; vertical-align: 1px; }
+.attention { border-left: 3px solid var(--warn); padding-left: 14px; }
+
+ul.plain { margin: 0; padding-left: 1.15rem; display: grid; gap: 6px; }
+.risk { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px 28px; padding: 12px 0; border-bottom: 1px solid var(--rule); }
+.risk .ans { color: var(--muted); }
+@media (max-width: 640px) { .risk { grid-template-columns: 1fr; } }
+.grammar { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 16px 18px; display: grid; gap: 10px; }
+.grammar pre { margin: 0; font: 0.9rem/1.6 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.sources { font-size: 0.88rem; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <div class="eyebrow">Proposal &middot; direction reset and Phase ES &middot; awaiting your tweaks</div>
+  <h1>Make the bot measurably better, then let evolution prove it.</h1>
+  <p class="lede">Your requests from 2026-11-11, mapped to what is now in the master plan. Choices you made are marked RP. Defaults I chose are marked RD, and each one has a tweak you can request by ID. Three defaults came out of plan-review and need your eyes first: <a href="#RD1">RD1</a>, <a href="#RD2">RD2</a> and <a href="#RD3">RD3</a>.</p>
+  <p class="lede"><b>Folded 2026-11-16.</b> RD1&ndash;RD3 changed as recommended: the worker moves to <code>scripts/</code>, the build order is EH, then ES.6&ndash;ES.10, then EI, and ES.12 plants a known-weak candidate. New choices RP13&ndash;RP19: stage scoreboards and champion decisions move to the Windows build, PPO comes first after the scoreboard (ES.6&ndash;ES.13 held), and the new step ES.14 lets older versions play self-play on Windows. The sections below show publication 1; the master plan (&sect;16, &sect;18) is the source of truth.</p>
+  <div class="meta">
+    <span><b>Plan</b> <code>docs/plans/master_plan.md</code></span>
+    <span><b>Publication</b> 2 &middot; 2026-11-16</span>
+    <span><b>Review</b> plan-review: needs work (1 blocker, 3 items for input)</span>
+  </div>
+</header>
+
+<section aria-labelledby="heard">
+  <div class="eyebrow">What I heard</div>
+  <h2 id="heard">Nine asks, nine places they landed.</h2>
+  <div class="asks">
+    <div class="ask"><p class="q">&ldquo;Improve the evolution pipeline so the bot gets better at the game, not just the proof of concept.&rdquo;</p><p class="d">Phase ES (steps ES.1&ndash;ES.13, design in &sect;17): a fixed scoreboard against Blizzard&rsquo;s built-in AI, scored-code promotion and a built-in-AI promotion gate.</p></div>
+    <div class="ask"><p class="q">&ldquo;Use a decision register to keep or throw away themes.&rdquo;</p><p class="d">&sect;16 register D1&ndash;D16. Of the 131 original steps, 38 were removed, 48 parked and the rest kept or reframed.</p></div>
+    <div class="ask"><p class="q">&ldquo;Wrap up Jev, mark it completed, cannibalize the ideas.&rdquo;</p><p class="d">&sect;8 closure record, <code>docs/seeds/jev-harvest.md</code> (20 ideas), and all 25 Jev issues closed with your comment.</p></div>
+    <div class="ask"><p class="q">&ldquo;PPO is the strongest path forward; reframe it, don&rsquo;t park it.&rdquo;</p><p class="d">PPO.0 plus <code>docs/seeds/ppo-direction.md</code>; the old PPO steps are held under it.</p></div>
+    <div class="ask"><p class="q">&ldquo;Refine the viewer like Jev&rsquo;s, without much time; one bot or two.&rdquo;</p><p class="d">VW.0 plus <code>docs/seeds/strength-viewer.md</code>: single and dual layouts and a &ldquo;flag this moment&rdquo; button.</p></div>
+    <div class="ask"><p class="q">&ldquo;Evolution headless, live games only for spot checks and demos; deprecate live evolution.&rdquo;</p><p class="d">Decision D16: ES.1 proves the WSL substrate; ES.6 moves the launcher into WSL and deprecates <code>--viewer</code>.</p></div>
+    <div class="ask"><p class="q">&ldquo;Targets in stages, because one target will be overcome quickly.&rdquo;</p><p class="d">The <code>STAGES</code> table: VeryHard, then CheatVision, CheatMoney and CheatInsane (ladder below).</p></div>
+    <div class="ask"><p class="q">&ldquo;v7 would need to beat v11, v12 and v13; if it does, promote it.&rdquo;</p><p class="d">ES.5 champion challenge: at least 6 of 10 against each, then repoint and commit.</p></div>
+    <div class="ask"><p class="q">&ldquo;Update the wiki and README, minimal edits.&rdquo;</p><p class="d">Done: README direction and story lines, wiki index section, FAQ and project history.</p></div>
+  </div>
+</section>
+
+<section aria-labelledby="why">
+  <div class="eyebrow">Why this shape</div>
+  <h2 id="why">Thirteen promotions, and no fixed opponent to show they helped.</h2>
+  <div class="col" style="display:grid;gap:12px">
+    <p>Every promotion only had to beat its own parent, in a Protoss mirror on Simple64, by a simple majority of 5&ndash;9 games. A no-better candidate passes that half the time. The code that won was then deleted and rewritten from its description before shipping. Against VeryHard, v13 won 4 of 10 games in October and v0 won 2 of 5 in April, about the same rate.</p>
+    <p>So Phase ES measures first, and changes promotion second.</p>
+  </div>
+  <div class="ladder-wrap" role="group" aria-label="Built-in AI difficulty ladder with Phase ES stages">
+    <div class="ladder">
+      <div class="rung"><span class="n">1</span><span class="name">VeryEasy</span></div>
+      <div class="rung"><span class="n">2</span><span class="name">Easy</span><span class="tag">calibration: win &ge;8/9</span></div>
+      <div class="rung"><span class="n">3</span><span class="name">Medium</span></div>
+      <div class="rung"><span class="n">4</span><span class="name">MediumHard</span></div>
+      <div class="rung"><span class="n">5</span><span class="name">Hard</span><span class="tag">v0: 27&ndash;23 (Apr)</span></div>
+      <div class="rung"><span class="n">6</span><span class="name">Harder</span></div>
+      <div class="rung stage now"><span class="n">7</span><span class="name">VeryHard</span><span class="tag">Stage 0 baseline; Stage 1 &ge;60%, each race &ge;50%</span></div>
+      <div class="rung stage"><span class="n">8</span><span class="name">CheatVision</span><span class="tag">Stage 2 &ge;50%, each race &ge;40%</span></div>
+      <div class="rung stage"><span class="n">9</span><span class="name">CheatMoney</span><span class="tag">Stage 3 &ge;50%</span></div>
+      <div class="rung stage"><span class="n">10</span><span class="name">CheatInsane</span><span class="tag">Stage 4 &ge;50%; calibration: win &le;1/9</span></div>
+    </div>
+  </div>
+  <p class="ladder-note">Blue underline: where v13 stands today (4 of 10 at VeryHard). Stage 5 goes beyond the built-in AI and isn&rsquo;t built in this phase.</p>
+</section>
+
+<section aria-labelledby="timeline">
+  <div class="eyebrow">Phase timeline</div>
+  <h2 id="timeline">Six phases, each ending with something you can run.</h2>
+  <div class="phases">
+    <div class="phase"><span class="num">1</span><div class="body"><h3>Finish the plan gates</h3><span class="steps">plan-redline (this page) &rarr; plan-wrap &rarr; repo-sync</span><div class="after"><span class="arw">&rarr;</span><span><b>Afterwards:</b> <code>/plan-wrap --autofix docs/plans/master_plan.md</code></span></div></div></div>
+    <div class="phase"><span class="num">2</span><div class="body"><h3>Prove the headless substrate</h3><span class="steps">ES.1 (operator)</span><p>WSL venv synced, one solo game and one self-play pair played headless, and a replay test opened on Windows.</p><div class="after"><span class="arw">&rarr;</span><span><b>Afterwards:</b> <code>wsl -d Ubuntu-22.04 --cd "$env:USERPROFILE\dev\Alpha4Gate" -- bash -lc "DATA_DIR=/tmp/a4g-substrate uv run python -m bots.v13 --role solo --map Simple64 --difficulty 1"</code></span></div></div></div>
+    <div class="phase"><span class="num">3</span><div class="body"><h3>Build the scoreboard</h3><span class="steps">ES.2, ES.3 (code)</span><p>Any version against the built-in AI with a chosen race, on a sealed schedule, using an isolated data folder and recorded replays. Reports give Wilson intervals and stage verdicts.</p><div class="after"><span class="arw">&rarr;</span><span><b>Afterwards:</b> <code>uv run python scripts/scoreboard.py run --versions v13 --difficulty 7 --races zerg,terran,protoss --games-per-race 1 --dry-run</code></span></div></div></div>
+    <div class="phase"><span class="num">4</span><div class="body"><h3>Measure, challenge, review</h3><span class="steps">ES.4 (wait), ES.5 (operator), ES.11 (operator)</span><p>Stage 0 for v0, v3, v7, v11, v12 and v13 (180 games, about 8 hours). Then the champion challenge if an older version leads, and a review of losses against the tactical-bug list.</p><div class="after"><span class="arw">&rarr;</span><span><b>Afterwards:</b> <code>uv run python scripts/scoreboard.py report --run data/scoreboard/stage0</code></span></div></div></div>
+    <div class="phase"><span class="num">5</span><div class="body"><h3>Change how evolution promotes</h3><span class="steps">ES.6&ndash;ES.10 (code)</span><p>A headless WSL launcher, the scored code shipped exactly, a 12-game built-in-AI panel with a posterior rollback, and losses plus your flags fed to the proposer.</p><div class="after"><span class="arw">&rarr;</span><span><b>Afterwards:</b> <code>.\scripts\launch-evolve.ps1 -Hours 0.75 -Generations 0 -EvolveArgs "--promote-scored --ai-panel --panel-gate posterior --regression-rule one-sided --panel-floor --fitness-mode both --screen-null-diff --refresh-dedup --budget-fit"</code></span></div></div></div>
+    <div class="phase"><span class="num">6</span><div class="body"><h3>Prove it climbs</h3><span class="steps">ES.12 (operator smoke), ES.13 (wait: 6-hour soak, then Stage 1)</span><p>A target-unmet Stage 1 is a valid, recorded result, not a reason to rerun on new seeds.</p><div class="after"><span class="arw">&rarr;</span><span><b>Afterwards:</b> <code>uv run python scripts/scoreboard.py report --run data/scoreboard/stage1 --stage 1</code></span></div></div></div>
+  </div>
+  <div class="parallel">
+    <h3>Alongside, any time</h3>
+    <p>PPO.0 explores what PPO should control; its first measurement uses the Stage 0 scoreboard. VW.0 plans the Jev-style viewer.</p>
+    <div class="after"><span class="arw">&rarr;</span><span><b>Afterwards:</b> <code>/plan-feature docs/seeds/ppo-direction.md</code></span></div>
+  </div>
+</section>
+
+<section aria-labelledby="picked">
+  <div class="eyebrow">Operator choices</div>
+  <h2 id="picked">Locked in from your answers.</h2>
+  <div class="decs">
+    <div class="dec" id="RP1"><span class="id p">RP1</span><div class="txt"><p>The goal is measurable playing strength. Register items D1&ndash;D6, D8, D12 and D15 are agreed, including D3 and D4, confirmed today.</p></div></div>
+    <div class="dec" id="RP2"><span class="id p">RP2</span><div class="txt"><p>Jev is closed as a completed proof of concept. Its Jev-only steps are removed, its ideas harvested, and its 25 issues closed (D14).</p></div></div>
+    <div class="dec" id="RP3"><span class="id p">RP3</span><div class="txt"><p>PPO is explored actively, not parked (D11 &rarr; PPO.0).</p></div></div>
+    <div class="dec" id="RP4"><span class="id p">RP4</span><div class="txt"><p>The viewer is reframed in Jev&rsquo;s style for live spot checks and demos, with limited time (D10 &rarr; VW.0).</p></div></div>
+    <div class="dec" id="RP5"><span class="id p">RP5</span><div class="txt"><p>The dashboard Stop button work is dropped as duplicate functionality (D7). Closing the evolve console already stops a run.</p></div></div>
+    <div class="dec" id="RP6"><span class="id p">RP6</span><div class="txt"><p>Diversification (races, mini-games, Hydra and similar) is parked, not dropped (D13). Evolution lines stay parked until you decide (D9).</p></div></div>
+    <div class="dec" id="RP7"><span class="id p">RP7</span><div class="txt"><p>Targets come in stages, from VeryHard up to CheatInsane (the ladder above).</p></div></div>
+    <div class="dec" id="RP8"><span class="id p">RP8</span><div class="txt"><p>An older champion replaces v13 only if it beats v11, v12 and v13 head-to-head (ES.5).</p></div></div>
+    <div class="dec" id="RP9"><span class="id p">RP9</span><div class="txt"><p>The scoreboard rotates Simple64, Simple96 and Simple128.</p></div></div>
+    <div class="dec" id="RP10"><span class="id p">RP10</span><div class="txt"><p>Stage 0 is lean: VeryHard, 10 games per race per version, about 8 hours.</p></div></div>
+    <div class="dec" id="RP11"><span class="id p">RP11</span><div class="txt"><p>Evolution and measurement run headless on WSL Linux. Live games are for spot checks and demos, and live evolution is deprecated (D16).</p></div></div>
+    <div class="dec" id="RP12"><span class="id p">RP12</span><div class="txt"><p>A promotion rolls back when it is probably worse than its parent on the built-in-AI panel (P(worse) &ge; 0.85).</p></div></div>
+  </div>
+</section>
+
+<section aria-labelledby="defaults">
+  <div class="eyebrow">Agent defaults</div>
+  <h2 id="defaults">Defaults worth your eyes. Reference by ID to tweak.</h2>
+  <div class="decs">
+    <div class="dec attention" id="RD1"><span class="id d">RD1</span><div class="txt"><p><span class="flag">Review blocker</span>As written, the scoreboard worker lives in <code>src/orchestrator/scoreboard_worker.py</code> (ES.2).</p><p class="why">Why: I put it next to <code>scoreboard.py</code>. But it must import <code>bots.&lt;v&gt;</code>, and CLAUDE.md forbids that from <code>src/orchestrator/</code> because it triggers a MetaPathFinder loop.</p><p class="tweak"><em>Tweak (recommended):</em> move it to <code>scripts/scoreboard_worker.py</code>, launched by path, and add a test that keeps <code>src/orchestrator/</code> free of <code>bots.*</code> imports.</p></div></div>
+    <div class="dec attention" id="RD2"><span class="id d">RD2</span><div class="txt"><p><span class="flag">Needs input</span>As written, ES.7&ndash;ES.10 declare no dependency on the pending EH steps, although they all edit <code>scripts/evolve.py</code>.</p><p class="why">Why: I wrote them as independent slices. In practice that invites merge conflicts and stale line anchors.</p><p class="tweak"><em>Tweak (recommended):</em> land EH.3, EH.6, EH.7 and EH.8 first, then ES.6&ndash;ES.10, then EI.1&ndash;EI.6. ES.10 overlaps EI.4&rsquo;s proposer evidence.</p></div></div>
+    <div class="dec attention" id="RD3"><span class="id d">RD3</span><div class="txt"><p><span class="flag">Needs input</span>As written, the panel rollback is only seen if a real regression happens to occur during ES.12 or ES.13.</p><p class="why">Why: the smoke tests the wiring, but a gate that never fires live is unproven.</p><p class="tweak"><em>Tweak (recommended):</em> ES.12 injects a known-weak candidate (<code>scripts/evolve_inject_one.py</code>) and watches the rollback fire.</p></div></div>
+    <div class="dec" id="RD4"><span class="id d">RD4</span><div class="txt"><p>A stage passes on its point estimate plus a per-race floor; Wilson intervals are reported beside it.</p><p class="why">Why: requiring the Wilson lower bound to clear 60% would need far more than 60 games. A 60% result over 60 games has a lower bound near 47%.</p><p class="tweak"><em>Tweak:</em> require the lower bound to clear the target, and accept larger stage samples.</p></div></div>
+    <div class="dec" id="RD5"><span class="id d">RD5</span><div class="txt"><p>Stage 1 and later use 20 games per race (60 games, about 2.5 hours).</p><p class="why">Why: twice the Stage 0 sample, for verdicts that decide what counts as progress.</p><p class="tweak"><em>Tweak:</em> 10 for speed, or 30 for tighter verdicts.</p></div></div>
+    <div class="dec" id="RD6"><span class="id d">RD6</span><div class="txt"><p>Calibration runs before Stage 0. v13 must win at least 8 of 9 at Easy and at most 1 of 9 at CheatInsane, or the run stops.</p><p class="why">Why: it proves the scoreboard can tell a sure win from a sure loss before its numbers are trusted.</p><p class="tweak"><em>Tweak:</em> the thresholds, or a different known-bad opponent.</p></div></div>
+    <div class="dec" id="RD7"><span class="id d">RD7</span><div class="txt"><p>Frozen versions are not edited. The scoreboard builds each bot with that version&rsquo;s own code, adding only the opponent race.</p><p class="why">Why: the score has to describe the real version, not a re-implementation of it.</p><p class="tweak"><em>Tweak:</em> none recommended, because scoring the real artifact is the point of the phase.</p></div></div>
+    <div class="dec" id="RD8"><span class="id d">RD8</span><div class="txt"><p>The built-in AI uses its default random build, and games are not seeded.</p><p class="why">Why: <code>run_bot</code> has no build or seed parameter, so a &ldquo;sealed schedule&rdquo; fixes the order of matchups, not identical games.</p><p class="tweak"><em>Tweak:</em> add a pinned build parameter (touches each version&rsquo;s call path through the worker).</p></div></div>
+    <div class="dec" id="RD9"><span class="id d">RD9</span><div class="txt"><p>The panel is 12 games (4 per race) at the current stage&rsquo;s difficulty. The incumbent&rsquo;s results are reused rather than replayed.</p><p class="why">Why: enough to catch a clear drop without halving the generations per night.</p><p class="tweak"><em>Tweak:</em> 18 or 24 games, for fewer wrong rollbacks and slower evolution.</p></div></div>
+    <div class="dec" id="RD10"><span class="id d">RD10</span><div class="txt"><p>The new evolve flags (<code>--promote-scored</code>, <code>--ai-panel</code>, <code>--panel-gate</code>) default off and are switched on in ES.12 and ES.13.</p><p class="why">Why: project convention keeps a bare <code>evolve.py</code> run byte-identical.</p><p class="tweak"><em>Tweak:</em> make them the defaults once ES.13 has run.</p></div></div>
+    <div class="dec" id="RD11"><span class="id d">RD11</span><div class="txt"><p>The self-play fitness bar stays a simple majority during Phase ES.</p><p class="why">Why: the panel guards quality, and ES.13 records the real pass rate to decide on later.</p><p class="tweak"><em>Tweak:</em> require 4 of 5 now (the judging investigation&rsquo;s top pick).</p></div></div>
+    <div class="dec" id="RD12"><span class="id d">RD12</span><div class="txt"><p>Regression against older ancestors is checked by stage scoreboards, not by extra games at every promotion.</p><p class="why">Why: lower game cost per generation.</p><p class="tweak"><em>Tweak:</em> add ancestor games to each promotion.</p></div></div>
+    <div class="dec" id="RD13"><span class="id d">RD13</span><div class="txt"><p>When two winning changes touch the same files, the later one is benched for the next generation and never rewritten.</p><p class="why">Why: rewriting is exactly how untested code shipped before.</p><p class="tweak"><em>Tweak:</em> cap each promotion at one winner.</p></div></div>
+    <div class="dec" id="RD14"><span class="id d">RD14</span><div class="txt"><p>The launcher runs evolve inside WSL in a visible console, and closing that console stops the run.</p><p class="why">Why: it keeps today&rsquo;s stop gesture and avoids the known WSL backgrounding trap.</p><p class="tweak"><em>Tweak:</em> run in the background with a separate stop command.</p></div></div>
+    <div class="dec" id="RD15"><span class="id d">RD15</span><div class="txt"><p><code>evolve --viewer</code> is deprecated with a warning, not removed.</p><p class="why">Why: the smallest change that moves runs headless; removal can follow once the new viewer exists.</p><p class="tweak"><em>Tweak:</em> remove the viewer code now.</p></div></div>
+    <div class="dec" id="RD16"><span class="id d">RD16</span><div class="txt"><p>Champion-challenge games are played on Simple64 only, 10 per opponent. The repoint uses a one-line Python call plus a commit.</p><p class="why">Why: reuses the existing head-to-head tool and pointer helper with no new code.</p><p class="tweak"><em>Tweak:</em> rotate maps, or add a scoreboard repoint command.</p></div></div>
+    <div class="dec" id="RD17"><span class="id d">RD17</span><div class="txt"><p>The scoreboard plays one game at a time by default (<code>--concurrency 1</code>).</p><p class="why">Why: safe on memory. Four parallel games on Linux were validated in April and remain available.</p><p class="tweak"><em>Tweak:</em> default to 2&ndash;4 in WSL.</p></div></div>
+    <div class="dec" id="RD18"><span class="id d">RD18</span><div class="txt"><p>Plan-review&rsquo;s other gaps stay as review findings for plan-wrap and build time: hang limits, a single writer for result rows, a scoreboard run lock, argument quoting, outcome tokens shared with the dashboard, a WSL Claude login check, file lists, placeholders and retention.</p><p class="why">Why: none of them needs a product decision.</p><p class="tweak"><em>Tweak:</em> fold them into the plan now, before plan-wrap.</p></div></div>
+    <div class="dec" id="RD19"><span class="id d">RD19</span><div class="txt"><p>ES.11 reviews at least 12 of the champion&rsquo;s losses, 4 per race.</p><p class="why">Why: enough to see repeating patterns in each matchup.</p><p class="tweak"><em>Tweak:</em> a different count, or review every loss when there are fewer than 12.</p></div></div>
+  </div>
+</section>
+
+<section aria-labelledby="notv1">
+  <div class="eyebrow">Not in v1</div>
+  <h2 id="notv1">Cut on purpose.</h2>
+  <ul class="plain col">
+    <li>Stage 2 and later runs: added once Stage 1 passes.</li>
+    <li>Scoreboards on ladder maps (installed on the Linux side) and against other bots.</li>
+    <li>Evolution lines (D9), Hydra experts, mini-games, other races and replay exhibition: parked.</li>
+    <li>Deleting the evolve viewer code: deprecation only.</li>
+    <li>A dashboard page for scoreboard reports, and the Windows compatibility wrapper for live games with older versions: VW.0.</li>
+    <li>Any change to what PPO controls: PPO.0 decides.</li>
+  </ul>
+</section>
+
+<section aria-labelledby="risks">
+  <div class="eyebrow">Risks</div>
+  <h2 id="risks">What could bite, and the built-in answer.</h2>
+  <div class="col" style="border-top:1px solid var(--rule)">
+    <div class="risk"><p>Linux replays (SC2 4.10) may not open in the Windows client (build 98310).</p><p class="ans">ES.1 tests one. If it fails, ES.11 replays the matchup live on Windows.</p></div>
+    <div class="risk"><p>Scoreboard numbers come from SC2 4.10 and can&rsquo;t be compared with April&rsquo;s Windows results.</p><p class="ans">Every report states the substrate and build.</p></div>
+    <div class="risk"><p>WSL setup has drifted since April.</p><p class="ans">ES.1 checks it before any long run.</p></div>
+    <div class="risk"><p>Closing the console could leave Linux SC2 processes behind.</p><p class="ans">ES.12 checks with <code>pgrep</code>; any fix lands before ES.13.</p></div>
+    <div class="risk"><p>The run lock mixes Windows and Linux process IDs.</p><p class="ans">A decision note on EH.7: the lock records which platform wrote it.</p></div>
+    <div class="risk"><p>10 games per race gives wide intervals at Stage 0.</p><p class="ans">The champion challenge settles close calls; Stage 1 uses 20 per race.</p></div>
+    <div class="risk"><p>The panel adds 12 games per promotion.</p><p class="ans">Incumbent results are cached, and the concurrency option is available.</p></div>
+  </div>
+</section>
+
+<section aria-labelledby="reply">
+  <div class="eyebrow">Reply grammar</div>
+  <h2 id="reply">Scan, then reply in chat. IDs make it cheap.</h2>
+  <div class="grammar">
+    <pre>RD1 -> scripts
+RD2 -> yes
+RD3 -> yes
+RD4 -> Wilson lower bound
+RP7 -> Stage 1 at 65%</pre>
+    <p>One line per change: the ID, an arrow, what you want. Anything you don&rsquo;t mention lands as written. That includes RD1&ndash;RD3, which keep the plan as currently written unless you reply.</p>
+  </div>
+  <p class="sources">Sources: <code>docs/plans/master_plan.md</code> (&sect;7 ES.1&ndash;ES.13, &sect;16 register, &sect;17 Phase ES design, &sect;18 Decision Inventory), <code>docs/seeds/evolve-for-strength.md</code>, <code>docs/seeds/ppo-direction.md</code>, <code>docs/seeds/strength-viewer.md</code>, <code>docs/seeds/jev-harvest.md</code>.</p>
+</section>
+
+</main>
+</body>
+</html>

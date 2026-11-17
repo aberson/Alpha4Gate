@@ -150,13 +150,13 @@ describe("ObservableTab", () => {
     ).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/replay-stream-as-live/i)).toBeInTheDocument();
 
-    // Wiki link points at documentation/wiki/models-tab.md.
+    // Wiki link points at docs/wiki/models-tab.md.
     const link = screen.getByTestId(
       "observable-wiki-link",
     ) as HTMLAnchorElement;
     expect(link).toBeInTheDocument();
     expect(link.getAttribute("href")).toMatch(
-      /documentation\/wiki\/models-tab\.md$/,
+      /docs\/wiki\/models-tab\.md$/,
     );
   });
 });

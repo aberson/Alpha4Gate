@@ -175,7 +175,7 @@ def test_to_dict_keys_match_frontend_evolve_current_round_interface(
     specifically the ``EvolveCurrentRound`` interface around lines
     187-207. Drift on the Python side silently breaks the dashboard.
 
-    Mirrors plan §5 (``documentation/plans/evolve-parallelization-plan.md``).
+    Mirrors plan §5 (``docs/completed/evolve-parallelization-plan.md``).
     Optional dispatcher-only fields (``worker_id`` / ``run_id``) are
     omitted from the active-default keyset because the TypeScript
     interface does not declare them — the frontend reads them only via

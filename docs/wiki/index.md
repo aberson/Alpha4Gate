@@ -1,0 +1,121 @@
+# Alpha4Gate Wiki
+
+An autonomous AI agent that teaches itself to get better at a task. The task happens to be StarCraft II, but the loop is general.
+
+## Two Loops, Nested
+
+Alpha4Gate runs two self-improvement loops at different timescales. They're both
+here because they operate on different things.
+
+```
+┌───────────────────────────────────────────────────────────────────────────────┐
+│  OUTER LOOP — /improve-bot-advised (hours)                                    │
+│  Improves the bot's CODE and CONFIG                                            │
+│                                                                                │
+│    PLAY ──> THINK ──> FIX ──> TEST ──> COMMIT ──> TRAIN ──> loop              │
+│     ▲                 (edit config                  │                          │
+│     │                  or write code)               │                          │
+│     │                                               ▼                          │
+│     │     ┌──────────────────────────────────────────────────┐                │
+│     │     │  INNER LOOP — TrainingDaemon (minutes)           │                │
+│     │     │  Improves the NEURAL POLICY                      │                │
+│     │     │                                                  │                │
+│     │     │  PLAY ──> EVALUATE ──> TRAIN ──> PROMOTE ──> loop│                │
+│     │     │                                    │             │                │
+│     │     │  (rollback if worse ◄──────────────┘)           │                │
+│     │     └──────────────────────────────────────────────────┘                │
+│     │                                                                          │
+│     └──────────────── run new games to see if the fix held ─────────────────  │
+│                                                                                │
+└───────────────────────────────────────────────────────────────────────────────┘
+
+                              observed by
+                                   │
+                                   ▼
+                   ┌───────────────────────────────┐
+                   │   Transparency Dashboard      │
+                   │                               │
+                   │  7 tabs: Advisor, Evolution,  │
+                   │  Models, Observable,          │
+                   │  Processes, Help, Jev         │
+                   │  (refactored 2026-04-29 from  │
+                   │   the original 12-tab layout; │
+                   │   Jev added 2026-10-08)       │
+                   └───────────────────────────────┘
+```
+
+- **Outer loop** ([improve-bot-advised-architecture.md](improve-bot-advised-architecture.md)) — Claude observes games, diagnoses weaknesses, writes code or config changes, validates them, commits. Hours-long autonomous sessions.
+- **Inner loop** ([training-pipeline.md](training-pipeline.md), [promotions.md](promotions.md)) — `TrainingDaemon` background thread runs PPO cycles, `PromotionManager` gates new checkpoints, `RollbackMonitor` reverts regressions.
+- **THE TASK** — an SC2 1v1 game. The loops treat it as a black box: code + config in, win/loss + stats out. See [domain-coupling.md](domain-coupling.md) for the abstraction boundary.
+
+## Current direction (2026-11-11)
+
+The goal is a bot that measurably gets better at the game, not only a working self-improvement loop.
+
+- **Scoreboard first.** Measure every version against built-in AI at rising difficulty across all three races, in stages. Promotions must hold up there, not only against the immediate parent ([seed](../seeds/evolve-for-strength.md)).
+- **PPO under active exploration** of what it should control ([seed](../seeds/ppo-direction.md)).
+- **Headless evolution.** Evolution and the scoreboard run headless on WSL Linux; live evolution (`evolve --viewer`) is deprecated.
+- **A Jev-style viewer** for live spot-check and demo games, with a way to flag issues ([seed](../seeds/strength-viewer.md)).
+- **Jev** closed as a completed proof of concept; its reusable ideas are in the [Jev harvest](../seeds/jev-harvest.md).
+
+Decisions are recorded in [master_plan.md §16](../plans/master_plan.md#16-direction-reset-and-decision-register-2026-11-11).
+
+---
+
+## Start Here
+
+| Page | Best for |
+|------|----------|
+| [Project History](project-history.md) | Narrative "how we got here" — the story of the project so far |
+| [FAQ](faq.md) | First-time visitors — "what is this?", "what's happening?", "what's next?" |
+| [improve-bot-advised-architecture](improve-bot-advised-architecture.md) | How the outer loop teaches itself |
+| [Monitoring & Observability](monitoring.md) | How to watch the loop run |
+
+---
+
+## Wiki Pages
+
+### The Autonomous Loop
+
+| Page | Description |
+|------|-------------|
+| [improve-bot-advised architecture](improve-bot-advised-architecture.md) | Outer loop — PLAY / THINK / FIX / TEST / COMMIT / TRAIN, with SC2 as an opaque task |
+| [Monitoring & Observability](monitoring.md) | What's visible at each phase, the state-file single source of truth, 7 alert rules |
+| [Training Pipeline](training-pipeline.md) | Inner loop — PPO, imitation pre-training, LSTM, KL-to-rules, curriculum, `TrainingDaemon` |
+| [Evaluation Pipeline](evaluation-pipeline.md) | Win rates, reward rules (63 total, 58 active in v13), `ModelEvaluator` (deterministic inference-only eval) |
+| [Promotion History](promotions.md) | `PromotionManager` + `RollbackMonitor` — live gate, auto-updated log |
+
+### The Task (SC2 bot internals)
+
+| Page | Description |
+|------|-------------|
+| [Architecture Overview](architecture.md) | Seven-layer bot architecture, on_step() pipeline, inter-layer data flow |
+| [Decision Engine](decision-engine.md) | Strategic state machine — states, transitions, triggers |
+| [Command System](command-system.md) | Three command modes, parser, interpreter, executor, queue |
+| [Army & Combat](army-combat.md) | Coherence, staging, engagement, retreat, micro |
+| [Economy & Production](economy.md) | Macro manager, build orders, expansion, production |
+| [Claude Advisor](claude-advisor.md) | Live in-game advisor — async subprocess, rate limiting |
+
+### Infrastructure
+
+| Page | Description |
+|------|-------------|
+| [Frontend Dashboard](frontend.md) | 7 tabs, React components, WebSocket protocol, poll cadences |
+| [Models Tab](models-tab.md) | Lineage, Live Runs, Inspector, Compare, Forensics — five questions answered, weight-dynamics + recovery procedures |
+| [Domain Coupling](domain-coupling.md) | What's SC2-specific vs domain-agnostic |
+| [Testing](testing.md) | 3345 unit tests passing across 131 files (with the `[viewer]` extra), SC2 integration tests, coverage map |
+| [Linux Dev Environment](linux-dev-environment.md) | WSL Ubuntu 22.04 setup — venv on ext4, env vars, gotchas |
+
+---
+
+## How to Use This Wiki
+
+**For Claude sessions:** Start with this index, then read the page for the system you're touching. Each page follows the structure:
+
+1. **Purpose & Design** — stable overview
+2. **Key Interfaces** — public API, data flow
+3. **Implementation Notes** — internal details (marked "verify against code" — these can drift)
+
+**For the active plan:** See [master_plan.md](../plans/master_plan.md) for the current roadmap. Phases A, 0–5, 7, 8, 9 and N are complete, and Phases EL (evolution lines), EJ (judging noise-floor) and EV (evolve `--viewer`) have shipped. Evolve has carried the lineage to v13 via successive auto-promotions. Phase EH (evolve operational hardening) is in progress — EH.1 and EH.2 of 10 shipped 2026-10-04. Phase JV (Jev player and dashboard viewer) automated Steps 201–206 shipped 2026-10-07 to 2026-10-08 (#318–#323 closed); operator Steps 207/208 (#324/#325) remain as Manual UAT M1/M2 (procedure: [jev-validation.md](../operator/jev-validation.md)). Phase JI (Typesafe Jev integration) completed 2026-10-08; Phase J2 (adaptive Jev, #327) has 10 of 13 steps done: 212 (benchmarks), 224 (dashboard-first exact-game launch) and 214–221 (2026-10-09 to 2026-10-10, #331–#338: the packaged v2 player with scouting, gas, persistent expansion and tech plans, a Zealot/Stalker army and hosted strategy and execution questions, plus the live Jev graph). Next is operator Manual UAT M1 = Step 222 (#339: at most three paid dashboard-first v2 matches, [jev-v2-validation.md](../operator/jev-v2-validation.md) section 13), then the wait Step 223 (#340); Step 213 (#330, frozen v1 baseline) stays operator-deferred, not passed. Next: EH.3–EH.10, then Phase EI (evolve evidence layer), Phase O scripted Hydra v1, and the Tracks 7-10 capability research phases.
+
+**For day-to-day operator commands:** See [operator-commands.md](operator-commands.md) — the cheat sheet for running the bot, launching evolve (Windows + WSL), watching tasks, debugging, and frequent recipes.

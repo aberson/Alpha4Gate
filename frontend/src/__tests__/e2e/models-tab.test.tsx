@@ -11,7 +11,7 @@ import App from "../../App";
 /**
  * Models tab + Observable tab END-TO-END test invoking a REAL backend.
  *
- * Plan: documentation/plans/models-tab-plan.md §7 Step 11 — "vitest e2e
+ * Plan: docs/completed/models-tab-plan.md §7 Step 11 — "vitest e2e
  * suite invoking real backend".
  *
  * GATING:
@@ -36,6 +36,14 @@ import App from "../../App";
  *   5xx responses cannot silently pass — that "empty response leak"
  *   was the iter-1 review's HIGH-1 finding.
  */
+
+// Pre-existing build-blocker fix (on-brand pilot Step 16): this app-project
+// tsconfig excludes @types/node, so `process` was untyped and `tsc -b` failed
+// (TS2591) for everyone from a clean build — a stale tsbuildinfo had been
+// masking it. This module-scoped, type-only declaration unblocks the build
+// with zero runtime impact; the real Node `process` is used when the e2e
+// suite actually runs. Not part of the brand refactor.
+declare const process: { env: Record<string, string | undefined> };
 
 const E2E_ENABLED = process.env.BACKEND_E2E === "1";
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8765";

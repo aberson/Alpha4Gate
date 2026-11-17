@@ -63,7 +63,11 @@ __all__ = [
 # Mirrors the Windows ``os.replace`` retry-backoff used by
 # ``orchestrator.lineages._atomic_write_json`` and
 # ``orchestrator.evolve._restore_pointer``. Kept identical so the baseline
-# registry survives the same ``--serve`` polling race. We mirror rather
+# registry survives the same ``--serve`` polling race -- with one
+# exception, documented at that module's copy: the ``lineages`` copy
+# pid-stamps its scratch name and unlinks it on the failure path, because
+# ``write_lineages`` is its only caller. This copy keeps the shared
+# ``<path>.tmp`` name. We mirror rather
 # than import ``scripts/evolve_round_state`` so this ``src/`` module stays
 # free of a ``scripts/``-on-sys.path dependency (the test harness only puts
 # ``src/`` on the path).

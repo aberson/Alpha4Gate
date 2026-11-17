@@ -5,7 +5,7 @@
 # feedback_wsl_bash_lc_heredoc_fragile.md.
 set -u
 
-cd /mnt/c/Users/abero/dev/Alpha4Gate
+cd "$(dirname "$(readlink -f "$0")")/.." || { echo "FATAL: cannot locate the Alpha4Gate repo root from $0" >&2; exit 1; }
 
 pass() { echo "  PASS: $*"; }
 warn() { echo "  WARN: $*"; }

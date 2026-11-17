@@ -36,7 +36,7 @@ Alpha4Gate runs evolve on Windows-SC2 (canonical) or Linux-SC2 in WSL (Phase 8+)
 
 6. **Git config for the cross-FS repo:**
    ```bash
-   git config --global safe.directory /mnt/c/Users/abero/dev/Alpha4Gate
+   git config --global safe.directory /mnt/c/Users/x/dev/Alpha4Gate
    git config --global core.autocrlf input
    ```
 
@@ -51,7 +51,7 @@ Alpha4Gate runs evolve on Windows-SC2 (canonical) or Linux-SC2 in WSL (Phase 8+)
 
 ## Launch recipes
 
-**Windows-SC2 (canonical):** PowerShell + `Start-Process` driving `C:\Users\abero\.local\bin\uv.exe`. Simplest path, no interop layer.
+**Windows-SC2 (canonical):** PowerShell + `Start-Process` driving `$env:USERPROFILE\.local\bin\uv.exe`. Simplest path, no interop layer.
 
 **Linux-SC2 (Phase 8 Step 11+):** Open an **interactive** shell with `wsl -d Ubuntu-22.04`, then run `nohup uv run python scripts/evolve.py ... &` from the prompt, then `exit`. The PowerShell one-liner `wsl -d Ubuntu-22.04 bash -lc 'nohup ... &'` silently fails to background — bash teardown kills the orphaned child before nohup completes its session-detach.
 

@@ -447,4 +447,46 @@ describe("ForensicsView — selector change", () => {
       ).toBeInTheDocument();
     });
   });
+
+  it("resets a manual pick to the newest game when the version changes", async () => {
+    // Every version's training-history returns the same three games, so
+    // this pins the reset itself (manual pick -> newest) independent of
+    // when the new version's history fetch lands.
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      makeFetchMock({
+        trainingHistory: {
+          rolling_10: [],
+          rolling_50: [],
+          rolling_overall: [
+            { game_id: "g_001", ts: "2026-04-30T00:00:00Z", wr: 0.3 },
+            { game_id: "g_002", ts: "2026-04-30T01:00:00Z", wr: 0.5 },
+            { game_id: "g_003", ts: "2026-04-30T02:00:00Z", wr: 0.7 },
+          ],
+        },
+      }),
+    );
+    const { rerender } = render(<ForensicsView version="v7" />);
+    const select = (await screen.findByTestId(
+      "forensics-game-select",
+    )) as HTMLSelectElement;
+    await waitFor(() => {
+      expect(select.value).toBe("g_003");
+    });
+
+    // Operator picks an older game; it sticks while the version is unchanged.
+    fireEvent.change(select, { target: { value: "g_001" } });
+    expect(
+      (screen.getByTestId("forensics-game-select") as HTMLSelectElement).value,
+    ).toBe("g_001");
+
+    // Version change drops the manual pick and re-snaps to the newest game.
+    rerender(<ForensicsView version="v8" />);
+    expect(screen.getByTestId("forensics-title")).toHaveTextContent("v8");
+    await waitFor(() => {
+      expect(
+        (screen.getByTestId("forensics-game-select") as HTMLSelectElement)
+          .value,
+      ).toBe("g_003");
+    });
+  });
 });

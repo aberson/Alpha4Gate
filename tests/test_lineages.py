@@ -8,7 +8,10 @@ at a tmp tree so no test touches the real ``data/`` dir.
 
 from __future__ import annotations
 
+import dataclasses
 import json
+import logging
+import os
 from pathlib import Path
 
 import pytest
@@ -170,6 +173,76 @@ def test_next_lineage_empty_registry_raises() -> None:
         next_lineage({}, None)
 
 
+def test_next_lineage_skips_extinct_records() -> None:
+    """Phase EH.2: a persisted ``status="extinct"`` record is never scheduled.
+
+    The generation-boundary write-back persists culled lineages rather than
+    dropping them (plan §6 D-3), so without this filter a restart would
+    resurrect an extinct lineage into the round-robin.
+    """
+    registry = {
+        "main": _make_lineage("main", "v0"),
+        "line-2": dataclasses.replace(
+            _make_lineage("line-2", "v8"), status="extinct"
+        ),
+        "line-3": _make_lineage("line-3", "v9"),
+    }
+    assert next_lineage(registry, None) == "main"
+    assert next_lineage(registry, "main") == "line-3"
+    # Wrap skips the extinct record entirely.
+    assert next_lineage(registry, "line-3") == "main"
+    # An extinct id handed in as *last_id* is not a member of the active
+    # ring, so the scheduler restarts at the first active lineage rather
+    # than raising from ``list.index``.
+    assert next_lineage(registry, "line-2") == "main"
+
+
+def test_next_lineage_all_extinct_falls_back_and_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An all-extinct registry degrades to scheduling, never to a crash.
+
+    Phase EH.2 clause (7). ``next_lineage``'s in-loop call site
+    (``scripts/evolve.py``'s generation loop) reaches this helper with
+    whatever the registry holds, so an all-extinct on-disk registry must
+    fall back to every id and warn rather than abort the next run. (The
+    call site gained a status partition upstream in EH.2 iteration 2; this
+    fallback remains the defence-in-depth guarantee of the helper itself.)
+    """
+    registry = {
+        "main": dataclasses.replace(
+            _make_lineage("main", "v0"), status="extinct"
+        ),
+        "line-2": dataclasses.replace(
+            _make_lineage("line-2", "v8"), status="extinct"
+        ),
+    }
+    with caplog.at_level(logging.WARNING, logger="orchestrator.lineages"):
+        first = next_lineage(registry, None)
+    assert first == "main"
+    warnings = [
+        rec.getMessage()
+        for rec in caplog.records
+        if rec.levelno == logging.WARNING
+    ]
+    # Pin the ACTUAL text, not a hedged disjunction: a two-arm `or` whose
+    # first arm can never match passes on the loose second arm and asserts
+    # nothing about the warning contract.
+    assert any(
+        "none of the 2 registered lineage(s) is active" in msg
+        for msg in warnings
+    ), warnings
+    # The warning must also name each id with its status so the operator
+    # can see WHY nothing was schedulable.
+    assert any(
+        "main='extinct'" in msg and "line-2='extinct'" in msg
+        for msg in warnings
+    ), warnings
+    # The fallback ring still round-robins across every id.
+    assert next_lineage(registry, "main") == "line-2"
+    assert next_lineage(registry, "line-2") == "main"
+
+
 def test_next_lineage_preserves_insertion_order() -> None:
     # Insertion order (NOT sorted) drives the round-robin sequence.
     registry = {
@@ -231,3 +304,63 @@ def test_default_lineages_path_under_repo_data(
 ) -> None:
     monkeypatch.setattr(lineages, "_repo_root", lambda: tmp_path)
     assert default_lineages_path() == tmp_path / "data" / "lineages.json"
+
+
+def test_atomic_write_scratch_file_is_per_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ``.tmp`` scratch name carries the writer's pid.
+
+    Two concurrent ``scripts/lineage.py`` invocations used to share one
+    ``<path>.tmp``: the second writer overwrote the first's scratch, the
+    first's ``replace`` consumed it, and the second's ``replace`` raised an
+    unretried ``FileNotFoundError`` — so one process reported success for an
+    entry that never landed. The pid in the name is what makes that
+    impossible, and this test exists so "restore consistency with
+    ``baselines``/``fingerprint``" cannot silently undo it.
+    """
+    seen: list[str] = []
+    real_replace = Path.replace
+
+    def _spy(self: Path, target: str | os.PathLike[str]) -> Path:
+        seen.append(self.name)
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", _spy)
+    path = tmp_path / "lineages.json"
+    write_lineages(path, {"main": _make_lineage("main", "v13")})
+
+    assert len(seen) == 1
+    # The property under test is collision-freedom, not the exact spelling:
+    # any name distinct from the shared ``<path>.tmp`` the sibling copies
+    # use keeps two concurrent writers off each other's scratch. Pinning
+    # the literal would fail a refactor that preserved the property.
+    assert seen[0] != f"{path.name}.tmp"
+    assert load_lineages(path)["main"].head_version == "v13"
+    # The scratch file is consumed by the replace, not left behind.
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_atomic_write_cleans_scratch_when_replace_never_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``replace`` that never succeeds leaves no scratch file behind.
+
+    The retry-backoff covers a ``--serve`` handle that clears within ~1.5s;
+    one that never clears propagates ``PermissionError``. Without the
+    ``finally`` cleanup the scratch survived that path, and per-pid naming
+    turned the leak from a single reusable ``<path>.tmp`` into one
+    accumulating file per invocation under ``data/``.
+    """
+    monkeypatch.setattr(lineages.time, "sleep", lambda _delay: None)
+
+    def _always_busy(self: Path, target: str | os.PathLike[str]) -> Path:
+        raise PermissionError(13, "in use")
+
+    monkeypatch.setattr(Path, "replace", _always_busy)
+    path = tmp_path / "lineages.json"
+    with pytest.raises(PermissionError):
+        write_lineages(path, {"main": _make_lineage("main", "v13")})
+
+    assert list(tmp_path.glob("*.tmp")) == []
+    assert not path.exists()

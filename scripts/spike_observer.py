@@ -6,7 +6,7 @@ a locally-inlined copy of ``_install_observer_dispatch_patch`` +
 (which spawns one SC2Process per ``needs_sc2`` player — i.e. 3 processes).
 
 Prints checkpoint info for manual verification against the checkpoints (a-e)
-in ``documentation/plans/selfplay-viewer-plan.md`` §7 Step 1.
+in ``docs/archived-plans/legacy/selfplay-viewer-observer-plan.md`` §7 Step 1.
 
 NOT for production — the real patch + coroutine move into
 ``src/orchestrator/selfplay.py`` in Step 2 (#196). This exists only to

@@ -117,9 +117,15 @@ class _CurrentAliasFinder(importlib.abc.MetaPathFinder):
         except ImportError:
             return None
         loader = _AliasLoader(actual)
-        spec = importlib.util.spec_from_loader(fullname, loader)
+        actual_spec = actual.__spec__
+        spec = importlib.util.spec_from_loader(
+            fullname, loader, origin=actual_spec.origin if actual_spec else None
+        )
         if spec is None:
             return None
+        # runpy uses the origin for __file__ and sys.argv[0] during -m execution.
+        if actual_spec is not None:
+            spec.has_location = actual_spec.has_location
         # Mark as a package when the target is one so submodule-of-submodule
         # imports (bots.current.learning.database) keep flowing through this
         # finder.

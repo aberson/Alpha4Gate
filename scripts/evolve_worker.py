@@ -1,7 +1,7 @@
 """Per-worker eval CLI for parallel evolve.
 
 This is the one-shot child invoked by the parallel dispatcher
-(``documentation/plans/evolve-parallelization-plan.md``). The worker
+(``docs/completed/evolve-parallelization-plan.md``). The worker
 supports two modes — selected via ``--mode``:
 
 * ``fitness`` (default) — original behavior. Reads an ``Improvement``

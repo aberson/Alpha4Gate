@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# on-brand pilot: brand/dist is generated-but-committed (consumers read
+# tokens.css / theme.ts from it; a fresh clone must build without a
+# regeneration step). Regenerate with `onbrand build`.
+!brand/dist/
+!brand/dist/**
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

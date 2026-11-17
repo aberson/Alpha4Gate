@@ -5,7 +5,7 @@ import type { UseApiResult } from "./useApi";
 // --- Pool item (from data/evolve_pool.json) ---
 
 // Six-status vocabulary for the gate-reduced (2-gate) evolve algorithm.
-// See documentation/plans/evolve-gate-reduction-plan.md (2026-04-23);
+// See docs/completed/evolve-gate-reduction-plan.md (2026-04-23);
 // the two legacy promotion statuses collapsed into a single `promoted`
 // status when the composition phase was removed.
 export type EvolvePoolStatus =

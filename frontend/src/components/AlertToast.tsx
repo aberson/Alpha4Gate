@@ -85,12 +85,15 @@ export function AlertToast({ newAlerts, onView }: AlertToastProps) {
   }, [visible]);
 
   // Clean up all timers on unmount.
+  // ``timersRef`` holds one Map for the component's lifetime (never
+  // reassigned), so capturing it here is the same Map the cleanup sees.
   useEffect(() => {
+    const timers = timersRef.current;
     return () => {
-      for (const handle of timersRef.current.values()) {
+      for (const handle of timers.values()) {
         clearTimeout(handle);
       }
-      timersRef.current.clear();
+      timers.clear();
     };
   }, []);
 

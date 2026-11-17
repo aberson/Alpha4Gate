@@ -1,0 +1,8 @@
+# Shell scripts must check out with LF endings so bash / WSL / git-bash can run
+# them on Windows. Without this, git re-checks-out CRLF and bash fails with
+# `$'\r': command not found` / `set: pipefail` (start-dev.sh, dev-serve.sh, ...).
+*.sh text eol=lf
+
+# Exact plan originals: preserve bytes across Windows checkouts.
+/docs/archived-plans/** -text
+/docs/completed/** -text

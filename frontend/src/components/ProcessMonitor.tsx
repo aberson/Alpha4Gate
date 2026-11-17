@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { useApi } from "../hooks/useApi";
 import { StaleDataBanner } from "./StaleDataBanner";
+import { theme } from "../../brand/dist/theme";
 
 interface ProcessEntry {
   name: string;
@@ -50,11 +51,10 @@ const ROLE_COLORS: Record<string, string> = {
   orphan: "#e74c3c",
 };
 
+// Process status badge fills, sourced from the brand theme
+// (color.process-status). Falls back to a neutral grey for unknown status.
 const STATUS_COLORS: Record<string, string> = {
-  running: "#2ecc71",
-  stopped: "#888",
-  stale: "#e74c3c",
-  unknown: "#f39c12",
+  ...theme.color["process-status"],
 };
 
 function Badge({ label, color }: { label: string; color: string }) {

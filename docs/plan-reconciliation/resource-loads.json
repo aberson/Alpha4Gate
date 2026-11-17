@@ -1,0 +1,72 @@
+[
+  {
+    "version": "v0",
+    "operator_endpoint": "PASS",
+    "principles_sections": 34
+  },
+  {
+    "version": "v1",
+    "operator_endpoint": "not present in original version",
+    "principles_sections": 34
+  },
+  {
+    "version": "v2",
+    "operator_endpoint": "not present in original version",
+    "principles_sections": 34
+  },
+  {
+    "version": "v3",
+    "operator_endpoint": "not present in original version",
+    "principles_sections": 34
+  },
+  {
+    "version": "v4",
+    "operator_endpoint": "not present in original version",
+    "principles_sections": 34
+  },
+  {
+    "version": "v5",
+    "operator_endpoint": "not present in original version",
+    "principles_sections": 34
+  },
+  {
+    "version": "v6",
+    "operator_endpoint": "not present in original version",
+    "principles_sections": 34
+  },
+  {
+    "version": "v7",
+    "operator_endpoint": "PASS",
+    "principles_sections": 34
+  },
+  {
+    "version": "v8",
+    "operator_endpoint": "PASS",
+    "principles_sections": 34
+  },
+  {
+    "version": "v9",
+    "operator_endpoint": "PASS",
+    "principles_sections": 34
+  },
+  {
+    "version": "v10",
+    "operator_endpoint": "PASS",
+    "principles_sections": 34
+  },
+  {
+    "version": "v11",
+    "operator_endpoint": "PASS",
+    "principles_sections": 34
+  },
+  {
+    "version": "v12",
+    "operator_endpoint": "PASS",
+    "principles_sections": 34
+  },
+  {
+    "version": "v13",
+    "operator_endpoint": "PASS",
+    "principles_sections": 34
+  }
+]

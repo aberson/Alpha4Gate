@@ -77,13 +77,24 @@ frontend/build/
 
 # ruff
 .ruff_cache/
+
+# UI/UAT evidence dirs (agent-driven review/judge capture output, never committed)
 .ui-review-evidence/
 .ui-dashboard-evidence/
+# /judge-motion run artifacts (a4g-motion adapter) - append-only capture runs
+.judge-motion/
 
-# Raw capture files — only cropped/optimized GIFs should be committed in documentation/images/
-documentation/images/*.mp4
-documentation/images/*.mov
+# Raw capture files — only cropped/optimized GIFs should be committed in docs/images/
+docs/images/*.mp4
+docs/images/*.mov
 
 # plan-expedite resume state (transient, session-local)
 .plan-expedite-state
 .plan-expedite-state.*
+
+# Agent scratch from /build-step and /build-phase runs (reports, prewrap checks).
+# Not gitignored historically, which put 6 scratch files one `git add -A` away
+# from being committed. Never intended for version control.
+.build-step/
+.claude/task-state/.checkpoint-nudge-stamp
+.claude/task-state/handoff-prompt.md

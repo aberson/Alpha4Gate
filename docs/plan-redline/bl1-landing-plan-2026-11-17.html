@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BL.1 landing plan: master-plan/phase-ev into master (2026-11-17)</title>
+<style>
+  :root { --ink:#1d2330; --muted:#5b6475; --line:#d9dee7; --bg:#f7f8fb; --card:#fff; --accent:#2f5fd0; --ok:#1d7a46; --warn:#a15c00; --bad:#b3261e; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.55 "Segoe UI", system-ui, -apple-system, sans-serif; color:var(--ink); background:var(--bg); }
+  header { background:var(--ink); color:#fff; padding:28px 32px 22px; }
+  header h1 { margin:0 0 6px; font-size:24px; }
+  header p { margin:0; color:#c9d1e3; }
+  nav { position:sticky; top:0; z-index:2; background:#fff; border-bottom:1px solid var(--line); padding:8px 32px; display:flex; flex-wrap:wrap; gap:6px 16px; font-size:13px; }
+  nav a { color:var(--accent); text-decoration:none; }
+  main { max-width:1040px; margin:0 auto; padding:24px 32px 64px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:20px 24px; margin:0 0 18px; }
+  h2 { margin:0 0 12px; font-size:19px; }
+  h3 { margin:18px 0 8px; font-size:15.5px; }
+  p, li { max-width:78ch; }
+  table { border-collapse:collapse; width:100%; margin:8px 0 4px; font-size:14px; }
+  th, td { text-align:left; vertical-align:top; padding:7px 10px; border-bottom:1px solid var(--line); }
+  th { background:#f0f2f7; font-weight:600; }
+  code { font:13px/1.4 Consolas, "Cascadia Mono", monospace; background:#eef1f6; padding:1px 5px; border-radius:4px; }
+  pre { font:13px/1.45 Consolas, "Cascadia Mono", monospace; background:#141922; color:#e6ebf5; padding:12px 14px; border-radius:8px; overflow-x:auto; margin:6px 0 14px; }
+  pre code { background:none; padding:0; color:inherit; }
+  .runin { font-size:12.5px; color:var(--muted); margin:12px 0 2px; }
+  .callout { border-left:4px solid var(--accent); background:#eef3ff; padding:10px 14px; border-radius:0 8px 8px 0; margin:10px 0; }
+  .callout.warn { border-color:var(--warn); background:#fff6e8; }
+  .callout.ok { border-color:var(--ok); background:#ebf7f0; }
+  .tag { display:inline-block; font-size:12px; font-weight:600; padding:1px 8px; border-radius:20px; }
+  .t-ok { background:#e2f3e9; color:var(--ok); } .t-warn { background:#fdefd9; color:var(--warn); } .t-bad { background:#fbe3e1; color:var(--bad); }
+  ol.steps > li { margin-bottom:6px; }
+  .small { font-size:13px; color:var(--muted); }
+  @media print { nav { display:none; } body { background:#fff; } section { break-inside:avoid; border-color:#bbb; } pre { white-space:pre-wrap; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>BL.1 landing plan: <code style="background:#2b3345;color:#fff">master-plan/phase-ev</code> into <code style="background:#2b3345;color:#fff">master</code></h1>
+  <p>Read-only investigation for the operator, written 2026-11-17 by lane evolve (Alpha4Gate). Nothing was merged, pushed or opened. All facts below were checked against <code>origin</code> at phase-ev <code>839afee</code> and master <code>2ee3e79</code>.</p>
+</header>
+<nav>
+  <a href="#summary">Summary</a><a href="#state">Current state</a><a href="#master-only">Master-only commits</a><a href="#carries">What phase-ev carries</a><a href="#checks">Must not land / check first</a><a href="#ci">CI</a><a href="#method">Merge method</a><a href="#tag">Tag</a><a href="#commands">Command sequence</a><a href="#gates">Gates</a><a href="#done">Done-when</a><a href="#risks">Risks and rollback</a><a href="#decide">Your decisions</a>
+</nav>
+<main>
+
+<section id="summary">
+  <h2>Summary and recommendation</h2>
+  <div class="callout ok"><b>Recommendation:</b> land through a pull request from a short-lived landing branch. Make it a <b>merge commit</b> (not squash, not rebase), then tag the merge commit <code>master-plan/phase-ev/landed</code>. This puts all 136 phase-ev commits on <code>master</code> with their SHAs unchanged, so they count on your contribution graph. It also gives the work its first Linux CI run before it lands.</div>
+  <ul>
+    <li><b>The merge is not automatic.</b> <code>README.md</code> conflicts in 4 hunks. Three are mechanical. One needs a wording choice: master corrected an overstated screenshot caption, and phase-ev still has the old text. Keep master's honest caption.</li>
+    <li><b>CI has never run on phase-ev.</b> Both workflows trigger only on pushes to <code>master</code> and on pull requests. Master's own CI has failed since July on a single Python 3.12 test. Phase-ev already contains that fix (cherry-picks of open PRs #303 and #304), so landing should turn master green.</li>
+    <li><b>Nothing unwanted lands.</b> The preserved Jev candidates are separate branches or uncommitted files, and none of them merges with phase-ev. The production bot pointer stays <code>v13</code>. The frozen trees <code>bots/v0</code> to <code>v12</code> change only in documentation-path strings.</li>
+    <li><b>Timing (decision D2):</b> land before any <code>EVO_AUTO</code> run, while no lane is mid-build on phase-ev.</li>
+  </ul>
+</section>
+
+<section id="state">
+  <h2>Current state (verified)</h2>
+  <table>
+    <tr><th>Fact</th><th>Value</th></tr>
+    <tr><td>Repository</td><td><code>aberson/Alpha4Gate</code>, <b>public</b>, default branch <code>master</code></td></tr>
+    <tr><td>Tips</td><td><code>origin/master</code> = <code>2ee3e79</code> (2026-11-02); <code>origin/master-plan/phase-ev</code> = <code>839afee</code> (2026-11-16)</td></tr>
+    <tr><td>Divergence</td><td>phase-ev is <b>136 ahead</b> (132 commits + 4 merges); master is <b>2 ahead</b>. A fast-forward is impossible, so a merge commit is required either way.</td></tr>
+    <tr><td>Merge base</td><td><code>d6a2e73</code> "docs: showcase hosted Jev gameplay on the GitHub front page" (2026-10-11)</td></tr>
+    <tr><td>Authorship</td><td>All 136 phase-ev commits are authored and committed as <code>aberobison@gmail.com</code>, so all count toward your graph once they are on <code>master</code>.</td></tr>
+    <tr><td>Branch protection on master</td><td>None (<code>404 Branch not protected</code>). A local push would not be refused, which is one more reason to use the PR path.</td></tr>
+    <tr><td>Allowed PR merge methods</td><td>merge commit, squash and rebase are all enabled; delete-branch-on-merge is off.</td></tr>
+    <tr><td>Production bot pointer</td><td><code>bots/current/current.txt</code> = <code>v13</code> on both branches (unchanged by landing).</td></tr>
+  </table>
+</section>
+
+<section id="master-only">
+  <h2>The 2 master-only commits and how they reconcile</h2>
+  <table>
+    <tr><th>Commit</th><th>What it did</th><th>File</th></tr>
+    <tr><td><code>b22c8c1</code> 2026-10-14</td><td>"docs(readme): link the two Medium articles and correct overstated claims"</td><td>README.md (+26/−17)</td></tr>
+    <tr><td><code>2ee3e79</code> 2026-11-02</td><td>"docs: move hero artwork to README banner"</td><td>README.md (+2/−4)</td></tr>
+  </table>
+  <p>Phase-ev changed <code>README.md</code> in 20 commits since the merge base, including the <code>documentation/</code> to <code>docs/</code> migration. A dry-run merge (<code>git merge-tree</code>, nothing written) gives <b>exactly one conflicted file, README.md, with 4 hunks</b>. Everything else merges cleanly, including the Medium links section and the corrected "a local decision graph issues every command" wording.</p>
+  <table>
+    <tr><th>#</th><th>Hunk</th><th>Resolution</th></tr>
+    <tr><td>1</td><td>Hero banner image path: master has <code>documentation/images/...</code>, phase-ev has <code>docs/images/...</code></td><td><span class="tag t-ok">mechanical</span> Take phase-ev's path. <code>docs/images/alpha4gate-hero.png</code> exists on phase-ev.</td></tr>
+    <tr><td>2</td><td>Advisor screenshot caption. Master (corrected): <i>"Training-mode run: 6 reward-rule changes committed; the win-rate shift shown is game variance"</i>. Phase-ev (old, overstated): <i>"6 fixes proposed, validated, committed"</i>.</td><td><span class="tag t-warn">wording</span> Keep <b>master's caption</b> with phase-ev's <code>docs/images/advisor-completed.png</code> path. This is the one hunk where taking phase-ev would quietly undo a correction.</td></tr>
+    <tr><td>3</td><td>Jev "army gathering at home" paragraph: master's 2026-10-14 status versus phase-ev's 2026-11-11 closure text</td><td><span class="tag t-ok">take phase-ev</span> It is newer and records the Jev proof-of-concept closure.</td></tr>
+    <tr><td>4</td><td>Status bullets ("Now", "Next", Jev wrap-up)</td><td><span class="tag t-ok">take phase-ev</span> It holds the 2026-11-11 direction reset. Master's "Archon Caster" naming is superseded by "Archon Auto Caster".</td></tr>
+  </table>
+</section>
+
+<section id="carries">
+  <h2>What phase-ev carries</h2>
+  <p>527 files changed, +140,963 / −13,688 lines, commits dated 2026-07-17 to 2026-11-16. By commit type: 38 build checkpoints, 20 <code>docs(jev)</code>, 12 <code>docs</code>, 7 <code>docs(phase-eh)</code>, 4 merges, plus feat/fix/test commits.</p>
+  <table>
+    <tr><th>Area</th><th>What lands</th><th>Note</th></tr>
+    <tr><td>Phase EV</td><td><code>evolve --viewer</code>, the themed viewer, <code>launch-evolve.ps1</code>, the on-brand frontend (<code>onbrand-pilot</code> is already inside phase-ev)</td><td>Live evolution in the viewer is deprecated (D16) but stays in the code.</td></tr>
+    <tr><td>Phase EJ / EL / EH</td><td>Judging noise-floor flags (default off), lineages and baselines, and EH.1 to EH.9 hardening: <code>--require-baselines</code>, path-scoped <code>[evo-auto]</code> commits, <code>-Generations</code>, the single-run lock, the chain smoke test</td><td>All new behaviour is opt-in or a safety guard.</td></tr>
+    <tr><td>Phase ES (part)</td><td>The SC2 build-98310 compatibility shim (<code>52f1afd</code>, #364) and ES.14 (self-play launches every version through the shim)</td><td>Makes v0 to v12 playable on the current Windows SC2 build.</td></tr>
+    <tr><td>Jev</td><td><code>src/jev/</code>, <code>bots/jev/v1</code>, <code>bots/jev/v2</code>, the Jev dashboard tab, Observer Rush / Battle View tooling, Jev tests</td><td>Jev closed as a proof of concept on 2026-11-11. The code stays in place, per the master plan.</td></tr>
+    <tr><td>Documentation migration</td><td><code>documentation/</code> moved to <code>docs/</code> (<code>8915098</code>), the plan reconciliation records, the canonical <code>docs/plans/master_plan.md</code>, lanes docs</td><td>Includes reference-only path repairs in the frozen trees (below).</td></tr>
+    <tr><td>Frozen trees <code>bots/v0</code> to <code>v12</code></td><td>76 files, 89 lines in, 89 out</td><td><span class="tag t-ok">verified</span> Every changed line is a <code>documentation</code> to <code>docs</code> path string. No gameplay change (master plan §10, reference-only exception).</td></tr>
+    <tr><td>Home-path scrub history</td><td>12 commits in phase-ev's history added or edited operator home paths (<code>%USERPROFILE%...</code>). They were later scrubbed (<code>145f4f0</code> "security: scrub operator home identity", and later portability fixes).</td><td>The tip contains <b>no</b> home paths (0 tracked files). History keeps them; see the check-first list.</td></tr>
+    <tr><td>Large files</td><td>Only one blob is over 2 MB: <code>docs/images/jev-battle-preview.gif</code> (2.8 MB)</td><td>An optimized showcase asset, deliberately committed.</td></tr>
+  </table>
+</section>
+
+<section id="checks">
+  <h2>Must not land / check first</h2>
+  <table>
+    <tr><th>Item</th><th>Status</th><th>What to do</th></tr>
+    <tr><td>Preserved Jev candidates <code>build-step-225-jdi-contracts</code> (324d5f0), <code>build-step-232-jdi</code> (00bc515), <code>fix/jev-order-repair</code> (f027bc2)</td><td><span class="tag t-ok">will not land</span> None is an ancestor of phase-ev. They are 3, 1 and 3 commits ahead of it.</td><td>Leave them alone. Deleting them is a separate operator decision (master plan §8).</td></tr>
+    <tr><td><code>worktree_build-step-225-b0cc7700</code></td><td><span class="tag t-ok">will not land</span> Its branch tip <code>5eb0367</code> is already inside phase-ev. The preserved candidate is <b>7 staged but uncommitted files</b> (Jev campaign: <code>src/jev/campaign*.py</code>, <code>scripts/run_jev_campaign.py</code>, tests).</td><td>Do not commit, reset or remove that worktree during landing.</td></tr>
+    <tr><td>Other remote branches: <code>docs/jev-overnight-20261015</code>, <code>fix/jev-recovery-test-lifetime</code>, <code>fix/burnysc2-730</code>, <code>code-quality/pilot-20261101</code></td><td><span class="tag t-ok">will not land</span> Each is ahead of phase-ev and not part of it. <code>fix/burnysc2-730</code> (<code>fc66956</code>) is superseded by <code>52f1afd</code>.</td><td>Optional later cleanup; not part of BL.1.</td></tr>
+    <tr><td>Home paths in history</td><td><span class="tag t-warn">decide</span> Already public, because phase-ev is pushed. A merge commit makes them reachable from <code>master</code> too, which adds no new exposure.</td><td>Accept them (recommended). The only removal is a history rewrite, which would change every SHA the plan, issues and handoffs cite.</td></tr>
+    <tr><td>Uncommitted work in the shared checkout <code><dev>\Alpha4Gate</code></td><td><span class="tag t-ok">irrelevant to the merge</span> The landing is built from <code>origin</code> refs in its own worktree.</td><td>Do it in a fresh worktree, never in the shared checkout.</td></tr>
+    <tr><td>Running work</td><td><span class="tag t-warn">check</span> An evolve run or <code>EVO_AUTO</code> commit on phase-ev during landing would race the merge.</td><td>Confirm no lane is mid-build and no evolve/SC2 run is active, and set lane cards idle first.</td></tr>
+  </table>
+</section>
+
+<section id="ci">
+  <h2>CI status and what a PR would run</h2>
+  <table>
+    <tr><th>Workflow</th><th>Triggers</th><th>What it runs</th><th>History</th></tr>
+    <tr><td><code>linux-tests.yml</code></td><td>push to <code>master</code>; every <code>pull_request</code></td><td>ubuntu-22.04, Python 3.12, <code>uv sync --frozen --extra dev</code>, <code>ruff check .</code>, <code>mypy src bots --strict</code>, <code>pytest -m "not sc2"</code>; 15-minute timeout</td><td><span class="tag t-bad">red on master since July</span> The last run (2026-11-03) failed 1 test: <code>tests/test_current_pointer.py::test_dash_m_submodule_runs_via_alias</code> (1951 passed, 53 s).</td></tr>
+    <tr><td><code>docker-build.yml</code></td><td>push to <code>master</code> or <code>pull_request</code> touching <code>Dockerfile</code>, <code>.dockerignore</code>, <code>pyproject.toml</code> or <code>uv.lock</code></td><td>Builds the worker image (no push); 30-minute timeout</td><td>Will run on the PR, because phase-ev changed <code>pyproject.toml</code> and <code>uv.lock</code>.</td></tr>
+  </table>
+  <ul>
+    <li><b>Phase-ev has never had a CI run.</b> Neither workflow triggers on pushes to it. The PR is the first Linux and Python 3.12 signal for 136 commits that were developed on Windows with Python 3.14.</li>
+    <li><b>Master's red test is fixed in phase-ev.</b> Open PRs #303 (<code>fix/current-alias-python312</code>) and #304 (<code>fix/pointer-fixture-runtime-data</code>) are in neither branch. But phase-ev carries equivalent commits (<code>c6a7ec3</code>, <code>ead7ce7</code>), and merging #304 onto phase-ev changes nothing. After landing, close #303 and #304 as superseded.</li>
+    <li><b>Local evidence on phase-ev (Windows, Python 3.14):</b> the full suite passed, 3,424 passed and 0 failed, in named chunks, and ruff and <code>mypy src bots --strict</code> are clean (lane evolve, 2026-11-17). This is not a substitute for the Linux run. Windows-only and PowerShell-pinning tests may skip or fail there, and only the PR will tell.</li>
+  </ul>
+</section>
+
+<section id="method">
+  <h2>Merge commit versus the alternatives</h2>
+  <table>
+    <tr><th>Method</th><th>Contribution graph</th><th>SHAs the plan and issues cite</th><th>History</th><th>Verdict</th></tr>
+    <tr><td><b>Merge commit</b> (PR "Create a merge commit", or <code>--no-ff</code>)</td><td>All 136 commits count</td><td>Unchanged</td><td>Step checkpoints preserved; one merge commit to tag and, if needed, revert</td><td><span class="tag t-ok">recommended</span></td></tr>
+    <tr><td>Squash</td><td>Collapses to one commit (your graph would gain 1, not about 136)</td><td>Every cited SHA becomes unreachable from master</td><td>Step history lost on master</td><td><span class="tag t-bad">no</span> It defeats the reason for landing.</td></tr>
+    <tr><td>Rebase and merge</td><td>Counts, but as rewritten commits</td><td>All SHAs change, so handoffs and issue comments point at commits that are not on master</td><td>Linear, but rewritten; the 4 merge commits are flattened</td><td><span class="tag t-bad">no</span></td></tr>
+    <tr><td>Local <code>git merge --no-ff</code> and push</td><td>Counts</td><td>Unchanged</td><td>Same as a PR merge commit</td><td><span class="tag t-warn">fallback</span> There is no CI signal before landing.</td></tr>
+  </table>
+  <p class="small">GitHub's graph counts a commit when it is on the default branch and its author email is linked to your account. Both hold here. The graph can take up to 24 hours to refresh.</p>
+</section>
+
+<section id="tag">
+  <h2>Tag name</h2>
+  <p>The existing convention is <code>master-plan/&lt;phase&gt;/final</code> (phases 1 to 5), plus <code>alphastar/A/final</code>. The earlier landing note proposed <code>master-plan/ev/final</code>, but this landing is no longer "Phase EV final": EV.4 and EV.5 moved into Phase VW, and the branch also carries EH, part of ES, Jev and the documentation migration.</p>
+  <div class="callout"><b>Proposed:</b> an annotated tag <code>master-plan/phase-ev/landed</code> on the <b>merge commit</b> on master (as phases 0, 2 and 4 tag their merge commits). The message would be "BL.1: master-plan/phase-ev landed on master via PR #N (phase-ev tip 839afee or later)". An alternative is <code>master-plan/bl1/landed</code> if you would rather name the step than the branch.</div>
+</section>
+
+<section id="commands">
+  <h2>Exact command sequence</h2>
+  <p>PowerShell, run from your own window. Each block is one observation point; read its output before the next. Nothing here has been run.</p>
+
+  <h3>0. Pre-flight (read-only)</h3>
+  <p class="runin">Run in: this window @ Alpha4Gate (<code><dev>\Alpha4Gate</code>) · Model: any (no build)</p>
+<pre><code>cd <dev>\Alpha4Gate
+git fetch origin
+git log --oneline -1 origin/master-plan/phase-ev
+git log --oneline -1 origin/master
+git rev-list --left-right --count origin/master...origin/master-plan/phase-ev
+passing-notes card show --project alpha4gate</code></pre>
+  <p class="small">Look for: phase-ev at <code>839afee</code> or a known later handoff, master at <code>2ee3e79</code>, "2 136" (or more on the right), and every lane idle, done or parked. If master moved, re-run the conflict check in step 1.</p>
+
+  <h3>1. Build the landing branch in its own worktree and reconcile master into it</h3>
+  <p class="runin">Run in: this window @ Alpha4Gate · Model: any</p>
+<pre><code>git worktree add <dev>\worktree_bl1-landing -b land/phase-ev-2026-11-17 origin/master-plan/phase-ev
+cd <dev>\worktree_bl1-landing
+git merge --no-ff origin/master -m "Merge master into phase-ev for BL.1 landing (README reconciliation)"</code></pre>
+  <p class="small">Expect: "CONFLICT (content): Merge conflict in README.md" and nothing else. Resolve the 4 hunks per the table in <a href="#master-only">Master-only commits</a>: phase-ev for 1, 3 and 4; master's caption with the <code>docs/</code> path for 2. Then:</p>
+<pre><code>Select-String -Path README.md -Pattern '^(<<<<<<<|=======|>>>>>>>)'
+Select-String -Path README.md -Pattern 'documentation/images'
+Select-String -Path README.md -Pattern 'game variance','Medium, October 2026','issues every command'</code></pre>
+  <p class="small">Look for: no conflict markers, no <code>documentation/images</code>, and all three master corrections present.</p>
+<pre><code>git add README.md
+git commit --no-edit</code></pre>
+
+  <h3>2. Local gates on the reconciled commit</h3>
+  <p class="runin">Run in: this window @ worktree_bl1-landing · Model: any. Foreground; about 12 minutes for the suite. Needs at least 1 GB free memory.</p>
+<pre><code>uv sync --extra dev
+uv run ruff check .
+uv run mypy src bots --strict
+uv run pytest -q</code></pre>
+  <p class="small">Look for: ruff clean, "Success: no issues found", and 0 failed. If the harness reaps a long run, split the suite into file chunks as in the EH runs.</p>
+
+  <h3>3. Push the landing branch and open the PR</h3>
+  <p class="runin">Run in: this window @ worktree_bl1-landing · Model: any. This publishes to GitHub.</p>
+<pre><code>git push -u origin land/phase-ev-2026-11-17
+gh pr create --base master --head land/phase-ev-2026-11-17 --title "BL.1: land master-plan/phase-ev on master" --body-file %USERPROFILE%\AppData\Local\Temp\bl1-pr-body.md</code></pre>
+  <p class="small">Write the PR body file first: a short summary from this page and a link to it. The PR's merge ref equals the head, because master is already merged in, so CI tests exactly what will land.</p>
+
+  <h3>4. Wait for CI</h3>
+  <p class="runin">Run in: this window @ worktree_bl1-landing · Model: any</p>
+<pre><code>gh pr checks --watch</code></pre>
+  <p class="small">Look for: <code>linux-tests</code> and <code>docker-build</code> both pass. On a red Linux-only failure, fix it on <code>land/phase-ev-2026-11-17</code> (or on phase-ev, then merge it in), push, and re-check. Do not merge red.</p>
+
+  <h3>5. Merge with a merge commit</h3>
+  <p class="runin">Run in: this window @ worktree_bl1-landing · Model: any. This changes master.</p>
+<pre><code>gh pr merge --merge --subject "Merge BL.1: master-plan/phase-ev landed on master"</code></pre>
+
+  <h3>6. Tag the merge commit</h3>
+  <p class="runin">Run in: this window @ worktree_bl1-landing · Model: any</p>
+<pre><code>git fetch origin
+git log --oneline -1 origin/master
+git cat-file -p origin/master | Select-String '^parent'</code></pre>
+  <p class="small">Look for: the merge commit, with two parents (<code>2ee3e79</code>'s line and the landing branch). Then tag that exact commit:</p>
+<pre><code>git tag -a master-plan/phase-ev/landed origin/master -m "BL.1: master-plan/phase-ev landed on master"
+git push origin master-plan/phase-ev/landed</code></pre>
+
+  <h3>7. Post-landing tidy</h3>
+  <p class="runin">Run in: this window @ Alpha4Gate · Model: any</p>
+<pre><code>gh pr close 304 --comment "Superseded: the same fix landed on master via BL.1 (ead7ce7)."
+gh pr close 303 --comment "Superseded: the same fix landed on master via BL.1 (c6a7ec3)."
+git push origin --delete land/phase-ev-2026-11-17
+git -C <dev>\Alpha4Gate worktree remove <dev>\worktree_bl1-landing</code></pre>
+  <p class="small">Keep <code>master-plan/phase-ev</code> (BL.1: retain the phase branch until gates close). Choosing the mainline from here on is a separate decision; see below.</p>
+</section>
+
+<section id="gates">
+  <h2>Gates that must pass</h2>
+  <h3>Before merging</h3>
+  <ol class="steps">
+    <li>No lane mid-build, no evolve, SC2 or <code>EVO_AUTO</code> run active (lane cards idle).</li>
+    <li>README reconciled: no conflict markers, no <code>documentation/</code> image paths, master's three corrections present.</li>
+    <li>Local on the reconciled commit: <code>ruff check .</code> clean, <code>mypy src bots --strict</code> clean, full <code>pytest</code> with 0 failed.</li>
+    <li>PR checks: <code>linux-tests</code> (Python 3.12, Linux) and <code>docker-build</code> both green.</li>
+  </ol>
+  <h3>After merging</h3>
+  <ol class="steps">
+    <li><code>origin/master</code> is a two-parent merge commit containing <code>origin/master-plan/phase-ev</code> (<code>git merge-base --is-ancestor origin/master-plan/phase-ev origin/master</code> exits 0).</li>
+    <li>The push-to-master <code>linux-tests</code> run on master is green, its first green master run since July.</li>
+    <li><code>bots/current/current.txt</code> on master reads <code>v13</code>.</li>
+    <li>The tag points at the merge commit (<code>git rev-parse master-plan/phase-ev/landed^{commit}</code> equals <code>origin/master</code>).</li>
+    <li>Within a day, the GitHub contribution graph shows the phase-ev commits.</li>
+  </ol>
+</section>
+
+<section id="done">
+  <h2>Proposed Done-when for BL.1 (replaces "&lt;TBD&gt;")</h2>
+  <div class="callout">
+  <b>Done when:</b> <code>origin/master</code> contains <code>origin/master-plan/phase-ev</code> through a non-squash merge commit made by a pull request whose <code>linux-tests</code> and <code>docker-build</code> checks passed on the merged content. The merge commit's own push-to-master <code>linux-tests</code> run is green. <code>README.md</code> on master keeps master's two corrections (Medium links; the honest advisor caption) with <code>docs/</code> paths. <code>uv run ruff check .</code>, <code>uv run mypy src bots --strict</code> and the full <code>uv run pytest</code> pass locally on the merge commit. <code>bots/current/current.txt</code> still reads <code>v13</code>. The merge commit carries the pushed annotated tag <code>master-plan/phase-ev/landed</code>. PRs #303 and #304 are closed as superseded. <code>CLAUDE.md</code> and the lanes doc name the post-landing mainline. The preserved Jev branches and the <code>worktree_build-step-225-b0cc7700</code> worktree are unchanged.
+  </div>
+</section>
+
+<section id="risks">
+  <h2>Risks and rollback</h2>
+  <table>
+    <tr><th>Risk</th><th>Likelihood</th><th>Mitigation</th></tr>
+    <tr><td>Linux / Python 3.12 failures that Windows / 3.14 runs never saw (PowerShell-pinning tests, path separators, <code>pywin32</code>-dependent code, 3.12 typing differences)</td><td>Medium: 136 commits have never seen CI</td><td>The PR catches them before master changes. Fix on the landing branch; never merge red.</td></tr>
+    <tr><td>A lane commits to phase-ev during landing</td><td>Low, if cards are idle</td><td>Pre-flight check. Later phase-ev commits land in a follow-up merge.</td></tr>
+    <tr><td>The README caption is resolved the wrong way, quietly restoring the overstated claim</td><td>Medium without the explicit check</td><td>The step-1 check for <code>game variance</code>.</td></tr>
+    <tr><td>The docker build exceeds 30 minutes, or fails on the larger dependency set</td><td>Low to medium</td><td>Treat it like any red check; the image is not pushed.</td></tr>
+    <tr><td>The tag lands on the branch tip instead of the merge commit</td><td>Low</td><td>Step 6 verifies the two-parent commit before tagging.</td></tr>
+  </table>
+  <h3>Rollback</h3>
+  <ul>
+    <li><b>Before the merge:</b> close the PR and delete <code>land/phase-ev-2026-11-17</code>. Nothing on master changed.</li>
+    <li><b>After the merge:</b> run <code>git revert -m 1 &lt;merge-sha&gt;</code> through a PR, never a force-push to master. Note that re-landing later needs a revert of that revert first. Delete the tag only if the revert is final: <code>git push origin :refs/tags/master-plan/phase-ev/landed</code>.</li>
+    <li><b>Never</b> rewrite master's or phase-ev's history to roll back. Too many issue comments, handoffs and plan lines cite these SHAs.</li>
+  </ul>
+</section>
+
+<section id="decide">
+  <h2>What only you can decide</h2>
+  <ol class="steps">
+    <li><b>Authorize the landing and its timing.</b> D2 says before any <code>EVO_AUTO</code> run, and lane evolve's build run is complete.</li>
+    <li><b>PR path (recommended) or a local <code>--no-ff</code> merge.</b> The PR publishes a landing branch and a PR; the local path lands without CI.</li>
+    <li><b>README hunk 2 wording.</b> Recommended: keep master's corrected caption.</li>
+    <li><b>Tag name:</b> <code>master-plan/phase-ev/landed</code> (recommended) or <code>master-plan/bl1/landed</code>.</li>
+    <li><b>Mainline after landing.</b> Either (a) work on <code>master</code> from now on and keep <code>master-plan/phase-ev</code> frozen until its gates close, or (b) keep working on phase-ev and land again later. Option (a) keeps your graph current without repeat landings. <code>EVO_AUTO</code> commits go to whichever branch is checked out, so choose before the next evolve run.</li>
+    <li><b>Home paths in history:</b> accept them (recommended; already public, and landing adds no exposure) or ask for a history rewrite (not recommended).</li>
+    <li><b>Close #303 and #304</b> as superseded after landing, and optionally clean up stale remote branches (<code>fix/burnysc2-730</code> and others) in a separate pass. Deleting the preserved Jev candidates stays a separate decision.</li>
+  </ol>
+  <p class="small">Prepared by lane evolve (Alpha4Gate) for central. Evidence: <code>git merge-tree</code> dry run, <code>git rev-list</code>/<code>merge-base</code> checks, <code>gh run list</code>/<code>gh run view</code> on master CI, <code>gh api</code> repo settings, and the phase-ev full-suite runs from the EH build (3,424 passed). This page is the only file written. It is uncommitted; central owns <code>docs/plan-redline/</code>.</p>
+</section>
+
+</main>
+</body>
+</html>

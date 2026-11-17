@@ -548,14 +548,14 @@ async def start_batch(request: dict[str, Any]) -> dict[str, Any]:
 
 @app.get("/api/operator-commands")
 async def get_operator_commands() -> dict[str, str]:
-    """Return the contents of `documentation/wiki/operator-commands.md`.
+    """Return the contents of `docs/wiki/operator-commands.md`.
 
     The Help dashboard tab renders this directly via react-markdown so the
     on-disk doc is the single source of truth — edits to the markdown file
     surface immediately in the UI without a frontend rebuild.
     """
     repo_root = Path(__file__).resolve().parents[2]
-    doc_path = repo_root / "documentation" / "wiki" / "operator-commands.md"
+    doc_path = repo_root / "docs" / "wiki" / "operator-commands.md"
     if not doc_path.is_file():
         raise HTTPException(
             status_code=404,
@@ -620,7 +620,7 @@ async def debug_raise_error(
     message that ``ErrorLogBuffer`` will capture and the frontend
     alerts rule will fire on. Used during soak-test pre-flight to
     verify the alerts pipeline is alive end-to-end before committing
-    four hours to a run (see ``documentation/soak-test-runs/README.md`` Section 3.5).
+    four hours to a run (see ``docs/soak-test-runs/README.md`` Section 3.5).
     """
     if os.environ.get("DEBUG_ENDPOINTS", "").lower() not in ("1", "true", "yes"):
         raise HTTPException(status_code=404, detail="Debug endpoints disabled")

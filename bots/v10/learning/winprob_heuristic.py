@@ -1,7 +1,7 @@
 """Heuristic win-probability score for a GameSnapshot.
 
 Implements the closed-form heuristic from
-``documentation/investigations/win-probability-forecast-investigation.md`` §5
+``docs/investigations/win-probability-forecast-investigation.md`` §5
 ("Heuristic baseline (Option c)").  The function is intentionally small,
 pure (no I/O, no DB reads, no side effects), and intended to drive a
 debug indicator — not to be used as a classifier on its own.

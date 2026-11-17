@@ -100,16 +100,16 @@ class TestSubstrateInfo:
                 and "SC2PATH" in cmd[2]
                 and "grep" in cmd[2]
             ):
-                return "/home/abero/StarCraftII\n"
+                return "/home/x/StarCraftII\n"
             if cmd[:2] == ["bash", "-lc"] and "find" in cmd[2] and "SC2_x64" in cmd[2]:
-                return "/home/abero/StarCraftII/Versions/Base75689/SC2_x64\n"
+                return "/home/x/StarCraftII/Versions/Base75689/SC2_x64\n"
             return None
 
         monkeypatch.setattr(system_info, "_run_wsl", _fake_run_wsl)
         info = system_info.get_substrate_info()
         assert info["wsl"]["available"] is True
         assert info["wsl"]["kernel"] == "5.15.0-microsoft-WSL2"
-        assert info["wsl"]["sc2_path"] == "/home/abero/StarCraftII"
+        assert info["wsl"]["sc2_path"] == "/home/x/StarCraftII"
         assert info["wsl"]["sc2_binary_present"] is True
 
 
@@ -135,13 +135,13 @@ class TestWslProcesses:
         monkeypatch.setattr(system_info.shutil, "which", lambda _: "/usr/bin/wsl")
         # Pad columns so the split-by-whitespace logic works (5 columns
         # total; last column is the full args line).
-        sc2_args = "/home/abero/StarCraftII/Versions/Base75689/SC2_x64 -listen 127.0.0.1"
+        sc2_args = "/home/x/StarCraftII/Versions/Base75689/SC2_x64 -listen 127.0.0.1"
         v3_args = (
-            "/home/abero/venv-alpha4gate-linux/bin/python3 "
+            "/home/x/venv-alpha4gate-linux/bin/python3 "
             "-m bots.v3 --role p1 --map Simple64"
         )
         sp_args = (
-            "/home/abero/venv-alpha4gate-linux/bin/python3 "
+            "/home/x/venv-alpha4gate-linux/bin/python3 "
             "scripts/selfplay.py --p1 v3 --p2 v3"
         )
         ps_output = (

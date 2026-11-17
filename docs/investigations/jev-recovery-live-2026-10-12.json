@@ -1,0 +1,133 @@
+[
+  {
+    "case": "recovery-4x",
+    "viewer": "Observer Rush",
+    "run_id": "b451217895fa499d899ebae4783c4751",
+    "outcome": {
+      "status": "finished",
+      "result": "win",
+      "error_code": null,
+      "exit_code": 0,
+      "game_seconds": 500.7142857142857,
+      "commands_accepted": 347,
+      "commands_rejected": 3
+    },
+    "metrics": {
+      "schema_version": 1,
+      "status": "complete",
+      "failure": null,
+      "sampling": {
+        "max_gap_seconds": 1.0,
+        "samples": 1403,
+        "first_sample_game_seconds": 0.0,
+        "last_sample_game_seconds": 500.7142857142857,
+        "end_game_seconds": 500.7142857142857,
+        "covered_game_seconds": 500.714,
+        "missed_game_seconds": 0.0,
+        "largest_gap_game_seconds": 0.357
+      },
+      "first_attack": {
+        "status": "observed",
+        "game_seconds": 150.0
+      },
+      "first_expansion_nexus": {
+        "status": "observed",
+        "game_seconds": 252.857
+      },
+      "first_cybernetics_core": {
+        "status": "observed",
+        "game_seconds": 178.214
+      },
+      "first_stalker": {
+        "status": "observed",
+        "game_seconds": 254.286
+      },
+      "supply_blocked_game_seconds": {
+        "status": "measured",
+        "value": 0.357
+      },
+      "idle_gateway_game_seconds": {
+        "status": "measured",
+        "value": 118.929
+      },
+      "mean_mineral_bank": {
+        "status": "measured",
+        "value": 84.394
+      },
+      "mean_vespene_bank": {
+        "status": "measured",
+        "value": 110.04
+      },
+      "workers": {
+        "status": "measured",
+        "final": 16,
+        "max": 17,
+        "mean": 15.748
+      },
+      "unit_losses": {
+        "status": "measured",
+        "units": 16,
+        "structures": 0,
+        "by_type": {
+          "Probe": 1,
+          "Stalker": 6,
+          "Zealot": 9
+        }
+      },
+      "plan_aborts": {
+        "status": "measured",
+        "value": 0
+      },
+      "decisions": {
+        "status": "measured",
+        "provider": "typesafe",
+        "requested_model": "jev-1.13.0",
+        "max_requests": 450,
+        "calls": 61,
+        "answers": 60,
+        "accepted": 42,
+        "stale": 16,
+        "low_confidence": 2,
+        "other_answers": 0,
+        "failures": {},
+        "authentication_failures": 0,
+        "returned_models": {
+          "jev-1.13.0": 60
+        },
+        "latency_ms": {
+          "count": 60,
+          "mean": 586.3,
+          "median": 573.8,
+          "min": 444.5,
+          "max": 1117.0
+        },
+        "input_tokens": 152528,
+        "output_tokens": 2096,
+        "pending_at_end": true
+      },
+      "timing": {
+        "status": "measured",
+        "game_seconds": 500.714,
+        "wall_seconds": 164.027,
+        "game_seconds_per_wall_second": 3.0526,
+        "requested_game_speed": 4.0
+      }
+    },
+    "army_source_after_first_attack": {
+      "status": "measured",
+      "window_start_game_seconds": 150.0,
+      "window_end_game_seconds": 500.7142857142857,
+      "seconds_by_source": {
+        "scripted_fallback": 225.714,
+        "typesafe": 125.0
+      },
+      "hosted_percent": 35.64,
+      "army_branch_seconds": {
+        "no_child_selected": 20.714,
+        "army.rally": 0.0,
+        "army.attack": 306.071,
+        "army.defend": 23.929
+      }
+    }
+  }
+]

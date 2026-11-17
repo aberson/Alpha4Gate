@@ -1,0 +1,688 @@
+{
+  "kind": "controlled_offline_mock_http_not_live_match",
+  "accepted_recover_loop": 104,
+  "decision_facts": {
+    "decision_provider": "typesafe",
+    "question_id": "strategy",
+    "reason": "accepted",
+    "pending": false,
+    "requested_model": "jev-latest",
+    "model": "jev-test-model",
+    "question": "Choose Jev's strategic priority in StarCraft II. We are Protoss after a four-Gateway Zealot opening and its first attack; we can add a Cybernetics Core for Stalkers and one natural expansion, nothing more. The choice decides which macro plan, if any, gets the next reservation and the army's posture; economy, supply, production and emergency home defense always continue locally, and a plan already started continues until it completes or aborts. Fog of war hides enemies; absence of visible enemies does not imply safety. Choose only an offered option. Local code handles targets, movement, production and resources.",
+    "options": [
+      "pressure",
+      "recover",
+      "expand",
+      "tech"
+    ],
+    "available_options": [
+      "pressure",
+      "recover",
+      "expand",
+      "tech"
+    ],
+    "answer_request_id": 3,
+    "pending_request_id": null,
+    "answer": "recover",
+    "confidence": 0.9,
+    "probabilities": {
+      "pressure": 0.033333333333333326,
+      "recover": 0.9,
+      "expand": 0.033333333333333326,
+      "tech": 0.033333333333333326
+    },
+    "latency_ms": 357.1,
+    "calls": 3,
+    "input_tokens": 150,
+    "output_tokens": 15,
+    "max_requests": 450,
+    "observation_game_seconds": 4.285714285714286,
+    "source": "typesafe",
+    "choice": "recover",
+    "in_force_request_id": 3,
+    "slots": {
+      "macro": {
+        "local": false,
+        "choice": null,
+        "request_id": 3,
+        "source": "typesafe"
+      },
+      "army": {
+        "local": false,
+        "choice": "recover",
+        "request_id": 3,
+        "source": "typesafe"
+      }
+    },
+    "posture_hold_until_game_seconds": 34.642857142857146,
+    "started_plan": null,
+    "recovery_progress": {
+      "status": "settling",
+      "started_game_seconds": 4.642857142857143,
+      "elapsed_game_seconds": 0.0,
+      "ready_combat_units": 8,
+      "units_at_home": 8,
+      "minimum_units": 4,
+      "home_fraction_required": 0.8,
+      "home_radius": 20.0,
+      "base_threatened": false,
+      "new_losses_or_damage": false,
+      "settled_game_seconds": 0.0,
+      "settle_required_game_seconds": 5.0,
+      "completed_game_seconds": null
+    },
+    "response_age_game_seconds": 0.35714285714285765
+  },
+  "recovery_nodes": [
+    {
+      "node": "army.recover",
+      "status": "success",
+      "reason": "all children succeeded"
+    }
+  ],
+  "recovery_commands_on_tick": 0,
+  "after_adapter": {
+    "tasks": [
+      {
+        "id": "16fad34c92db4e5c8c5ea83ba3fcdcbf:2",
+        "node": "army.attack.go",
+        "actor": 6000,
+        "status": "running"
+      },
+      {
+        "id": "16fad34c92db4e5c8c5ea83ba3fcdcbf:3",
+        "node": "army.attack.go",
+        "actor": 6001,
+        "status": "running"
+      },
+      {
+        "id": "16fad34c92db4e5c8c5ea83ba3fcdcbf:4",
+        "node": "army.attack.go",
+        "actor": 6002,
+        "status": "running"
+      },
+      {
+        "id": "16fad34c92db4e5c8c5ea83ba3fcdcbf:5",
+        "node": "army.attack.go",
+        "actor": 6003,
+        "status": "running"
+      },
+      {
+        "id": "16fad34c92db4e5c8c5ea83ba3fcdcbf:6",
+        "node": "army.attack.go",
+        "actor": 6004,
+        "status": "running"
+      },
+      {
+        "id": "16fad34c92db4e5c8c5ea83ba3fcdcbf:7",
+        "node": "army.attack.go",
+        "actor": 6005,
+        "status": "running"
+      },
+      {
+        "id": "16fad34c92db4e5c8c5ea83ba3fcdcbf:8",
+        "node": "army.attack.go",
+        "actor": 6006,
+        "status": "running"
+      },
+      {
+        "id": "16fad34c92db4e5c8c5ea83ba3fcdcbf:9",
+        "node": "army.attack.go",
+        "actor": 6007,
+        "status": "running"
+      }
+    ],
+    "orders": {
+      "6000": [
+        [
+          "AbilityId.ATTACK_ATTACK",
+          [
+            120.5,
+            120.5
+          ],
+          0.0
+        ]
+      ],
+      "6001": [
+        [
+          "AbilityId.ATTACK_ATTACK",
+          [
+            120.5,
+            120.5
+          ],
+          0.0
+        ]
+      ],
+      "6002": [
+        [
+          "AbilityId.ATTACK_ATTACK",
+          [
+            120.5,
+            120.5
+          ],
+          0.0
+        ]
+      ],
+      "6003": [
+        [
+          "AbilityId.ATTACK_ATTACK",
+          [
+            120.5,
+            120.5
+          ],
+          0.0
+        ]
+      ],
+      "6004": [
+        [
+          "AbilityId.ATTACK_ATTACK",
+          [
+            120.5,
+            120.5
+          ],
+          0.0
+        ]
+      ],
+      "6005": [
+        [
+          "AbilityId.ATTACK_ATTACK",
+          [
+            120.5,
+            120.5
+          ],
+          0.0
+        ]
+      ],
+      "6006": [
+        [
+          "AbilityId.ATTACK_ATTACK",
+          [
+            120.5,
+            120.5
+          ],
+          0.0
+        ]
+      ],
+      "6007": [
+        [
+          "AbilityId.ATTACK_ATTACK",
+          [
+            120.5,
+            120.5
+          ],
+          0.0
+        ]
+      ]
+    }
+  },
+  "source_commit": "00bc515",
+  "run_id": "16fad34c92db4e5c8c5ea83ba3fcdcbf",
+  "fixture": "tests/test_jev_v2.py:_hosted_match; tests/test_jev_plans.py:_world(core=False)",
+  "scenario": "First strategy recover answer at confidence 0.9; before delivery put eight living Zealots at the home rally point while preserving existing attack orders. Snapshot immediately after JevBot.on_step and before world.advance.",
+  "boundary": "run_match -> mock HTTP -> TypesafeProvider -> JevBot -> graph -> adapter -> simulated world; real launcher forbidden; HTTP requires MockTransport; dummy credential only; no hosted model or SC2 process.",
+  "events": [
+    {
+      "schema_version": 1,
+      "run_id": "16fad34c92db4e5c8c5ea83ba3fcdcbf",
+      "sequence": 1519,
+      "game_loop": 104,
+      "game_seconds": 4.642857142857143,
+      "node_id": "tech",
+      "task_id": null,
+      "kind": "diagnostic",
+      "status": "success",
+      "reason": "Strategy decision source",
+      "facts": {
+        "decision_provider": "typesafe",
+        "question_id": "strategy",
+        "reason": "accepted",
+        "pending": false,
+        "requested_model": "jev-latest",
+        "model": "jev-test-model",
+        "question": "Choose Jev's strategic priority in StarCraft II. We are Protoss after a four-Gateway Zealot opening and its first attack; we can add a Cybernetics Core for Stalkers and one natural expansion, nothing more. The choice decides which macro plan, if any, gets the next reservation and the army's posture; economy, supply, production and emergency home defense always continue locally, and a plan already started continues until it completes or aborts. Fog of war hides enemies; absence of visible enemies does not imply safety. Choose only an offered option. Local code handles targets, movement, production and resources.",
+        "options": [
+          "pressure",
+          "recover",
+          "expand",
+          "tech"
+        ],
+        "available_options": [
+          "pressure",
+          "recover",
+          "expand",
+          "tech"
+        ],
+        "answer_request_id": 3,
+        "pending_request_id": null,
+        "answer": "recover",
+        "confidence": 0.9,
+        "probabilities": {
+          "pressure": 0.033333333333333326,
+          "recover": 0.9,
+          "expand": 0.033333333333333326,
+          "tech": 0.033333333333333326
+        },
+        "latency_ms": 357.1,
+        "calls": 3,
+        "input_tokens": 150,
+        "output_tokens": 15,
+        "max_requests": 450,
+        "observation_game_seconds": 4.285714285714286,
+        "source": "typesafe",
+        "choice": "recover",
+        "in_force_request_id": 3,
+        "slots": {
+          "macro": {
+            "local": false,
+            "choice": null,
+            "request_id": 3,
+            "source": "typesafe"
+          },
+          "army": {
+            "local": false,
+            "choice": "recover",
+            "request_id": 3,
+            "source": "typesafe"
+          }
+        },
+        "posture_hold_until_game_seconds": 34.642857142857146,
+        "started_plan": null,
+        "recovery_progress": {
+          "status": "settling",
+          "started_game_seconds": 4.642857142857143,
+          "elapsed_game_seconds": 0.0,
+          "ready_combat_units": 8,
+          "units_at_home": 8,
+          "minimum_units": 4,
+          "home_fraction_required": 0.8,
+          "home_radius": 20.0,
+          "base_threatened": false,
+          "new_losses_or_damage": false,
+          "settled_game_seconds": 0.0,
+          "settle_required_game_seconds": 5.0,
+          "completed_game_seconds": null
+        },
+        "response_age_game_seconds": 0.35714285714285765
+      },
+      "action": null
+    },
+    {
+      "schema_version": 1,
+      "run_id": "16fad34c92db4e5c8c5ea83ba3fcdcbf",
+      "sequence": 1611,
+      "game_loop": 104,
+      "game_seconds": 4.642857142857143,
+      "node_id": "army.recover.move",
+      "task_id": null,
+      "kind": "node",
+      "status": "success",
+      "reason": "8 actor(s) already in the intended state",
+      "facts": {
+        "target": "36.16,36.16",
+        "units": 8,
+        "active": 0,
+        "issued": 0,
+        "satisfied": 8,
+        "blocked": 0
+      },
+      "action": null
+    },
+    {
+      "schema_version": 1,
+      "run_id": "16fad34c92db4e5c8c5ea83ba3fcdcbf",
+      "sequence": 1612,
+      "game_loop": 104,
+      "game_seconds": 4.642857142857143,
+      "node_id": "army.recover",
+      "task_id": null,
+      "kind": "node",
+      "status": "success",
+      "reason": "all children succeeded",
+      "facts": {},
+      "action": null
+    }
+  ],
+  "baseline_comparison": {
+    "kind": "controlled_offline_mock_http_not_live_match",
+    "accepted_recover_loop": 104,
+    "decision_facts": {
+      "decision_provider": "typesafe",
+      "question_id": "strategy",
+      "reason": "accepted",
+      "pending": false,
+      "requested_model": "jev-latest",
+      "model": "jev-test-model",
+      "question": "Choose Jev's strategic priority in StarCraft II. We are Protoss after a four-Gateway Zealot opening and its first attack; we can add a Cybernetics Core for Stalkers and one natural expansion, nothing more. The choice decides which macro plan, if any, gets the next reservation and the army's posture; economy, supply, production and emergency home defense always continue locally, and a plan already started continues until it completes or aborts. Fog of war hides enemies; absence of visible enemies does not imply safety. Choose only an offered option. Local code handles targets, movement, production and resources.",
+      "options": [
+        "pressure",
+        "recover",
+        "expand",
+        "tech"
+      ],
+      "available_options": [
+        "pressure",
+        "recover",
+        "expand",
+        "tech"
+      ],
+      "answer_request_id": 3,
+      "pending_request_id": null,
+      "answer": "recover",
+      "confidence": 0.9,
+      "probabilities": {
+        "pressure": 0.033333333333333326,
+        "recover": 0.9,
+        "expand": 0.033333333333333326,
+        "tech": 0.033333333333333326
+      },
+      "latency_ms": 357.1,
+      "calls": 3,
+      "input_tokens": 150,
+      "output_tokens": 15,
+      "max_requests": 450,
+      "observation_game_seconds": 4.285714285714286,
+      "source": "typesafe",
+      "choice": "recover",
+      "in_force_request_id": 3,
+      "slots": {
+        "macro": {
+          "local": false,
+          "choice": null,
+          "request_id": 3,
+          "source": "typesafe"
+        },
+        "army": {
+          "local": false,
+          "choice": "recover",
+          "request_id": 3,
+          "source": "typesafe"
+        }
+      },
+      "posture_hold_until_game_seconds": 34.642857142857146,
+      "started_plan": null,
+      "recovery_progress": {
+        "status": "available",
+        "started_game_seconds": null,
+        "elapsed_game_seconds": null,
+        "ready_combat_units": 8,
+        "units_at_home": 8,
+        "minimum_units": 4,
+        "home_fraction_required": 0.8,
+        "home_radius": 20.0,
+        "base_threatened": false,
+        "new_losses_or_damage": false,
+        "settled_game_seconds": 0.0,
+        "settle_required_game_seconds": 5.0,
+        "completed_game_seconds": null
+      },
+      "response_age_game_seconds": 0.35714285714285765
+    },
+    "recovery_nodes": [
+      {
+        "node": "army.recover",
+        "status": "success",
+        "reason": "all children succeeded"
+      }
+    ],
+    "recovery_commands_on_tick": 0,
+    "after_adapter": {
+      "tasks": [
+        {
+          "id": "ec14a829a8874a498b2289635fe59e69:2",
+          "node": "army.attack.go",
+          "actor": 6000,
+          "status": "running"
+        },
+        {
+          "id": "ec14a829a8874a498b2289635fe59e69:3",
+          "node": "army.attack.go",
+          "actor": 6001,
+          "status": "running"
+        },
+        {
+          "id": "ec14a829a8874a498b2289635fe59e69:4",
+          "node": "army.attack.go",
+          "actor": 6002,
+          "status": "running"
+        },
+        {
+          "id": "ec14a829a8874a498b2289635fe59e69:5",
+          "node": "army.attack.go",
+          "actor": 6003,
+          "status": "running"
+        },
+        {
+          "id": "ec14a829a8874a498b2289635fe59e69:6",
+          "node": "army.attack.go",
+          "actor": 6004,
+          "status": "running"
+        },
+        {
+          "id": "ec14a829a8874a498b2289635fe59e69:7",
+          "node": "army.attack.go",
+          "actor": 6005,
+          "status": "running"
+        },
+        {
+          "id": "ec14a829a8874a498b2289635fe59e69:8",
+          "node": "army.attack.go",
+          "actor": 6006,
+          "status": "running"
+        },
+        {
+          "id": "ec14a829a8874a498b2289635fe59e69:9",
+          "node": "army.attack.go",
+          "actor": 6007,
+          "status": "running"
+        }
+      ],
+      "orders": {
+        "6000": [
+          [
+            "AbilityId.ATTACK_ATTACK",
+            [
+              120.5,
+              120.5
+            ],
+            0.0
+          ]
+        ],
+        "6001": [
+          [
+            "AbilityId.ATTACK_ATTACK",
+            [
+              120.5,
+              120.5
+            ],
+            0.0
+          ]
+        ],
+        "6002": [
+          [
+            "AbilityId.ATTACK_ATTACK",
+            [
+              120.5,
+              120.5
+            ],
+            0.0
+          ]
+        ],
+        "6003": [
+          [
+            "AbilityId.ATTACK_ATTACK",
+            [
+              120.5,
+              120.5
+            ],
+            0.0
+          ]
+        ],
+        "6004": [
+          [
+            "AbilityId.ATTACK_ATTACK",
+            [
+              120.5,
+              120.5
+            ],
+            0.0
+          ]
+        ],
+        "6005": [
+          [
+            "AbilityId.ATTACK_ATTACK",
+            [
+              120.5,
+              120.5
+            ],
+            0.0
+          ]
+        ],
+        "6006": [
+          [
+            "AbilityId.ATTACK_ATTACK",
+            [
+              120.5,
+              120.5
+            ],
+            0.0
+          ]
+        ],
+        "6007": [
+          [
+            "AbilityId.ATTACK_ATTACK",
+            [
+              120.5,
+              120.5
+            ],
+            0.0
+          ]
+        ]
+      }
+    },
+    "source_commit": "3f89a4f",
+    "run_id": "ec14a829a8874a498b2289635fe59e69",
+    "events": [
+      {
+        "schema_version": 1,
+        "run_id": "ec14a829a8874a498b2289635fe59e69",
+        "sequence": 1603,
+        "game_loop": 104,
+        "game_seconds": 4.642857142857143,
+        "node_id": "tech",
+        "task_id": null,
+        "kind": "diagnostic",
+        "status": "success",
+        "reason": "Strategy decision source",
+        "facts": {
+          "decision_provider": "typesafe",
+          "question_id": "strategy",
+          "reason": "accepted",
+          "pending": false,
+          "requested_model": "jev-latest",
+          "model": "jev-test-model",
+          "question": "Choose Jev's strategic priority in StarCraft II. We are Protoss after a four-Gateway Zealot opening and its first attack; we can add a Cybernetics Core for Stalkers and one natural expansion, nothing more. The choice decides which macro plan, if any, gets the next reservation and the army's posture; economy, supply, production and emergency home defense always continue locally, and a plan already started continues until it completes or aborts. Fog of war hides enemies; absence of visible enemies does not imply safety. Choose only an offered option. Local code handles targets, movement, production and resources.",
+          "options": [
+            "pressure",
+            "recover",
+            "expand",
+            "tech"
+          ],
+          "available_options": [
+            "pressure",
+            "recover",
+            "expand",
+            "tech"
+          ],
+          "answer_request_id": 3,
+          "pending_request_id": null,
+          "answer": "recover",
+          "confidence": 0.9,
+          "probabilities": {
+            "pressure": 0.033333333333333326,
+            "recover": 0.9,
+            "expand": 0.033333333333333326,
+            "tech": 0.033333333333333326
+          },
+          "latency_ms": 357.1,
+          "calls": 3,
+          "input_tokens": 150,
+          "output_tokens": 15,
+          "max_requests": 450,
+          "observation_game_seconds": 4.285714285714286,
+          "source": "typesafe",
+          "choice": "recover",
+          "in_force_request_id": 3,
+          "slots": {
+            "macro": {
+              "local": false,
+              "choice": null,
+              "request_id": 3,
+              "source": "typesafe"
+            },
+            "army": {
+              "local": false,
+              "choice": "recover",
+              "request_id": 3,
+              "source": "typesafe"
+            }
+          },
+          "posture_hold_until_game_seconds": 34.642857142857146,
+          "started_plan": null,
+          "recovery_progress": {
+            "status": "available",
+            "started_game_seconds": null,
+            "elapsed_game_seconds": null,
+            "ready_combat_units": 8,
+            "units_at_home": 8,
+            "minimum_units": 4,
+            "home_fraction_required": 0.8,
+            "home_radius": 20.0,
+            "base_threatened": false,
+            "new_losses_or_damage": false,
+            "settled_game_seconds": 0.0,
+            "settle_required_game_seconds": 5.0,
+            "completed_game_seconds": null
+          },
+          "response_age_game_seconds": 0.35714285714285765
+        },
+        "action": null
+      },
+      {
+        "schema_version": 1,
+        "run_id": "ec14a829a8874a498b2289635fe59e69",
+        "sequence": 1695,
+        "game_loop": 104,
+        "game_seconds": 4.642857142857143,
+        "node_id": "army.recover.move",
+        "task_id": null,
+        "kind": "node",
+        "status": "success",
+        "reason": "8 actor(s) already in the intended state",
+        "facts": {
+          "target": "36.16,36.16",
+          "units": 8,
+          "active": 0,
+          "issued": 0,
+          "satisfied": 8,
+          "blocked": 0
+        },
+        "action": null
+      },
+      {
+        "schema_version": 1,
+        "run_id": "ec14a829a8874a498b2289635fe59e69",
+        "sequence": 1696,
+        "game_loop": 104,
+        "game_seconds": 4.642857142857143,
+        "node_id": "army.recover",
+        "task_id": null,
+        "kind": "node",
+        "status": "success",
+        "reason": "all children succeeded",
+        "facts": {},
+        "action": null
+      }
+    ],
+    "instrumentation": "Root fixture lacks after_hooks. Wrapped JevBot.on_step to snapshot immediately after its original implementation returned, before world.advance; gameplay source unchanged."
+  }
+}

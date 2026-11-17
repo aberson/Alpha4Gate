@@ -1,0 +1,30 @@
+{
+  "$description": "Alpha4Gate frontend dark-mode overlay. Same shape as tokens.json; overrides COLOR values only. Dark values are parity with the current @media (prefers-color-scheme: dark) block in index.css and the previously-hardcoded Recharts chrome, so dark mode is unchanged while the chart chrome now FLIPS with the theme.",
+  "$extensions": {
+    "onbrand": {
+      "schemaVersion": 1
+    }
+  },
+  "color": {
+    "$type": "color",
+    "semantic": {
+      "bg": { "$value": "#16171d" },
+      "text": { "$value": "#9ca3af" },
+      "text-h": { "$value": "#f3f4f6" },
+      "border": { "$value": "#2e303a" },
+      "code-bg": { "$value": "#1f2028" },
+      "accent": { "$value": "#c084fc" },
+      "accent-bg": { "$value": "#c084fc26" },
+      "accent-border": { "$value": "#c084fc80" },
+      "social-bg": { "$value": "#2f303a80" }
+    },
+    "chart": {
+      "chrome": {
+        "grid": { "$value": "#333333" },
+        "axis": { "$value": "#888888" },
+        "label": { "$value": "#cccccc" },
+        "tooltip-bg": { "$value": "#1a1a1a" }
+      }
+    }
+  }
+}

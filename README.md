@@ -1,4 +1,4 @@
-<img src="documentation/images/alpha4gate-hero.png" alt="Alpha4Gate conceptual artwork: four gateways meet a decision graph" width="100%">
+<img src="docs/images/alpha4gate-hero.png" alt="Alpha4Gate conceptual artwork: four gateways meet a decision graph" width="100%">
 
 # Alpha4Gate
 
@@ -20,34 +20,40 @@ chooses among the graph's own branches at a few decision points during the match
 Advised measures progress against a known opponent; evolve tests progress against
 the bot's own lineage. Both improve the versioned bot between games.
 
-**A new player alongside those loops — Jev:** Typesafe's hosted Jev model chooses
-among available strategy and execution options *during* a game. Its graph maintains
-plans, checks resources and legality, and issues SC2 commands while requests are
-pending. This is a separate player family, with no PPO. Connecting it to automated
-between-game evolution is future work.
+**A second player, now a completed proof of concept — Jev:** Typesafe's hosted Jev
+model chose among strategy and execution options *during* a game, while a local graph
+maintained plans, checked resources and legality, and issued SC2 commands. Jev closed
+as a proof of concept on 2026-11-11. Its lessons (graph-owned legality, matched
+evaluation, the Observer Rush viewer) now feed the main bot.
+
+**Current direction (2026-11-11):** make the bot measurably better at the game. That
+means a fixed scoreboard of built-in AI opponents at rising difficulty, promotions that
+must hold up on it, and an active look at what PPO should control. Evolution runs
+headless on WSL Linux for speed; live games are for spot checks and demos, and live
+evolution (`evolve --viewer`) is being deprecated.
 
 <table>
 <tr>
 <td width="25%" valign="top" align="center">
-<a href="documentation/images/advisor-completed.png"><img src="documentation/images/advisor-completed.png" alt="Advisor Control Panel showing a completed autonomous improvement run" width="100%"></a>
+<a href="docs/images/advisor-completed.png"><img src="docs/images/advisor-completed.png" alt="Advisor Control Panel showing a completed autonomous improvement run" width="100%"></a>
 <br/><sub><b>Self-improvement loop</b><br/>Training-mode run: 6 reward-rule changes committed; the win-rate shift shown is game variance</sub>
 </td>
 <td width="25%" valign="top" align="center">
-<a href="documentation/images/evolution-running.png"><img src="documentation/images/evolution-running.png" alt="Evolution tab showing a live improve-bot-evolve run with fitness pool, stack apply, and import check" width="100%"></a>
+<a href="docs/images/evolution-running.png"><img src="docs/images/evolution-running.png" alt="Evolution tab showing a live improve-bot-evolve run with fitness pool, stack apply, and import check" width="100%"></a>
 <br/><sub><b>Self-play arena</b><br/>Live evolve run — fitness pool, stack apply, regression</sub>
 </td>
 <td width="25%" valign="top" align="center">
-<a href="documentation/images/sc2-gameplay.gif"><img src="documentation/images/sc2-gameplay.gif" alt="Live capture — SC2 gameplay, dashboard Decision Log, and backend logs side-by-side" width="100%"></a>
+<a href="docs/images/sc2-gameplay.gif"><img src="docs/images/sc2-gameplay.gif" alt="Live capture — SC2 gameplay, dashboard Decision Log, and backend logs side-by-side" width="100%"></a>
 <br/><sub><b>Live capture</b><br/>Game, advisor decisions, and backend logs streaming together</sub>
 </td>
 <td width="25%" valign="top" align="center">
-<a href="documentation/images/reward-trends.png"><img src="documentation/images/reward-trends.png" alt="Reward Trends — per-rule reward contribution over recent games" width="100%"></a>
+<a href="docs/images/reward-trends.png"><img src="docs/images/reward-trends.png" alt="Reward Trends — per-rule reward contribution over recent games" width="100%"></a>
 <br/><sub><b>Monitoring</b><br/>Per-rule reward contribution over recent games</sub>
 </td>
 </tr>
 <tr>
 <td colspan="4" align="center">
-<a href="documentation/media/jev-battle-view.mp4"><img src="documentation/images/jev-battle-preview.gif" alt="Jev Battle View: live SC2 alongside the rotating decision graph, current decisions and Archon Caster" width="720"></a>
+<a href="docs/media/jev-battle-view.mp4"><img src="docs/images/jev-battle-preview.gif" alt="Jev Battle View: live SC2 alongside the rotating decision graph, current decisions and Archon Auto Caster" width="720"></a>
 <br/><sub><b>Jev Battle View</b><br/>The match and its decisions, together — click for the 40-second video</sub>
 </td>
 </tr>
@@ -56,7 +62,7 @@ between-game evolution is future work.
 > **Historical results, not a current Jev benchmark:** the April 17 advised-run
 > report recorded **68/82 wins (83%)** at difficulty 4 over the preceding week.
 > An eight-hour headless Linux evolve run promoted **v4 → v7**. The versioned
-> lineage later reached **v13**. [Advised report](documentation/soak-test-runs/advised-2026-04-17.md) · [Evolve report](documentation/soak-test-runs/evolve-2026-04-30T20-15-20+00-00.md)
+> lineage later reached **v13**. [Advised report](docs/soak-test-runs/advised-2026-04-17.md) · [Evolve report](docs/soak-test-runs/evolve-2026-04-30T20-15-20+00-00.md)
 
 **Writing about this project** (Medium, October 2026):
 
@@ -74,7 +80,7 @@ The project combines automated improvement with an inspectable playing experienc
 
 SC2 supplies concrete outcomes and a demanding test of planning, execution and observation. The improvement-loop pattern may transfer elsewhere; this implementation remains SC2-specific.
 
-**Deep dives:** [Wiki](documentation/wiki/index.md) · [Active plan](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/documentation/master_plan.md)
+**Deep dives:** [Wiki](docs/wiki/index.md) · [Active plan](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/docs/plans/master_plan.md)
 
 ---
 
@@ -103,7 +109,7 @@ SC2 supplies concrete outcomes and a demanding test of planning, execution and o
 
 The loop runs unattended for hours. Each cycle: play N games, Claude reads the results and proposes ranked fixes, apply one, re-run N games to validate, commit if it held, retrain the neural policy, repeat. Quality gates (pytest/mypy/ruff), auto-rollback, a wall-clock budget, and a 3-fail cap keep it safe.
 
-**Read the full architecture:** [improve-bot-advised-architecture.md](documentation/wiki/improve-bot-advised-architecture.md)
+**Read the full architecture:** [improve-bot-advised-architecture.md](docs/wiki/improve-bot-advised-architecture.md)
 
 ---
 
@@ -112,13 +118,13 @@ The loop runs unattended for hours. Each cycle: play N games, Claude reads the r
 A different kind of loop from the advised one — instead of validating one improvement at a time, the arena generates a pool of orthogonal candidates per generation and lets them compete. The bot grows by ancestor chain — v0 → v1 → v2 → … — and each link is one pass through this loop:
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="documentation/images/evolve-arena-dark.svg">
-  <img alt="One evolve generation, left to right: an improvement pool (Claude proposes 10 ranked improvements), a fitness gate where each improvement plays the parent best-of-5, winners re-written onto a fresh snapshot (stack-apply), an [evo-auto] promote commit, then a regression gate where the new version plays the prior parent — passing grows the lineage (v0 → v1 → … → vN+1), losing triggers a git revert of the promotion. A log-only baseline gauntlet checks frozen anchors after promotion. Close losers retry up to 3 generations; each generation ends with a pool top-up with title dedup." src="documentation/images/evolve-arena-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/evolve-arena-dark.svg">
+  <img alt="One evolve generation, left to right: an improvement pool (Claude proposes 10 ranked improvements), a fitness gate where each improvement plays the parent best-of-5, winners re-written onto a fresh snapshot (stack-apply), an [evo-auto] promote commit, then a regression gate where the new version plays the prior parent — passing grows the lineage (v0 → v1 → … → vN+1), losing triggers a git revert of the promotion. A log-only baseline gauntlet checks frozen anchors after promotion. Close losers retry up to 3 generations; each generation ends with a pool top-up with title dedup." src="docs/images/evolve-arena-light.svg">
 </picture>
 
 What the diagram can't show: **stack-apply is a re-write, not a merge** — each fitness winner is re-implemented from its text description by a fresh sub-agent onto the new snapshot, in rank order, with a 30-second import check catching bad combinations; and **promotion commits before the regression gate** — the `[evo-auto]` commit lands first, and a regression loss (or a sweep loss against the frozen baseline panel, when armed) triggers a real `git revert`. Each promotion is a versioned commit; each regression rollback is a revert. Close-losers retry against the next parent; evicted imps get replaced at the generation-end pool refresh.
 
-**Read the mechanism:** [improve-bot-evolve SKILL.md](.claude/skills/improve-bot-evolve/SKILL.md) · [gate-reduction plan](documentation/archived/evolve-gate-reduction-plan.md)
+**Read the mechanism:** [improve-bot-evolve SKILL.md](.claude/skills/improve-bot-evolve/SKILL.md) · [gate-reduction plan](docs/completed/evolve-gate-reduction-plan.md)
 
 ---
 
@@ -144,32 +150,29 @@ Unavailable, invalid or stale answers have explicit fallback behavior, and the
 trace records the decision source. The 3D graph shows this recorded policy activity;
 it is not a picture of the model's internal thoughts.
 
-One revealing test left a large army massing at home: the model kept choosing
-`recover`, and each answer renewed a hold that outranked the graph's own `attack`
-fallback. Watching the game showed the stall, and the recorded decision trace
-explained it; the 3D graph and Battle View were built after that diagnosis. On
-`master-plan/phase-ev`, a recovery-completion change released that hold after its
-required five quiet game seconds instead of 137.5 in an offline test; it has not
-yet been shown in a live game, and the v2 gameplay acceptance runs remain open
-work. A richer graph and a working API connection do not, by themselves, establish
-a stronger player.
+One revealing test left a large army gathering at home: an `attack` choice was
+being overridden by a repeatedly renewed `recover` posture. Seeing both choices
+made the conflict diagnosable. The proof of concept closed on 2026-11-11 with that
+recovery repair and the v2 gameplay acceptance runs unfinished. A richer graph and a
+working API connection do not, by themselves, establish a stronger player.
 
-**Explore:** [Jev code](https://github.com/aberson/Alpha4Gate/tree/master-plan/phase-ev/src/jev) · [v2 policy](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/bots/jev/v2/policy.json) · [Recovery investigation](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/documentation/investigations/jev-recovery-stall-2026-10-11.md)
+**Explore:** [Jev code](https://github.com/aberson/Alpha4Gate/tree/master-plan/phase-ev/src/jev) · [v2 policy](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/bots/jev/v2/policy.json) · [Recovery investigation](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/docs/investigations/jev-recovery-stall-2026-10-11.md)
 
-## Watching Jev play: Battle View and Archon Caster
+## Watching Jev play: Observer Rush and Archon Auto Caster
 
-**[Watch the 40-second Battle View video](documentation/media/jev-battle-view.mp4)** ·
-[Open the video directly](https://raw.githubusercontent.com/aberson/Alpha4Gate/master/documentation/media/jev-battle-view.mp4) ·
-[Recording details](documentation/media/README.md)
+**[Watch the 40-second Battle View video](docs/media/jev-battle-view.mp4)** ·
+[Open the video directly](https://raw.githubusercontent.com/aberson/Alpha4Gate/master/docs/media/jev-battle-view.mp4) ·
+[Recording details](docs/media/README.md)
 
-Battle View brings native SC2 and the decision graph into one Windows window.
+**Observer Rush** (formerly Battle View) brings native SC2 and the decision graph
+into one Windows window. It is the standard viewer for attended investigations.
 The graph occupies the right half; decisions, recent events and commentary sit
 beside the game. An automatic observer follows visible action, or you can unlock
 the camera and move it yourself. The dashboard's Jev tab also supports selectable
 branches, compact nodes, radial layouts and several 3D arrangements. Larger active
 dots, labeled branch roots and a full-path inspector make busy graphs easier to read.
 
-**Archon Caster** supplies short game commentary, random AI facts and dad jokes in
+**Archon Auto Caster** supplies short game commentary, random AI facts and dad jokes in
 a 70/15/15 mix. It uses local Qwen through Ollama, with labeled fallback text when
 generation is unavailable or slow. Commentary can highlight its subject with a
 purple halo, and the graph can slowly rotate; both have independent switches.
@@ -186,7 +189,7 @@ API calls; the hosted player uses Typesafe credits.
 **Try the preview:** Jev and Battle View currently live on
 [`master-plan/phase-ev`](https://github.com/aberson/Alpha4Gate/tree/master-plan/phase-ev),
 not in the default branch's runtime. Use that checkout and follow the
-[Battle View setup guide](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/documentation/operator/jev-battle-view.md), then run:
+[Battle View setup guide](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/docs/operator/jev-battle-view.md), then run:
 
 ```powershell
 powershell -File scripts/launch-jev-battle.ps1 -AutoRecord
@@ -221,7 +224,7 @@ Two things are running: the **loop** and the **task** it's learning from. The da
 
 For the advised loop that's the **Advisor tab** + `data/advised_run_state.json`; for evolve it's the **Evolution tab** + `data/evolve_run_state.json` (plus `data/evolve_pool.json` for the current pool and `data/evolve_results.jsonl` for per-phase outcomes). Same pattern, different loop. Jev adds a third vantage point: per-run policy, decisions and events in the Jev tab, with the combined Battle View for watching a live match.
 
-**Read the full monitoring guide:** [monitoring.md](documentation/wiki/monitoring.md)
+**Read the full monitoring guide:** [monitoring.md](docs/wiki/monitoring.md)
 
 ---
 
@@ -263,9 +266,10 @@ assistant to issue every unit command.
 - **Parallelizing the arena -** Evolve can now test candidates in parallel per generation (concurrency window + worker-slot recycling). Steps 1-7 plus iter-3 hardening shipped 2026-04-30; the overnight run that followed took the lineage from v7 to **v10**, with two automatic rollbacks.
 - **A second player -** A four-Gateway Zealot rush became Jev v1, then a hosted Typesafe integration and an adaptive v2 graph with scouting, expansion and mixed armies.
 - **Making decisions visible -** Branch cards grew into compact and radial layouts, then 3D views with a starting hub, branch labels and inspectable paths.
-- **A seat at the match -** Battle View combines SC2, the graph, a camera observer, recording and a local Archon Caster. The real hosted demo is linked above.
-- **Now (2026-10-14) -** The versioned lineage is at v13 (promoted 2026-05-07; no promotion has stuck since). In a 10-game check on 2026-10-14, v13 beat the VeryHard (level 7) built-in AI in 4 of 10 games. Jev v2 and Battle View are implemented on the `master-plan/phase-ev` branch; formal gameplay acceptance remains open, and there is no evidence yet that the hosted model makes Jev play better. They are separate player families, and Jev is not yet part of the evolution loop.
-- **Next -** Confirm Jev's recovery fix in live games, complete bounded live acceptance, and measure future decision-choice flattening against a preserved before/after baseline. The frozen-v1 benchmark remains deferred. On the evolution side, EH.1–EH.2 hardening is shipped; EH.3–EH.10 and the EV operator acceptance gates remain pending. [Current plan](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/documentation/master_plan.md).
+- **A seat at the match -** Battle View combines SC2, the graph, a camera observer, recording and a local Archon Auto Caster. The real hosted demo is linked above.
+- **Jev wraps up (2026-11-11) -** Jev closes as a completed proof of concept. Its decision-graph, evaluation and viewer lessons carry into the main bot.
+- **Now (2026-11-11) -** The focus is playing strength. The lineage is at v13, but nothing yet shows it beating v0 against a fixed opponent, and an SC2 update currently breaks the older versions.
+- **Next -** Fix SC2 compatibility, then measure v0 through v13 on a fixed scoreboard (built-in AI at rising difficulty, all three races). Promote only versions that also hold up there, explore what PPO should control, and refresh the viewer in Jev's style for spot-checking candidates. [Current plan](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/docs/plans/master_plan.md).
 
 ---
 
@@ -285,7 +289,7 @@ assistant to issue every unit command.
 | Deep learning | PyTorch + Stable Baselines 3 | PPO policy network for strategic decisions |
 | Jev gameplay | Hosted Typesafe + local graph | Constrained in-game choices and persistent task execution; no PPO |
 | Battle View | Native SC2 + React + OBS (Windows) | Combined viewing and recording preview |
-| Archon Caster | Ollama + Qwen 2.5 1.5B | Local text commentary; no gameplay control |
+| Archon Auto Caster | Ollama + Qwen 2.5 1.5B | Local text commentary; no gameplay control |
 | Training data | SQLite | Structured (s,a,r,s') transition storage |
 | Testing (Python) | pytest | Unit tests plus separately marked SC2, Windows and browser checks |
 | Testing (Frontend) | vitest + jsdom + @testing-library/react | Component, hook and graph behavior tests |
@@ -299,7 +303,7 @@ assistant to issue every unit command.
 
 ### Prerequisites
 
-- Windows 11 (primary dev). Linux / WSL2 also supported for the headless training substrate — see [documentation/wiki/cloud-deployment.md](documentation/wiki/cloud-deployment.md) and [documentation/wiki/linux-dev-environment.md](documentation/wiki/linux-dev-environment.md).
+- Windows 11 (primary dev). Linux / WSL2 headless training setup is documented in [docs/wiki/linux-dev-environment.md](docs/wiki/linux-dev-environment.md). The local `alpha4gate-worker` Docker testing workflow was retired by the operator on 2026-10-29; it is not required for desktop work. [The Docker runbook](docs/wiki/cloud-deployment.md) is retained as historical reference, alongside its Dockerfile and build CI.
 - StarCraft II installed at `C:\Program Files (x86)\StarCraft II\` (Windows) or `~/StarCraftII/` (Linux/WSL).
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) package manager
@@ -357,7 +361,7 @@ cd frontend && npm run dev
 | Models | Per-version view: Lineage (absorbs the old Improvements timeline), Live Runs, Inspector, Compare and Forensics sub-views |
 | Observable | Exhibition shell for Phase L: left/right version pickers and a placeholder card (replay-stream-as-live not shipped) |
 | Processes | Live system process monitor, resource gauge, WSL processes, port status, state files, backend restart, plus the severity-filtered alert list (ack/dismiss) the old Alerts tab held |
-| Help | Renders `documentation/wiki/operator-commands.md` from disk |
+| Help | Renders `docs/wiki/operator-commands.md` from disk |
 | Jev | Archived/live run selector; independently toggled branch cards with Add all/Collapse all; compact Nodes or Boxes, Tree/Radial layouts and Dots 3D shapes; Start hub and labeled branch roots; full-width graph with inspector below or optional overlay; recorded activity, plan and decision sources. `?tab=jev&run=<run_id>` opens an exact run; `?tab=jev&launch=<session_id>` follows a dashboard-first launch. Standalone Windows Battle View at `?battle=1` combines native SC2 and the graph through the local launcher. |
 
 In-app `AlertToast` lives at the App root and shows new alerts as they fire, regardless of which tab is active.
@@ -386,11 +390,11 @@ uv run python -m bots.v0.runner --map Simple64
 
 Use the `master-plan/phase-ev` checkout for these commands.
 
-**Combined Battle View preview (Windows):** watch hosted Typesafe Jev with the live 3D graph,
+**Combined Observer Rush preview (Windows):** watch hosted Typesafe Jev with the live 3D graph,
 decision text and event log in one window. Run
 `powershell -File scripts/launch-jev-battle.ps1`; add `-AutoRecord` for automatic
 2160×1200 recording with game audio only. Desktop shortcuts are installed on the
-development workstation. [Try it yourself](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/documentation/operator/jev-battle-view.md).
+development workstation. [Try it yourself](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/docs/operator/jev-battle-view.md).
 This preview uses your saved Typesafe key and credits, requires the isolated portable OBS
 setup, and does not complete the v2 gameplay acceptance gates.
 
@@ -425,7 +429,7 @@ For actual Typesafe gameplay, configure `TYPESAFE_API_KEY` in terminal 3 and run
 uv run python -m bots.jev.v2 --decision-provider typesafe --decision-model jev-1.13.0 --decision-max-requests 450 --realtime
 ```
 
-The dashboard's **Army decision** panel identifies Typesafe decisions and scripted fallback, actual returned model, latency and token usage; for v2 the **Plans and decisions** panel and the graph's node sources show which request, fallback or local decision drove each plan and node. Missing credentials fail before SC2 starts. Setup and the separate live integration gate: [Typesafe validation](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/documentation/operator/jev-validation.md#13-typesafe-jev-integration-phase-ji).
+The dashboard's **Army decision** panel identifies Typesafe decisions and scripted fallback, actual returned model, latency and token usage; for v2 the **Plans and decisions** panel and the graph's node sources show which request, fallback or local decision drove each plan and node. Missing credentials fail before SC2 starts. Setup and the separate live integration gate: [Typesafe validation](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/docs/operator/jev-validation.md#13-typesafe-jev-integration-phase-ji).
 
 For an attended test, use the dashboard-first launcher. It starts or reuses the dashboard, opens the Jev tab on the exact run (`/?tab=jev&launch=<session_id>`), and starts SC2 only after that page has rendered the run and acknowledged it:
 
@@ -433,9 +437,9 @@ For an attended test, use the dashboard-first launcher. It starts or reuses the 
 powershell -File scripts/launch-jev.ps1 -Version v2 -DecisionProvider scripted -Difficulty 1 -Seed 1
 ```
 
-Its defaults are `-Version v2 -DecisionProvider typesafe -Difficulty 3 -Seed 11`: with no arguments it plays `bots.jev.v2` as a paid hosted match (`-Version v1` plays v1). The v2 player, its lanes, plans and questions, the live graph and the Step 222 prerequisites are in section 13 of the [Jev v2 validation guide](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/documentation/operator/jev-v2-validation.md#13-the-v2-player-and-the-live-graph-steps-214-221). The launcher and the reproducible benchmark are documented in the [Jev v2 validation guide](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/documentation/operator/jev-v2-validation.md); for example, `uv run python scripts/benchmark_jev.py --panel baseline --dry-run` resolves the exact plan with no service call, SC2 launch or file write.
+Its defaults are `-Version v2 -DecisionProvider typesafe -Difficulty 3 -Seed 11`: with no arguments it plays `bots.jev.v2` as a paid hosted match (`-Version v1` plays v1). The v2 player, its lanes, plans and questions, the live graph and the Step 222 prerequisites are in section 13 of the [Jev v2 validation guide](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/docs/operator/jev-v2-validation.md#13-the-v2-player-and-the-live-graph-steps-214-221). The launcher and the reproducible benchmark are documented in the [Jev v2 validation guide](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/docs/operator/jev-v2-validation.md); for example, `uv run python scripts/benchmark_jev.py --panel baseline --dry-run` resolves the exact plan with no service call, SC2 launch or file write.
 
-Stop a match with Ctrl+C once in its own terminal (the bot leaves cleanly; never kill SC2 processes wholesale). Full smoke and acceptance procedure: [documentation/operator/jev-validation.md](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/documentation/operator/jev-validation.md).
+Stop a match with Ctrl+C once in its own terminal (the bot leaves cleanly; never kill SC2 processes wholesale). Full smoke and acceptance procedure: [docs/operator/jev-validation.md](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/docs/operator/jev-validation.md).
 
 ### Running without Claude
 
@@ -510,9 +514,9 @@ Alpha4Gate/
 ├── tests/                   # Python unit, integration and opt-in browser checks
 ├── frontend/                # React + TypeScript dashboard (Vite, 7 tabs)
 ├── scripts/                 # Training/evolve tools, Jev launchers, benchmark and Battle View host
-├── documentation/wiki/      # Project wiki (start with index.md)
-├── documentation/plans/     # Active sub-plans (see documentation/master_plan.md)
-├── documentation/archived/  # Completed plans
+├── docs/wiki/      # Project wiki (start with index.md)
+├── docs/plans/     # Canonical master and per-step forecast estimates
+├── docs/archived/  # Completed plans
 ├── bots/<v>/data/           # Per-version state: training.db, checkpoints/, reward_rules.json
 ├── data/                    # Cross-version state: ladder, evolve runs, advised state (gitignored)
 ├── logs/                    # JSONL game logs (gitignored)
@@ -563,8 +567,8 @@ The bot follows a build order during the opening, then transitions to dynamic de
 
 ---
 
-**Wiki:** [documentation/wiki/index.md](documentation/wiki/index.md) — system diagram + page map
-**Active plan:** [documentation/master_plan.md](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/documentation/master_plan.md)
+**Wiki:** [docs/wiki/index.md](docs/wiki/index.md) — system diagram + page map
+**Active plan:** [docs/plans/master_plan.md](https://github.com/aberson/Alpha4Gate/blob/master-plan/phase-ev/docs/plans/master_plan.md)
 
 ---
 

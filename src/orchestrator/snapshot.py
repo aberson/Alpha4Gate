@@ -202,7 +202,7 @@ def snapshot_current(
             :func:`orchestrator.evolve.run_fitness_eval` (and other
             parallel-evolve primitives) where the snapshot is ephemeral
             scratch and the caller does not want it to become the active
-            version. See ``documentation/plans/evolve-parallelization-plan.md``
+            version. See ``docs/completed/evolve-parallelization-plan.md``
             decision D-2.
 
     Returns:
@@ -263,7 +263,7 @@ def snapshot_current(
     # ``update_pointer=False`` so callers (e.g. evolve fitness eval) can
     # produce ephemeral scratch snapshots without flipping the
     # process-global pointer that every other process in the repo shares.
-    # See ``documentation/plans/evolve-parallelization-plan.md`` decision
+    # See ``docs/completed/evolve-parallelization-plan.md`` decision
     # D-2 for the rationale.
     if update_pointer:
         pointer = _repo_root() / "bots" / "current" / "current.txt"

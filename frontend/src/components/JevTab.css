@@ -1,0 +1,1013 @@
+/* Jev tab: run picker, run summary, decision graph, node inspector, trace.
+ * Status colours always accompany text and outline style (never colour alone).
+ * Flat selectors (no nesting), so test environments parse this sheet too. */
+
+.jev-tab {
+  --jev-active: #2ecc71;
+  --jev-waiting: #f59e0b;
+  --jev-failure: #dc2626;
+  --jev-stale: #fbbc04;
+  --jev-lane: #64748b;
+
+  text-align: left;
+  padding: 12px 16px 24px;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.jev-tab h2 {
+  margin: 0 0 4px;
+  color: var(--text-h);
+}
+
+.jev-tab h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  color: var(--text-h);
+}
+
+.jev-tab h4 {
+  margin: 12px 0 4px;
+  font-size: 13px;
+  color: var(--text-h);
+}
+
+.jev-tab code,
+.jev-tab pre {
+  font-family: var(--mono);
+}
+
+/* Inline identifiers sit in running text: smaller than the global code chip. */
+.jev-tab code {
+  display: inline;
+  padding: 0 4px;
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+}
+
+.jev-tab pre {
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  max-height: 220px;
+  overflow: auto;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.jev-tab-intro,
+.jev-note {
+  margin: 4px 0 12px;
+  opacity: 0.8;
+}
+
+.jev-notice {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-radius: 4px;
+  border-left: 3px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+.jev-notice-error {
+  border-left-color: var(--jev-failure);
+  background: rgba(220, 38, 38, 0.1);
+}
+
+.jev-notice-warning {
+  border-left-color: var(--jev-stale);
+  background: rgba(251, 188, 4, 0.15);
+}
+
+.jev-notice-waiting {
+  border-left: 3px dashed var(--jev-waiting);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.jev-empty {
+  padding: 16px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
+
+.jev-empty p {
+  margin: 4px 0;
+}
+
+.jev-run-picker,
+.jev-run-summary {
+  margin-bottom: 12px;
+}
+
+.jev-army-decision {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--code-bg);
+}
+
+/* Dashboard-first launch (plan D7): the followed session's phase and controls. */
+.jev-launch {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--jev-waiting);
+  border-radius: 6px;
+  background: var(--code-bg);
+}
+
+.jev-launch-live,
+.jev-launch-finished {
+  border-left-color: var(--jev-active);
+}
+
+.jev-launch-failed,
+.jev-launch-unavailable {
+  border-left-color: var(--jev-failure);
+}
+
+.jev-launch-stale,
+.jev-launch-silent,
+.jev-launch-stopped {
+  border-left-style: dashed;
+  border-left-color: var(--jev-stale);
+}
+
+.jev-launch-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.jev-launch-phase {
+  font-weight: 600;
+}
+
+.jev-launch-detail {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.jev-launch-paused {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.jev-launch-paused .jev-notice {
+  flex: 1 1 280px;
+  margin: 0;
+}
+
+.jev-army-decision-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.jev-army-decision-title h3 {
+  margin-right: auto;
+}
+
+.jev-decision-source-typesafe {
+  border-color: var(--jev-active);
+}
+
+.jev-decision-source-scripted_fallback {
+  border-style: dashed;
+  border-color: var(--jev-waiting);
+}
+
+.jev-decision-details {
+  margin-top: 8px;
+}
+
+.jev-decision-details summary {
+  color: var(--text-h);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.jev-run-select select {
+  margin-left: 6px;
+  max-width: 100%;
+  padding: 4px 6px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text-h);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.jev-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.jev-badge {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.jev-badge-failed {
+  border-color: var(--jev-failure);
+}
+
+.jev-badge-finished {
+  border-color: var(--jev-active);
+}
+
+.jev-badge-stale,
+.jev-badge-offline {
+  border: 1px dashed var(--jev-stale);
+}
+
+.jev-badge-live::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--jev-active);
+  animation: jev-pulse 1.6s ease-in-out infinite;
+}
+
+.jev-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 8px 0;
+}
+
+.jev-facts dt {
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.jev-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.jev-run-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.jev-branches {
+  margin: 12px 0;
+}
+
+.jev-branches-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.jev-branches-title h3 {
+  margin-right: auto;
+}
+
+.jev-branch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px;
+}
+
+.jev-branch-summary {
+  margin: 2px 0 6px;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.jev-branch-card {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-top: 4px solid var(--jev-lane);
+  border-radius: 6px;
+  background: var(--code-bg);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.jev-branch-card:hover,
+.jev-branch-card:focus-visible {
+  border-color: var(--accent-border);
+  border-top-color: var(--jev-lane);
+  outline: 2px solid transparent;
+}
+
+.jev-branch-card[aria-pressed="true"] {
+  background: var(--accent-bg);
+  box-shadow: inset 0 0 0 2px var(--accent-border);
+}
+
+.jev-branch-card-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-h);
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.jev-branch-state {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.jev-branch-state-active {
+  color: var(--jev-active);
+}
+
+.jev-branch-state-waiting {
+  color: var(--jev-waiting);
+}
+
+.jev-branch-card-line,
+.jev-branch-card-counts {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jev-branch-card-counts {
+  opacity: 0.75;
+}
+
+.jev-branch-code {
+  font-family: var(--mono);
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.jev-graph-workspace {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.jev-view-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.jev-view-controls button {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.jev-view-controls button[aria-pressed="true"] {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+
+.jev-graph-workspace-fullscreen {
+  overflow: auto;
+  padding: 12px;
+}
+
+.jev-graph-workspace-fullscreen .jev-graph-viewport {
+  height: calc(100vh - 90px);
+}
+
+.jev-graph {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+}
+
+.jev-disclosure {
+  margin: 8px 0;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.jev-disclosure summary {
+  cursor: pointer;
+  color: var(--text-dim);
+}
+
+.jev-empty-graph {
+  padding: 64px 20px;
+  text-align: center;
+}
+
+.jev-graph-node text.jev-graph-node-code {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.jev-graph-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.jev-graph-toolbar button {
+  min-width: 30px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-h);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.jev-graph-toolbar button:hover:not(:disabled) {
+  border-color: var(--accent-border);
+}
+
+.jev-graph-toolbar button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.jev-graph-zoom {
+  min-width: 84px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.jev-graph-legend,
+.jev-graph-hint {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 2px 0;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.jev-graph-viewport {
+  display: block;
+  width: 100%;
+  height: clamp(600px, 70vh, 900px);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--code-bg);
+  touch-action: none;
+  user-select: none;
+}
+
+.jev-graph-background {
+  fill: transparent;
+  cursor: grab;
+}
+
+.jev-graph-background:active {
+  cursor: grabbing;
+}
+
+.jev-graph-edge {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 1.5;
+  pointer-events: none;
+}
+
+.jev-graph-node {
+  cursor: pointer;
+  outline: none;
+}
+
+.jev-layout-controls {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 8px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}
+
+.jev-graph-density {
+  display: block;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.jev-dot {
+  fill: var(--jev-lane, var(--text));
+  stroke: var(--text);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.jev-dot-hit { fill: transparent; pointer-events: all; cursor: pointer; }
+.jev-dot-label {
+  font-family: var(--mono);
+  font-size: 13px;
+  fill: var(--text-h);
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 3px;
+  pointer-events: none;
+}
+.jev-graph-node-active .jev-dot { stroke: var(--jev-active); stroke-width: 3; }
+.jev-graph-node-waiting .jev-dot { stroke: var(--jev-waiting); stroke-width: 3; stroke-dasharray: 3 2; }
+.jev-graph-node-failure .jev-dot { stroke: var(--jev-failure); stroke-dasharray: 2 2; }
+.jev-graph-node-last-known .jev-dot { opacity: 0.65; stroke: var(--text); }
+.jev-graph-node-selected .jev-dot,
+.jev-graph-node:focus-visible .jev-dot { stroke: var(--accent); stroke-width: 4; }
+
+.jev-graph-node rect {
+  fill: var(--bg);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.jev-graph-node text {
+  fill: var(--text-h);
+  font-family: var(--mono);
+  pointer-events: none;
+}
+
+.jev-graph-node-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.jev-graph-node-status {
+  font-size: 10px;
+}
+
+.jev-graph-node-hidden {
+  font-size: 10px;
+  font-style: italic;
+}
+
+.jev-graph-node-active rect {
+  stroke: var(--jev-active);
+  stroke-width: 3;
+}
+
+.jev-graph-node-waiting rect {
+  stroke: var(--jev-waiting);
+  stroke-width: 2.5;
+  stroke-dasharray: 6 3;
+}
+
+.jev-graph-node-failure rect {
+  stroke: var(--jev-failure);
+  stroke-dasharray: 2 2;
+}
+
+/* Not live (stale, offline or final): active/waiting are history, drawn muted.
+ * The outline pattern stays, so the two remain distinguishable. */
+.jev-graph-node-last-known rect {
+  stroke: var(--text);
+  opacity: 0.6;
+}
+
+.jev-graph-node-last-known text {
+  opacity: 0.75;
+}
+
+/* Selection changes the fill only, so the status outline stays visible. */
+.jev-graph-node-selected rect {
+  fill: var(--accent-bg);
+}
+
+.jev-graph-node:focus-visible rect {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+.jev-graph-node-live rect {
+  animation: jev-pulse 1.6s ease-in-out infinite;
+}
+
+.jev-graph-node-live .jev-dot {
+  animation: jev-pulse 1.6s ease-in-out infinite;
+}
+
+.jev-graph-toggle {
+  cursor: pointer;
+}
+
+.jev-graph-toggle circle {
+  fill: var(--bg);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.jev-graph-toggle text {
+  fill: var(--text-h);
+  font-size: 12px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.jev-inspector {
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: 100%;
+  max-height: 640px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-sizing: border-box;
+}
+
+.jev-inspector p {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+
+.jev-node-events,
+.jev-node-tasks {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.jev-node-events li,
+.jev-node-tasks li {
+  margin-bottom: 6px;
+  overflow-wrap: anywhere;
+}
+
+.jev-trace {
+  margin-top: 16px;
+}
+
+.jev-recent-decisions {
+  margin-top: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--code-bg);
+}
+
+.jev-recent-decisions ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 6px 0 0;
+  padding-left: 22px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.jev-recent-decisions li span {
+  opacity: 0.75;
+}
+
+.jev-trace-scroll {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.jev-trace-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.jev-trace-scroll th,
+.jev-trace-scroll td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+/* Only the reason column wraps; the short columns stay on one line. */
+.jev-trace-scroll td:last-child {
+  width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.jev-trace-scroll th {
+  position: sticky;
+  top: 0;
+  background: var(--code-bg);
+  color: var(--text-h);
+}
+
+/* Lanes (plan J2 Step 221, D5): colour identifies a root lane -- economy green,
+ * expansion teal, army red, tech purple -- on its band, node stripes, activity edges
+ * and legend chip. Status stays outline, glyph and words. Each lane class sets
+ * --jev-lane; roots the policy names otherwise get an "other" tone. */
+.jev-lane-economy {
+  --jev-lane: #22a06b;
+}
+
+.jev-lane-expansion {
+  --jev-lane: #0f9d9a;
+}
+
+.jev-lane-army {
+  --jev-lane: #d64545;
+}
+
+.jev-lane-tech {
+  --jev-lane: #8b5cf6;
+}
+
+.jev-lane-supply {
+  --jev-lane: #ca8a04;
+}
+
+.jev-lane-construction {
+  --jev-lane: #c2410c;
+}
+
+.jev-lane-scouting {
+  --jev-lane: #3b82f6;
+}
+
+.jev-lane-production {
+  --jev-lane: #db2777;
+}
+
+.jev-lane-reserve {
+  --jev-lane: #64748b;
+}
+
+.jev-lane-other-0 {
+  --jev-lane: #0891b2;
+}
+
+.jev-lane-other-1 {
+  --jev-lane: #65a30d;
+}
+
+.jev-lane-other-2 {
+  --jev-lane: #a16207;
+}
+
+.jev-lane-other-3 {
+  --jev-lane: #7c3aed;
+}
+
+.jev-lane-other-4 {
+  --jev-lane: #be123c;
+}
+
+.jev-lane-other-5 {
+  --jev-lane: #475569;
+}
+
+.jev-graph-lane-band {
+  fill: var(--jev-lane);
+  fill-opacity: 0.07;
+  stroke: var(--jev-lane);
+  stroke-opacity: 0.25;
+  stroke-width: 1;
+  pointer-events: none;
+}
+
+.jev-graph-node rect.jev-graph-node-lane {
+  fill: var(--jev-lane);
+  stroke: none;
+  opacity: 1;
+  animation: none;
+}
+
+.jev-graph-lane-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.jev-graph-lane-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--jev-lane);
+}
+
+/* Observed activity: only edges the evidence records. Current path solid, recent
+ * trail dashed and fading (labeled recent); muted and still once not live. */
+.jev-graph-edge-activity {
+  fill: none;
+  stroke: var(--jev-lane);
+  pointer-events: none;
+}
+
+.jev-graph-edge-current {
+  stroke-width: 4;
+}
+
+.jev-graph-edge-recent {
+  stroke-width: 2.5;
+  stroke-dasharray: 5 4;
+}
+
+.jev-graph-edge-last-known {
+  stroke-dasharray: 2 4;
+}
+
+.jev-graph-activity-animated .jev-graph-edge-recent {
+  transition: opacity 0.9s linear;
+}
+
+.jev-graph-edge-flow {
+  stroke-dasharray: 10 6;
+  animation: jev-flow 1.2s linear infinite;
+}
+
+.jev-graph-node-source {
+  font-size: 10px;
+}
+
+.jev-graph-follow {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  font-size: 13px;
+}
+
+.jev-graph-follow-status {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+/* Plans and decisions (plan J2 Step 221): plan, stage, blocker, slot and source. */
+.jev-plans {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--code-bg);
+}
+
+.jev-plans-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.jev-plans-title h3 {
+  margin-right: auto;
+}
+
+.jev-plans-scroll {
+  overflow-x: auto;
+}
+
+.jev-plans table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.jev-plans th,
+.jev-plans td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.jev-plans th {
+  color: var(--text-h);
+}
+
+.jev-plans td.jev-nowrap {
+  white-space: nowrap;
+}
+
+.jev-plan-lane {
+  border-left: 4px solid var(--jev-lane);
+  padding-left: 4px;
+}
+
+.jev-plans button,
+.jev-inspector button {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-h);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.jev-source-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.jev-source-list li {
+  margin-bottom: 4px;
+  overflow-wrap: anywhere;
+}
+
+@keyframes jev-flow {
+  to {
+    stroke-dashoffset: -16;
+  }
+}
+
+@keyframes jev-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (max-width: 900px) {
+  .jev-run-body {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .jev-inspector {
+    flex-basis: auto;
+    max-height: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jev-graph-node-live rect,
+  .jev-graph-node-live .jev-dot,
+  .jev-badge-live::before,
+  .jev-graph-edge-flow {
+    animation: none;
+  }
+
+  .jev-graph-activity-animated .jev-graph-edge-recent {
+    transition: none;
+  }
+}
+.jev-details-overlay {
+  position: relative;
+}
+
+.jev-details-overlay > .jev-inspector {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2;
+  width: min(310px, calc(100% - 24px));
+  max-height: min(350px, 45%);
+  background: var(--bg-secondary, #202129);
+  border: 1px solid var(--border-color, #454653);
+  border-radius: 8px;
+  box-shadow: 0 4px 18px #0006;
+}
+.jev-start-hub rect {
+  fill: var(--bg-secondary, #202129);
+  stroke: #aab3c5;
+  stroke-width: 1.5;
+}
+
+.jev-start-hub text {
+  fill: #e8edf5;
+  font-size: 12px;
+  font-weight: 700;
+}

@@ -1,58 +1,120 @@
 # Current Task State
 
-**Task:** Phase EL (Evolution Lines) — build the parallel-lineage / baseline-DB / diversity-extinction evolve substrate
-**Status:** EL.1–EL.6 DONE (EL.7 multi-hour soak is the only remainder)
-**Last written:** 2026-06-20T16:30:00Z
-**Session SHA:** 7137e7c
+**Task:** Reduce pointer-test fixture copying, selected and authorized by the user's request to recommend the next task and proceed.
+**Status:** PASS — standalone build-step, automated gates, iteration 1/10. Minimal pointer fixtures committed; full main-checkout and hosted CI gates green. Draft PRs #303 and #304 remain unmerged; EH/EV work remains pending.
+**Session SHA:** ead7ce7
+**Last written:** 2026-09-28
+**Branch:** `master-plan/phase-ev`. The "not mergeable until onbrand-pilot lands" blocker is DISSOLVED — the branch already contains onbrand-pilot, so landing is one merge. See `documentation/branch-landing-phase-ev.md`.
 
 ## Next Action
 
-GOAL MET: EL.1–EL.5 built + merged to master, pytest 1773 + vitest 218 green. The remaining steps are NOT agent-completable and require the operator running the real SC2 stack:
-
-- **EL.6 (#278, operator smoke):** one real multi-lineage round —
-  `python scripts/evolve.py --lineages 2 --pool-size 2 --games-per-eval 3 --fitness-mode both --population-cap 2 --generations 1 --no-commit`
-  (also covers the EL.5 dashboard visual: open the Evolution tab, confirm the lineage list + diversity matrix + extinction timeline render). Write a record under documentation/soak-test-runs/evolution-lines-smoke-<ts>.md.
-- **EL.7 (#279, wait soak):** multi-hour 2–3 lineage run —
-  `python scripts/evolve.py --lineages 3 --population-cap 3 --hours 6 --fitness-mode both`
-
-Resume after EL.6 via `/build-phase --plan documentation/plans/evolution-lines-plan.md --resume EL.6` if desired (build-phase will halt at the operator/wait steps).
+Review/land CI repair PR #303, then retarget stacked fixture PR #304 to master and land it. Resume EH issue sync/build before long-run gates; use the existing EI investigation plan for the later self-improvement evidence work.
 
 ## Completed
-- EL.1 Lineage registry + round-robin scheduler: PASS iter 2/3. lineages.py overlay; current.txt shape unchanged; --lineages 1 byte-identical. Merged 2675c43.
-- EL.2 Baseline opponent DB + fitness gauntlet: PASS iter 2/3. baselines.py registry + scripts/baseline.py CLI + run_baseline_gauntlet + --fitness-mode {parent,baseline,both} (parent byte-identical). Merged ddd7be6.
-- EL.3 Behavioral diversity fingerprint: PASS iter 2/3. fingerprint.py; fingerprint_distance (nan sentinel for incomparable pairs). Merged 561d9fd.
-- EL.4 Population manager — diversity-driven extinction: PASS iter 2/3. decide_extinctions (pure) + run_loop wiring; --population-cap (default 0=disabled, byte-identical) + --diversity-threshold; phase:"extinction" row. Correctness reviewer confirmed cull logic provably safe. Full suite 1765.
-- EL.5 Dashboard lineage + extinction surfacing: PASS iter 2/3. GET /api/evolve/lineages (bots/v13/api.py, reuses _evolve_dir) + EvolutionTab lineage cards/diversity matrix/extinction timeline + useEvolveLineages hook. nan→null/drop; reuses fingerprint_distance. pytest TestClient 8 + vitest 218. Built --reviewers code (live Playwright deferred to EL.6 operator smoke per bot-runtime backend-lifecycle rule). Full suite 1773.
+
+- [ead7ce7] 2026-09-28 build-step pointer-fixture cleanup: replaced live bots/src tree copies in three negative cases with two real package modules and a generated pointer. Preserved all assertions and fresh subprocess imports. Main Python 3.14 suite: 2025 passed / 2 skipped / 1 deselected in 170.05 seconds versus preceding 351.03-second run in the same checkout (observed 52% reduction, not a controlled benchmark). Frontend: 228 passed / 6 skipped; ruff and strict mypy clean; Linux Python 3.12 pointer tests: 9 passed. All gates exit 0. Worktree suite: 2024 passed / 3 skipped / 1 deselected; additional skip requires the absent local training DB. Existing formatter debt outside changed lines retained. Draft PR https://github.com/aberson/Alpha4Gate/pull/304 at 27613f8 is stacked on #303; hosted Linux/Python 3.12 CI green. Temporary worktrees removed, workspace file restored, unrelated old stash preserved. Evidence: `.build-step/pointer-fixture/` (local, ignored).
+- [c6a7ec3] 2026-09-28 user-debug/build-step CI repair: preserve target module origin and has_location in the current-bot alias. Original Windows/Linux Python 3.12 CLI failure is gone; new source-file regression demonstrated RED before fixing. Five isolated review lenses, no blocking findings; PASS iteration 1/10. Final main-project Python 3.14 suite: 2025 passed / 2 skipped / 1 deselected; frontend 228 passed / 6 skipped; ruff clean; strict mypy clean (866 files). Worktree Python 3.12 suite: 2024 passed / 3 skipped / 1 deselected. Hosted master-based Ubuntu/Python 3.12: 1953 passed / 22 skipped / 1 deselected, lint/typecheck green. Draft PR https://github.com/aberson/Alpha4Gate/pull/303 carries only the two-file fix as f6a71a5; no master merge performed. Evidence logs/reviews: `.build-step/py312-alias/` (local, ignored). Temporary worktrees removed, pre-existing workspace file restored, old unrelated stash untouched. Corrected the old memory calling this supported-runtime defect a false red.
+- [b543765] `/repo-update` Phase EH plan readiness: repaired README active-plan links, recorded the clean
+  plan-wrap result in the EH plan and master index, refreshed `CLAUDE.md`, collected 2,026 selected / 2,027
+  total tests with one deselection, and pushed all six pending documentation commits to
+  `origin/master-plan/phase-ev`.
+- **2026-09-02 — Lane B items 1-4 (this session, ~60 agents / ~5.5M subagent tokens, 0 errors).**
+  - **Item 1, master-plan spine reconciliation.** 39 of 40 relative links in `master_plan.md` were
+    broken (28 used a `documentation/` prefix that doubles; 11 used `../` that escapes the folder);
+    all now resolve. The same dead parent link sat in 7 of 11 sub-plans, not just phase-6. Added
+    narrative sections for Phases EL, EJ and EV (none existed), extended Track structure, Decision
+    graph, Glossary and Time budget, corrected 3 stale index rows, resolved 2 contradictions with
+    Phase R's own supersession note, gave Phases D and 7 the Status lines every other shipped phase
+    has, and added 5 plan-history entries covering everything since 2026-05-19.
+  - **Item 2, evolve-restructure thread → Phase EI.** Two adversarial rounds (23 agents). Round 2's
+    finding: **gate 1 selects improvement TEXTS, not code, 100% of the time** — commits `f2eb564`
+    and `ce8545f` build the same version from the same parent and the same improvement text and
+    produce different bots. Round 3 declared unnecessary. Produced
+    `documentation/plans/evolve-evidence-layer-plan.md` (Phase EI, 14 steps), plus round-1 and
+    round-2 records under `documentation/investigations/`. plan-review found 7 Blockers (all fixed);
+    plan-wrap returned READY WITH GAPS, 0 Blockers, and all 7 gaps are closed.
+  - **Item 3, operator-gate runbook.** `documentation/operator-gate-runbook.md` — 8 gates,
+    cheapest-first, ~28-30 h serialized. Leads with three confirmed defects: the launcher's missing
+    generation cap, an absent baselines registry that makes two gates test nothing, and the fact
+    that `--lineages N` does not create N lineages, which makes EL.7 unrunnable as its plan
+    specifies it.
+  - **Item 4, branch landing note.** `documentation/branch-landing-phase-ev.md` — the stated blocker
+    is already satisfied by containment, a read-only merge-tree predicts zero conflicts, and CI has
+    never run on any of the 18 commits because both workflows gate on pushes to master only.
+  - An independent verification pass over the runbook and landing note caught 2 wrong commands
+    (one work-destroying), 2 wrong anchors and 3 wrong numbers; all corrected.
+
+- [7e08491] `/repo-wrap` (Rail A, OWNED) → `/repo-update` 2026-08-19, doc-only close-out at unchanged HEAD: tree clean, origin already at `7e08491`, so nothing committed or pushed. Memory updated (Phase EV entry re-anchored `afb19d5`→`7e08491`; NEW `project_evolve_restructure_thread_2026_08.md` for the open evolve-restructure planning thread; MEMORY.md index refreshed). Observatory synced — wrote 5 obs tasks to `dev.code-workspace` IN THE PROJECT ROOT, untracked (see Parked). Drift checks skipped as redundant (full reconciliation was `978ee4f`; zero code changes since). No posterity issue (doc-only), no tour. Branch 17 ahead / 1 behind local `master`; merge still blocked on `onbrand-pilot`.
+
+- [978ee4f] `/repo-update` (doc-only; no Phase EV code touched): reconciled current-state docs against source — 34 stale facts across `CLAUDE.md`, `README.md` and 10 wiki pages. Pointer v4→**v13**; wiki `FEATURE_DIM=24`/`BASE=17` → v13 **55/48**, v0 **47/40**, DB stores **40**; test counts reconciled to one convention; "Six layers" → seven (no `tactics.py`); Phases **EL** and **EJ** added to Current state (both shipped, both previously absent). `.gitignore` gained `.build-step/` + 2 task-state scratch entries. Issue #297 opened+closed. Gates: ruff clean, mypy clean 866 files, 2024 selected, frontend 234.
+
+- [fbd7363] EV.1 `--viewer` flag + degradation gate + concurrency guard: PASS iter 3/3 + polish. `_viewer_enabled` probes `pygame` (not `selfplay_viewer`, which imports fine without the extra) and is total — the whole probe sits in one `try/except Exception`, so no meta-path finder can abort a run. Guard lives in `main()` (D13), gated behind `args.viewer` so the parallel path is byte-identical. 1990 → 2005 collected.
+- [5b65afb] EV.2 `_EvolveViewerSession` + `main()` inversion: PASS iter 3/3, `--reviewers deep`. Chains callbacks, never touches `stop_event`; `close()` latch bounds `_event_queue`. Fixed a hang inherited from the plan's own §5 block (viewer failing pre-batch-start left `run_loop` uncalled while `main()` blocked forever claiming the run continued) via a `started` event + lock-guarded one-shot claim. 2005 → 2023 collected.
+- [59c8cfa] EV.3 launcher opt-in + docs: PASS iter 2. `launch-evolve.ps1` spawns `uv run --extra viewer ... --viewer` (only that executable line changed; guard + delegation byte-identical, ASCII/no-BOM). Found and fixed two false doc claims: the dashboard Stop button does nothing, and `evolve.py`'s own banner told operators to stop the run with a gesture that only detaches. New tests pin the launcher spawn contract and the SKILL.md row.
+- [afb19d5] `/repo-wrap` (Rail A, OWNED per registry `owned = true`) + `/user-wrap` → `session-wrap --end`: pushed `ee47014..afb19d5` to `origin/master-plan/phase-ev` (now 0 ahead). Full `/repo-update` delegation deliberately NOT run — see Parked. Git-verb router anomaly pre-flight triggered checks 3 and 4, so Steps B/C were withheld (`ask-first pending`); the withheld base action was a no-op anyway (session edit set already committed in 7658605, 0 ahead), so nothing is stranded.
+- [ee47014] `/build-phase --resume EV.4`: no code steps to run. EV.4 classified pure-observation (its `Produces:` carries no code-shaped artifact) → deferred to the phase-end Manual UAT bundle as **M1** rather than halting mid-run; EV.5 (`Type: wait`) halted the phase per halt class #4. Baseline gates green at HEAD: pytest 2022 passed / 2 skipped / 1 deselected (`--extra viewer`), ruff clean, mypy clean (808 files). Wait-handoff comment posted to #295.
 
 ## WIP
 
-**Current:** Plan authored, reviewed, wrapped, and synced to GitHub. Plan-expedite chain complete. Ready to build.
+**Current:** Python 3.12 CI repair c6a7ec3 and pointer-fixture cleanup ead7ce7 are complete; draft PRs #303 and #304 have green hosted CI. Temporary worktrees removed and pre-run workspace file restored. Phase EV's code remains complete with M1 pending. **Phase EH is repo-synced (umbrella #305, steps #306-#315) with EH.1 (`4eb7836`) and EH.2 (`5fb4213`) shipped 2026-10-04 and EH.3-EH.10 remaining**; Phase EI still awaits issue sync and `/plan-redline`. Earlier freeze/decision blockers in historical entries below are superseded by this checkpoint.
 
-**Approach:** New Phase EL on Track 9 captures the four "lines of evolution" ideas from the 2026-04-27 plan-shape notes that never made it into the master plan: (1) parallel lineages, (2) baseline opponent DB, (3) diversity fingerprint + extinction events. Species knobs (task-ordering, time-in-task) DEFERRED — blocked on Track 7 mini-games. Design spine: `current.txt` pointer shape unchanged; lineages are an overlay registry, scheduler flips the existing pointer between heads (keeps all 40 `current_version()` consumers working).
+**Approach:** Completed build-step iteration 1/10, reviewers=auto, with an isolated developer, full worktree gates, three-way patch application, full main-checkout gates, and Linux Python 3.12 verification. No production changes or new tests; all original behavior assertions retained. Same-checkout full-suite timing improved from 351.03 to 170.05 seconds with unchanged test counts.
 
-## Completed (this session)
-
-- Audited the 2026-04-27 plan-shape notes against the master plan + investigations — 10/14 ideas already incorporated; 4 gaps found (parallel lineages, extinction events, baseline DB, monolith task-ordering/time-in-task knobs).
-- Authored `documentation/plans/evolution-lines-plan.md` (Phase EL, 7 steps).
-- /plan-review --autofix → READY (auto-fixed 6: Type:code on EL.1–EL.5, SKILL.md impact row).
-- /plan-wrap --autofix → READY WITH GAPS: 1 gap (EL.5 /api/evolve/lineages response shape — non-blocking, refine at build).
-- /repo-sync → umbrella #272 + steps #273–#279 created; plan **Issue:** lines backfilled.
-
-## Dead Ends
-
-- Regex backfill of **Issue:** lines failed twice (multi-line Problem bullets broke the bullet-eater; bare `#` didn't match `#\d+`). Line-based scan with `startswith("- **Issue:**")` worked.
+- Root cause: `bots/current/__init__.py:120` builds alias specs without an origin; Python 3.12 `runpy.py:197` assigns that origin to argv[0], then `argparse.py:1795` calls basename(None). Independently confirmed HIGH confidence; reproduces on Windows and WSL Ubuntu Python 3.12.13, direct versioned CLI passes. Fresh-context conversation challenge v2 passed calibrated control and both sibling comparisons; read-only diagnosis arm made no source changes.
+- Fix design (user authorized start): preserve target source-location metadata in alias specs; touch only `bots/current/__init__.py` and `tests/test_current_pointer.py`; retain import identity and >=3.12 support. Existing CLI test plus runpy file-metadata regression must go red before fix and green after, including 3.14 where argparse masks the symptom.
+- Dead end: treating Python 3.12 as a wrong environment hides a supported-runtime defect; pyproject.toml explicitly supports >=3.12 and Linux CI runs 3.12. Python 3.14 argparse uses __main__.__spec__.name and masks the missing origin.
+- Branch preparation: merging origin/master into the isolated repair worktree exposed an add/add conflict in the seed notes, contrary to the old branch-landing note. Preserved the feature branch's later September decisions; resulting merge has no content delta from d0487eb.
 
 ## Critical Gotchas
 
-- EL.1 + EL.2 both modify `scripts/evolve.py` (loop-wrap vs `--fitness-mode` argparse) — sequential recommended to avoid worktree merge conflict, even though logically parallel.
-- EL.5 is frontend-touching → `--ui` + Playwright evidence mandatory (already in issue #277 flags).
-- New `phase: "extinction"` row in `evolve_results.jsonl` (EL.4) — audit existing readers per `feedback_audit_wire_shape_on_storage_change`.
-- `_evolve_dir` resolver already exists in `bots/v13/api.py:53` — EL.5 reuses it (do NOT use per-version `_data_dir`).
+- Harness cleanup discovered 2026-09-28: three invalid/empty-pointer cases in `tests/test_current_pointer.py` copy the ENTIRE local bots tree. This checkout contains 75,565 files / 3,218,307,636 bytes, including per-version `.mypy_cache` and runtime data; the post-merge suite spends minutes copying them. A read-only production-source probe reproduced all three expected ImportErrors with only 3 files / 8,165 bytes in about 0.3 seconds per case (`bots/__init__.py`, `bots/current/__init__.py`, `current.txt`; no src tree needed). Evidence: `.build-step/py312-alias/minimal-fixture-probe.json`. Isolate this fixture in a separate follow-up; do not delete operator data or weaken the invalid-pointer behavior checks.
+- CI repair review result: no blocking findings across five isolated lenses. Test-quality noted optional has_location assertion (low); style's claim that 3.14 was untested is refuted by the parent's actual 9-passing 3.14 run. Source hashes unchanged across review. Worktree cleanup completed; pre-run `dev.code-workspace` stash restored. Two-file fix committed as c6a7ec3 on working branch; master-only cherry-pick f6a71a5 is draft PR #303, hosted CI PASS.
+- **Python 3.12 is supported:** the former alias CLI failure was a real source-metadata defect, fixed in c6a7ec3 / PR #303. Selecting Python 3.14 masked it; do not dismiss supported-runtime failures as false reds. Rebuild fresh worktree dependencies and verify the intended interpreter explicitly.
+- **Test count depends on the optional extra**: **2037** selected without pygame, **2054** with it (17 pygame-gated tests), across **114 top-level `tests/test_*.py` files** (a recursive `find` reports 115 — `tests/commands/test_dispatch_guard.py` sits one level down; the documented count uses the top-level convention). Never compare a worktree count to a main-project count. The dev `.venv` currently HAS the viewer deps installed, so a bare `uv run pytest` reports 2054, not 2037 — 2037 is the deps-absent case (e.g. Linux CI, where `pywin32` cannot install). Measured 2026-10-04: `uv run --extra viewer pytest -q` → 2052 passed / 2 skipped / 1 deselected.
+- **Current collection evidence supersedes the earlier baseline:** `uv run --extra viewer pytest --collect-only -q` on 2026-09-20 reported 2,026 selected / 2,027 collected with one deselection. Re-measure before changing published passing-test counts.
+- **Never run mutation-testing review agents concurrently in one worktree** — they corrupt each other and produce phantom flaky-test findings.
+- A piped count over a binary that is not on PATH reads as 0, identical to clean — use `uv run <tool>`, never bare `ruff`/`pytest` in the Bash tool.
+- Two `dev/` worktrees are STALE (tips 9 and 6 weeks old): `worktree_skill-iterate-review-dev-gauntlet-1780807852`, `worktree_switchboard-endpoint-launcher`. Not this session's; left alone.
+- **This repo uses the single-file task-state model** — no `.claude/task-state/sessions/` dir and no local `task-state-derive.ps1`, and `current.md` is TRACKED here (not gitignored, unlike the workspace contract). Write `current.md` directly; do NOT run the dev-level `Write-DerivedRollup` against this root — it would find zero session files.
+- **CLAUDE.md's test counts are CORRECT — do not "fix" them.** Measured 2026-08-10 with `uv run --extra viewer python -m pytest -q`: **2022 passed, 2 skipped, 1 deselected** → 2024 *selected*, 2025 *collected*. CLAUDE.md says "2007 unit tests; 2024 with the optional `[viewer]` extra" and 2024 − 17 pygame-gated = 2007, so both numbers check out. A review lens this session claimed drift by comparing 2007 against 2022-*passing* — conflating **passed** with **selected**. Re-measure before ever writing a new count in. **2026-08-18: this convention was PRESERVED, not overwritten** — `/repo-update` propagated the same 2007/2024 pair out to README + wiki (which carried 1448/1020/~1327) and added only the file count. The frontend number WAS resolved: the tree is now clean of frontend WIP, so a real run measured **234 (228 passing, 6 skipped) across 23 files**; README's 119 and CLAUDE.md's 143 were both wrong.
+- **NEVER `git add documentation/images/`** — that directory holds `Recording 2026-04-15 223435.mp4` at 199,528,926 bytes — but it is now GITIGNORED (`.gitignore:88`, `documentation/images/*.mp4`), verified via `git check-ignore`, so adding the directory no longer stages the video. Path-scoping every `git add` remains the standing rule for an unrelated reason: `EVO_AUTO` commits sweep whatever was already staged.
+- **The launcher silently truncates soaks.** `scripts/evolve.py --generations` defaults to **1** and `launch-evolve.ps1` (line 72) omits it, so the dev-observatory `run-evolution` button stops after ONE generation regardless of `-Hours`; the launcher's own line-28 comment claims otherwise. `documentation/wiki/operator-commands.md` is correct and does pass `--generations 0`. Fixing the launcher is an operator-facing behaviour change (a 4h run becomes 4 real hours of SC2 that can auto-commit `[evo-auto]`), so it was left as a deliberate decision rather than folded into a doc pass.
 
-## Key Files
+## Parked
 
-- Plan: `documentation/plans/evolution-lines-plan.md`
-- Master plan: `documentation/plans/alpha4gate-master-plan.md` (Phase EL slots into Track 9 at merge time)
-- Evolve substrate: `src/orchestrator/evolve.py`, `scripts/evolve.py`
-- Hydra investigation (species framing): `documentation/investigations/hydra-hierarchical-ppo-investigation.md`
-- Issues: umbrella #272, steps #273–#279
+- **Evolve-restructure planning thread OPEN** (started 2026-08-06): verified pipeline map
+  ("11 steps vs. reality", file:line-anchored) + operator ideas live in
+  `docs/seeds/evolve-restructure-operator-notes.md` (committed); README § self-play arena now
+  renders it as `documentation/images/evolve-arena-{light,dark}.svg`. Next: operator finishes
+  the truncated idea (ii) ("Use a SC2 version of the 'judge…") → adversarial-review rounds →
+  `/plan-feature`. Memory: `project_evolve_restructure_thread_2026_08.md`.
+- **`dev.code-workspace` in the PROJECT root is untracked and of uncertain provenance** —
+  `observatory sync` run 2026-08-19 from inside Alpha4Gate wrote "5 obs task(s)" to
+  `$env:USERPROFILE\dev\Alpha4Gate\dev.code-workspace` rather than the dev root's workspace file
+  (possibly cwd-derived target resolution in dev-observatory). Decide: gitignore it, commit it,
+  or fix the sync target. Left untracked deliberately.
+- **Wiki drift that `/repo-update` must NOT auto-fix** (issue #296): stale dashboard/component
+  tables in `documentation/wiki/monitoring.md` (a 10-tab table naming 13 components absent from
+  disk), `frontend.md` (nonexistent `ImprovementsTab.tsx` x5; tab list disagrees with `App.tsx`),
+  and `promotions.md` (4 of 4 "Dashboard Surfaces" rows point at absent files). STILL OPEN after
+  the 2026-08-18 pass, which fixed only mechanical numeric/pointer drift.
+- **Zero wiki coverage of the Phase EL/EJ `src/orchestrator/` modules** (`gate_stats.py`,
+  `lineages.py`, `population.py`, `fingerprint.py`, `baselines.py`). Both phases are now named in
+  `CLAUDE.md` Current state (2026-08-18), but they have no wiki page. This needs a NEW page, which
+  `/repo-update` does not author -- escalate to the operator to decide where it lives.
+- **`documentation/wiki/evaluation-pipeline.md` still carries a 24-row feature table.** Its scalar
+  claims were corrected 2026-08-18 and the table is now explicitly labelled the historical
+  pre-Phase-B layout with a pointer to `_FEATURE_SPEC`, but the rows themselves are only right for
+  indices 0-16: the advisor block moved to the end of the vector (48-54 in v13). Rewriting it to
+  55 rows is authoring, not a numeric fix, so it was escalated rather than guessed.
+- **Follow-up recorded in the plan's section 8:** teach the runner to read
+  `data/evolve_run_control.json` at the generation boundary so the dashboard Stop button actually
+  works; add a `dashboard-stop` `stop_reason`.
+- **`.build-step/` forensics reports** (`prewrap-ownership.md`, `prewrap-coherence.md`,
+  `prewrap-delta.md`, `prewrap-hygiene.md`, `plan-wrap-report.md`, `wiki-check-report.md`) are
+  still on disk and safe to delete once read. They are now gitignored, so they no longer pose a
+  `git add -A` risk.
+
+RESOLVED 2026-08-18, removed from this list: README self-disagreement on test counts (3 different
+Python numbers); the vitest 119-vs-143 disagreement (measured 234 on a now-clean tree);
+`.build-step/` not being gitignored; and the parked uncommitted frontend WIP (landed in `82873ab`).

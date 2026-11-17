@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Alpha4Gate Decisions Owed</title>
+<style>
+/* Layout: one column of decision cards (tensions, then plan-review defaults), a reply builder, then the full register table. */
+:root {
+  --bg: #f3f5f8; --surface: #ffffff; --ink: #18222d; --muted: #5a6879; --rule: #d9dfe7;
+  --gold: #9c6411; --gold-wash: #f5e9d4;
+  --psi: #1d5c99; --psi-wash: #e1ebf6;
+  --red: #a23a26; --red-wash: #f7e2dc;
+  --slate: #56677d; --slate-wash: #e6eaf0;
+  --code-bg: #e9edf3;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-body: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f151c; --surface: #16202a; --ink: #e4eaf1; --muted: #9babbb; --rule: #2a3644;
+    --gold: #e2ab4a; --gold-wash: #2b2416; --psi: #82b6ea; --psi-wash: #162a3e;
+    --red: #f0937e; --red-wash: #3a211b; --slate: #a9b7c8; --slate-wash: #212c38; --code-bg: #1d2834;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f151c; --surface: #16202a; --ink: #e4eaf1; --muted: #9babbb; --rule: #2a3644;
+  --gold: #e2ab4a; --gold-wash: #2b2416; --psi: #82b6ea; --psi-wash: #162a3e;
+  --red: #f0937e; --red-wash: #3a211b; --slate: #a9b7c8; --slate-wash: #212c38; --code-bg: #1d2834;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.55 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 64px;
+}
+main { max-width: 72rem; margin: 0 auto; display: grid; gap: 44px; }
+h1, h2, h3 { font-family: var(--font-display); line-height: 1.2; margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(1.7rem, 3.6vw, 2.3rem); font-weight: 650; }
+h2 { font-size: 1.3rem; font-weight: 640; }
+h3 { font-size: 1.08rem; font-weight: 640; }
+p { margin: 0; }
+section { display: grid; gap: 16px; min-width: 0; }
+.eyebrow { font: 600 0.72rem/1.3 var(--font-body); letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold); }
+.lede { color: var(--muted); max-width: 50rem; font-size: 1.02rem; }
+code { font-family: var(--font-mono); font-size: 0.86em; background: var(--code-bg); padding: 0.06em 0.34em; border-radius: 4px; overflow-wrap: anywhere; }
+button, input, textarea { font: inherit; }
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.steps { margin: 0; padding-left: 1.2rem; display: grid; gap: 4px; max-width: 50rem; }
+.summary { display: flex; flex-wrap: wrap; gap: 10px; }
+.stat { display: flex; align-items: baseline; gap: 8px; background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 14px; }
+.stat b { font: 650 1.35rem var(--font-display); font-variant-numeric: tabular-nums; }
+.stat span { color: var(--muted); font-size: 0.88rem; }
+.chip { display: inline-flex; align-items: center; font: 650 0.68rem/1 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; padding: 5px 7px; border-radius: 4px; white-space: nowrap; }
+.chip.high { color: var(--red); background: var(--red-wash); }
+.chip.medium { color: var(--gold); background: var(--gold-wash); }
+.chip.low { color: var(--slate); background: var(--slate-wash); }
+.chip.you { color: var(--psi); background: var(--psi-wash); }
+.chip.me { color: var(--gold); background: var(--gold-wash); }
+.chip.ask { color: var(--red); background: var(--red-wash); }
+.cards { display: grid; gap: 18px; }
+.card { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 18px 20px; display: grid; gap: 14px; min-width: 0; }
+.card.high { border-top: 3px solid var(--red); }
+.card.medium { border-top: 3px solid var(--gold); }
+.card.low { border-top: 3px solid var(--slate); }
+.card.review { border-top: 3px solid var(--psi); }
+.t-head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.t-id { font: 700 0.85rem var(--font-mono); color: var(--muted); }
+.sides { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 10px; }
+.said { border-left: 3px solid var(--psi); padding: 2px 0 2px 12px; display: grid; gap: 4px; min-width: 0; }
+.said q { font-style: italic; }
+.said small { color: var(--muted); font-size: 0.8rem; }
+.why, .now { max-width: 62rem; }
+.now { color: var(--muted); font-size: 0.94rem; }
+.now b { color: var(--ink); font-weight: 600; }
+fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 8px; min-width: 0; }
+legend { font: 600 0.82rem var(--font-body); color: var(--muted); padding: 0 0 6px; }
+.opt { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 8px; cursor: pointer; background: var(--bg); }
+.opt:hover { border-color: var(--psi); }
+.opt input { margin-top: 4px; accent-color: var(--psi); }
+.opt:has(input:checked) { border-color: var(--psi); background: var(--psi-wash); }
+.opt .ol { display: grid; gap: 2px; min-width: 0; }
+.opt .ot { font-weight: 600; }
+.opt .od { color: var(--muted); font-size: 0.92rem; }
+.rec { font: 650 0.66rem/1 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--psi); margin-left: 6px; }
+.reply { background: var(--surface); border: 1px solid var(--psi); border-radius: 10px; padding: 18px 20px; display: grid; gap: 12px; }
+.reply textarea { width: 100%; min-height: 11rem; resize: vertical; background: var(--code-bg); color: var(--ink); border: 1px solid var(--rule); border-radius: 6px; padding: 10px 12px; font: 0.9rem/1.6 var(--font-mono); }
+.reply label { font-weight: 600; font-size: 0.9rem; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.btn { border: 1px solid var(--psi); background: var(--psi); color: var(--bg); border-radius: 6px; padding: 8px 14px; font-weight: 600; cursor: pointer; }
+.btn.secondary { background: transparent; color: var(--psi); }
+.status { color: var(--muted); font-size: 0.88rem; min-height: 1.3em; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 760px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--rule); }
+th { font: 600 0.74rem var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); background: var(--bg); }
+tbody tr:last-child td { border-bottom: 0; }
+td.id { font: 700 0.84rem var(--font-mono); white-space: nowrap; }
+td .q { display: block; color: var(--muted); font-style: italic; font-size: 0.88rem; margin-top: 3px; }
+td.where { font-size: 0.88rem; color: var(--muted); }
+td.t a { font: 600 0.84rem var(--font-mono); color: var(--red); text-decoration: none; margin-right: 6px; }
+.group-row td { background: var(--bg); font: 650 0.8rem var(--font-display); }
+@media (max-width: 520px) { .card, .reply { padding: 14px; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main>
+
+<header style="display:grid;gap:12px">
+  <div class="eyebrow">Alpha4Gate &middot; main lane &middot; 2026-11-16</div>
+  <h1>Decisions owed</h1>
+  <p class="lede">Ten answers stand between the plan and the next builds. Seven are tensions, where two of your choices pull against each other. Three are defaults that plan-review flagged. Each one has a recommendation, but nothing changes until you reply.</p>
+  <ol class="steps">
+    <li>Pick one option on each card below (or press <b>Fill in my recommendations</b> and change any you disagree with).</li>
+    <li>Press <b>Copy reply</b> and paste it into the main lane window.</li>
+    <li>Main then folds the answers into the plan, runs plan-wrap and repo-sync, and the scoreboard and evolve lanes can build.</li>
+  </ol>
+  <div class="summary" aria-label="Summary">
+    <div class="stat"><b>7</b><span>tensions (2 high, 3 medium, 2 low)</span></div>
+    <div class="stat"><b>3</b><span>plan-review defaults (RD1&ndash;RD3)</span></div>
+    <div class="stat"><b>1</b><span>more to come: evolve's commit proposal</span></div>
+  </div>
+</header>
+
+<section aria-labelledby="tensions-h">
+  <div class="eyebrow">Part 1 &middot; tensions</div>
+  <h2 id="tensions-h">Where your choices pull against each other</h2>
+  <div class="cards">
+
+    <article class="card high" id="T1">
+      <div class="t-head"><span class="t-id">T1</span><span class="chip high">High</span><h3>Fast headless training vs the game you actually want to win</h3></div>
+      <div class="sides">
+        <div class="said"><q>We want actual evolution to happen headless since it's way faster.</q><small>D16, planning answer</small></div>
+        <div class="said"><q>An AI lab that started with a simple goal: beat a friend at StarCraft II.</q><small>README, the project's original motivation</small></div>
+      </div>
+      <p class="why">Headless Linux SC2 stops at version 4.10 (base build 75689, from 2019). Real matches, against your friend or anyone else, happen on the current Windows client (build 98310). Seven years of balance patches separate them: unit stats, costs and timings differ. Evolution and the scoreboard would make the bot better at a version of the game nobody plays, and the maps (Simple64/96/128) are test maps.</p>
+      <p class="now"><b>Plan now:</b> evolution, the panel and every stage scoreboard run on 4.10. Windows is used only for live spot checks.</p>
+      <fieldset data-q="T1"><legend>Pick one</legend>
+        <label class="opt"><input type="radio" name="T1" value="A" id="T1-A" data-rec="1"><span class="ol"><span class="ot">A. Split by job<span class="rec">Recommended</span></span><span class="od">Evolution's inner loop and the 12-game panel stay headless for speed. Stage scoreboards and champion decisions run on the current Windows build, where the bot really plays. Stage runs get slower and can't run in parallel.</span></span></label>
+        <label class="opt"><input type="radio" name="T1" value="B" id="T1-B"><span class="ol"><span class="ot">B. All headless, as planned</span><span class="od">Fastest. Accept that "stronger" means stronger on 2019 SC2.</span></span></label>
+        <label class="opt"><input type="radio" name="T1" value="C" id="T1-C"><span class="ol"><span class="ot">C. All on the current Windows build</span><span class="od">What you measure is what you play. Slowest, no parallel games, and it reverses the headless decision.</span></span></label>
+      </fieldset>
+    </article>
+
+    <article class="card high" id="T2">
+      <div class="t-head"><span class="t-id">T2</span><span class="chip high">High</span><h3>PPO is "the strongest path", but every build step goes elsewhere</h3></div>
+      <div class="sides">
+        <div class="said"><q>PPO is i think the strongest path forward we have.</q><small>Your answer 2, decision D11</small></div>
+        <div class="said"><q>This PPO only optimization isn't working, let's shut this down.</q><small>Your call on 2026-04-15, after 421 PPO games</small></div>
+      </div>
+      <p class="why">All 13 Phase ES steps improve the rules-code evolution loop, and the scoreboard measures rules mode, where PPO is never consulted. PPO gets one exploration step (PPO.0); its design-space survey finished today and its first measurement waits for the scoreboard. Past "hybrid" batch results may not mean what they seem: the batch runner ignores <code>--decision-mode</code>, so they likely played the rules engine.</p>
+      <p class="now"><b>Plan now:</b> Phase ES first. PPO.0 runs in parallel as research (lane direction), and the old PPO steps are held under it.</p>
+      <fieldset data-q="T2"><legend>Pick one</legend>
+        <label class="opt"><input type="radio" name="T2" value="A" id="T2-A" data-rec="1"><span class="ol"><span class="ot">A. Measure first, then decide<span class="rec">Recommended</span></span><span class="od">Add "v13 in hybrid mode with its newest checkpoint" to Stage 0. One run then answers whether today's PPO beats the rules engine, and PPO's priority is set from that number.</span></span></label>
+        <label class="opt"><input type="radio" name="T2" value="B" id="T2-B"><span class="ol"><span class="ot">B. PPO first</span><span class="od">Build the scoreboard (ES.1&ndash;ES.4), then pause the evolve changes (ES.6&ndash;ES.13) and plan a PPO build phase next.</span></span></label>
+        <label class="opt"><input type="radio" name="T2" value="C" id="T2-C"><span class="ol"><span class="ot">C. Evolution first, as planned</span><span class="od">PPO stays exploration until Phase ES finishes.</span></span></label>
+      </fieldset>
+    </article>
+
+    <article class="card medium" id="T3">
+      <div class="t-head"><span class="t-id">T3</span><span class="chip medium">Medium</span><h3>"I spot-check by watching" vs evolution games you can't see</h3></div>
+      <div class="sides">
+        <div class="said"><q>How else can I spot check it for issues to flag? Don't park.</q><small>Decision D10</small></div>
+        <div class="said"><q>A live game of 1 bot vs the computer or 2 bots is for spot checking behavior and for demo purposes.</q><small>Decision D16</small></div>
+      </div>
+      <p class="why">The games worth spot-checking are the ones that decide a promotion, and those now run headless. Their replays come from SC2 4.10 and may not open in your Windows client. So a spot check would watch a fresh live game rather than the game that actually decided anything.</p>
+      <p class="now"><b>Plan now:</b> ES.1 tests whether a Linux replay opens on Windows. The evolve-demo lane builds the live viewer, and ES.11 falls back to replaying a matchup live.</p>
+      <fieldset data-q="T3"><legend>Pick one</legend>
+        <label class="opt"><input type="radio" name="T3" value="A" id="T3-A" data-rec="1"><span class="ol"><span class="ot">A. Spot-check by re-playing<span class="rec">Recommended</span></span><span class="od">After each promotion the viewer offers "watch this candidate live" at the same race and difficulty, and your flags feed the next proposals. Pairs well with T1-A, whose stage runs on Windows leave watchable replays.</span></span></label>
+        <label class="opt"><input type="radio" name="T3" value="B" id="T3-B"><span class="ol"><span class="ot">B. Make the headless replays watchable</span><span class="od">Get the 4.10 client running on Windows just for replays. It may not be possible, because Blizzard's launcher manages game versions.</span></span></label>
+        <label class="opt"><input type="radio" name="T3" value="C" id="T3-C"><span class="ol"><span class="ot">C. Keep one live slice</span><span class="od">Run the 12-game promotion panel live on Windows so it can be watched; everything else stays headless. Slows every promotion.</span></span></label>
+      </fieldset>
+    </article>
+
+    <article class="card medium" id="T4">
+      <div class="t-head"><span class="t-id">T4</span><span class="chip medium">Medium</span><h3>Jev is closed and "will be incorporated", but nothing is scheduled to do it</h3></div>
+      <div class="sides">
+        <div class="said"><q>Separate bot and mark as completed.</q><small>Decision D14</small></div>
+        <div class="said"><q>We will be incorporating Jev work into main bot functionality.</q><small>The comment now on 25 closed GitHub issues</small></div>
+      </div>
+      <p class="why">The plan closes Jev and keeps its ideas in a harvest list, but no step owns bringing them in. One route now has a home: the evolve-demo lane reuses Jev's viewer. The other (a graph that decides which moves are legal before PPO chooses) is only an option inside PPO.0.</p>
+      <p class="now"><b>Plan now:</b> <code>docs/seeds/jev-harvest.md</code> lists 20 ideas and their destinations; the viewer route is underway, the legality route is not committed.</p>
+      <fieldset data-q="T4"><legend>Pick one</legend>
+        <label class="opt"><input type="radio" name="T4" value="A" id="T4-A" data-rec="1"><span class="ol"><span class="ot">A. Give the legality route an owner<span class="rec">Recommended</span></span><span class="od">PPO.0 must evaluate the legal-moves graph as one of its candidate designs and record yes or no. The viewer route stays with evolve-demo.</span></span></label>
+        <label class="opt"><input type="radio" name="T4" value="B" id="T4-B"><span class="ol"><span class="ot">B. Add a dedicated step</span><span class="od">After PPO.0: "Port Jev's legality layer into the main bot." Bigger commitment, made before PPO's direction is known.</span></span></label>
+        <label class="opt"><input type="radio" name="T4" value="C" id="T4-C"><span class="ol"><span class="ot">C. Viewer only</span><span class="od">Incorporation means the viewer. Soften what the issue comment promises.</span></span></label>
+      </fieldset>
+    </article>
+
+    <article class="card medium" id="T6">
+      <div class="t-head"><span class="t-id">T6</span><span class="chip medium">Medium</span><h3>The champion challenge judges by head-to-head, the method the reset distrusts</h3></div>
+      <div class="sides">
+        <div class="said"><q>v7 would need to beat a few version v11,v12,v13. But yes, if it is beating them, promote it.</q><small>Your answer 4</small></div>
+        <div class="said"><q>Agree.</q><small>D1 and D4: judge against fixed opponents, not only the parent</small></div>
+      </div>
+      <p class="why">Version-against-version play is the judging that produced 13 unproven promotions, and it isn't transitive. v7 could beat v13 head-to-head and still lose more often to VeryHard. Read literally, your rule promotes on head-to-head alone.</p>
+      <p class="now"><b>Plan now:</b> ES.5 requires at least 6 of 10 against each of v11, v12 and v13, <i>and</i> no worse than v13 at Stage 0. I added the second condition.</p>
+      <fieldset data-q="T6"><legend>Pick one</legend>
+        <label class="opt"><input type="radio" name="T6" value="A" id="T6-A" data-rec="1"><span class="ol"><span class="ot">A. Both conditions, as planned<span class="rec">Recommended</span></span><span class="od">Head-to-head wins and a Stage 0 score at least as good as v13's.</span></span></label>
+        <label class="opt"><input type="radio" name="T6" value="B" id="T6-B"><span class="ol"><span class="ot">B. Head-to-head only</span><span class="od">Your literal rule. Faster, but it can crown a version that plays worse against the built-in AI.</span></span></label>
+        <label class="opt"><input type="radio" name="T6" value="C" id="T6-C"><span class="ol"><span class="ot">C. Scoreboard only</span><span class="od">The best Stage 0 version becomes champion; head-to-head results are just reported.</span></span></label>
+      </fieldset>
+    </article>
+
+    <article class="card low" id="T5">
+      <div class="t-head"><span class="t-id">T5</span><span class="chip low">Low</span><h3>You value diversity but parked the two diversity tools already built</h3></div>
+      <div class="sides">
+        <div class="said"><q>This is a way to make the bot stronger by diversifying it, but it's down the road to be sure.</q><small>Decision D13</small></div>
+        <div class="said"><q>No idea what this is for, might be useful, might not.</q><small>Decision D9, evolution lines</small></div>
+      </div>
+      <p class="why">Evolution lines (already built) are the in-loop way to diversify, and Jev's frozen players are a ready-made opponent with a different style. One is parked and the other is closed. "Later" is a consistent choice, but the cheapest diversity is already on the shelf.</p>
+      <p class="now"><b>Plan now:</b> evolution lines are parked pending your D9 decision; Jev is closed.</p>
+      <fieldset data-q="T5"><legend>Pick one</legend>
+        <label class="opt"><input type="radio" name="T5" value="A" id="T5-A" data-rec="1"><span class="ol"><span class="ot">A. Both stay parked until Stage 1 passes<span class="rec">Recommended</span></span><span class="od">Prove one evolution line climbs first, then decide D9.</span></span></label>
+        <label class="opt"><input type="radio" name="T5" value="B" id="T5-B"><span class="ol"><span class="ot">B. Add Jev v1 and v2 as panel opponents now</span><span class="od">Cheap variety, if the self-play harness can run Jev. That isn't verified yet.</span></span></label>
+        <label class="opt"><input type="radio" name="T5" value="C" id="T5-C"><span class="ol"><span class="ot">C. Run the evolution-lines soak now</span><span class="od">The EL.7 observation run as it was planned before the reset.</span></span></label>
+      </fieldset>
+    </article>
+
+    <article class="card low" id="T7">
+      <div class="t-head"><span class="t-id">T7</span><span class="chip low">Low</span><h3>"Targets will be overcome quickly" vs where the bot is today</h3></div>
+      <div class="sides">
+        <div class="said"><q>Sure, but that will be overcome quickly. You probably need to have a few stages of this.</q><small>Your answer 3</small></div>
+        <div class="said"><q>v13 vs VeryHard: 4 wins, 6 losses.</q><small>Measured 2026-10-14; Stage 1 asks for 60% and every race at 50%+</small></div>
+      </div>
+      <p class="why">This one is an expectation check, not a logic clash. Nothing shows the last 13 promotions raised strength, and Stage 1 sits well above today's result. Expect Stage 1 to take real work. If it falls quickly, the next stage is ready.</p>
+      <p class="now"><b>Plan now:</b> Stage 1 is VeryHard at 60% overall with every race at 50% or better.</p>
+      <fieldset data-q="T7"><legend>Pick one</legend>
+        <label class="opt"><input type="radio" name="T7" value="A" id="T7-A" data-rec="1"><span class="ol"><span class="ot">A. Keep Stage 1 as is<span class="rec">Recommended</span></span><span class="od">VeryHard at 60%, every race at 50% or better.</span></span></label>
+        <label class="opt"><input type="radio" name="T7" value="B" id="T7-B"><span class="ol"><span class="ot">B. Start lower</span><span class="od">Stage 1 at VeryHard 50%, closer to today, so the first win comes sooner.</span></span></label>
+        <label class="opt"><input type="radio" name="T7" value="C" id="T7-C"><span class="ol"><span class="ot">C. Start higher</span><span class="od">Skip to CheatVision as Stage 1.</span></span></label>
+      </fieldset>
+    </article>
+  </div>
+</section>
+
+<section aria-labelledby="review-h">
+  <div class="eyebrow">Part 2 &middot; plan-review defaults</div>
+  <h2 id="review-h">Three defaults plan-review says need you</h2>
+  <p class="lede">These keep the plan as written unless you choose otherwise. RD1 is a blocker: plan-wrap will flag it again if it stays.</p>
+  <div class="cards">
+    <article class="card review" id="RD1">
+      <div class="t-head"><span class="t-id">RD1</span><span class="chip ask">Blocker</span><h3>Where the scoreboard's game worker lives</h3></div>
+      <p class="why">Each scoreboard game runs in a small worker process that must load a specific bot version's code (<code>bots.v7</code>, <code>bots.v13</code>&hellip;). The plan puts that worker in <code>src/orchestrator/</code>. The project's own rules forbid that folder from importing bot versions, because it triggers an import loop. Scripts in <code>scripts/</code> already do this safely.</p>
+      <p class="now"><b>Affects:</b> step ES.2 and the scoreboard lane, which waits on this answer.</p>
+      <fieldset data-q="RD1"><legend>Pick one</legend>
+        <label class="opt"><input type="radio" name="RD1" value="A" id="RD1-A" data-rec="1"><span class="ol"><span class="ot">A. Move it to <code>scripts/scoreboard_worker.py</code><span class="rec">Recommended</span></span><span class="od">Launched by path as a subprocess, plus a test that keeps <code>src/orchestrator/</code> free of bot-version imports.</span></span></label>
+        <label class="opt"><input type="radio" name="RD1" value="B" id="RD1-B"><span class="ol"><span class="ot">B. Keep it as written</span><span class="od">Breaks the project rule; the blocker stays open.</span></span></label>
+      </fieldset>
+    </article>
+
+    <article class="card review" id="RD2">
+      <div class="t-head"><span class="t-id">RD2</span><span class="chip medium">Needs input</span><h3>Build order on the shared evolve files</h3></div>
+      <p class="why">The hardening steps (EH), the new promotion steps (ES.6&ndash;ES.10) and the evidence steps (EI) all rewrite the same two large files, <code>scripts/evolve.py</code> and <code>src/orchestrator/evolve.py</code>. Built in parallel or out of order, they collide when merged.</p>
+      <p class="now"><b>Affects:</b> the evolve lane's queue.</p>
+      <fieldset data-q="RD2"><legend>Pick one</legend>
+        <label class="opt"><input type="radio" name="RD2" value="A" id="RD2-A" data-rec="1"><span class="ol"><span class="ot">A. Hardening first, then promotion, then evidence<span class="rec">Recommended</span></span><span class="od">EH.3, EH.8, EH.6, EH.7, EH.9, then ES.6&ndash;ES.10, then EI.1&ndash;EI.4, EI.6, EI.13. One at a time.</span></span></label>
+        <label class="opt"><input type="radio" name="RD2" value="B" id="RD2-B"><span class="ol"><span class="ot">B. Leave the order open</span><span class="od">The steps declare no dependency on each other, as written.</span></span></label>
+      </fieldset>
+    </article>
+
+    <article class="card review" id="RD3">
+      <div class="t-head"><span class="t-id">RD3</span><span class="chip medium">Needs input</span><h3>Prove the new rollback actually fires</h3></div>
+      <p class="why">The plan adds a rule that rolls back a promotion when it plays worse against the built-in AI. Unless a bad candidate happens to show up during the test runs, nobody ever sees that rule work for real.</p>
+      <p class="now"><b>Affects:</b> step ES.12, the 45-minute armed smoke run.</p>
+      <fieldset data-q="RD3"><legend>Pick one</legend>
+        <label class="opt"><input type="radio" name="RD3" value="A" id="RD3-A" data-rec="1"><span class="ol"><span class="ot">A. Plant a known-weak candidate in ES.12<span class="rec">Recommended</span></span><span class="od">Use the existing <code>scripts/evolve_inject_one.py</code> tool and confirm the rollback fires.</span></span></label>
+        <label class="opt"><input type="radio" name="RD3" value="B" id="RD3-B"><span class="ol"><span class="ot">B. Only watch what happens naturally</span><span class="od">As written. Cheaper, but the rule may never be exercised.</span></span></label>
+      </fieldset>
+    </article>
+  </div>
+</section>
+
+<section aria-labelledby="reply-h">
+  <div class="reply">
+    <h2 id="reply-h">Your reply</h2>
+    <p class="status" id="pick-count">Nothing picked yet.</p>
+    <div class="row">
+      <button class="btn secondary" type="button" id="use-rec">Fill in my recommendations</button>
+      <button class="btn secondary" type="button" id="clear">Clear picks</button>
+    </div>
+    <label for="reply-text">Text to paste into the main lane window</label>
+    <textarea id="reply-text" readonly spellcheck="false">Pick an option on each card above. Your reply appears here, one line per decision, like:
+T1 -> A (split by job)</textarea>
+    <label for="reply-notes">Anything else (optional)</label>
+    <textarea id="reply-notes" style="min-height:4.5rem" placeholder="For example: also push today's commits"></textarea>
+    <div class="row">
+      <button class="btn" type="button" id="copy">Copy reply</button>
+      <span class="status" id="copy-status" role="status"></span>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="later-h">
+  <div class="eyebrow">Coming next</div>
+  <h2 id="later-h">The second thing: evolve's commit proposal</h2>
+  <p class="lede">Earlier sessions left uncommitted edits in the evolve files. The evolve lane is listing them now and will propose how to commit them. When its proposal arrives, main writes it up as a second document like this one, and you approve or change it before anything is committed.</p>
+</section>
+
+<section aria-labelledby="register-h">
+  <div class="eyebrow">Reference</div>
+  <h2 id="register-h">Every decision so far</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">ID</th><th scope="col">Decision</th><th scope="col">By</th><th scope="col">Status</th><th scope="col">Where</th><th scope="col">Tension</th></tr></thead>
+      <tbody>
+        <tr class="group-row"><td colspan="6">Your theme register (master plan &sect;16)</td></tr>
+        <tr><td class="id">D1</td><td>Build a fixed scoreboard against the built-in AI</td><td><span class="chip you">You</span></td><td>Agreed</td><td class="where">ES.2&ndash;ES.4</td><td class="t"><a href="#T1">T1</a></td></tr>
+        <tr><td class="id">D2</td><td>Fix SC2 compatibility; land the working tree</td><td><span class="chip you">You</span></td><td>Agreed</td><td class="where">ES.2, BL.1</td><td class="t"></td></tr>
+        <tr><td class="id">D3</td><td>Promote the exact code that was tested</td><td><span class="chip you">You</span></td><td>Confirmed</td><td class="where">ES.7</td><td class="t"></td></tr>
+        <tr><td class="id">D4</td><td>Promotion must also hold up against the built-in AI</td><td><span class="chip you">You</span></td><td>Confirmed</td><td class="where">ES.8, ES.9</td><td class="t"><a href="#T6">T6</a></td></tr>
+        <tr><td class="id">D5</td><td>Revalidate the tactical bugs on v13</td><td><span class="chip you">You</span></td><td>Agreed</td><td class="where">ES.11, T.*</td><td class="t"></td></tr>
+        <tr><td class="id">D6</td><td>Unattended-run safety</td><td><span class="chip you">You</span></td><td>Agreed</td><td class="where">EH.3, EH.6&ndash;EH.10</td><td class="t"></td></tr>
+        <tr><td class="id">D7</td><td>Dashboard Stop button work<span class="q">"Drop if there is duplicate functionality."</span></td><td><span class="chip you">You</span></td><td>Dropped</td><td class="where">EH.4, EH.5, EV.6 removed</td><td class="t"></td></tr>
+        <tr><td class="id">D8</td><td>Keep a reduced evidence layer</td><td><span class="chip you">You</span></td><td>Agreed</td><td class="where">EI.1&ndash;EI.4, EI.6, EI.13</td><td class="t"></td></tr>
+        <tr><td class="id">D9</td><td>Evolution lines</td><td><span class="chip you">You</span></td><td><span class="chip ask">Undecided</span> parked</td><td class="where">EL.7, ER.5, ER.7</td><td class="t"><a href="#T5">T5</a></td></tr>
+        <tr><td class="id">D10</td><td>Jev-style viewer, limited time</td><td><span class="chip you">You</span></td><td>Lane evolve-demo</td><td class="where">VW.0</td><td class="t"><a href="#T3">T3</a></td></tr>
+        <tr><td class="id">D11</td><td>Explore PPO for the strength goal</td><td><span class="chip you">You</span></td><td>Lane direction; survey done</td><td class="where">PPO.0</td><td class="t"><a href="#T2">T2</a></td></tr>
+        <tr><td class="id">D12</td><td>Park Hydra experts and replay pretraining</td><td><span class="chip you">You</span></td><td>Parked</td><td class="where">O.0&ndash;O.3, P.1</td><td class="t"></td></tr>
+        <tr><td class="id">D13</td><td>Diversification: park, don't drop</td><td><span class="chip you">You</span></td><td>Parked</td><td class="where">G, H, I, J, K, L, M.1, Q, S</td><td class="t"><a href="#T5">T5</a></td></tr>
+        <tr><td class="id">D14</td><td>Jev is a separate bot, completed</td><td><span class="chip you">You</span></td><td>Closed; 25 issues closed</td><td class="where">&sect;8, jev-harvest seed</td><td class="t"><a href="#T4">T4</a></td></tr>
+        <tr><td class="id">D15</td><td>"SC2 version of the judge" answered by the scoreboard</td><td><span class="chip you">You</span></td><td>Closed</td><td class="where">ES.3</td><td class="t"></td></tr>
+        <tr><td class="id">D16</td><td>Evolution headless; live games only for spot checks and demos</td><td><span class="chip you">You</span></td><td>Agreed</td><td class="where">ES.1, ES.6</td><td class="t"><a href="#T1">T1</a><a href="#T3">T3</a></td></tr>
+        <tr class="group-row"><td colspan="6">Your other answers</td></tr>
+        <tr><td class="id">A3</td><td>Staged targets, VeryHard up to CheatInsane</td><td><span class="chip you">You</span></td><td>Agreed</td><td class="where">&sect;17.5</td><td class="t"><a href="#T7">T7</a></td></tr>
+        <tr><td class="id">A4</td><td>An older version replaces v13 only by beating v11, v12 and v13</td><td><span class="chip you">You</span></td><td>Agreed</td><td class="where">ES.5</td><td class="t"><a href="#T6">T6</a></td></tr>
+        <tr><td class="id">PA</td><td>Maps Simple64/96/128; lean Stage 0; posterior panel gate</td><td><span class="chip you">You</span></td><td>Agreed</td><td class="where">ES.2, ES.4, ES.9</td><td class="t"><a href="#T1">T1</a></td></tr>
+        <tr><td class="id">L1</td><td>Lanes: main, direction, evolve, repair, evolve-demo; scoreboard waits</td><td><span class="chip you">You</span></td><td>Open (2026-11-16)</td><td class="where">docs/lanes/README.md</td><td class="t"></td></tr>
+        <tr class="group-row"><td colspan="6">My other defaults (master plan &sect;18), standing unless you object</td></tr>
+        <tr><td class="id">RD4&ndash;RD19</td><td>Stage pass rules, sample sizes, calibration, panel size, flag defaults, launcher behavior and similar. Full list in the redline proposal.</td><td><span class="chip me">Me</span></td><td>Stands</td><td class="where">docs/plan-redline/alpha4gate-proposal.html</td><td class="t"></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+</main>
+
+<script>
+(function () {
+  var KEY = "a4g-decisions-owed";
+  var labels = {
+    T1: {A: "split by job", B: "all headless", C: "all on current Windows build"},
+    T2: {A: "measure first, add v13 hybrid to Stage 0", B: "PPO first after the scoreboard", C: "evolution first, as planned"},
+    T3: {A: "spot-check by re-playing live", B: "make headless replays watchable", C: "keep the panel live on Windows"},
+    T4: {A: "PPO.0 owns the legality route", B: "add a dedicated port step", C: "viewer only"},
+    T5: {A: "stay parked until Stage 1", B: "add Jev as panel opponents now", C: "run the evolution-lines soak now"},
+    T6: {A: "both conditions", B: "head-to-head only", C: "scoreboard only"},
+    T7: {A: "keep Stage 1 as is", B: "start lower (50%)", C: "start higher (CheatVision)"},
+    RD1: {A: "move worker to scripts/", B: "keep as written"},
+    RD2: {A: "EH, then ES.6-ES.10, then EI", B: "leave order open"},
+    RD3: {A: "plant a known-weak candidate in ES.12", B: "watch naturally only"}
+  };
+  var order = ["T1", "T2", "T3", "T4", "T5", "T6", "T7", "RD1", "RD2", "RD3"];
+  var replyEl = document.getElementById("reply-text");
+  var notesEl = document.getElementById("reply-notes");
+  var countEl = document.getElementById("pick-count");
+  var copyStatus = document.getElementById("copy-status");
+  var placeholder = replyEl.value;
+  function load() { try { return JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { return {}; } }
+  function save(p) { try { localStorage.setItem(KEY, JSON.stringify(p)); } catch (e) {} }
+  function render() {
+    var picks = {}, lines = [];
+    order.forEach(function (q) {
+      var el = document.querySelector('input[name="' + q + '"]:checked');
+      if (el) { picks[q] = el.value; lines.push(q + " -> " + el.value + " (" + labels[q][el.value] + ")"); }
+    });
+    countEl.textContent = lines.length === 0 ? "Nothing picked yet." : lines.length + " of 10 decided.";
+    var notes = notesEl.value.trim();
+    if (notes) lines.push(notes);
+    replyEl.value = lines.length ? lines.join("\n") : placeholder;
+    save({picks: picks, notes: notesEl.value});
+  }
+  var saved = load();
+  if (saved.picks) Object.keys(saved.picks).forEach(function (q) { var el = document.getElementById(q + "-" + saved.picks[q]); if (el) el.checked = true; });
+  if (typeof saved.notes === "string") notesEl.value = saved.notes;
+  document.querySelectorAll("fieldset[data-q] input").forEach(function (el) { el.addEventListener("change", render); });
+  notesEl.addEventListener("input", render);
+  document.getElementById("use-rec").addEventListener("click", function () { document.querySelectorAll('input[data-rec="1"]').forEach(function (el) { el.checked = true; }); render(); });
+  document.getElementById("clear").addEventListener("click", function () { document.querySelectorAll("fieldset[data-q] input").forEach(function (el) { el.checked = false; }); render(); });
+  document.getElementById("copy").addEventListener("click", function () {
+    var text = replyEl.value;
+    if (text === placeholder) { copyStatus.textContent = "Pick at least one option first."; return; }
+    function fallback() { replyEl.focus(); replyEl.select(); copyStatus.textContent = "Selected. Press Ctrl+C to copy."; }
+    try { navigator.clipboard.writeText(text).then(function () { copyStatus.textContent = "Copied. Paste it into the main lane window."; }, fallback); } catch (e) { fallback(); }
+  });
+  render();
+})();
+</script>
+</body>
+</html>
