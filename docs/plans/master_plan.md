@@ -460,7 +460,7 @@ powershell -File scripts/launch-strength-viewer.ps1 -P1 v13 -P2 v0 -Map Simple64
 
 ### Step EH.8: Path-scope the `[evo-auto]` commit
 
-- **Status:** PENDING
+- **Status:** DONE (2026-11-16)
 - **Decision (2026-11-11):** Kept by D6 (2026-11-11): run safety before unattended Phase ES runs.
 - **Type:** code
 - **Issue:** #313
