@@ -2116,7 +2116,7 @@ Concurrent workers collide on logs/selfplay_tmp/game{i}_p*.json, but result-out 
 
 ### Step BL.1: Decide and execute branch landing when authorized
 
-- **Status:** IN PROGRESS — authorized 2026-11-17 (operator accepted central's leans on [the landing plan](../plan-redline/bl1-landing-plan-2026-11-17.html)); landing branch `land/phase-ev-2026-11-17`, lane bl1-land
+- **Status:** DONE 2026-11-17 — landed by PR #385 as merge commit `cd96886` (parents `2ee3e79`, `816b0b4`), annotated tag `master-plan/phase-ev/landed`; linux-tests and docker-build green on the PR and on the push to master (first green linux-tests on master since July); #303 and #304 closed as superseded. Executed by lane bl1-land under [the landing plan](../plan-redline/bl1-landing-plan-2026-11-17.html).
 - **Decision (2026-11-11):** D2: land the working tree before any `EVO_AUTO` run (ES-A). The EV.4 dependency was removed with the viewer reframe (D10).
 - **Decision (2026-11-17):** land now, by pull request, as a merge commit (no squash, no rebase); README hunk 2 keeps master's corrected advisor caption with the `docs/` image path; annotated tag `master-plan/phase-ev/landed` on the merge commit; `master` is the mainline afterwards and `master-plan/phase-ev` is kept, frozen, until its gates close; the scrubbed home paths stay in history (no rewrite); close #303 and #304 as superseded; remote-branch cleanup later, after gates close.
 - **Type:** operator
