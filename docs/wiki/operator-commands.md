@@ -82,6 +82,9 @@ PS> uv run --extra viewer python scripts/evolve.py --generations 0 --hours 8 --v
 PS> .\scripts\launch-evolve.ps1 -Hours 8
 ```
 
+`-Generations` defaults to `0` (no generation cap), so the run lasts its full `-Hours`
+budget. Pass `-Generations N` to stop after N generations instead.
+
 Starts `scripts/evolve.py --viewer` in its own console window, then brings up
 the dashboard on the Evolution tab. This is the command behind the
 dev-observatory **run-evolution** button. See
@@ -243,10 +246,11 @@ PS> .\scripts\launch-evolve.ps1 -Hours 8          # evolve run (--viewer) + dash
   `benchmark_jev.py`).
 - **`scripts/launch-evolve.ps1`** — the command behind the dev-observatory
   **run-evolution** button. Starts `uv run --extra viewer python
-  scripts/evolve.py --hours <N> --viewer` in its own console window, then
-  delegates to `launch-a4g.ps1 -Tab evolution`. If a `python …evolve.py`
-  process is already running it skips the spawn and just opens the dashboard,
-  so two runs never race on `data/evolve_*.json`. `-Hours` defaults to 4.
+  scripts/evolve.py --hours <N> --generations <G> --viewer` in its own console
+  window, then delegates to `launch-a4g.ps1 -Tab evolution`. If a
+  `python …evolve.py` process is already running it skips the spawn and just
+  opens the dashboard; `scripts/evolve.py` itself also refuses to start over a
+  live run (EH.7). `-Hours` defaults to 4 and `-Generations` to 0 (no cap).
   **Read [§Evolve with the themed viewer](#evolve-with-the-themed-viewer)
   before using it** — it auto-commits `[evo-auto]` promotions to master, and
   its stop gesture is not the one you'd guess.

@@ -182,11 +182,16 @@ before extinction can fire at all — which loops back to defect 2.
 checked out. Worse: a second run starting mid-soak calls `_clear_fresh_run_state`
 (`scripts/evolve.py:1888-1899`), which **truncates the first run's `evolve_results.jsonl`**.
 
-This is enforced by **convention, not code**. There is no lock file, no pid file, and
-`scripts/evolve.py` never reads `data/evolve_run_state.json` — every reference to it is a write.
-The only mechanical guard is a Windows CIM process probe inside `scripts/launch-evolve.ps1:54-75`,
-and it is launcher-scoped, Windows-only, blind to a WSL run, and explicitly fails open. A direct
-`python scripts/evolve.py` bypasses it entirely.
+Since EH.7 this is **enforced in code**. At startup `scripts/evolve.py` reads the previous
+`data/evolve_run_state.json` before it writes anything. If that record says `running` and its
+pid is confirmed alive on the same platform (and not recycled), the new run refuses with a
+non-zero exit that names the pid, so the first run's `evolve_results.jsonl` is never truncated.
+A `running` record from the other platform (a WSL soak seen from Windows, or the reverse) also
+refuses, because its pid cannot be probed from here. Stale records (no pid, a dead or recycled
+pid) are reaped with an INFO line and the run proceeds. `--force` overrides a refusal; use it only
+after you have confirmed no other run is alive. The lock is not atomic: two runs started in the
+same instant can both pass. The Windows CIM probe in `scripts/launch-evolve.ps1` is still there
+as an extra launcher-side check.
 
 **The branch matters.** You are on `master-plan/phase-ev`. EV.4 item (e) and EV.5 run the
 launcher un-flagged, so they can promote a version and auto-commit `[evo-auto]` to that branch.
