@@ -440,7 +440,7 @@ powershell -File scripts/launch-strength-viewer.ps1 -P1 v13 -P2 v0 -Map Simple64
 
 ### Step EH.7: Single-run lock + stale run-state reconciliation
 
-- **Status:** PENDING
+- **Status:** DONE (2026-11-17)
 - **Decision (2026-11-11):** Kept by D6 (2026-11-11): run safety before unattended Phase ES runs. D16 moves evolve into WSL: liveness must be judged in the platform that wrote the record. Stamp the platform with the pid and handle a record from the other platform explicitly (tested both ways); a Windows `psutil` probe of a Linux pid is meaningless.
 - **Type:** code
 - **Issue:** #312

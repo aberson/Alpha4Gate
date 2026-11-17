@@ -6725,3 +6725,466 @@ def test_main_require_baselines_cli_exits_before_any_game(
     err = capsys.readouterr().err
     assert "scripts/baseline.py add <name> <version>" in err
     assert not (tmp_path / "state.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Phase EH.7: single-run lock + stale run-state reconciliation
+# ---------------------------------------------------------------------------
+
+_EH7_RESULTS_EVIDENCE = b'{"phase": "fitness", "imp_title": "live soak evidence"}\r\n'
+
+
+def _eh7_stub_preflight(cli: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli, "check_sc2_installed", lambda: True)
+    monkeypatch.setattr(cli, "check_git_clean", lambda **k: (True, []))
+    monkeypatch.setattr(cli, "check_no_phantom_promote", lambda **k: (True, "v0", "v0"))
+
+
+def _eh7_seed(tmp_path: Path, record: dict[str, Any]) -> tuple[argparse.Namespace, bytes]:
+    """Seed a prior run-state record + a non-empty results file (the evidence
+    a second run must not truncate). Returns (args, state-file bytes)."""
+    args = _build_args(tmp_path, pool_size=1)
+    args.results_path.write_bytes(_EH7_RESULTS_EVIDENCE)
+    state_bytes = json.dumps(record).encode("utf-8")
+    args.state_path.write_bytes(state_bytes)
+    return args, state_bytes
+
+
+def _eh7_live_record(cli: ModuleType, **overrides: Any) -> dict[str, Any]:
+    import os
+    import time
+
+    record: dict[str, Any] = {
+        "status": "running",
+        "parent_start": "v0",
+        "parent_current": "v0",
+        "started_at": "2026-11-16T00:00:00+00:00",
+        "run_id": "live1234",
+        "pid": os.getpid(),
+        # After this (pytest) process was created, so the pid is NOT recycled.
+        "pid_started_at": time.time(),
+        "platform": cli._current_platform(),
+    }
+    record.update(overrides)
+    return record
+
+
+def _eh7_run_refusing(cli: ModuleType, args: argparse.Namespace) -> int:
+    """run_loop with every seam armed to fail: a refusal must reach none."""
+    return int(
+        cli.run_loop(
+            args,
+            generate_pool_fn=_must_not_run("generate_pool"),
+            run_fitness_fn=_must_not_run("run_fitness"),
+            stack_apply_fn=_must_not_run("stack_apply"),
+            run_regression_fn=_must_not_run("run_regression"),
+            current_version_fn=lambda: "v0",
+        )
+    )
+
+
+def _eh7_run_to_completion(cli: ModuleType, args: argparse.Namespace) -> int:
+    """A one-imp run whose imp fails fitness; the loop exits pool-exhausted."""
+    pool = _make_pool(1)
+
+    def gen(*a: Any, **k: Any) -> list[Improvement]:
+        return [] if k.get("skip_mirror") else pool
+
+    return int(
+        cli.run_loop(
+            args,
+            generate_pool_fn=gen,
+            run_fitness_fn=_ScriptedFitness(["fail"]),
+            stack_apply_fn=_must_not_run("stack_apply"),
+            run_regression_fn=_must_not_run("run_regression"),
+            current_version_fn=lambda: "v0",
+        )
+    )
+
+
+def _eh7_dead_pid() -> int:
+    """The pid of a child that has already exited on its own (nothing is
+    signalled). Skips in the vanishingly rare case the OS reused it at once."""
+    import psutil
+
+    with subprocess.Popen([sys.executable, "-c", "pass"]) as child:
+        child.wait()
+        pid = child.pid
+    if psutil.pid_exists(pid):
+        pytest.skip(f"pid {pid} was reused immediately; cannot stage a dead pid")
+    return pid
+
+
+def test_eh7_live_own_pid_refuses_and_leaves_evidence_untouched(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A `running` record naming THIS (live) process: the second run_loop
+    refuses non-zero, names the pid, truncates nothing, writes nothing, and
+    the probed process (this pytest process) is still alive afterwards."""
+    import os
+
+    import psutil
+
+    _eh7_stub_preflight(cli, monkeypatch)
+    args, state_bytes = _eh7_seed(tmp_path, _eh7_live_record(cli))
+
+    rc = _eh7_run_refusing(cli, args)
+
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert f"pid={os.getpid()}" in err
+    assert "--force" in err
+    assert args.results_path.read_bytes() == _EH7_RESULTS_EVIDENCE
+    assert args.state_path.read_bytes() == state_bytes
+    assert not args.pool_path.exists()
+    assert not args.current_round_path.exists()
+    # The probe never signalled the target: the probing process lives on.
+    assert psutil.pid_exists(os.getpid())
+    assert psutil.Process(os.getpid()).is_running()
+
+
+def test_eh7_force_overrides_live_refusal(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--force on the exact refusal case above: the run proceeds (rc 0) and
+    replaces the record with its own stamp."""
+    import os
+
+    _eh7_stub_preflight(cli, monkeypatch)
+    args, _ = _eh7_seed(tmp_path, _eh7_live_record(cli))
+    args.force = True
+
+    rc = _eh7_run_to_completion(cli, args)
+
+    assert rc == 0
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["status"] == "completed"
+    assert state["run_id"] != "live1234"
+    assert state["pid"] == os.getpid()
+
+
+def test_eh7_dead_pid_record_is_reaped_and_run_proceeds(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import os
+
+    _eh7_stub_preflight(cli, monkeypatch)
+    dead = _eh7_dead_pid()
+    args, _ = _eh7_seed(tmp_path, _eh7_live_record(cli, pid=dead, run_id="dead5678"))
+    caplog.set_level(logging.INFO, logger="evolve")
+
+    rc = _eh7_run_to_completion(cli, args)
+
+    assert rc == 0
+    reaped = [r.getMessage() for r in caplog.records if "reaped stale" in r.getMessage()]
+    assert len(reaped) == 1
+    assert "run_id=dead5678" in reaped[0]
+    assert f"pid {dead} is not running" in reaped[0]
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["run_id"] != "dead5678"
+    assert state["pid"] == os.getpid()
+
+
+@pytest.mark.parametrize(
+    "pid_field",
+    [pytest.param({}, id="no-pid-key"), pytest.param({"pid": "not-an-int"}, id="non-int-pid")],
+)
+def test_eh7_pre_eh7_record_shape_is_reaped_not_refused(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    pid_field: dict[str, Any],
+) -> None:
+    """The real pre-EH.7 record (exactly what write_run_state produced before
+    this step: status running, a past started_at, NO pid key) must not lock
+    anyone out: liveness cannot be established, so it is reaped (INFO line
+    naming run_id + started_at) and the run proceeds with rc 0."""
+    _eh7_stub_preflight(cli, monkeypatch)
+    legacy_path = tmp_path / "legacy_state.json"
+    cli.write_run_state(
+        legacy_path,
+        status="running",
+        parent_start="v0",
+        parent_current="v0",
+        started_at="2026-10-01T03:04:05+00:00",
+        wall_budget_hours=4.0,
+        generations_completed=0,
+        generations_promoted=0,
+        evictions=0,
+        resurrections_remaining=0,
+        pool_remaining_count=0,
+        last_result=None,
+        run_id="legacy99",
+    )
+    record = json.loads(legacy_path.read_text(encoding="utf-8"))
+    # Strip the EH.7 stamp keys so the shape is byte-for-byte pre-EH.7.
+    for key in ("pid", "pid_started_at", "platform"):
+        record.pop(key)
+    record.update(pid_field)
+    args, _ = _eh7_seed(tmp_path, record)
+    caplog.set_level(logging.INFO, logger="evolve")
+
+    rc = _eh7_run_to_completion(cli, args)
+
+    assert rc == 0
+    reaped = [r for r in caplog.records if "reaped stale" in r.getMessage()]
+    assert len(reaped) == 1
+    assert reaped[0].levelno == logging.INFO
+    assert "run_id=legacy99" in reaped[0].getMessage()
+    assert "started_at=2026-10-01T03:04:05+00:00" in reaped[0].getMessage()
+
+
+def test_eh7_recycled_pid_is_reaped(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A live pid whose create_time() is NEWER than the stamped start: the
+    pid was recycled by an unrelated process, so the record is stale."""
+    import os
+
+    import psutil
+
+    _eh7_stub_preflight(cli, monkeypatch)
+    stamp = psutil.Process(os.getpid()).create_time() - 3600.0
+    args, _ = _eh7_seed(tmp_path, _eh7_live_record(cli, pid_started_at=stamp, run_id="recyc001"))
+    caplog.set_level(logging.INFO, logger="evolve")
+
+    rc = _eh7_run_to_completion(cli, args)
+
+    assert rc == 0
+    reaped = [r.getMessage() for r in caplog.records if "reaped stale" in r.getMessage()]
+    assert len(reaped) == 1
+    assert "run_id=recyc001" in reaped[0]
+    assert "recycled" in reaped[0]
+
+
+def test_eh7_probe_raising_is_reaped(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Refusal requires a POSITIVELY confirmed live pid: a probe that raises
+    (AccessDenied and friends) cannot confirm one, so the record is reaped."""
+    import psutil
+
+    _eh7_stub_preflight(cli, monkeypatch)
+
+    def _raise(pid: int) -> bool:
+        raise psutil.AccessDenied(pid)
+
+    monkeypatch.setattr(cli.psutil, "pid_exists", _raise)
+    args, _ = _eh7_seed(tmp_path, _eh7_live_record(cli, run_id="probe001"))
+    caplog.set_level(logging.INFO, logger="evolve")
+
+    verdict = cli._assess_prior_run_state(args.state_path)
+    assert verdict.action == "reap"
+    assert "raised" in verdict.reason
+
+
+def test_eh7_fresh_checkout_without_state_file_is_unaffected(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import os
+
+    _eh7_stub_preflight(cli, monkeypatch)
+    args = _build_args(tmp_path, pool_size=1)
+    assert not args.state_path.exists()
+    caplog.set_level(logging.INFO, logger="evolve")
+
+    rc = _eh7_run_to_completion(cli, args)
+
+    assert rc == 0
+    assert not [r for r in caplog.records if "reaped stale" in r.getMessage()]
+    assert not [r for r in caplog.records if "refusing to start" in r.getMessage()]
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["status"] == "completed"
+    # The run stamps the lock fields for the NEXT run's startup check.
+    assert state["pid"] == os.getpid()
+    assert state["platform"] == cli._current_platform()
+    assert isinstance(state["pid_started_at"], float)
+
+
+def test_eh7_terminal_record_with_live_pid_proceeds_without_reap(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Only a `running` record locks: a completed run's record (whose pid may
+    well still be alive, e.g. a dashboard) is not a lock and is not reaped."""
+    _eh7_stub_preflight(cli, monkeypatch)
+    args, _ = _eh7_seed(tmp_path, _eh7_live_record(cli, status="completed"))
+    caplog.set_level(logging.INFO, logger="evolve")
+
+    rc = _eh7_run_to_completion(cli, args)
+
+    assert rc == 0
+    assert not [r for r in caplog.records if "reaped stale" in r.getMessage()]
+
+
+@pytest.mark.parametrize(
+    ("stamped", "here"),
+    [
+        pytest.param("win32", "linux", id="windows-record-read-on-linux"),
+        pytest.param("linux", "win32", id="linux-record-read-on-win32"),
+    ],
+)
+def test_eh7_cross_platform_record_refuses_naming_platform_and_force(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    stamped: str,
+    here: str,
+) -> None:
+    """D16: a well-formed `running` record stamped by the OTHER platform
+    cannot be probed from here (a psutil lookup of a foreign pid is
+    meaningless). It REFUSES rather than reaps, so a Windows run can never
+    truncate a live WSL soak (and vice versa); --force is the way past. The
+    probe must not even be consulted."""
+    _eh7_stub_preflight(cli, monkeypatch)
+    monkeypatch.setattr(cli, "_current_platform", lambda: here)
+    monkeypatch.setattr(cli.psutil, "pid_exists", _must_not_run("psutil.pid_exists"))
+    # A pid that means nothing on this platform; it is never probed.
+    args, state_bytes = _eh7_seed(tmp_path, _eh7_live_record(cli, pid=424242, platform=stamped))
+
+    rc = _eh7_run_refusing(cli, args)
+
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "pid=424242" in err
+    assert f"platform={stamped}" in err
+    assert repr(here) in err
+    assert "--force" in err
+    assert args.results_path.read_bytes() == _EH7_RESULTS_EVIDENCE
+    assert args.state_path.read_bytes() == state_bytes
+
+
+def test_eh7_cross_platform_record_force_proceeds(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _eh7_stub_preflight(cli, monkeypatch)
+    monkeypatch.setattr(cli, "_current_platform", lambda: "linux")
+    args, _ = _eh7_seed(tmp_path, _eh7_live_record(cli, pid=424242, platform="win32"))
+    args.force = True
+
+    rc = _eh7_run_to_completion(cli, args)
+
+    assert rc == 0
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["platform"] == "linux"
+
+
+def test_eh7_write_run_state_defaults_lock_fields_to_none(cli: ModuleType, tmp_path: Path) -> None:
+    state_path = tmp_path / "evolve_run_state.json"
+    cli.write_run_state(state_path, **_state_kwargs())
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    assert payload["pid"] is None
+    assert payload["pid_started_at"] is None
+    assert payload["platform"] is None
+
+
+def test_eh7_main_threads_force_flag_from_argparse(cli: ModuleType) -> None:
+    parser = cli.build_parser()
+    assert parser.parse_args([]).force is False
+    assert parser.parse_args(["--force"]).force is True
+
+
+def test_eh7_main_refuses_on_live_record(
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Production entry point: main(argv) reaches the lock before any seam."""
+    import os
+
+    import orchestrator.evolve as evolve_mod
+
+    _eh7_stub_preflight(cli, monkeypatch)
+    for seam in ("generate_pool", "run_fitness_eval", "run_regression_eval"):
+        monkeypatch.setattr(evolve_mod, seam, _must_not_run(seam))
+    state_path = tmp_path / "state.json"
+    results_path = tmp_path / "results.jsonl"
+    state_path.write_text(json.dumps(_eh7_live_record(cli)), encoding="utf-8")
+    results_path.write_bytes(_EH7_RESULTS_EVIDENCE)
+    argv = [
+        "--generations",
+        "1",
+        "--no-commit",
+        "--results-path",
+        str(results_path),
+        "--pool-path",
+        str(tmp_path / "pool.json"),
+        "--state-path",
+        str(state_path),
+        "--current-round-path",
+        str(tmp_path / "round.json"),
+        "--crash-log-path",
+        str(tmp_path / "crashes.jsonl"),
+        "--run-log",
+        str(tmp_path / "run.md"),
+    ]
+    assert cli.main(argv) != 0
+    assert f"pid={os.getpid()}" in capsys.readouterr().err
+    assert results_path.read_bytes() == _EH7_RESULTS_EVIDENCE
+
+
+def test_eh7_lock_source_never_signals_and_imports_psutil_eagerly(
+    cli: ModuleType,
+) -> None:
+    """Source-level pin (mirrors the cross-file pins above): the lock code
+    probes liveness with psutil ONLY. A signal-0 probe would, on Windows,
+    TerminateProcess the target. psutil must be a plain module-scope import
+    (no try/except ImportError degrade path: a lock that fails open is not a
+    lock)."""
+    import ast
+    import inspect
+
+    import psutil
+
+    lock_fns = (
+        cli._current_platform,
+        cli._record_start_epoch,
+        cli._assess_prior_run_state,
+        cli._enforce_single_run_lock,
+    )
+    for fn in lock_fns:
+        src = inspect.getsource(fn)
+        assert "os.kill" not in src, f"{fn.__name__} uses os.kill"
+        assert not re.search(r"\bsignal\.", src), f"{fn.__name__} uses the signal module"
+    assert "psutil.pid_exists" in inspect.getsource(cli._assess_prior_run_state)
+    assert "create_time()" in inspect.getsource(cli._assess_prior_run_state)
+    assert cli.psutil is psutil
+
+    tree = ast.parse((_REPO_ROOT / "scripts" / "evolve.py").read_text(encoding="utf-8"))
+    top_level_psutil = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Import) and any(a.name == "psutil" for a in node.names)
+    ]
+    assert len(top_level_psutil) == 1, "psutil must be imported once at module scope"
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Try):
+            for handler in node.handlers:
+                for inner in ast.walk(handler):
+                    if isinstance(inner, ast.Import):
+                        assert all(a.name != "psutil" for a in inner.names)
+            for inner in node.body:
+                if isinstance(inner, ast.Import):
+                    assert all(a.name != "psutil" for a in inner.names), (
+                        "psutil import wrapped in try: degrade path forbidden"
+                    )

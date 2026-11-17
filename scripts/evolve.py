@@ -64,6 +64,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+import psutil  # type: ignore[import-untyped]
+
 if TYPE_CHECKING:
     from orchestrator.baselines import Baseline
     from orchestrator.contracts import SelfPlayRecord
@@ -467,6 +469,20 @@ def build_parser() -> argparse.ArgumentParser:
             "are registered — the floor needs the gauntlet to have teeth. "
             "Fail-open: a gauntlet crash never blocks an "
             "already-committed promotion."
+        ),
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Phase EH.7 single-run lock override. evolve refuses to start "
+            "while --state-path records a `running` run whose pid is "
+            "positively confirmed alive (same platform, pid not recycled), or "
+            "a `running` run stamped by a DIFFERENT platform (a Windows run "
+            "cannot probe a WSL/Linux pid, and vice versa). Pass --force ONLY "
+            "for the genuine recovery case where you have confirmed that run "
+            "is gone: a fresh run truncates evolve_results.jsonl and rewrites "
+            "the run state."
         ),
     )
     parser.add_argument(
@@ -1451,6 +1467,9 @@ def write_run_state(
     cli_argv: list[str] | None = None,
     gen_durations_seconds: list[float] | None = None,
     generations_target: int | None = None,
+    pid: int | None = None,
+    pid_started_at: float | None = None,
+    platform: str | None = None,
 ) -> None:
     """Write ``evolve_run_state.json`` — dashboard run state.
 
@@ -1467,6 +1486,12 @@ def write_run_state(
     generation cap. All default to ``None`` so legacy callers keep
     byte-identical output (the keys are still emitted with ``None`` /
     ``[]`` values for shape stability).
+
+    ``pid`` / ``pid_started_at`` / ``platform`` are the Phase EH.7
+    single-run lock stamp: the writing process's pid, the wall-clock epoch
+    (``time.time()``) at which its run started, and the platform
+    (``sys.platform``) that wrote the record. :func:`_assess_prior_run_state`
+    reads them at the next run's startup. Same null-default contract.
     """
     payload: dict[str, Any] = {
         "status": status,
@@ -1490,8 +1515,212 @@ def write_run_state(
             else None
         ),
         "generations_target": generations_target,
+        "pid": pid,
+        "pid_started_at": pid_started_at,
+        "platform": platform,
     }
     _atomic_write_json(state_path, payload)
+
+
+# ---------------------------------------------------------------------------
+# Phase EH.7: single-run lock + stale run-state reconciliation
+# ---------------------------------------------------------------------------
+#
+# "One evolve run at a time, machine-wide" used to be convention only. A
+# second run starting mid-soak truncated the first run's evolve_results.jsonl
+# (``_clear_fresh_run_state``) and both runs flipped bots/current/current.txt.
+# The lock lives in the EXISTING ``evolve_run_state.json``: every run-state
+# write stamps ``pid`` / ``pid_started_at`` / ``platform``, and ``run_loop``
+# reads the previous record STRICTLY BEFORE its own run-start write (a
+# whole-file atomic replace that would otherwise clobber the very record being
+# checked) and before ``_clear_fresh_run_state``.
+#
+# Liveness is ``psutil.pid_exists`` + ``psutil.Process(pid).create_time()``
+# ONLY. Never a signal-0 probe: on Windows that API maps to TerminateProcess
+# and kills the target. psutil is imported unconditionally at module scope:
+# a lock that silently degrades when its probe is missing is not a lock.
+#
+# Policy (the one rule every branch follows): refusal needs POSITIVE evidence
+# that another run may be live. A ``running`` record whose liveness cannot be
+# established on this platform (pid absent, which is the only shape on every
+# pre-EH.7 machine; pid not an integer; no platform stamp; no usable start
+# stamp; the probe raising; the pid dead; or the pid recycled) is stale: it
+# is reaped (INFO line naming its run_id and started_at) and the run proceeds.
+#
+# The ONE exception is a well-formed EH.7 record stamped by a DIFFERENT
+# platform (D16: evolve runs headless in WSL, the dashboard and spot checks on
+# Windows, and both can share the checkout's data/ directory). Such a record
+# is not "unestablishable because malformed": it carries a valid pid and a
+# platform stamp that positively say a run started on the other side, and
+# this process simply has no meaningful probe for it (a Windows psutil lookup
+# of a Linux pid answers a question about an unrelated Windows process).
+# Reaping it would let a Windows run truncate a live WSL soak's evidence, the
+# exact failure this lock exists to prevent, so it REFUSES, naming the other
+# platform and ``--force``. If that run really died, the operator confirms it
+# on its own platform and re-runs with ``--force``.
+
+# create_time() vs the stamp tolerance (seconds). The stamp is taken at run
+# start, strictly after the process was created, so a create_time newer than
+# the stamp means the pid was recycled. Linux create_time is boot_time (whole
+# seconds) + jiffies, and the ``started_at`` fallback is second-resolution, so
+# allow 2s of slack before calling a pid recycled.
+_PID_CREATE_TIME_TOLERANCE_S = 2.0
+
+
+def _current_platform() -> str:
+    """The platform stamped into, and compared against, the run-state lock.
+
+    One seam so tests can flip it (Windows-stamped record read on linux, and
+    the reverse) without touching ``sys.platform`` for the whole process.
+    """
+    return sys.platform
+
+
+@dataclass(frozen=True)
+class PriorRunVerdict:
+    """Phase EH.7 startup verdict on the previous ``evolve_run_state.json``.
+
+    ``action`` is ``"proceed"`` (no record, or a terminal one), ``"reap"``
+    (a stale ``running`` record: delete it and proceed) or ``"refuse"``
+    (another run may be live: exit non-zero unless ``--force``). ``reason``
+    is the human-readable why; ``run_id`` / ``started_at`` / ``pid`` /
+    ``platform`` echo the record for log lines.
+    """
+
+    action: Literal["proceed", "reap", "refuse"]
+    reason: str
+    run_id: Any = None
+    started_at: Any = None
+    pid: Any = None
+    platform: Any = None
+
+
+def _record_start_epoch(payload: dict[str, Any]) -> float | None:
+    """The record's run-start wall-clock epoch, or None when unusable.
+
+    Prefers the EH.7 ``pid_started_at`` float; falls back to parsing the
+    second-resolution ``started_at`` ISO string.
+    """
+    stamp = payload.get("pid_started_at")
+    if isinstance(stamp, (int, float)) and not isinstance(stamp, bool):
+        return float(stamp)
+    started_at = payload.get("started_at")
+    if isinstance(started_at, str):
+        try:
+            parsed = datetime.fromisoformat(started_at)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.timestamp()
+    return None
+
+
+def _assess_prior_run_state(state_path: Path) -> PriorRunVerdict:
+    """Read the previous run-state record and decide proceed / reap / refuse.
+
+    Pure apart from the read and the psutil probe: it never writes, deletes
+    or signals anything. See the policy comment above.
+    """
+    try:
+        raw = state_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return PriorRunVerdict("proceed", "no prior run-state record")
+    except OSError as exc:
+        return PriorRunVerdict("proceed", f"prior run-state unreadable ({exc})")
+    try:
+        payload = json.loads(raw)
+    except ValueError as exc:
+        return PriorRunVerdict("proceed", f"prior run-state unparseable ({exc})")
+    if not isinstance(payload, dict):
+        return PriorRunVerdict("proceed", "prior run-state is not a JSON object")
+    status = payload.get("status")
+    run_id = payload.get("run_id")
+    started_at = payload.get("started_at")
+    pid = payload.get("pid")
+    platform = payload.get("platform")
+
+    def _verdict(action: Literal["proceed", "reap", "refuse"], reason: str) -> PriorRunVerdict:
+        return PriorRunVerdict(
+            action,
+            reason,
+            run_id=run_id,
+            started_at=started_at,
+            pid=pid,
+            platform=platform,
+        )
+
+    if status != "running":
+        return _verdict("proceed", f"prior run status is {status!r}")
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return _verdict("reap", f"record has no usable pid ({pid!r})")
+    if not isinstance(platform, str) or not platform:
+        return _verdict("reap", "record has no platform stamp")
+    here = _current_platform()
+    if platform != here:
+        return _verdict(
+            "refuse",
+            f"record was stamped on platform {platform!r} and this process "
+            f"runs on {here!r}, so pid {pid} cannot be probed from here",
+        )
+    stamp = _record_start_epoch(payload)
+    if stamp is None:
+        return _verdict("reap", "record has no usable start timestamp")
+    try:
+        if not psutil.pid_exists(pid):
+            return _verdict("reap", f"pid {pid} is not running")
+        create_time = float(psutil.Process(pid).create_time())
+    except Exception as exc:  # psutil.Error, OverflowError, OSError, ...
+        return _verdict("reap", f"liveness probe of pid {pid} raised {exc!r}")
+    if create_time > stamp + _PID_CREATE_TIME_TOLERANCE_S:
+        return _verdict(
+            "reap",
+            f"pid {pid} was recycled (process created {create_time:.0f}, "
+            f"after the run's start stamp {stamp:.0f})",
+        )
+    return _verdict("refuse", f"pid {pid} is alive")
+
+
+def _enforce_single_run_lock(state_path: Path, *, force: bool) -> str | None:
+    """Apply the EH.7 verdict. Returns a refusal message, or None to proceed.
+
+    Must run before the run-start state write and before
+    ``_clear_fresh_run_state``. On ``reap`` the stale record is deleted (so an
+    early exit before the run-start write leaves no phantom ``running`` record
+    for the dashboard) and an INFO line names its run_id and started_at.
+    """
+    verdict = _assess_prior_run_state(state_path)
+    if verdict.action == "proceed":
+        return None
+    if verdict.action == "reap":
+        _log.info(
+            "evolve: reaped stale run-state record run_id=%s started_at=%s (%s) from %s",
+            verdict.run_id,
+            verdict.started_at,
+            verdict.reason,
+            state_path,
+        )
+        try:
+            state_path.unlink(missing_ok=True)
+        except OSError as exc:
+            _log.warning(
+                "evolve: could not delete stale %s (%s); the run-start write will replace it",
+                state_path,
+                exc,
+            )
+        return None
+    msg = (
+        f"evolve: refusing to start: {state_path} records a running evolve "
+        f"run (run_id={verdict.run_id}, pid={verdict.pid}, "
+        f"platform={verdict.platform}, started_at={verdict.started_at}): "
+        f"{verdict.reason}. One evolve run at a time: a fresh run would "
+        "truncate that run's evolve_results.jsonl. If you have confirmed "
+        "that run is gone, re-run with --force."
+    )
+    if force:
+        _log.warning("%s [--force: overriding and proceeding]", msg)
+        return None
+    return msg
 
 
 def write_run_log(
@@ -4160,9 +4389,27 @@ def run_loop(
         print(msg, file=sys.stderr)
         return 1
 
+    # Phase EH.7: single-run lock. Reads the previous evolve_run_state.json
+    # STRICTLY BEFORE this run's first state write (a whole-file atomic
+    # replace) and before both _clear_fresh_run_state (truncates
+    # evolve_results.jsonl) and the per-worker round-file cleanup below, so a
+    # refusal leaves every file of a live run byte-unchanged.
+    _lock_refusal = _enforce_single_run_lock(
+        args.state_path, force=bool(getattr(args, "force", False))
+    )
+    if _lock_refusal is not None:
+        _log.error(_lock_refusal)
+        print(_lock_refusal, file=sys.stderr)
+        return 1
+
     parent_start = current_version_fn()
     parent_current = parent_start
     started_at_iso = _now_iso()
+    # EH.7 lock stamp: wall-clock epoch (sub-second) of this run's start,
+    # compared against psutil create_time() by the next run's startup.
+    started_at_epoch = time.time()
+    own_pid = os.getpid()
+    own_platform = _current_platform()
     start_monotonic = time_fn()
 
     # Decision D-6: per-run uuid epoch + stale-file cleanup. Generated
@@ -4323,6 +4570,9 @@ def run_loop(
             cli_argv=cli_argv_snapshot,
             gen_durations_seconds=gen_durations_seconds,
             generations_target=generations_target_int,
+            pid=own_pid,
+            pid_started_at=started_at_epoch,
+            platform=own_platform,
         )
 
     # Write an initial "running" state so a watchdog can see us mid-startup.
